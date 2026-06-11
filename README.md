@@ -1,5 +1,7 @@
 # jp-pii-detecter
 
+![PII detection F1](https://img.shields.io/badge/PII検出_F1（評価データセット）-0.92-green)
+
 日本特化の個人情報（PII）静的検出器。リポジトリに混入したマイナンバー・電話番号・住所などを
 コミット前（git hook）や CI/CD（GitHub Actions）で検出します。
 
@@ -108,26 +110,39 @@ TEST_PHONE = "090-1234-5678"  # pii-allow テスト用ダミー
 
 ## 検出ルール
 
-| ルール ID | 対象 | 手法 |
-|---|---|---|
-| `jp-my-number` | マイナンバー（個人番号） | 12 桁 + 検査用数字検証（総務省令のアルゴリズム） |
-| `jp-phone-number` | 電話番号 | 携帯/IP/固定/+81 表記 + 桁数検証 |
-| `jp-postal-code` | 郵便番号 | 〒マーク or コンテキスト |
-| `jp-address` | 住所 | 都道府県〜番地のパターン |
-| `email-address` | メールアドレス | パターン + 予約ドメイン除外 |
-| `credit-card` | クレジットカード番号 | Luhn + ブランドプレフィックス（JCB 対応） |
-| `jp-drivers-license` | 運転免許証番号 | 12 桁 + コンテキスト必須 |
-| `jp-passport` | 旅券番号 | パターン + コンテキスト必須 |
-| `jp-pension-number` | 基礎年金番号 | パターン + コンテキスト必須 |
-| `jp-residence-card` | 在留カード番号 | パターン + コンテキスト必須 |
-| `jp-bank-account` | 銀行口座番号 | 7 桁 + コンテキスト必須 |
-| `jp-health-insurance` | 健康保険 保険者番号等 | 8 桁 + コンテキスト必須 |
-| `person-name` | 氏名（ラベル付き） | `氏名:` 等のラベル。信頼度 low（既定では非表示） |
-| `jp-birthdate` | 生年月日（ラベル付き） | 西暦・和暦 |
+「検出精度」は同梱のラベル付き評価データセット（[internal/eval/dataset.go](internal/eval/dataset.go)）に対する
+**F1 スコア**（適合率と再現率の調和平均）です。`go test ./internal/eval` で検証しており
+（数値が動くと CI が落ちる）、内訳は [docs/accuracy.md](docs/accuracy.md) を参照してください。
+評価データセットに対する値であり、あらゆる入力での精度を保証するものではありません。
+
+| ルール ID | 対象 | 手法 | 検出精度（F1） |
+|---|---|---|:--:|
+| `jp-my-number` | マイナンバー（個人番号） | 12 桁 + 検査用数字検証（総務省令のアルゴリズム） | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) |
+| `jp-phone-number` | 電話番号 | 携帯/IP/固定/+81 表記 + 桁数検証 | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) |
+| `jp-postal-code` | 郵便番号 | 〒マーク or コンテキスト | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) |
+| `jp-address` | 住所 | 都道府県〜番地のパターン | ![F1 0.89](https://img.shields.io/badge/F1-0.89-green) |
+| `email-address` | メールアドレス | パターン + 予約ドメイン除外 | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) |
+| `credit-card` | クレジットカード番号 | Luhn + ブランドプレフィックス（JCB 対応） | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) |
+| `jp-drivers-license` | 運転免許証番号 | 12 桁 + コンテキスト必須 | ![F1 0.80](https://img.shields.io/badge/F1-0.80-yellowgreen) |
+| `jp-passport` | 旅券番号 | パターン + コンテキスト必須 | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) |
+| `jp-pension-number` | 基礎年金番号 | パターン + コンテキスト必須 | ![F1 0.80](https://img.shields.io/badge/F1-0.80-yellowgreen) |
+| `jp-residence-card` | 在留カード番号 | パターン + コンテキスト必須 | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) |
+| `jp-bank-account` | 銀行口座番号 | 7 桁 + コンテキスト必須 | ![F1 0.67](https://img.shields.io/badge/F1-0.67-yellow) |
+| `jp-health-insurance` | 健康保険 保険者番号等 | 8 桁 + コンテキスト必須 | ![F1 0.80](https://img.shields.io/badge/F1-0.80-yellowgreen) |
+| `person-name` | 氏名（ラベル付き） | `氏名:` 等のラベル。信頼度 low（既定では非表示） | ![F1 0.75](https://img.shields.io/badge/F1-0.75-yellowgreen) |
+| `jp-birthdate` | 生年月日（ラベル付き） | 西暦・和暦 | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) |
 
 ## 開発
 
 ```console
-$ go test ./...
+$ go test ./...                  # 全テスト（検出精度の回帰ガードを含む）
 $ go build ./cmd/jp-pii-detect
+```
+
+検出精度は [internal/eval](internal/eval) のラベル付きデータセットで計測しています。
+`go test ./internal/eval` が実測 F1 と README バッジの一致を検証するため、ルール変更で
+精度が動くと CI が落ちます。内訳ドキュメントは次のコマンドで再生成します:
+
+```console
+$ go test ./internal/eval -run TestGenerateDoc -update   # docs/accuracy.md を更新
 ```
