@@ -7,6 +7,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sync"
 
 	"github.com/baneido/jp-pii-detecter/internal/config"
 	"github.com/baneido/jp-pii-detecter/internal/detect"
@@ -30,53 +32,89 @@ var skipDirs = map[string]bool{
 }
 
 // ScanPaths は指定パス配下のテキストファイルを走査する。
+// allowlist.paths は検出結果に報告するパスと同じ表記
+// （走査ルートを含むスラッシュ区切りパス）に対して評価する。
 func ScanPaths(d *detect.Detector, cfg *config.Config, paths []string) ([]detect.Finding, error) {
-	var findings []detect.Finding
+	files, err := listFiles(cfg, paths)
+	if err != nil {
+		return nil, err
+	}
+	return scanFiles(d, files)
+}
+
+// listFiles は走査対象ファイルを walk 順に列挙する。
+func listFiles(cfg *config.Config, paths []string) ([]string, error) {
+	var files []string
 	for _, root := range paths {
 		err := filepath.WalkDir(root, func(path string, ent fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
-			rel := relPath(root, path)
+			slashed := filepath.ToSlash(path)
 			if ent.IsDir() {
 				if skipDirs[ent.Name()] {
 					return filepath.SkipDir
 				}
-				if rel != "." && !cfg.PathAllowed(rel) {
+				if path != root && !cfg.PathAllowed(slashed) {
 					return filepath.SkipDir
 				}
 				return nil
 			}
-			if !ent.Type().IsRegular() || !cfg.PathAllowed(rel) {
+			if !ent.Type().IsRegular() || !cfg.PathAllowed(slashed) {
 				return nil
 			}
 			info, err := ent.Info()
 			if err != nil || info.Size() > MaxFileSize {
 				return nil
 			}
-			data, err := os.ReadFile(path)
-			if err != nil {
-				return fmt.Errorf("read %s: %w", path, err)
-			}
-			if isBinary(data) {
-				return nil
-			}
-			findings = append(findings, d.ScanContent(filepath.ToSlash(path), string(data))...)
+			files = append(files, path)
 			return nil
 		})
 		if err != nil {
 			return nil, err
 		}
 	}
-	return findings, nil
+	return files, nil
 }
 
-func relPath(root, path string) string {
-	rel, err := filepath.Rel(root, path)
-	if err != nil {
-		return path
+// scanFiles はファイル群を並列に読み込み・走査し、入力順の結果を返す。
+// Detector は走査中は読み取り専用のため、ゴルーチン間で安全に共有できる。
+func scanFiles(d *detect.Detector, files []string) ([]detect.Finding, error) {
+	workers := max(min(runtime.GOMAXPROCS(0), len(files)), 1)
+	results := make([][]detect.Finding, len(files))
+	errs := make([]error, len(files))
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Go(func() {
+			for i := range jobs {
+				path := files[i]
+				data, err := os.ReadFile(path)
+				if err != nil {
+					errs[i] = fmt.Errorf("read %s: %w", path, err)
+					continue
+				}
+				if isBinary(data) {
+					continue
+				}
+				results[i] = d.ScanContent(filepath.ToSlash(path), string(data))
+			}
+		})
 	}
-	return filepath.ToSlash(rel)
+	for i := range files {
+		jobs <- i
+	}
+	close(jobs)
+	wg.Wait()
+
+	var findings []detect.Finding
+	for i := range files {
+		if errs[i] != nil {
+			return nil, errs[i]
+		}
+		findings = append(findings, results[i]...)
+	}
+	return findings, nil
 }
 
 // isBinary は先頭 8KB に NUL バイトが含まれるかで判定する。

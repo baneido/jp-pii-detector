@@ -21,7 +21,10 @@ func ScanDiff(d *detect.Detector, cfg *config.Config, diffRange string) ([]detec
 }
 
 func scanGitDiff(d *detect.Detector, cfg *config.Config, extra []string) ([]detect.Finding, error) {
-	args := append([]string{"diff", "-U0", "--no-color", "--no-ext-diff", "--diff-filter=ACMRT"}, extra...)
+	// core.quotePath=false: 日本語などの非 ASCII ファイル名が
+	// 8 進エスケープ（"\346\227\245..."）で出力されるのを防ぐ。
+	args := append([]string{"-c", "core.quotePath=false",
+		"diff", "-U0", "--no-color", "--no-ext-diff", "--diff-filter=ACMRT"}, extra...)
 	out, err := exec.Command("git", args...).Output()
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {

@@ -18,7 +18,20 @@ runs:
     - uses: actions/setup-go@v5
       with:
         go-version: stable
+        # setup-go 標準のキャッシュは利用側リポジトリの go.sum を前提と
+        # するため使わず、下の actions/cache で自前管理する。
         cache: false
+    - id: go-env
+      run: |
+        echo "modcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+        echo "buildcache=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+      shell: bash
+    - uses: actions/cache@v4
+      with:
+        path: |
+          ${{ steps.go-env.outputs.modcache }}
+          ${{ steps.go-env.outputs.buildcache }}
+        key: jp-pii-detect-${{ runner.os }}-${{ inputs.version }}
     - run: go install github.com/baneido/jp-pii-detecter/cmd/jp-pii-detect@${{ inputs.version }}
       shell: bash
     - run: jp-pii-detect ${{ inputs.args }}

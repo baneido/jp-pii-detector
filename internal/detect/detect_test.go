@@ -232,9 +232,95 @@ disabled = ["jp-phone-number"]
 
 func TestOverlapResolution(t *testing.T) {
 	d := newDetector(t, "")
-	// クレジットカード 16 桁の先頭 12 桁にマイナンバーのパターンが重なるケース。
-	fs := d.ScanLine("f.txt", 1, "4111-1111-1111-1111")
-	assertRules(t, fs, "credit-card")
+	// 「住所」コンテキスト下では郵便番号パターン \d{3}-\d{4} が電話番号
+	// "090-1234" の部分にもマッチし、範囲が重なる。長い方（電話番号）だけが
+	// 残ることを確認する（重複解決ロジックを実際に通るケース）。
+	fs := d.ScanLine("f.txt", 1, "住所・電話: 090-1234-5678")
+	assertRules(t, fs, "jp-phone-number")
+}
+
+func TestResolveOverlaps(t *testing.T) {
+	mk := func(id string, conf rule.Confidence, start, end int) Finding {
+		return Finding{RuleID: id, Confidence: conf, start: start, end: end}
+	}
+	tests := []struct {
+		name string
+		in   []Finding
+		want []string
+	}{
+		{"重複なしは全件残る", []Finding{mk("a", rule.High, 0, 5), mk("b", rule.High, 5, 10)}, []string{"a", "b"}},
+		{"信頼度が高い方が勝つ", []Finding{mk("lo", rule.Medium, 0, 8), mk("hi", rule.High, 4, 10)}, []string{"hi"}},
+		{"同率なら長い方が勝つ", []Finding{mk("short", rule.High, 0, 6), mk("long", rule.High, 4, 16)}, []string{"long"}},
+		{"同率同長は先勝ち", []Finding{mk("first", rule.High, 0, 6), mk("second", rule.High, 3, 9)}, []string{"first"}},
+		// 後から来た 1 件が既存の複数と重なるケース（旧実装は最初の 1 件
+		// としか比較せず重複が残った）。
+		{"複数と重なる場合は全部置き換える",
+			[]Finding{mk("a", rule.Medium, 0, 5), mk("b", rule.Medium, 6, 10), mk("big", rule.High, 0, 10)},
+			[]string{"big"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, resolveOverlaps(tt.in), tt.want...)
+		})
+	}
+}
+
+// 境界ガードが区切り文字を消費しても、隣接する次の PII を
+// 取りこぼさないこと（回帰テスト: 旧実装は 2 件目以降を見逃した）。
+func TestAdjacentFindings(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"カンマ区切りの電話番号 2 件", "090-1111-2222,090-3333-4444",
+			[]string{"jp-phone-number", "jp-phone-number"}},
+		{"CSV 行の電話番号 3 件", "山田,090-1111-2222,090-3333-4444,090-5555-6666",
+			[]string{"jp-phone-number", "jp-phone-number", "jp-phone-number"}},
+		{"区切りなし携帯の隣接", "tel: 09011112222,09033334444",
+			[]string{"jp-phone-number", "jp-phone-number"}},
+		{"メールアドレス 2 件", "a.yamada@gmail.com,b.suzuki@gmail.com",
+			[]string{"email-address", "email-address"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// docs 4.4「4-4-4-4 グループ除外」: クレジットカード様式の数字列の先頭
+// 12 桁が偶然マイナンバーの検査用数字を通過しても検出しない。
+func TestMyNumber4x4GroupExcluded(t *testing.T) {
+	d := newDetector(t, "")
+	// 1234-5678-9018 は検査用数字を通過するが、後ろに -3456 が続く。
+	assertRules(t, d.ScanLine("f.txt", 1, "code: 1234-5678-9018-3456"))
+}
+
+func TestMinConfidenceHigh(t *testing.T) {
+	d := newDetector(t, `min_confidence = "high"`)
+	// 区切りなし携帯（コンテキストなし）は medium なので報告されない。
+	assertRules(t, d.ScanLine("f.txt", 1, "09012345678"))
+	// 区切りあり携帯は high なので報告される。
+	assertRules(t, d.ScanLine("f.txt", 1, "090-1234-5678"), "jp-phone-number")
+}
+
+// stopword は全角表記とも正規化済みで照合される。
+func TestStopwordNormalized(t *testing.T) {
+	d := newDetector(t, `
+[allowlist]
+stopwords = ["090-0000-0001"]
+`)
+	assertRules(t, d.ScanLine("f.txt", 1, "TEL: ０９０－００００－０００１"))
+}
+
+// 固定電話は 10 桁のみ。11 桁は携帯・IP（0[5-9]0）に限る。
+func TestPhoneDigitCountStrict(t *testing.T) {
+	d := newDetector(t, "")
+	assertRules(t, d.ScanLine("f.txt", 1, "0123-456-7890"))                       // 11 桁の固定様式は実在しない
+	assertRules(t, d.ScanLine("f.txt", 1, "+81-1-2345-6789"), "jp-phone-number")  // +81 + 9 桁 = 固定 OK
+	assertRules(t, d.ScanLine("f.txt", 1, "+81-12-3456-7890"))                    // +81 + 10 桁で携帯以外は不正
+	assertRules(t, d.ScanLine("f.txt", 1, "+81-90-1234-5678"), "jp-phone-number") // +81 携帯
 }
 
 func TestPositionReporting(t *testing.T) {

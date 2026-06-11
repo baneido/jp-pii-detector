@@ -27,6 +27,12 @@ func TestMask(t *testing.T) {
 		{"090-1234-5678", "09*********78"},
 		{"abc", "***"},
 		{"abcdef", "a****f"},
+		{"", ""},                 // 空文字
+		{"abcd", "****"},         // 4 文字以下は全マスク
+		{"abcde", "a***e"},       // 5 文字（先頭・末尾 1 文字）
+		{"abcdefg", "a*****g"},   // 7 文字（< 8 の上限）
+		{"abcdefgh", "ab****gh"}, // 8 文字（先頭・末尾 2 文字に切替）
+		{"０９０１２３４５６７８", "０９*******７８"}, // マルチバイトはルーン単位
 	}
 	for _, tt := range tests {
 		if got := Mask(tt.in); got != tt.want {
@@ -44,6 +50,52 @@ func TestTextMasksByDefault(t *testing.T) {
 	}
 	if !strings.Contains(out, "users.csv:4:6") {
 		t.Errorf("missing location: %s", out)
+	}
+	if !strings.Contains(out, "1 件") || !strings.Contains(out, "pii-allow") {
+		t.Errorf("missing summary with remediation hint: %s", out)
+	}
+}
+
+func TestTextNoFindingsNoSummary(t *testing.T) {
+	var buf bytes.Buffer
+	Text(&buf, nil, false)
+	if buf.Len() != 0 {
+		t.Errorf("expected empty output, got %q", buf.String())
+	}
+}
+
+// confidence → SARIF level の対応（high=error, medium=warning, low=note）。
+func TestSARIFLevels(t *testing.T) {
+	fs := []detect.Finding{}
+	for _, c := range []rule.Confidence{rule.High, rule.Medium, rule.Low} {
+		f := sample()[0]
+		f.Confidence = c
+		fs = append(fs, f)
+	}
+	var buf bytes.Buffer
+	if err := SARIF(&buf, fs, rule.Builtin(), false); err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Runs []struct {
+			Results []struct {
+				Level string `json:"level"`
+			} `json:"results"`
+		} `json:"runs"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	got := []string{}
+	for _, r := range doc.Runs[0].Results {
+		got = append(got, r.Level)
+	}
+	want := []string{"error", "warning", "note"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("levels = %v, want %v", got, want)
+			break
+		}
 	}
 }
 

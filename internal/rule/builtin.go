@@ -115,7 +115,8 @@ func Builtin() []Rule {
 			Context: []string{"免許", "driver_license", "drivers_license", "driver's license",
 				"drivers license", "driver license", "license no", "license number", "licence"},
 			Validate: func(m string) bool {
-				// 先頭 2 桁は公安委員会コード（10 以上）
+				// 先頭 2 桁は公安委員会コードで 10 以上
+				// （= 先頭桁が 0 でないことと等価）
 				return !checksum.AllSame(m) && m[0] != '0'
 			},
 			Patterns: []Pattern{
@@ -191,12 +192,29 @@ func validPhone(m string) bool {
 		return false
 	}
 	if strings.HasPrefix(d, "81") {
-		// 国番号を除いた市外局番以下は 9〜10 桁（先頭 0 なし）
+		// 国番号を除いた市外局番以下は、固定 9 桁 / 携帯・IP 10 桁
+		// （先頭 0 なし）。10 桁は携帯・IP のプレフィックス X0 のみ。
 		rest := d[2:]
-		return (len(rest) == 9 || len(rest) == 10) && rest[0] != '0'
+		switch len(rest) {
+		case 9:
+			return rest[0] != '0'
+		case 10:
+			return rest[0] >= '5' && rest[0] <= '9' && rest[1] == '0'
+		}
+		return false
 	}
-	// 国内表記は先頭 0 + 計 10〜11 桁、第 2 桁は 0 以外
-	return (len(d) == 10 || len(d) == 11) && d[0] == '0' && d[1] != '0'
+	// 国内表記は先頭 0、第 2 桁は 0 以外。固定電話は計 10 桁、
+	// 11 桁は携帯・IP（0[5-9]0）のみ。
+	if len(d) == 0 || d[0] != '0' {
+		return false
+	}
+	switch len(d) {
+	case 10:
+		return d[1] != '0'
+	case 11:
+		return d[1] >= '5' && d[1] <= '9' && d[2] == '0'
+	}
+	return false
 }
 
 // validEmail は予約済みドメイン（RFC 2606/6761）等のダミー値を除外する。

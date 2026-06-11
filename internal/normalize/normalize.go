@@ -40,6 +40,19 @@ func isDigit(r rune) bool { return r >= '0' && r <= '9' }
 //   - ハイフン類似文字 → '-'
 //   - 長音記号「ー」は数字に隣接する場合のみ '-'（カタカナ語は保持）
 func Line(s string) string {
+	// 変換対象の文字（ハイフン類 U+2010〜U+2015・U+2212・U+FE63、
+	// 全角 ASCII U+FF01〜、全角スペース U+3000、長音記号 U+30FC）は
+	// すべて U+2010 以上。それ未満だけの行（純 ASCII 等）は無変換で返す。
+	needsMap := false
+	for _, r := range s {
+		if r >= '\u2010' {
+			needsMap = true
+			break
+		}
+	}
+	if !needsMap {
+		return s
+	}
 	rs := []rune(s)
 	out := make([]rune, len(rs))
 	for i, r := range rs {

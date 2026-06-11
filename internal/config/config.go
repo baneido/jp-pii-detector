@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 
 	"github.com/BurntSushi/toml"
@@ -21,7 +22,9 @@ type Config struct {
 		Disabled []string `toml:"disabled"`
 	} `toml:"rules"`
 	Allowlist struct {
-		// Paths は走査から除外するパスの正規表現（リポジトリ相対パスに適用）。
+		// Paths は走査から除外するパスの正規表現。検出結果に報告される
+		// パス（フルスキャンは走査ルートを含むパス、git diff は
+		// リポジトリ相対パス）に適用する。
 		Paths []string `toml:"paths"`
 		// Regexes はマッチ文字列に対する除外正規表現。
 		Regexes []string `toml:"regexes"`
@@ -38,21 +41,49 @@ func Default() *Config {
 	return &Config{MinConfidence: "medium"}
 }
 
-// Load は設定ファイルを読み込む。path が空の場合はカレントディレクトリの
-// DefaultFileName を探し、存在しなければ既定値を返す。
+// Load は設定ファイルを読み込む。path が空の場合はカレントディレクトリから
+// 親方向に DefaultFileName を探す（リポジトリルート =.git のあるディレクトリ
+// まで。サブディレクトリからの実行でもリポジトリルートの設定が使われる）。
+// 見つからなければ既定値を返す。
 func Load(path string) (*Config, error) {
-	explicit := path != ""
-	if !explicit {
-		path = DefaultFileName
+	if path == "" {
+		found, err := findUpward()
+		if err != nil {
+			return nil, err
+		}
+		if found == "" {
+			return Default(), nil
+		}
+		path = found
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) && !explicit {
-			return Default(), nil
-		}
 		return nil, fmt.Errorf("config: %w", err)
 	}
 	return Parse(string(data))
+}
+
+// findUpward はカレントディレクトリから親方向に DefaultFileName を探す。
+// .git を持つディレクトリ（リポジトリルート）より上には遡らない。
+func findUpward() (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("config: %w", err)
+	}
+	for {
+		candidate := filepath.Join(dir, DefaultFileName)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
+		}
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return "", nil // リポジトリルートに到達
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", nil // ファイルシステムルートに到達
+		}
+		dir = parent
+	}
 }
 
 // Parse は TOML 文字列から設定を構築する。

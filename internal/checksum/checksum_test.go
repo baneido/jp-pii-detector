@@ -66,13 +66,34 @@ func TestLuhn(t *testing.T) {
 	}
 }
 
+// luhnComplete は末尾にチェックディジットを付加して Luhn を通る番号を作る
+// （ブランド分岐テスト用。実装の Luhn と独立に総当たりで求める）。
+func luhnComplete(prefix string) string {
+	for d := byte('0'); d <= '9'; d++ {
+		if Luhn(prefix + string(d)) {
+			return prefix + string(d)
+		}
+	}
+	panic("unreachable")
+}
+
 func TestCreditCard(t *testing.T) {
 	valid := []string{
-		"4111111111111111", // Visa テスト番号
-		"5555555555554444", // Mastercard テスト番号
-		"3530111333300000", // JCB テスト番号
-		"378282246310005",  // Amex テスト番号
-		"30569309025904",   // Diners テスト番号
+		"4111111111111111",                 // Visa 16 桁テスト番号
+		"5555555555554444",                 // Mastercard テスト番号
+		"3530111333300000",                 // JCB 16 桁テスト番号
+		"378282246310005",                  // Amex テスト番号
+		"30569309025904",                   // Diners 14 桁テスト番号
+		"6011111111111117",                 // Discover テスト番号
+		luhnComplete("422222222222"),       // Visa 13 桁
+		luhnComplete("422222222222222222"), // Visa 19 桁
+		luhnComplete("222100000000000"),    // Mastercard 2-series 下限
+		luhnComplete("272099999999999"),    // Mastercard 2-series 上限
+		luhnComplete("352800000000000"),    // JCB プレフィックス下限
+		luhnComplete("358999999999999999"), // JCB 19 桁・プレフィックス上限
+		luhnComplete("650000000000000"),    // Discover 65
+		luhnComplete("644000000000000"),    // Discover 644
+		luhnComplete("3000000000000"),      // Diners 300
 	}
 	for _, v := range valid {
 		if !CreditCard(v) {
@@ -80,15 +101,30 @@ func TestCreditCard(t *testing.T) {
 		}
 	}
 	invalid := []string{
-		"4111111111111112", // Luhn 不正
-		"9111111111111111", // 未知のプレフィックス
-		"41111111",         // 桁数不足
-		"1234567890123456", // プレフィックス不正
+		"4111111111111112",              // Luhn 不正
+		"9111111111111111",              // 未知のプレフィックス
+		"41111111",                      // 桁数不足
+		"1234567890123456",              // プレフィックス不正
+		luhnComplete("41111111111111"),  // Visa 15 桁（13/16/19 のみ）
+		luhnComplete("55555555555544"),  // Mastercard 15 桁（16 のみ）
+		luhnComplete("222000000000000"), // 2-series 範囲外（2220）
+		luhnComplete("352700000000000"), // JCB 範囲外（3527）
+		luhnComplete("35301113333000"),  // JCB 15 桁（16〜19 のみ）
+		"0000000000000000",              // 全桁同一
 	}
 	for _, v := range invalid {
 		if CreditCard(v) {
 			t.Errorf("CreditCard(%q) = true, want false", v)
 		}
+	}
+}
+
+func TestLuhnEdge(t *testing.T) {
+	if Luhn("0") {
+		t.Error("Luhn(1 桁) = true, want false")
+	}
+	if Luhn("12a4") {
+		t.Error("Luhn(非数字) = true, want false")
 	}
 }
 
