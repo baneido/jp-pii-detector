@@ -1,0 +1,142 @@
+// jp-pii-detect は日本特化の個人情報（PII）静的検出器。
+// git commit hook / GitHub Actions CI からの利用を想定する。
+package main
+
+import (
+	"flag"
+	"fmt"
+	"os"
+
+	"github.com/baneido/jp-pii-detecter/internal/config"
+	"github.com/baneido/jp-pii-detecter/internal/detect"
+	"github.com/baneido/jp-pii-detecter/internal/report"
+	"github.com/baneido/jp-pii-detecter/internal/rule"
+	"github.com/baneido/jp-pii-detecter/internal/source"
+)
+
+var version = "dev" // -ldflags "-X main.version=..." で上書き
+
+const usage = `jp-pii-detect - 日本特化の個人情報（PII）静的検出器
+
+Usage:
+  jp-pii-detect scan [flags] [path...]   パス配下を走査（既定: カレントディレクトリ）
+  jp-pii-detect scan --staged            git のステージ済み追加行を走査（pre-commit 用）
+  jp-pii-detect scan --diff <range>      git diff の追加行を走査（例: origin/main...HEAD）
+  jp-pii-detect rules                    検出ルール一覧を表示
+  jp-pii-detect version                  バージョンを表示
+
+Scan flags:
+  --staged                 ステージ済み変更のみ走査
+  --diff <range>           指定リビジョン範囲の追加行を走査
+  --format <fmt>           出力形式: text|json|sarif|github (既定: text)
+  --config <path>          設定ファイル (既定: ./.jp-pii.toml)
+  --min-confidence <lvl>   報告する最小信頼度: low|medium|high (既定: 設定ファイル値 or medium)
+  --unmask                 検出値をマスクせず出力
+  --exit-zero              検出があっても終了コード 0 を返す
+
+Exit codes: 0=検出なし 1=検出あり 2=エラー
+`
+
+func main() {
+	if len(os.Args) < 2 {
+		fmt.Fprint(os.Stderr, usage)
+		os.Exit(2)
+	}
+	switch os.Args[1] {
+	case "scan":
+		os.Exit(runScan(os.Args[2:]))
+	case "rules":
+		runRules()
+	case "version":
+		fmt.Println(version)
+	case "help", "-h", "--help":
+		fmt.Print(usage)
+	default:
+		fmt.Fprintf(os.Stderr, "unknown command %q\n\n%s", os.Args[1], usage)
+		os.Exit(2)
+	}
+}
+
+func runScan(args []string) int {
+	fs := flag.NewFlagSet("scan", flag.ExitOnError)
+	staged := fs.Bool("staged", false, "")
+	diffRange := fs.String("diff", "", "")
+	format := fs.String("format", "text", "")
+	configPath := fs.String("config", "", "")
+	minConf := fs.String("min-confidence", "", "")
+	unmask := fs.Bool("unmask", false, "")
+	exitZero := fs.Bool("exit-zero", false, "")
+	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		return fail(err)
+	}
+	if *minConf != "" {
+		cfg.MinConfidence = *minConf
+	}
+	det, err := detect.New(cfg)
+	if err != nil {
+		return fail(err)
+	}
+
+	var findings []detect.Finding
+	switch {
+	case *staged:
+		findings, err = source.ScanStaged(det, cfg)
+	case *diffRange != "":
+		findings, err = source.ScanDiff(det, cfg, *diffRange)
+	default:
+		paths := fs.Args()
+		if len(paths) == 0 {
+			paths = []string{"."}
+		}
+		findings, err = source.ScanPaths(det, cfg, paths)
+	}
+	if err != nil {
+		return fail(err)
+	}
+
+	switch *format {
+	case "text":
+		report.Text(os.Stdout, findings, *unmask)
+	case "json":
+		if err := report.JSON(os.Stdout, findings, *unmask); err != nil {
+			return fail(err)
+		}
+	case "sarif":
+		if err := report.SARIF(os.Stdout, findings, det.Rules(), *unmask); err != nil {
+			return fail(err)
+		}
+	case "github":
+		report.GitHub(os.Stdout, findings, *unmask)
+	default:
+		return fail(fmt.Errorf("unknown format %q (text|json|sarif|github)", *format))
+	}
+
+	if len(findings) > 0 && !*exitZero {
+		return 1
+	}
+	return 0
+}
+
+func runRules() {
+	for _, r := range rule.Builtin() {
+		ctx := ""
+		for _, p := range r.Patterns {
+			if p.RequireContext {
+				ctx = " (コンテキストキーワード必須)"
+				break
+			}
+		}
+		fmt.Printf("%-22s %s%s\n", r.ID, r.Description, ctx)
+	}
+}
+
+func fail(err error) int {
+	fmt.Fprintln(os.Stderr, "jp-pii-detect:", err)
+	return 2
+}

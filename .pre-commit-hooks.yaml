@@ -1,0 +1,7 @@
+# pre-commit フレームワーク (https://pre-commit.com) 用フック定義
+- id: jp-pii-detect
+  name: jp-pii-detect（日本特化 PII 検出）
+  description: ステージ済み変更の追加行から日本の個人情報を検出する
+  entry: jp-pii-detect scan --staged
+  language: golang
+  pass_filenames: false

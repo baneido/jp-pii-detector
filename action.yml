@@ -1,0 +1,25 @@
+name: jp-pii-detect
+description: 日本特化の個人情報（PII）静的検出器をリポジトリに対して実行する
+branding:
+  icon: shield
+  color: red
+inputs:
+  args:
+    description: jp-pii-detect に渡す引数
+    required: false
+    default: scan --format github .
+  version:
+    description: インストールするバージョン（go install の @ 以降）
+    required: false
+    default: latest
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v5
+      with:
+        go-version: stable
+        cache: false
+    - run: go install github.com/baneido/jp-pii-detecter/cmd/jp-pii-detect@${{ inputs.version }}
+      shell: bash
+    - run: jp-pii-detect ${{ inputs.args }}
+      shell: bash
