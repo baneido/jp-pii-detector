@@ -1,0 +1,19 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test ./...
+      - run: go build ./cmd/jp-pii-detect
+      # dogfooding: 自リポジトリを自分でスキャンして偽陽性ゼロを保証する
+      - run: ./jp-pii-detect scan --format github .

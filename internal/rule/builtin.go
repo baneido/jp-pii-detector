@@ -1,0 +1,213 @@
+package rule
+
+import (
+	"regexp"
+	"slices"
+	"strings"
+
+	"github.com/baneido/jp-pii-detecter/internal/checksum"
+)
+
+// dg は数字エンティティ用の境界ガード付きパターンを生成する。
+// 前後が数字でないことを保証する（RE2 は lookaround 非対応のため
+// キャプチャグループで切り出す）。
+func dg(core string) *regexp.Regexp {
+	return regexp.MustCompile(`(?:^|[^0-9])(` + core + `)(?:[^0-9]|$)`)
+}
+
+// ag は英数字エンティティ用の境界ガード付きパターンを生成する。
+func ag(core string) *regexp.Regexp {
+	return regexp.MustCompile(`(?:^|[^0-9A-Za-z])(` + core + `)(?:[^0-9A-Za-z]|$)`)
+}
+
+func stripSeparators(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '-' || r == ' ' {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+const (
+	kanji    = `\x{4E00}-\x{9FFF}\x{3005}` // 漢字 + 々
+	hiragana = `\x{3041}-\x{3096}`
+	katakana = `\x{30A1}-\x{30FA}\x{30FC}` // カタカナ + ー
+)
+
+// Builtin は組み込みルール一覧を返す。
+func Builtin() []Rule {
+	return []Rule{
+		{
+			ID:          "jp-my-number",
+			Description: "マイナンバー（個人番号）",
+			Context:     []string{"マイナンバー", "個人番号", "mynumber", "my number", "my_number"},
+			Validate: func(m string) bool {
+				return checksum.MyNumber(stripSeparators(m))
+			},
+			Patterns: []Pattern{
+				{Re: dg(`\d{12}`), Base: Medium},
+				// 前後にハイフンが続く場合はクレジットカード等の
+				// 4-4-4-4 グループの一部とみなして除外する。
+				{Re: regexp.MustCompile(`(?:^|[^0-9-])(\d{4}-\d{4}-\d{4})(?:[^0-9-]|$)`), Base: Medium},
+			},
+		},
+		{
+			ID:          "jp-phone-number",
+			Description: "電話番号（携帯・固定・IP・国際表記）",
+			Context:     []string{"電話", "携帯", "連絡先", "tel", "phone", "fax", "mobile", "denwa"},
+			Validate:    validPhone,
+			Patterns: []Pattern{
+				// 区切りあり携帯・IP 電話（060/070/080/090/050）
+				{Re: dg(`0[5-9]0-\d{4}-\d{4}`), Base: High},
+				// 区切りなし携帯・IP 電話
+				{Re: dg(`0[5-9]0\d{8}`), Base: Medium},
+				// 区切りあり固定電話（市外局番 2〜5 桁）
+				{Re: dg(`0\d{1,4}-\d{1,4}-\d{4}`), Base: Medium},
+				// 国際表記 +81
+				{Re: dg(`\+81[- ]?\d{1,4}[- ]?\d{1,4}[- ]?\d{3,4}`), Base: High},
+			},
+		},
+		{
+			ID:          "jp-postal-code",
+			Description: "郵便番号",
+			Context:     []string{"郵便番号", "郵便", "住所", "postal", "zipcode", "zip code", "〒"},
+			Patterns: []Pattern{
+				{Re: dg(`〒\s?\d{3}-?\d{4}`), Base: High},
+				{Re: dg(`\d{3}-\d{4}`), Base: Medium, RequireContext: true},
+			},
+		},
+		{
+			ID:          "jp-address",
+			Description: "住所（都道府県〜番地）",
+			Context:     []string{"住所", "所在地", "自宅", "address", "居住"},
+			Patterns: []Pattern{
+				{Re: regexp.MustCompile(
+					`((?:北海道|東京都|京都府|大阪府|[` + kanji + `]{2,3}県)` +
+						`[` + kanji + hiragana + katakana + `0-9A-Za-z]{1,20}?[市区町村]` +
+						`[` + kanji + hiragana + katakana + `0-9-]{0,30}?` +
+						`\d{1,4}(?:丁目|番地?|号|(?:-\d{1,4}){1,2}))`,
+				), Base: High},
+			},
+		},
+		{
+			ID:          "email-address",
+			Description: "メールアドレス",
+			Validate:    validEmail,
+			Patterns: []Pattern{
+				{Re: regexp.MustCompile(`(?:^|[^A-Za-z0-9._%+-])([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})`), Base: High},
+			},
+		},
+		{
+			ID:          "credit-card",
+			Description: "クレジットカード番号（Luhn + ブランドプレフィックス検証）",
+			Context:     []string{"クレジット", "カード番号", "credit", "card"},
+			Validate: func(m string) bool {
+				return checksum.CreditCard(stripSeparators(m))
+			},
+			Patterns: []Pattern{
+				{Re: dg(`\d(?:[- ]?\d){12,18}`), Base: High},
+			},
+		},
+		{
+			ID:          "jp-drivers-license",
+			Description: "運転免許証番号",
+			Context: []string{"免許", "driver_license", "drivers_license", "driver's license",
+				"drivers license", "driver license", "license no", "license number", "licence"},
+			Validate: func(m string) bool {
+				// 先頭 2 桁は公安委員会コード（10 以上）
+				return !checksum.AllSame(m) && m[0] != '0'
+			},
+			Patterns: []Pattern{
+				{Re: dg(`\d{12}`), Base: High, RequireContext: true},
+			},
+		},
+		{
+			ID:          "jp-passport",
+			Description: "旅券（パスポート）番号",
+			Context:     []string{"パスポート", "旅券", "passport"},
+			Patterns: []Pattern{
+				{Re: ag(`[A-Z]{2}\d{7}`), Base: High, RequireContext: true},
+			},
+		},
+		{
+			ID:          "jp-pension-number",
+			Description: "基礎年金番号",
+			Context:     []string{"年金", "pension", "nenkin"},
+			Patterns: []Pattern{
+				{Re: dg(`\d{4}-?\d{6}`), Base: High, RequireContext: true},
+			},
+		},
+		{
+			ID:          "jp-residence-card",
+			Description: "在留カード番号",
+			Context:     []string{"在留", "residence card", "zairyu"},
+			Patterns: []Pattern{
+				{Re: ag(`[A-Z]{2}\d{8}[A-Z]{2}`), Base: High, RequireContext: true},
+			},
+		},
+		{
+			ID:          "jp-bank-account",
+			Description: "銀行口座番号",
+			Context:     []string{"口座", "普通預金", "当座預金", "支店番号", "account number", "account_no", "bank account", "kouza"},
+			Patterns: []Pattern{
+				{Re: dg(`\d{7}`), Base: Medium, RequireContext: true},
+			},
+		},
+		{
+			ID:          "jp-health-insurance",
+			Description: "健康保険 保険者番号・被保険者番号",
+			Context:     []string{"保険者番号", "被保険者", "保険証", "health insurance", "hokensha"},
+			Patterns: []Pattern{
+				{Re: dg(`\d{8}`), Base: Medium, RequireContext: true},
+			},
+		},
+		{
+			ID:          "person-name",
+			Description: "氏名（ラベル付き）",
+			Patterns: []Pattern{
+				{Re: regexp.MustCompile(
+					`(?:氏名|名前|姓名|フリガナ|ふりがな)\s*[:=]\s*` +
+						`([` + kanji + hiragana + katakana + `]{2,12}(?:[ ][` + kanji + hiragana + katakana + `]{1,12})?)`,
+				), Base: Low},
+			},
+		},
+		{
+			ID:          "jp-birthdate",
+			Description: "生年月日（ラベル付き）",
+			Patterns: []Pattern{
+				{Re: regexp.MustCompile(
+					`(?:生年月日|誕生日)\s*[:=]?\s*` +
+						`((?:(?:19|20)\d{2}|(?:明治|大正|昭和|平成|令和)\d{1,2})[年/.-]\d{1,2}[月/.-]\d{1,2}日?)`,
+				), Base: Medium},
+			},
+		},
+	}
+}
+
+func validPhone(m string) bool {
+	d := stripSeparators(strings.TrimPrefix(m, "+"))
+	if checksum.AllSame(d) {
+		return false
+	}
+	if strings.HasPrefix(d, "81") {
+		// 国番号を除いた市外局番以下は 9〜10 桁（先頭 0 なし）
+		rest := d[2:]
+		return (len(rest) == 9 || len(rest) == 10) && rest[0] != '0'
+	}
+	// 国内表記は先頭 0 + 計 10〜11 桁、第 2 桁は 0 以外
+	return (len(d) == 10 || len(d) == 11) && d[0] == '0' && d[1] != '0'
+}
+
+// validEmail は予約済みドメイン（RFC 2606/6761）等のダミー値を除外する。
+func validEmail(m string) bool {
+	at := strings.LastIndexByte(m, '@')
+	domain := strings.ToLower(m[at+1:])
+	labels := strings.Split(domain, ".")
+	tld := labels[len(labels)-1]
+	switch tld {
+	case "test", "invalid", "localhost", "example", "local":
+		return false
+	}
+	return !slices.Contains(labels, "example")
+}
