@@ -8,4 +8,6 @@ paths = [
   "^docs/",
   "^README\\.md$",
   "_test\\.go$",
+  # 評価用データセット（ダミー PII を多数含む）
+  "^internal/eval/dataset\\.go$",
 ]
