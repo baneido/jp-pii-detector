@@ -58,8 +58,10 @@ func ParseDiff(diff string) []AddedLine {
 		switch {
 		case strings.HasPrefix(line, "+++ "):
 			file = strings.TrimPrefix(line, "+++ ")
-			file = strings.TrimPrefix(file, "b/")
+			// 引用符（引用符・制御文字を含むパスで付く）を外してから
+			// b/ 接頭辞を取り除く。逆順だと引用時に b/ が残る。
 			file = strings.Trim(file, `"`)
+			file = strings.TrimPrefix(file, "b/")
 			if file == "/dev/null" {
 				file = ""
 			}

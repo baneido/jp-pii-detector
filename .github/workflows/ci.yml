@@ -13,7 +13,12 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go vet ./...
-      - run: go test ./...
+      # -race: 並列スキャン（internal/source）のデータ競合の回帰防止
+      - run: go test -race ./...
+      # docs/accuracy.md が実測値からドリフトしていないことを検証する
+      - run: |
+          go test ./internal/eval -run TestGenerateDoc -update
+          git diff --exit-code docs/accuracy.md
       - run: go build ./cmd/jp-pii-detect
       # dogfooding: 自リポジトリを自分でスキャンして偽陽性ゼロを保証する
       - run: ./jp-pii-detect scan --format github .

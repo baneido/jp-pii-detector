@@ -133,6 +133,18 @@ func TestGitHubEscapes(t *testing.T) {
 	}
 }
 
+// file= プロパティの値はプロパティ区切りの "," ":" もエスケープされる。
+func TestGitHubEscapesFileProperty(t *testing.T) {
+	var buf bytes.Buffer
+	fs := sample()
+	fs[0].File = "a,b/c:d.csv"
+	GitHub(&buf, fs, false)
+	out := buf.String()
+	if !strings.HasPrefix(out, "::error file=a%2Cb/c%3Ad.csv,line=4,") {
+		t.Errorf("file property not escaped: %s", out)
+	}
+}
+
 func TestSARIF(t *testing.T) {
 	var buf bytes.Buffer
 	if err := SARIF(&buf, sample(), rule.Builtin(), false); err != nil {

@@ -88,6 +88,36 @@ func TestScanPathsAllowlistMatchesReportedPath(t *testing.T) {
 	}
 }
 
+// サブディレクトリから実行しても、リポジトリルート相対の allowlist.paths
+// （^testdata/ 等）が機能すること。旧実装は走査時のパス表記
+// （../testdata/...）だけで照合していたためアンカーが効かなかった。
+func TestScanPathsAllowlistRepoRootRelative(t *testing.T) {
+	repo := t.TempDir()
+	phone := []byte("TEL: 090-1234-5678\n")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(repo, "testdata", "fixture.txt"), phone)
+	writeFile(t, filepath.Join(repo, "src", "main.txt"), phone)
+	t.Chdir(filepath.Join(repo, "src"))
+
+	cfg, err := config.Parse("[allowlist]\npaths = [\"^testdata/\"]\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, err := ScanPaths(d, cfg, []string{".."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 || !strings.HasSuffix(findings[0].File, "/src/main.txt") {
+		t.Fatalf("findings = %+v, want only src/main.txt", findings)
+	}
+}
+
 // 複数ファイルの検出結果が walk 順（=決定的な順序）で返ること。
 // 並列化後の順序保証の回帰テスト。
 func TestScanPathsDeterministicOrder(t *testing.T) {

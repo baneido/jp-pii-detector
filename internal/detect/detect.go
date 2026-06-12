@@ -78,6 +78,7 @@ func (d *Detector) ScanLine(file string, lineNo int, line string) []Finding {
 		return nil
 	}
 	norm := normalize.Line(line)
+	hasDigit, hasAt, hasCJK := classifyLine(norm)
 
 	// 小文字化・コンテキスト判定・元行のルーン展開はコストが高いため、
 	// 必要になるまで遅延させる（大半の行はどのパターンにもマッチしない）。
@@ -87,6 +88,22 @@ func (d *Detector) ScanLine(file string, lineNo int, line string) []Finding {
 
 	var found []Finding
 	for _, r := range d.rules {
+		// 必須文字種を含まない行はパターンマッチ自体をスキップする。
+		// 大半のルールは数字必須のため、数字のないコード行がほぼ無コストになる。
+		switch r.Prefilter {
+		case rule.PrefilterDigit:
+			if !hasDigit {
+				continue
+			}
+		case rule.PrefilterAt:
+			if !hasAt {
+				continue
+			}
+		case rule.PrefilterCJK:
+			if !hasCJK {
+				continue
+			}
+		}
 		ctxComputed, hasContext := false, false
 		ctx := func() bool {
 			if !ctxComputed {
@@ -135,8 +152,11 @@ func (d *Detector) ScanLine(file string, lineNo int, line string) []Finding {
 				if d.allowlisted(entity) {
 					continue
 				}
+				// RequireContext のパターンはキーワードの存在が検出の前提
+				// であり昇格の根拠にならないため、Base の信頼度のまま報告する
+				// （口座番号などの△ルールが常に high になるのを防ぐ）。
 				conf := p.Base
-				if conf < rule.High && ctx() {
+				if !p.RequireContext && conf < rule.High && ctx() {
 					conf = rule.High
 				}
 				if conf < d.minConf {
@@ -163,6 +183,24 @@ func (d *Detector) ScanLine(file string, lineNo int, line string) []Finding {
 		}
 	}
 	return resolveOverlaps(found)
+}
+
+// classifyLine は Prefilter 判定に使う文字種の有無を 1 パスで調べる。
+func classifyLine(s string) (hasDigit, hasAt, hasCJK bool) {
+	for _, r := range s {
+		switch {
+		case r >= '0' && r <= '9':
+			hasDigit = true
+		case r == '@':
+			hasAt = true
+		case r >= 0x3000: // CJK 記号・かな・漢字はすべて U+3000 以上
+			hasCJK = true
+		}
+		if hasDigit && hasAt && hasCJK {
+			break
+		}
+	}
+	return
 }
 
 // allowlisted は entity（正規化済みのマッチ文字列）が除外対象かを返す。

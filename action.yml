@@ -31,8 +31,16 @@ runs:
         path: |
           ${{ steps.go-env.outputs.modcache }}
           ${{ steps.go-env.outputs.buildcache }}
-        key: jp-pii-detect-${{ runner.os }}-${{ inputs.version }}
+        # version=latest はキーが固定だと初回保存のままリリース後も
+        # 更新されないため、run_id で毎回保存し restore-keys で引き継ぐ。
+        key: jp-pii-detect-${{ runner.os }}-${{ inputs.version }}-${{ github.run_id }}
+        restore-keys: |
+          jp-pii-detect-${{ runner.os }}-${{ inputs.version }}-
     - run: go install github.com/baneido/jp-pii-detecter/cmd/jp-pii-detect@${{ inputs.version }}
+      shell: bash
+    # GitHub ホストランナーは $GOPATH/bin が PATH に含まれるが、
+    # self-hosted ランナーでは保証されないため明示する。
+    - run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       shell: bash
     - run: jp-pii-detect ${{ inputs.args }}
       shell: bash
