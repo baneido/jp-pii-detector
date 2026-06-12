@@ -5,6 +5,7 @@ package eval
 
 import (
 	"fmt"
+	"math"
 	"sort"
 
 	"github.com/baneido/jp-pii-detecter/internal/config"
@@ -89,9 +90,33 @@ func Evaluate() ([]Result, error) {
 	return results, nil
 }
 
+// Micro は全ルール合算のマイクロ平均を返す。README 先頭の総合バッジと
+// docs/accuracy.md の合計行に使う。
+func Micro(results []Result) Result {
+	m := Result{RuleID: "micro"}
+	for _, r := range results {
+		m.TP += r.TP
+		m.FP += r.FP
+		m.FN += r.FN
+	}
+	if m.TP+m.FP > 0 {
+		m.Precision = float64(m.TP) / float64(m.TP+m.FP)
+	}
+	if m.TP+m.FN > 0 {
+		m.Recall = float64(m.TP) / float64(m.TP+m.FN)
+	}
+	if m.Precision+m.Recall > 0 {
+		m.F1 = 2 * m.Precision * m.Recall / (m.Precision + m.Recall)
+	}
+	return m
+}
+
 // Badge は F1 の表示文字列（小数 2 桁）と shields.io の色名を返す。
+// 色は表示と同じ小数 2 桁に丸めた値で判定する（0.75 ちょうどの F1 が
+// 浮動小数点誤差で 0.75 をわずかに下回り、表示 0.75 と色が食い違うのを防ぐ）。
 func Badge(f1 float64) (text, color string) {
 	text = fmt.Sprintf("%.2f", f1)
+	f1 = math.Round(f1*100) / 100
 	switch {
 	case f1 >= 0.95:
 		color = "brightgreen"

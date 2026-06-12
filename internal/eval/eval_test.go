@@ -13,8 +13,9 @@ import (
 var update = flag.Bool("update", false, "docs/accuracy.md を再生成する")
 
 // wantF1 は各ルールの期待 F1（評価データセットに対する実測値）。
-// README の検出精度バッジと一致させること。ルールやデータセットを
-// 変更して値が動いたら、ここと README・docs/accuracy.md を更新する。
+// README の検出精度バッジと一致させること（TestReadmeBadges が検証する）。
+// ルールやデータセットを変更して値が動いたら、ここを更新したうえで
+// `-update` で README のバッジと docs/accuracy.md を再生成する。
 var wantF1 = map[string]float64{
 	"jp-my-number":        1.00,
 	"jp-phone-number":     1.00,
@@ -92,34 +93,18 @@ func TestGenerateDoc(t *testing.T) {
 	b.WriteString("> この数値は同梱の評価データセット（陽性・陰性の代表例と、実運用での限界を表す難ケース）に\n")
 	b.WriteString("> 対する値であり、あらゆる入力での精度を保証するものではありません。データセットは\n")
 	b.WriteString("> [internal/eval/dataset.go](../internal/eval/dataset.go) にあります。\n\n")
-	total := struct{ tp, fp, fn int }{}
 	b.WriteString("| ルール ID | F1 | 適合率 | 再現率 | TP | FP | FN |\n")
 	b.WriteString("|---|:--:|:--:|:--:|--:|--:|--:|\n")
 	for _, r := range results {
-		total.tp += r.TP
-		total.fp += r.FP
-		total.fn += r.FN
 		fmt.Fprintf(&b, "| `%s` | %.2f | %.2f | %.2f | %d | %d | %d |\n",
 			r.RuleID, r.F1, r.Precision, r.Recall, r.TP, r.FP, r.FN)
 	}
-	microP := ratio(total.tp, total.tp+total.fp)
-	microR := ratio(total.tp, total.tp+total.fn)
-	microF1 := 0.0
-	if microP+microR > 0 {
-		microF1 = 2 * microP * microR / (microP + microR)
-	}
+	m := Micro(results)
 	fmt.Fprintf(&b, "| **全体（マイクロ平均）** | **%.2f** | **%.2f** | **%.2f** | %d | %d | %d |\n",
-		microF1, microP, microR, total.tp, total.fp, total.fn)
+		m.F1, m.Precision, m.Recall, m.TP, m.FP, m.FN)
 
 	if err := os.WriteFile("../../docs/accuracy.md", []byte(b.String()), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	t.Log("docs/accuracy.md を再生成しました")
-}
-
-func ratio(a, b int) float64 {
-	if b == 0 {
-		return 0
-	}
-	return float64(a) / float64(b)
 }

@@ -38,13 +38,15 @@ $ go test -bench . -benchmem ./internal/normalize/ ./internal/detect/
 ハーネスがあります。README の検出精度バッジと [accuracy.md](accuracy.md) はこの実測値です。
 
 ```console
-$ go test ./internal/eval                                # 実測 F1 と README バッジの一致を検証
-$ go test ./internal/eval -run TestGenerateDoc -update   # docs/accuracy.md を再生成
+$ go test ./internal/eval            # 実測 F1 と wantF1・README バッジの一致を検証
+$ go test ./internal/eval -update    # docs/accuracy.md と README のバッジを実測値で再生成
 ```
 
-`eval_test.go` の `TestAccuracy` は実測 F1 が `wantF1`（= README バッジ値）と一致するか
-検証します。ルールやデータセットを変えて精度が動くと CI が落ちるので、
-**`wantF1`・README のバッジ・`docs/accuracy.md` をまとめて更新**してください。
+`eval_test.go` の `TestAccuracy` は実測 F1 が `wantF1` と一致するか、
+`readme_test.go` の `TestReadmeBadges` は README の総合・ルール別バッジが
+実測値と一致するかを検証します。ルールやデータセットを変えて精度が動くと
+CI が落ちるので、**`wantF1` を更新し、`-update` で README のバッジと
+`docs/accuracy.md` を再生成**してください。
 
 ## プロジェクト構成
 
