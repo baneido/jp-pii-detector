@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/baneido/jp-pii-detecter/internal/config"
@@ -32,8 +33,10 @@ var skipDirs = map[string]bool{
 }
 
 // ScanPaths は指定パス配下のテキストファイルを走査する。
-// allowlist.paths は検出結果に報告するパスと同じ表記
-// （走査ルートを含むスラッシュ区切りパス）に対して評価する。
+// allowlist.paths は検出結果に報告するパス（走査ルートを含むスラッシュ
+// 区切りパス）に加え、リポジトリルートからの相対パスに対しても評価する。
+// サブディレクトリから実行しても、ルートの設定に書いたルート相対の
+// 正規表現（^testdata/ 等）が機能する。
 func ScanPaths(d *detect.Detector, cfg *config.Config, paths []string) ([]detect.Finding, error) {
 	files, err := listFiles(cfg, paths)
 	if err != nil {
@@ -44,23 +47,23 @@ func ScanPaths(d *detect.Detector, cfg *config.Config, paths []string) ([]detect
 
 // listFiles は走査対象ファイルを walk 順に列挙する。
 func listFiles(cfg *config.Config, paths []string) ([]string, error) {
+	repoRoot := gitRoot()
 	var files []string
 	for _, root := range paths {
 		err := filepath.WalkDir(root, func(path string, ent fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
-			slashed := filepath.ToSlash(path)
 			if ent.IsDir() {
 				if skipDirs[ent.Name()] {
 					return filepath.SkipDir
 				}
-				if path != root && !cfg.PathAllowed(slashed) {
+				if path != root && !pathAllowed(cfg, repoRoot, path) {
 					return filepath.SkipDir
 				}
 				return nil
 			}
-			if !ent.Type().IsRegular() || !cfg.PathAllowed(slashed) {
+			if !ent.Type().IsRegular() || !pathAllowed(cfg, repoRoot, path) {
 				return nil
 			}
 			info, err := ent.Info()
@@ -75,6 +78,46 @@ func listFiles(cfg *config.Config, paths []string) ([]string, error) {
 		}
 	}
 	return files, nil
+}
+
+// pathAllowed は allowlist.paths を、走査時のパス表記とリポジトリルート
+// 相対パスの両方で評価する（どちらかにマッチすれば除外）。
+func pathAllowed(cfg *config.Config, repoRoot, path string) bool {
+	if !cfg.PathAllowed(filepath.ToSlash(path)) {
+		return false
+	}
+	if repoRoot == "" {
+		return true
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return true
+	}
+	rel, err := filepath.Rel(repoRoot, abs)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return true // リポジトリ外のパスはルート相対では評価しない
+	}
+	return cfg.PathAllowed(filepath.ToSlash(rel))
+}
+
+// gitRoot はカレントディレクトリから親方向に .git を探し、リポジトリ
+// ルートの絶対パスを返す（リポジトリ外なら空文字列）。設定ファイルの
+// 上方探索（config.Load）と同じ基準でルートを決める。
+func gitRoot() string {
+	dir, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
 }
 
 // scanFiles はファイル群を並列に読み込み・走査し、入力順の結果を返す。

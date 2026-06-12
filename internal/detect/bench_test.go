@@ -25,6 +25,16 @@ func BenchmarkScanLineASCIINoMatch(b *testing.B) {
 	}
 }
 
+// 数字を含む ASCII 行（プリフィルタを通過して数字系ルールが走る）。
+func BenchmarkScanLineASCIIDigitsNoMatch(b *testing.B) {
+	d := benchDetector(b)
+	line := `const maxRetries = 3; timeout := 250 * time.Millisecond // retry budget v1.2.3 build 4567`
+	b.ReportAllocs()
+	for b.Loop() {
+		d.ScanLine("f.go", 1, line)
+	}
+}
+
 // 日本語を含むがマッチしない行（正規化のスローパスを通る）。
 func BenchmarkScanLineJapaneseNoMatch(b *testing.B) {
 	d := benchDetector(b)

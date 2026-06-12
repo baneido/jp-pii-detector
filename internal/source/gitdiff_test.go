@@ -66,6 +66,23 @@ func TestParseDiffJapaneseFilename(t *testing.T) {
 	}
 }
 
+// 引用符付きで出力されるパス（引用符・制御文字を含むファイル名は
+// core.quotePath=false でも引用される）から b/ 接頭辞が取り除かれること。
+// 旧実装は b/ の除去を引用符の除去より先に行っていたため接頭辞が残った。
+// なおエスケープシーケンス（\t 等）の復元までは行わない。
+func TestParseDiffQuotedFilename(t *testing.T) {
+	diff := "diff --git \"a/tab\\tname.csv\" \"b/tab\\tname.csv\"\n" +
+		"--- \"a/tab\\tname.csv\"\n" +
+		"+++ \"b/tab\\tname.csv\"\n" +
+		"@@ -0,0 +1 @@\n" +
+		"+TEL: 090-1234-5678\n"
+	got := ParseDiff(diff)
+	want := []AddedLine{{File: `tab\tname.csv`, Line: 1, Text: "TEL: 090-1234-5678"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ParseDiff = %+v, want %+v", got, want)
+	}
+}
+
 // initTestRepo は一時ディレクトリに git リポジトリを作り、そこへ chdir する。
 func initTestRepo(t *testing.T) string {
 	t.Helper()

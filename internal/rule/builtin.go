@@ -41,6 +41,7 @@ func Builtin() []Rule {
 		{
 			ID:          "jp-my-number",
 			Description: "マイナンバー（個人番号）",
+			Prefilter:   PrefilterDigit,
 			Context:     []string{"マイナンバー", "個人番号", "mynumber", "my number", "my_number"},
 			Validate: func(m string) bool {
 				return checksum.MyNumber(stripSeparators(m))
@@ -55,6 +56,7 @@ func Builtin() []Rule {
 		{
 			ID:          "jp-phone-number",
 			Description: "電話番号（携帯・固定・IP・国際表記）",
+			Prefilter:   PrefilterDigit,
 			Context:     []string{"電話", "携帯", "連絡先", "tel", "phone", "fax", "mobile", "denwa"},
 			Validate:    validPhone,
 			Patterns: []Pattern{
@@ -71,6 +73,7 @@ func Builtin() []Rule {
 		{
 			ID:          "jp-postal-code",
 			Description: "郵便番号",
+			Prefilter:   PrefilterDigit,
 			Context:     []string{"郵便番号", "郵便", "住所", "postal", "zipcode", "zip code", "〒"},
 			Patterns: []Pattern{
 				{Re: dg(`〒\s?\d{3}-?\d{4}`), Base: High},
@@ -80,6 +83,7 @@ func Builtin() []Rule {
 		{
 			ID:          "jp-address",
 			Description: "住所（都道府県〜番地）",
+			Prefilter:   PrefilterDigit,
 			Context:     []string{"住所", "所在地", "自宅", "address", "居住"},
 			Patterns: []Pattern{
 				{Re: regexp.MustCompile(
@@ -93,6 +97,7 @@ func Builtin() []Rule {
 		{
 			ID:          "email-address",
 			Description: "メールアドレス",
+			Prefilter:   PrefilterAt,
 			Validate:    validEmail,
 			Patterns: []Pattern{
 				{Re: regexp.MustCompile(`(?:^|[^A-Za-z0-9._%+-])([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})`), Base: High},
@@ -101,6 +106,7 @@ func Builtin() []Rule {
 		{
 			ID:          "credit-card",
 			Description: "クレジットカード番号（Luhn + ブランドプレフィックス検証）",
+			Prefilter:   PrefilterDigit,
 			Context:     []string{"クレジット", "カード番号", "credit", "card"},
 			Validate: func(m string) bool {
 				return checksum.CreditCard(stripSeparators(m))
@@ -112,6 +118,7 @@ func Builtin() []Rule {
 		{
 			ID:          "jp-drivers-license",
 			Description: "運転免許証番号",
+			Prefilter:   PrefilterDigit,
 			Context: []string{"免許", "driver_license", "drivers_license", "driver's license",
 				"drivers license", "driver license", "license no", "license number", "licence"},
 			Validate: func(m string) bool {
@@ -126,6 +133,7 @@ func Builtin() []Rule {
 		{
 			ID:          "jp-passport",
 			Description: "旅券（パスポート）番号",
+			Prefilter:   PrefilterDigit,
 			Context:     []string{"パスポート", "旅券", "passport"},
 			Patterns: []Pattern{
 				{Re: ag(`[A-Z]{2}\d{7}`), Base: High, RequireContext: true},
@@ -134,6 +142,7 @@ func Builtin() []Rule {
 		{
 			ID:          "jp-pension-number",
 			Description: "基礎年金番号",
+			Prefilter:   PrefilterDigit,
 			Context:     []string{"年金", "pension", "nenkin"},
 			Patterns: []Pattern{
 				{Re: dg(`\d{4}-?\d{6}`), Base: High, RequireContext: true},
@@ -142,6 +151,7 @@ func Builtin() []Rule {
 		{
 			ID:          "jp-residence-card",
 			Description: "在留カード番号",
+			Prefilter:   PrefilterDigit,
 			Context:     []string{"在留", "residence card", "zairyu"},
 			Patterns: []Pattern{
 				{Re: ag(`[A-Z]{2}\d{8}[A-Z]{2}`), Base: High, RequireContext: true},
@@ -150,6 +160,7 @@ func Builtin() []Rule {
 		{
 			ID:          "jp-bank-account",
 			Description: "銀行口座番号",
+			Prefilter:   PrefilterDigit,
 			Context:     []string{"口座", "普通預金", "当座預金", "支店番号", "account number", "account_no", "bank account", "kouza"},
 			Patterns: []Pattern{
 				{Re: dg(`\d{7}`), Base: Medium, RequireContext: true},
@@ -158,6 +169,7 @@ func Builtin() []Rule {
 		{
 			ID:          "jp-health-insurance",
 			Description: "健康保険 保険者番号・被保険者番号",
+			Prefilter:   PrefilterDigit,
 			Context:     []string{"保険者番号", "被保険者", "保険証", "health insurance", "hokensha"},
 			Patterns: []Pattern{
 				{Re: dg(`\d{8}`), Base: Medium, RequireContext: true},
@@ -166,6 +178,7 @@ func Builtin() []Rule {
 		{
 			ID:          "person-name",
 			Description: "氏名（ラベル付き）",
+			Prefilter:   PrefilterCJK,
 			Patterns: []Pattern{
 				{Re: regexp.MustCompile(
 					`(?:氏名|名前|姓名|フリガナ|ふりがな)\s*[:=]\s*` +
@@ -176,6 +189,7 @@ func Builtin() []Rule {
 		{
 			ID:          "jp-birthdate",
 			Description: "生年月日（ラベル付き）",
+			Prefilter:   PrefilterDigit,
 			Patterns: []Pattern{
 				{Re: regexp.MustCompile(
 					`(?:生年月日|誕生日)\s*[:=]?\s*` +

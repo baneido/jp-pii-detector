@@ -297,6 +297,36 @@ func TestMyNumber4x4GroupExcluded(t *testing.T) {
 	assertRules(t, d.ScanLine("f.txt", 1, "code: 1234-5678-9018-3456"))
 }
 
+// RequireContext のパターンはキーワードの存在が検出の前提のため High に
+// 昇格せず、Base の信頼度のまま報告される（docs/detection-methods.md 4.3）。
+// 旧実装は常に High へ昇格し、min_confidence = "high" で△ルールを
+// 絞り込めなかった。
+func TestContextRequiredConfidenceNotPromoted(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       string
+		conf       rule.Confidence
+	}{
+		{"銀行口座は base の medium のまま", "口座番号: 1234567", "jp-bank-account", rule.Medium},
+		{"保険者番号は base の medium のまま", "保険者番号: 12345678", "jp-health-insurance", rule.Medium},
+		{"運転免許は base が high", "免許証番号: 305012345678", "jp-drivers-license", rule.High},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, tt.want)
+			if fs[0].Confidence != tt.conf {
+				t.Errorf("confidence = %v, want %v", fs[0].Confidence, tt.conf)
+			}
+		})
+	}
+	// min_confidence = "high" で medium 止まりの△ルールが除外できる。
+	dh := newDetector(t, `min_confidence = "high"`)
+	assertRules(t, dh.ScanLine("f.txt", 1, "口座番号: 1234567"))
+	assertRules(t, dh.ScanLine("f.txt", 1, "免許証番号: 305012345678"), "jp-drivers-license")
+}
+
 func TestMinConfidenceHigh(t *testing.T) {
 	d := newDetector(t, `min_confidence = "high"`)
 	// 区切りなし携帯（コンテキストなし）は medium なので報告されない。

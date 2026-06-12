@@ -53,6 +53,23 @@ type Pattern struct {
 	RequireContext bool
 }
 
+// Prefilter は行単位の事前判定。正規化済みの行に必要な文字種が
+// 含まれない場合、そのルールの正規表現マッチをまるごとスキップする
+// （性能最適化）。既定の PrefilterNone は常に走査する安全側の値。
+type Prefilter int
+
+const (
+	// PrefilterNone は常に走査する（既定）。
+	PrefilterNone Prefilter = iota
+	// PrefilterDigit は ASCII 数字を含む行のみ走査する。
+	// 全角数字は事前判定の前に正規化で半角になっている。
+	PrefilterDigit
+	// PrefilterAt は '@' を含む行のみ走査する（メールアドレス用）。
+	PrefilterAt
+	// PrefilterCJK は U+3000 以上の文字（日本語等）を含む行のみ走査する。
+	PrefilterCJK
+)
+
 // Rule は 1 種類の PII に対応する検出ルール。
 type Rule struct {
 	ID          string
@@ -60,6 +77,9 @@ type Rule struct {
 	// Context は信頼度昇格・RequireContext 判定に使う周辺キーワード。
 	// 小文字で定義し、正規化・小文字化した行に対する部分一致で評価する。
 	Context []string
+	// Prefilter はパターンがマッチし得ない行を走査前に除外する事前判定。
+	// パターンの必須文字種（数字など）を含まない行をスキップする。
+	Prefilter Prefilter
 	// Validate はマッチ文字列の追加検証（チェックディジット等）。
 	// nil の場合は常に有効。引数は正規化済みのマッチ文字列。
 	Validate func(match string) bool

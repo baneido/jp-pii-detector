@@ -29,7 +29,7 @@ Scan flags:
   --staged                 ステージ済み変更のみ走査
   --diff <range>           指定リビジョン範囲の追加行を走査
   --format <fmt>           出力形式: text|json|sarif|github (既定: text)
-  --config <path>          設定ファイル (既定: ./.jp-pii.toml)
+  --config <path>          設定ファイル (既定: .jp-pii.toml をリポジトリルートまで上方探索)
   --min-confidence <lvl>   報告する最小信頼度: low|medium|high (既定: 設定ファイル値 or medium)
   --unmask                 検出値をマスクせず出力
   --exit-zero              検出があっても終了コード 0 を返す

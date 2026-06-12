@@ -81,12 +81,19 @@ func GitHub(w io.Writer, findings []detect.Finding, unmask bool) {
 	for _, f := range findings {
 		msg := fmt.Sprintf("%s: %s", f.Description, display(f, unmask))
 		fmt.Fprintf(w, "::error file=%s,line=%d,col=%d,title=PII detected (%s)::%s\n",
-			f.File, f.Line, f.Column, f.RuleID, escapeGH(msg))
+			escapeGHProp(f.File), f.Line, f.Column, f.RuleID, escapeGH(msg))
 	}
 }
 
 func escapeGH(s string) string {
 	r := strings.NewReplacer("%", "%25", "\r", "%0D", "\n", "%0A")
+	return r.Replace(s)
+}
+
+// escapeGHProp はプロパティ値（file= 等）用のエスケープ。メッセージ部と
+// 異なり、区切りに使われる "," と ":" もエスケープが必要。
+func escapeGHProp(s string) string {
+	r := strings.NewReplacer("%", "%25", "\r", "%0D", "\n", "%0A", ":", "%3A", ",", "%2C")
 	return r.Replace(s)
 }
 

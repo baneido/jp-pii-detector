@@ -24,7 +24,9 @@ type Config struct {
 	Allowlist struct {
 		// Paths は走査から除外するパスの正規表現。検出結果に報告される
 		// パス（フルスキャンは走査ルートを含むパス、git diff は
-		// リポジトリ相対パス）に適用する。
+		// リポジトリ相対パス）に適用する。フルスキャンではさらに
+		// リポジトリルートからの相対パスにも適用されるため、
+		// サブディレクトリからの実行でもルート相対の指定が機能する。
 		Paths []string `toml:"paths"`
 		// Regexes はマッチ文字列に対する除外正規表現。
 		Regexes []string `toml:"regexes"`
