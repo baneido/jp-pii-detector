@@ -4,6 +4,10 @@ on:
     branches: [main]
   pull_request:
 
+# GITHUB_TOKEN の権限を最小化する（リポジトリの読み取りのみ必要）
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
