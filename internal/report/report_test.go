@@ -101,7 +101,7 @@ func TestSARIFLevels(t *testing.T) {
 
 func TestJSON(t *testing.T) {
 	var buf bytes.Buffer
-	if err := JSON(&buf, sample(), true); err != nil {
+	if err := JSON(&buf, sample(), true, false); err != nil {
 		t.Fatal(err)
 	}
 	var got struct {
@@ -116,6 +116,36 @@ func TestJSON(t *testing.T) {
 	}
 	if got.Count != 1 || got.Findings[0].Match != "090-1234-5678" || got.Findings[0].Confidence != "high" {
 		t.Errorf("unexpected JSON: %s", buf.String())
+	}
+}
+
+func TestJSONExplainIncludesReason(t *testing.T) {
+	fs := sample()
+	fs[0].Reason = detect.DetectReason{
+		BaseConfidence:  "medium",
+		FinalConfidence: "high",
+		ContextKeywords: []string{"tel"},
+		ContextPromoted: true,
+		Validated:       true,
+	}
+	var buf bytes.Buffer
+	if err := JSON(&buf, fs, false, true); err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Findings []struct {
+			Match  string              `json:"match"`
+			Reason detect.DetectReason `json:"reason"`
+		} `json:"findings"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Findings[0].Match == "090-1234-5678" {
+		t.Fatalf("explain JSON should still mask match: %s", buf.String())
+	}
+	if got.Findings[0].Reason.BaseConfidence != "medium" || !got.Findings[0].Reason.ContextPromoted {
+		t.Fatalf("reason missing: %s", buf.String())
 	}
 }
 

@@ -45,23 +45,24 @@ func Text(w io.Writer, findings []detect.Finding, unmask bool) {
 }
 
 type jsonFinding struct {
-	RuleID      string `json:"rule_id"`
-	Description string `json:"description"`
-	File        string `json:"file"`
-	Line        int    `json:"line"`
-	Column      int    `json:"column"`
-	Match       string `json:"match"`
-	Confidence  string `json:"confidence"`
+	RuleID      string               `json:"rule_id"`
+	Description string               `json:"description"`
+	File        string               `json:"file"`
+	Line        int                  `json:"line"`
+	Column      int                  `json:"column"`
+	Match       string               `json:"match"`
+	Confidence  string               `json:"confidence"`
+	Reason      *detect.DetectReason `json:"reason,omitempty"`
 }
 
 // JSON は機械可読な JSON を出力する。
-func JSON(w io.Writer, findings []detect.Finding, unmask bool) error {
+func JSON(w io.Writer, findings []detect.Finding, unmask, explain bool) error {
 	out := struct {
 		Findings []jsonFinding `json:"findings"`
 		Count    int           `json:"count"`
 	}{Findings: []jsonFinding{}, Count: len(findings)}
 	for _, f := range findings {
-		out.Findings = append(out.Findings, jsonFinding{
+		jf := jsonFinding{
 			RuleID:      f.RuleID,
 			Description: f.Description,
 			File:        f.File,
@@ -69,7 +70,11 @@ func JSON(w io.Writer, findings []detect.Finding, unmask bool) error {
 			Column:      f.Column,
 			Match:       display(f, unmask),
 			Confidence:  f.Confidence.String(),
-		})
+		}
+		if explain {
+			jf.Reason = &f.Reason
+		}
+		out.Findings = append(out.Findings, jf)
 	}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")

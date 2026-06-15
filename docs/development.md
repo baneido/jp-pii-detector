@@ -59,6 +59,7 @@ internal/
   normalize/ 日本語テキストの正規化（全角→半角・ハイフン類・長音記号）
   rule/      検出ルールの型定義と組み込みルール一覧
   checksum/  チェックディジット検証（マイナンバー・Luhn・カードブランド）
+  dict/      IANA TLD などの埋め込み辞書
   report/    出力フォーマット（text/json/sarif/github）とマスキング
   eval/      ラベル付き評価データセットと検出精度（適合率・再現率・F1）の計測
 ```
@@ -77,11 +78,17 @@ internal/
      数字を含まないコード行がほぼ無コストになる。
    - 各ルールのパターンを正規表現でマッチし、`Validate`（チェックディジット等）と
      allowlist で絞り込む。同一行にコンテキストキーワードがあれば信頼度を High に昇格、
-     `RequireContext` のルールはキーワードがなければ破棄する。`RequireContext` の
-     パターンはキーワードの存在が前提のため昇格せず、`Base` の信頼度のまま報告する。
+     `RequireContext` のルールはキーワードがなければ破棄する。`RequireContextWindow`
+     が設定されたルールでは、キーワードをマッチ前後の指定ルーン数以内に限定する。
+     ASCII キーワードは英数字の単語境界つきで照合し、`tel` が `hotel` の一部で成立する
+     ような誤昇格を避ける。`NegativeContext` が近傍にある場合は、金額・数量・連番 ID と
+     みなして検出を棄却する。`RequireContext` のパターンはキーワードの存在が前提のため
+     昇格せず、`Base` の信頼度のまま報告する。
    - **resolveOverlaps** で範囲が重なる検出を信頼度（同率なら長い方）で 1 件に集約する。
+   - **detect.ScanContent** は通常の行単位検出に加え、隣接 2 行を結合した仮想ウィンドウを
+     `RequireContext` ルールに限定して走査する。検出位置は元の行・列へマップし直す。
 3. **report** が `min_confidence` で絞った結果を指定フォーマットで出力する。
-   検出値は既定でマスクされる。
+   検出値は既定でマスクされる。JSON 出力では `--explain` 指定時のみ `reason` を含める。
 
 ## 検出ルールの追加
 
@@ -92,8 +99,10 @@ internal/
 {
     ID:          "jp-example",
     Description: "説明（rules コマンドと検出結果に表示される）",
-    Context:     []string{"キーワード"}, // 小文字で定義。昇格・RequireContext 判定に使う
-    Prefilter:   PrefilterDigit,      // 数字を含む行のみ走査（性能最適化。既定は常に走査）
+    Context:              []string{"キーワード"}, // 小文字で定義。昇格・RequireContext 判定に使う
+    NegativeContext:      []string{"円", "件"}, // 近傍にあれば棄却する語（任意）
+    RequireContextWindow: 40,          // 0 なら行全体、正数なら前後ルーン数で近接判定
+    Prefilter:            PrefilterDigit, // 数字を含む行のみ走査（性能最適化。既定は常に走査）
     Validate: func(m string) bool {   // 追加検証（任意）。引数は正規化済みのマッチ文字列
         return checksum.Something(m)
     },
@@ -113,12 +122,36 @@ internal/
   偽陽性を抑える。検証だけで十分な精度なら `Base: High`。`RequireContext` の
   パターンはコンテキストによる昇格が起きないため、`Base` がそのまま報告される
   信頼度になる。
+- **コンテキストの設計**: ASCII キーワードは単語境界つきで照合される。桁数だけのルールは
+  `RequireContextWindow` で肯定語を近接必須にし、金額・数量・連番 ID と衝突しやすい場合は
+  `NegativeContext` を設定する。
 - **Prefilter**: パターンが特定の文字種（数字・`@`・日本語）なしにマッチし得ない
   場合は `Prefilter` を設定する。該当文字を含まない行の走査が丸ごと省ける。
   迷ったら未設定（常に走査）が安全。
 - **検証ロジック**: チェックディジットなどは `internal/checksum` に置き、独立にテストする。
+  実在性確認に使う小さな静的辞書は `internal/dict` に置き、`//go:embed` で同梱する。
+- **高再現率ルール**: 偽陽性リスクが高いルールは `internal/rule/high_recall.go` の
+  `HighRecallRuleIDs()` に追加し、既定では `[rules] high_recall = true` または
+  `--high-recall` が指定されたときだけ有効になるようにする。
 - **テスト**: 検出・非検出の両方を [`internal/detect/detect_test.go`](../internal/detect/detect_test.go) に追加する。
   特に「隣接する複数件」「コンテキスト有無での信頼度」「長い数字列の一部は対象外」を確認すること。
+
+### 埋め込み辞書の更新
+
+IANA TLD 一覧は公式の `https://data.iana.org/TLD/tlds-alpha-by-domain.txt` を
+[`internal/dict/tlds-alpha-by-domain.txt`](../internal/dict/tlds-alpha-by-domain.txt) に保存している。
+更新時は同 URL から取得し、`go test ./internal/dict ./internal/detect ./internal/eval` で検証する。
+
+郵便番号プレフィックスは日本郵便の UTF-8 版「住所の郵便番号」全データから上位 3 桁を抽出し、
+[`internal/dict/postal_prefixes.txt`](../internal/dict/postal_prefixes.txt) に保存している。
+更新時は `https://www.post.japanpost.jp/service/search/zipcode/download/utf-zip.html` の
+最新全データを取得し、次のコマンドで再生成してから同じテストで検証する。
+
+```console
+$ go run ./internal/dict/gen -input /path/to/utf_ken_all.zip -output internal/dict/postal_prefixes.txt
+```
+
+`-input` には展開済みの UTF-8 版 KEN_ALL CSV も指定できる。
 
 新ルールは `jp-pii-detect rules` に自動で表示されます。
 

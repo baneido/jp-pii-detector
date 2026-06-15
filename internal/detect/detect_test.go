@@ -1,6 +1,7 @@
 package detect
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/baneido/jp-pii-detecter/internal/config"
@@ -108,6 +109,7 @@ func TestPostalAndAddress(t *testing.T) {
 	}{
 		{"郵便マークと住所", "〒530-0001 大阪府大阪市北区梅田3丁目", []string{"jp-postal-code", "jp-address"}},
 		{"コンテキスト付き郵便番号", "郵便番号: 150-0043", []string{"jp-postal-code"}},
+		{"実在しない地域コードの郵便番号", "郵便番号: 000-0000", nil},
 		{"コンテキストなし NNN-NNNN は対象外", "version 150-0043", nil},
 		{"番地つき住所", "東京都渋谷区道玄坂2-10-7", []string{"jp-address"}},
 		{"番地なしの地名のみは対象外", "東京都渋谷区では雨が降った", nil},
@@ -131,6 +133,8 @@ func TestEmailRule(t *testing.T) {
 		{"ドットとプラスとサブドメイン", "contact: user.name+tag@sub-domain.company.co.jp", []string{"email-address"}},
 		{"予約ドメイン example は除外", "user@example.com / user@sub.example.co.jp", nil},
 		{"予約 TLD test は除外", "user@foo.test", nil},
+		{"実在しない TLD は除外", "user@service.notatld", nil},
+		{"IANA 登録済み TLD は検出", "contact: user@service.dev", []string{"email-address"}},
 		{"Ruby インスタンス変数チェーンは除外", "@dates_by_month ||= (@participant.starts_on..@participant.finishes_on_by_status).group_by(&:beginning_of_month)", nil},
 		{"Ruby unary minus receiver is not an email", "number_to_currency(-@bill.withholding_tax(worked_on))", nil},
 		{"ローカル部の連続ドットは除外", "contact: taro..yamada@gmail.com", nil},
@@ -188,6 +192,75 @@ func TestContextRequiredRules(t *testing.T) {
 	}
 }
 
+func TestASCIIContextRequiresWordBoundary(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+		conf       rule.Confidence
+	}{
+		{"tel は hotel の一部では成立しない", "hotel 03-1234-5678", []string{"jp-phone-number"}, rule.Medium},
+		{"license no は sublicense no の一部では成立しない", "sublicense no 305012345678", nil, 0},
+		{"ASCII 語が独立していれば成立する", "license no 305012345678", []string{"jp-drivers-license"}, rule.High},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, tt.want...)
+			if len(fs) == 1 && fs[0].Confidence != tt.conf {
+				t.Errorf("confidence = %v, want %v", fs[0].Confidence, tt.conf)
+			}
+		})
+	}
+}
+
+func TestDigitRulesRejectNearbyNegativeContext(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+	}{
+		{"口座文脈下の金額", "口座開設は1234567円から可能"},
+		{"免許文脈下の手数料", "免許の更新手数料 123456789012 円"},
+		{"年金文脈下の受給額", "年金の受給額 1234567890 円"},
+		{"保険文脈下の人数", "被保険者数は12345678人"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line))
+		})
+	}
+}
+
+func TestDigitRulesAllowIdentityWordsContainingNegativeCharacters(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"口座番号と名義", "口座番号: 1234567 名義: 山田太郎", []string{"jp-bank-account"}},
+		{"保険者番号と本人確認", "保険者番号: 12345678 本人確認済み", []string{"jp-health-insurance"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+func TestDigitRulesRequireNearbyPositiveContext(t *testing.T) {
+	d := newDetector(t, "")
+	assertRules(t, d.ScanLine("f.txt", 1, "口座番号: 1234567"), "jp-bank-account")
+
+	line := "口座番号は別紙に記載しています。" + strings.Repeat("あ", 40) + "1234567"
+	assertRules(t, d.ScanLine("f.txt", 1, line))
+}
+
+func TestDigitRulesIgnoreDistantNegativeContext(t *testing.T) {
+	d := newDetector(t, "")
+	line := "口座番号: 1234567" + strings.Repeat("あ", 25) + "円"
+	assertRules(t, d.ScanLine("f.txt", 1, line), "jp-bank-account")
+}
+
 func TestLabeledRules(t *testing.T) {
 	d := newDetector(t, `min_confidence = "low"`)
 	tests := []struct {
@@ -209,6 +282,21 @@ func TestLabeledRules(t *testing.T) {
 func TestPersonNameHiddenByDefault(t *testing.T) {
 	d := newDetector(t, "") // 既定 min_confidence = medium
 	assertRules(t, d.ScanLine("f.txt", 1, "氏名: 山田 太郎"))
+}
+
+func TestHighRecallRulesDisabledByDefault(t *testing.T) {
+	d := newDetector(t, "")
+	assertRules(t, d.ScanLine("f.txt", 1, "勤務地: 渋谷区道玄坂2-10-7"))
+	assertRules(t, d.ScanLine("f.txt", 1, "担当: 山田太郎"))
+}
+
+func TestHighRecallRulesOptIn(t *testing.T) {
+	d := newDetector(t, `
+[rules]
+high_recall = true
+`)
+	assertRules(t, d.ScanLine("f.txt", 1, "勤務地: 渋谷区道玄坂2-10-7"), "jp-address-high-recall")
+	assertRules(t, d.ScanLine("f.txt", 1, "担当: 山田太郎"), "person-name-high-recall")
 }
 
 func TestAllowlist(t *testing.T) {
@@ -339,6 +427,47 @@ func TestContextRequiredConfidenceNotPromoted(t *testing.T) {
 	assertRules(t, dh.ScanLine("f.txt", 1, "免許証番号: 305012345678"), "jp-drivers-license")
 }
 
+func TestReasonRecordsPromotionAndContext(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanLine("f.txt", 1, "tel: 09012345678")
+	assertRules(t, fs, "jp-phone-number")
+	reason := fs[0].Reason
+	if reason.BaseConfidence != "medium" || reason.FinalConfidence != "high" || !reason.ContextPromoted {
+		t.Fatalf("reason = %+v, want medium->high promotion", reason)
+	}
+	if len(reason.ContextKeywords) != 1 || reason.ContextKeywords[0] != "tel" {
+		t.Fatalf("context keywords = %v, want [tel]", reason.ContextKeywords)
+	}
+	if !reason.Validated {
+		t.Fatalf("validated = false, want true")
+	}
+}
+
+func TestReasonNotValidatedWhenNoValidator(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanLine("f.txt", 1, "住所: 東京都渋谷区道玄坂2-10-7")
+	assertRules(t, fs, "jp-address")
+	if fs[0].Reason.Validated {
+		t.Fatalf("validated = true, want false (jp-address has no validator)")
+	}
+}
+
+func TestReasonRecordsRequiredNearbyContext(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanLine("f.txt", 1, "口座番号: 1234567")
+	assertRules(t, fs, "jp-bank-account")
+	reason := fs[0].Reason
+	if !reason.RequireContext || reason.ContextPromoted {
+		t.Fatalf("reason = %+v, want required context without promotion", reason)
+	}
+	if reason.ContextWindow != 40 {
+		t.Fatalf("context window = %d, want 40", reason.ContextWindow)
+	}
+	if len(reason.ContextKeywords) == 0 || reason.ContextKeywords[0] != "口座" {
+		t.Fatalf("context keywords = %v, want first keyword 口座", reason.ContextKeywords)
+	}
+}
+
 func TestMinConfidenceHigh(t *testing.T) {
 	d := newDetector(t, `min_confidence = "high"`)
 	// 区切りなし携帯（コンテキストなし）は medium なので報告されない。
@@ -388,4 +517,54 @@ func TestScanContent(t *testing.T) {
 	if fs[0].Line != 2 {
 		t.Errorf("line = %d, want 2", fs[0].Line)
 	}
+}
+
+func TestScanContentSplitLabelAndValue(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanContent("f.txt", "口座番号:\n1234567")
+	assertRules(t, fs, "jp-bank-account")
+	if fs[0].Line != 2 || fs[0].Column != 1 {
+		t.Fatalf("location = %d:%d, want 2:1", fs[0].Line, fs[0].Column)
+	}
+	if fs[0].Match != "1234567" {
+		t.Fatalf("match = %q, want 1234567", fs[0].Match)
+	}
+}
+
+func TestScanContentSplitValueAndLabel(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanContent("f.txt", "1234567\n口座番号:")
+	assertRules(t, fs, "jp-bank-account")
+	if fs[0].Line != 1 || fs[0].Column != 1 {
+		t.Fatalf("location = %d:%d, want 1:1", fs[0].Line, fs[0].Column)
+	}
+}
+
+func TestScanContentDoesNotDuplicateInlineContext(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanContent("f.txt", "口座番号: 1234567\n備考")
+	assertRules(t, fs, "jp-bank-account")
+}
+
+func TestScanContentPreservesDocumentOrderWithAdjacentLineFindings(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanContent("f.txt", "口座番号:\n1234567\nTEL: 090-1234-5678")
+	assertRules(t, fs, "jp-bank-account", "jp-phone-number")
+
+	if fs[0].RuleID != "jp-bank-account" || fs[0].Line != 2 {
+		t.Fatalf("first finding = %s at line %d, want jp-bank-account at line 2", fs[0].RuleID, fs[0].Line)
+	}
+	if fs[1].RuleID != "jp-phone-number" || fs[1].Line != 3 {
+		t.Fatalf("second finding = %s at line %d, want jp-phone-number at line 3", fs[1].RuleID, fs[1].Line)
+	}
+}
+
+func TestScanContentRejectsCrossLineNegativeContext(t *testing.T) {
+	d := newDetector(t, "")
+	// 口座番号に見えるが、次の行に金額マーカーがある場合は検出しない。
+	assertRules(t, d.ScanContent("f.txt", "口座番号: 1234567\n円"))
+	// 3 行にまたがるケースも、隣接行のネガティブコンテキストを抑制する。
+	assertRules(t, d.ScanContent("f.txt", "口座番号:\n1234567\n円"))
+	// ネガティブコンテキストが遠い場合は検出する。
+	assertRules(t, d.ScanContent("f.txt", "口座番号: 1234567"+strings.Repeat("あ", 25)+"\n円"), "jp-bank-account")
 }

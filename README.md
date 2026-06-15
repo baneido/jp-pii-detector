@@ -1,6 +1,6 @@
 # jp-pii-detecter
 
-![PII detection F1](https://img.shields.io/badge/PII検出_F1（評価データセット）-0.92-green)
+![PII detection F1](https://img.shields.io/badge/PII検出_F1（評価データセット）-0.96-brightgreen)
 
 日本特化の個人情報（PII）静的検出器。リポジトリに混入したマイナンバー・電話番号・住所などを
 コミット前（git hook）や CI/CD（GitHub Actions）で検出します。
@@ -25,16 +25,16 @@
 |---|---|:---:|:---:|---|
 | マイナンバー（個人番号） | `1234-5678-9018` | ◎ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 12 桁 + 検査用数字（総務省令のアルゴリズム） |
 | クレジットカード番号 | `4111-1111-1111-1111` | ◎ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | Luhn + ブランド判定（Visa/Master/JCB/Amex 等） |
-| メールアドレス | `taro@example.jp` | ◎ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | パターン + 予約ドメイン除外 |
+| メールアドレス | `taro@example.jp` | ◎ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | パターン + IANA TLD 実在チェック + 予約ドメイン除外 |
 | 電話番号 | `090-1234-5678` | ◎ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 携帯/IP/固定/+81 + 桁数検証 |
-| 郵便番号 | `〒150-0043` | ◎ / ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 〒マーク付きは単独、なしは周辺の語が必要 |
+| 郵便番号 | `〒150-0043` | ◎ / ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 上位3桁の実在チェック。〒マーク付きは単独、なしは周辺の語が必要 |
 | 住所 | `東京都渋谷区道玄坂2-10-7` | ○ | ![F1 0.89](https://img.shields.io/badge/F1-0.89-green) | 都道府県〜番地のパターン |
-| 運転免許証番号 | `免許証番号: 305012345678` | ○ | ![F1 0.80](https://img.shields.io/badge/F1-0.80-yellowgreen) | 12 桁 + 周辺の語が必要 |
+| 運転免許証番号 | `免許証番号: 305012345678` | ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 12 桁 + 周辺の語が必要 |
 | 旅券（パスポート）番号 | `パスポート: TK1234567` | ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 英字2+数字7 + 周辺の語が必要 |
-| 基礎年金番号 | `年金番号: 1234-567890` | ○ | ![F1 0.80](https://img.shields.io/badge/F1-0.80-yellowgreen) | 4桁-6桁 + 周辺の語が必要 |
+| 基礎年金番号 | `年金番号: 1234-567890` | ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 4桁-6桁 + 周辺の語が必要 |
 | 在留カード番号 | `在留カード AB12345678CD` | ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 英2+数8+英2 + 周辺の語が必要 |
-| 銀行口座番号 | `口座番号: 1234567` | △ | ![F1 0.67](https://img.shields.io/badge/F1-0.67-yellow) | 7 桁 + 周辺の語が必要 |
-| 健康保険 保険者番号等 | `保険者番号: 12345678` | △ | ![F1 0.80](https://img.shields.io/badge/F1-0.80-yellowgreen) | 8 桁 + 周辺の語が必要 |
+| 銀行口座番号 | `口座番号: 1234567` | △ | ![F1 0.80](https://img.shields.io/badge/F1-0.80-yellowgreen) | 7 桁 + 周辺の語が必要 |
+| 健康保険 保険者番号等 | `保険者番号: 12345678` | △ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 8 桁 + 周辺の語が必要 |
 | 生年月日 | `生年月日: 1990年1月23日` | △ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | ラベル付き。西暦・和暦に対応 |
 | 氏名 | `氏名: 山田 太郎` | △ | ![F1 0.75](https://img.shields.io/badge/F1-0.75-yellowgreen) | ラベル付き。**既定では非表示**（後述） |
 
@@ -59,6 +59,7 @@ $ go install github.com/baneido/jp-pii-detecter/cmd/jp-pii-detect@latest
 $ jp-pii-detect scan .                        # カレントディレクトリ以下をフルスキャン
 $ jp-pii-detect scan --staged                 # ステージ済み変更の追加行のみ（pre-commit 用）
 $ jp-pii-detect scan --diff origin/main...HEAD  # PR の追加行のみ（CI 用）
+$ jp-pii-detect scan --high-recall .          # 偽陽性リスクを許容して再現率重視ルールも有効化
 $ jp-pii-detect rules                         # 検出ルール一覧
 ```
 
@@ -129,6 +130,8 @@ min_confidence = "medium"
 [rules]
 # 無効化するルール ID（`jp-pii-detect rules` で一覧表示）
 disabled = ["person-name"]
+# 都道府県なし住所・担当者/敬称アンカー付き氏名など、偽陽性リスクの高い追加ルールを有効化
+high_recall = false
 
 [allowlist]
 # 走査から除外するパス（正規表現）。フルスキャンでは走査時のパス表記に加えて

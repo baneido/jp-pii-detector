@@ -2,6 +2,7 @@
 package detect
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/baneido/jp-pii-detecter/internal/config"
@@ -15,6 +16,8 @@ const IgnoreMarker = "jp-pii-detector:ignore"
 // AllowMarker は後方互換のために残している旧除外マーカー。
 const AllowMarker = "pii-allow"
 
+const negativeContextWindowRunes = 20
+
 // Finding は 1 件の検出結果。
 type Finding struct {
 	RuleID      string          `json:"rule_id"`
@@ -24,8 +27,21 @@ type Finding struct {
 	Column      int             `json:"column"` // 1 始まり（ルーン単位）
 	Match       string          `json:"match"`  // 元テキスト（マスクは出力層で行う）
 	Confidence  rule.Confidence `json:"-"`
+	// Reason は検出の根拠（調査・チューニング用。既定の出力には含めない）。
+	Reason DetectReason `json:"reason,omitempty"`
 	// span（ルーン単位、重複解決用）
 	start, end int
+}
+
+// DetectReason は検出の根拠を表す。生の PII は含めない。
+type DetectReason struct {
+	BaseConfidence  string   `json:"base_confidence,omitempty"`
+	FinalConfidence string   `json:"final_confidence,omitempty"`
+	ContextKeywords []string `json:"context_keywords,omitempty"`
+	ContextPromoted bool     `json:"context_promoted,omitempty"`
+	RequireContext  bool     `json:"require_context,omitempty"`
+	ContextWindow   int      `json:"context_window,omitempty"`
+	Validated       bool     `json:"validated,omitempty"`
 }
 
 // Detector は設定を適用済みの検出エンジン。
@@ -65,14 +81,140 @@ func (d *Detector) Rules() []rule.Rule { return d.rules }
 
 // ScanContent はファイル内容全体を行に分割して走査する。
 func (d *Detector) ScanContent(file, content string) []Finding {
-	var findings []Finding
-	lineNo := 0
+	var lines []string
 	for line := range strings.SplitSeq(content, "\n") {
-		lineNo++
-		line = strings.TrimSuffix(line, "\r")
-		findings = append(findings, d.ScanLine(file, lineNo, line)...)
+		lines = append(lines, strings.TrimSuffix(line, "\r"))
 	}
+
+	var candidates []Finding
+	for i, line := range lines {
+		candidates = append(candidates, d.ScanLine(file, i+1, line)...)
+	}
+	for i := 0; i+1 < len(lines); i++ {
+		candidates = append(candidates, d.scanAdjacentLines(file, i+1, lines[i], lines[i+1])...)
+	}
+
+	seen := map[string]bool{}
+	var findings []Finding
+	for _, f := range candidates {
+		if d.hasCrossLineNegativeContext(f, lines, f.Line-1) {
+			continue
+		}
+		key := findingKey(f)
+		if seen[key] {
+			continue
+		}
+		findings = append(findings, f)
+		seen[key] = true
+	}
+
+	sort.SliceStable(findings, func(i, j int) bool {
+		if findings[i].File != findings[j].File {
+			return findings[i].File < findings[j].File
+		}
+		if findings[i].Line != findings[j].Line {
+			return findings[i].Line < findings[j].Line
+		}
+		if findings[i].Column != findings[j].Column {
+			return findings[i].Column < findings[j].Column
+		}
+		return findings[i].end < findings[j].end
+	})
 	return findings
+}
+
+func findingKey(f Finding) string {
+	return f.RuleID + "\x00" + f.File + "\x00" + itoa(f.Line) + "\x00" + itoa(f.start) + "\x00" + itoa(f.end)
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var buf [20]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	return string(buf[i:])
+}
+
+func (d *Detector) hasCrossLineNegativeContext(f Finding, lines []string, lineIdx int) bool {
+	if lineIdx < 0 || lineIdx >= len(lines) {
+		return false
+	}
+	var negCtx []string
+	for _, r := range d.rules {
+		if r.ID == f.RuleID {
+			negCtx = r.NegativeContext
+			break
+		}
+	}
+	if len(negCtx) == 0 {
+		return false
+	}
+
+	var parts []string
+	offset := 0
+	if lineIdx > 0 {
+		prev := normalize.Line(lines[lineIdx-1])
+		parts = append(parts, prev)
+		offset = len(prev) + 1 // 改行 1 バイト分
+	}
+	curr := normalize.Line(lines[lineIdx])
+	currRunes := []rune(curr)
+	if f.start > len(currRunes) || f.end > len(currRunes) {
+		return false
+	}
+	byteStart := len(string(currRunes[:f.start]))
+	byteEnd := len(string(currRunes[:f.end]))
+	parts = append(parts, curr)
+	if lineIdx+1 < len(lines) {
+		parts = append(parts, normalize.Line(lines[lineIdx+1]))
+	}
+
+	combined := strings.Join(parts, "\n")
+	// 隣接行を同一視してチェックするため改行を空白に置き換える。
+	// 改行と空白は両方とも 1 バイトなのでオフセットは変わらない。
+	combined = strings.ReplaceAll(combined, "\n", " ")
+	var runes []rune
+	return hasNegativeContextNear(combined, offset+byteStart, offset+byteEnd, negativeContextWindowRunes, &runes, negCtx)
+}
+
+func (d *Detector) scanAdjacentLines(file string, firstLineNo int, first, second string) []Finding {
+	combined := first + "\n" + second
+	firstRunes := []rune(first)
+	secondRunes := []rune(second)
+	sep := len(firstRunes)
+
+	var out []Finding
+	for _, f := range d.ScanLine(file, firstLineNo, combined) {
+		if !f.Reason.RequireContext {
+			continue
+		}
+		switch {
+		case f.end <= sep:
+			f.Line = firstLineNo
+			f.Column = f.start + 1
+			f.Match = string(firstRunes[f.start:f.end])
+		case f.start > sep:
+			start := f.start - sep - 1
+			end := f.end - sep - 1
+			if start < 0 || end > len(secondRunes) {
+				continue
+			}
+			f.Line = firstLineNo + 1
+			f.Column = start + 1
+			f.Match = string(secondRunes[start:end])
+			f.start, f.end = start, end
+		default:
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
 }
 
 // ScanLine は 1 行を走査する。lineNo は 1 始まり。
@@ -87,6 +229,7 @@ func (d *Detector) ScanLine(file string, lineNo int, line string) []Finding {
 	// 必要になるまで遅延させる（大半の行はどのパターンにもマッチしない）。
 	var lower string
 	lowered := false
+	var normRunes []rune
 	var origRunes []rune
 
 	var found []Finding
@@ -107,25 +250,33 @@ func (d *Detector) ScanLine(file string, lineNo int, line string) []Finding {
 				continue
 			}
 		}
-		ctxComputed, hasContext := false, false
-		ctx := func() bool {
+		ctxComputed := false
+		var ctxKeywords []string
+		ctx := func() []string {
 			if !ctxComputed {
 				if !lowered {
 					lower = strings.ToLower(norm)
 					lowered = true
 				}
-				for _, kw := range r.Context {
-					if strings.Contains(lower, kw) {
-						hasContext = true
-						break
-					}
-				}
+				ctxKeywords = matchingContexts(lower, r.Context)
 				ctxComputed = true
 			}
-			return hasContext
+			return ctxKeywords
+		}
+		ctxNear := func(start, end int) []string {
+			if r.RequireContextWindow <= 0 {
+				return ctx()
+			}
+			return matchingContexts(contextWindow(norm, start, end, r.RequireContextWindow, &normRunes), r.Context)
+		}
+		hasNegativeNear := func(start, end int) bool {
+			if len(r.NegativeContext) == 0 {
+				return false
+			}
+			return hasNegativeContextNear(norm, start, end, negativeContextWindowRunes, &normRunes, r.NegativeContext)
 		}
 		for _, p := range r.Patterns {
-			if p.RequireContext && !ctx() {
+			if p.RequireContext && r.RequireContextWindow <= 0 && len(ctx()) == 0 {
 				continue
 			}
 			// FindAll はマッチ全体（末尾の境界ガード文字を含む）の直後から
@@ -149,9 +300,27 @@ func (d *Detector) ScanLine(file string, lineNo int, line string) []Finding {
 				}
 				pos = next
 				entity := norm[start:end]
-				if r.Validate != nil && !r.Validate(entity) {
+				reason := DetectReason{
+					BaseConfidence: p.Base.String(),
+					RequireContext: p.RequireContext,
+					ContextWindow:  r.RequireContextWindow,
+				}
+				if p.RequireContext {
+					kws := ctxNear(start, end)
+					if len(kws) == 0 {
+						continue
+					}
+					reason.ContextKeywords = kws
+				}
+				if hasNegativeNear(start, end) {
 					continue
 				}
+			if r.Validate != nil {
+				if !r.Validate(entity) {
+					continue
+				}
+				reason.Validated = true
+			}
 				if d.allowlisted(entity) {
 					continue
 				}
@@ -159,12 +328,18 @@ func (d *Detector) ScanLine(file string, lineNo int, line string) []Finding {
 				// であり昇格の根拠にならないため、Base の信頼度のまま報告する
 				// （口座番号などの△ルールが常に high になるのを防ぐ）。
 				conf := p.Base
-				if !p.RequireContext && conf < rule.High && ctx() {
-					conf = rule.High
+				if !p.RequireContext && conf < rule.High {
+					kws := ctx()
+					if len(kws) > 0 {
+						reason.ContextKeywords = kws
+						reason.ContextPromoted = true
+						conf = rule.High
+					}
 				}
 				if conf < d.minConf {
 					continue
 				}
+				reason.FinalConfidence = conf.String()
 				// バイトオフセット → ルーン位置（正規化は 1:1 なので元行と一致）
 				rs := len([]rune(norm[:start]))
 				re := rs + len([]rune(entity))
@@ -179,6 +354,7 @@ func (d *Detector) ScanLine(file string, lineNo int, line string) []Finding {
 					Column:      rs + 1,
 					Match:       string(origRunes[rs:re]),
 					Confidence:  conf,
+					Reason:      reason,
 					start:       rs,
 					end:         re,
 				})
@@ -190,6 +366,196 @@ func (d *Detector) ScanLine(file string, lineNo int, line string) []Finding {
 
 func ignoredLine(line string) bool {
 	return strings.Contains(line, IgnoreMarker) || strings.Contains(line, AllowMarker)
+}
+
+func containsAnyContext(haystack string, kws []string) bool {
+	return len(matchingContexts(haystack, kws)) > 0
+}
+
+func hasNegativeContextNear(s string, start, end, radius int, runes *[]rune, kws []string) bool {
+	if *runes == nil {
+		*runes = []rune(s)
+	}
+	rs := *runes
+	runeStart := len([]rune(s[:start]))
+	runeEnd := runeStart + len([]rune(s[start:end]))
+
+	var generic []string
+	for _, kw := range kws {
+		switch {
+		case isCurrencyPrefix(kw):
+			if hasUnitBefore(rs, runeStart, radius, []rune(kw)) {
+				return true
+			}
+		case isCurrencySuffix(kw):
+			if hasUnitAfter(rs, runeEnd, radius, []rune(kw), false) {
+				return true
+			}
+		case isCounterSuffix(kw):
+			if hasUnitAfter(rs, runeEnd, radius, []rune(kw), true) {
+				return true
+			}
+		default:
+			generic = append(generic, kw)
+		}
+	}
+	if len(generic) == 0 {
+		return false
+	}
+	return containsAnyContext(contextWindow(s, start, end, radius, runes), generic)
+}
+
+func isCurrencyPrefix(kw string) bool {
+	switch kw {
+	case "¥", "￥", "$":
+		return true
+	}
+	return false
+}
+
+func isCurrencySuffix(kw string) bool {
+	switch kw {
+	case "円", "千", "万", "億", "%", "％":
+		return true
+	}
+	return false
+}
+
+func isCounterSuffix(kw string) bool {
+	switch kw {
+	case "人", "名", "件", "個", "回", "点":
+		return true
+	}
+	return false
+}
+
+func hasUnitBefore(rs []rune, start, radius int, unit []rune) bool {
+	if len(unit) == 0 {
+		return false
+	}
+	i := start - 1
+	from := start - radius
+	if from < 0 {
+		from = 0
+	}
+	for i >= from && (rs[i] == ' ' || rs[i] == '\t') {
+		i--
+	}
+	unitStart := i - len(unit) + 1
+	if unitStart < from {
+		return false
+	}
+	return runesEqual(rs[unitStart:i+1], unit)
+}
+
+func hasUnitAfter(rs []rune, end, radius int, unit []rune, requireBoundary bool) bool {
+	if len(unit) == 0 {
+		return false
+	}
+	i := end
+	to := end + radius
+	if to > len(rs) {
+		to = len(rs)
+	}
+	for i < to && (rs[i] == ' ' || rs[i] == '\t') {
+		i++
+	}
+	unitEnd := i + len(unit)
+	if unitEnd > to || !runesEqual(rs[i:unitEnd], unit) {
+		return false
+	}
+	return !requireBoundary || unitEnd == len(rs) || !isJapaneseLetter(rs[unitEnd])
+}
+
+func runesEqual(a, b []rune) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func isJapaneseLetter(r rune) bool {
+	return (r >= 0x3040 && r <= 0x30ff) || (r >= 0x3400 && r <= 0x9fff)
+}
+
+func matchingContexts(haystack string, kws []string) []string {
+	lower := strings.ToLower(haystack)
+	var out []string
+	for _, kw := range kws {
+		if containsWord(lower, kw) {
+			out = append(out, kw)
+		}
+	}
+	return out
+}
+
+func containsWord(haystack, kw string) bool {
+	if kw == "" {
+		return true
+	}
+	if !asciiOnly(kw) || !isASCIIAlnum(kw[0]) || !isASCIIAlnum(kw[len(kw)-1]) {
+		return strings.Contains(haystack, kw)
+	}
+	for offset := 0; offset <= len(haystack); {
+		i := strings.Index(haystack[offset:], kw)
+		if i < 0 {
+			return false
+		}
+		start := offset + i
+		end := start + len(kw)
+		if !hasASCIIAlnumBefore(haystack, start) && !hasASCIIAlnumAfter(haystack, end) {
+			return true
+		}
+		offset = start + 1
+	}
+	return false
+}
+
+func asciiOnly(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
+}
+
+func hasASCIIAlnumBefore(s string, pos int) bool {
+	return pos > 0 && isASCIIAlnum(s[pos-1])
+}
+
+func hasASCIIAlnumAfter(s string, pos int) bool {
+	return pos < len(s) && isASCIIAlnum(s[pos])
+}
+
+func isASCIIAlnum(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
+func contextWindow(s string, start, end, radius int, runes *[]rune) string {
+	if radius <= 0 {
+		return s
+	}
+	if *runes == nil {
+		*runes = []rune(s)
+	}
+	rs := *runes
+	runeStart := len([]rune(s[:start]))
+	runeEnd := runeStart + len([]rune(s[start:end]))
+	from := runeStart - radius
+	if from < 0 {
+		from = 0
+	}
+	to := runeEnd + radius
+	if to > len(rs) {
+		to = len(rs)
+	}
+	return string(rs[from:to])
 }
 
 // classifyLine は Prefilter 判定に使う文字種の有無を 1 パスで調べる。

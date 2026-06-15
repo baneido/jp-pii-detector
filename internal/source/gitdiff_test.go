@@ -138,6 +138,31 @@ func TestScanStagedJapaneseFilename(t *testing.T) {
 	}
 }
 
+func TestScanStagedSplitLabelAndValue(t *testing.T) {
+	repo := initTestRepo(t)
+	name := "pii.txt"
+	if err := os.WriteFile(filepath.Join(repo, name), []byte("口座番号:\n1234567\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, "add", name)
+
+	cfg := config.Default()
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, err := ScanStaged(d, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("findings = %+v, want split label/value finding", findings)
+	}
+	if f := findings[0]; f.File != name || f.RuleID != "jp-bank-account" || f.Line != 2 || f.Column != 1 {
+		t.Errorf("finding = %+v, want %s:2:1 jp-bank-account", f, name)
+	}
+}
+
 // ScanDiff がコミット間の追加行のみを走査すること。
 func TestScanDiffRange(t *testing.T) {
 	repo := initTestRepo(t)

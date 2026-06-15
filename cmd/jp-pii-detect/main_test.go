@@ -146,6 +146,36 @@ func TestMinConfidenceFlagOverride(t *testing.T) {
 	}
 }
 
+func TestScanHighRecallFlag(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("勤務地: 渋谷区道玄坂2-10-7\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, code := run(t, dir, "scan", "."); code != 0 {
+		t.Error("high-recall finding should be hidden by default")
+	}
+	out, code := run(t, dir, "scan", "--high-recall", ".")
+	if code != 1 {
+		t.Errorf("exit = %d, want 1 with --high-recall", code)
+	}
+	if !strings.Contains(out, "jp-address-high-recall") {
+		t.Fatalf("missing high-recall rule in output: %s", out)
+	}
+}
+
+func TestScanJSONExplain(t *testing.T) {
+	out, code := run(t, piiDir(t), "scan", "--format", "json", "--explain", ".")
+	if code != 1 {
+		t.Errorf("exit = %d, want 1", code)
+	}
+	if !strings.Contains(out, `"reason"`) || !strings.Contains(out, `"base_confidence"`) {
+		t.Fatalf("--explain should include reason: %s", out)
+	}
+	if strings.Contains(out, "090-1234-5678") {
+		t.Fatalf("--explain should not unmask match: %s", out)
+	}
+}
+
 func TestRulesCommand(t *testing.T) {
 	out, code := run(t, t.TempDir(), "rules")
 	if code != 0 {

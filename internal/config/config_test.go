@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/baneido/jp-pii-detecter/internal/rule"
 )
 
 func TestParse(t *testing.T) {
@@ -24,7 +26,7 @@ stopwords = ["090-0000-0000"]
 	if cfg.MinConfidence != "high" {
 		t.Errorf("MinConfidence = %q", cfg.MinConfidence)
 	}
-	if len(cfg.Rules.Disabled) != 1 || cfg.Rules.Disabled[0] != "person-name" {
+	if !containsString(cfg.Rules.Disabled, "person-name") {
 		t.Errorf("Disabled = %v", cfg.Rules.Disabled)
 	}
 	if cfg.PathAllowed("testdata/sample.txt") {
@@ -41,6 +43,85 @@ stopwords = ["090-0000-0000"]
 	}
 }
 
+func TestParseHighRecallRulesDisabledByDefault(t *testing.T) {
+	cfg, err := Parse("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range rule.HighRecallRuleIDs() {
+		if !containsString(cfg.Rules.Disabled, id) {
+			t.Fatalf("Disabled = %v, want high-recall rule %q to be disabled by default", cfg.Rules.Disabled, id)
+		}
+	}
+}
+
+func TestParseHighRecallOptInLeavesRulesEnabled(t *testing.T) {
+	cfg, err := Parse(`
+[rules]
+high_recall = true
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range rule.HighRecallRuleIDs() {
+		if containsString(cfg.Rules.Disabled, id) {
+			t.Fatalf("Disabled = %v, want high-recall rule %q to remain enabled", cfg.Rules.Disabled, id)
+		}
+	}
+}
+
+func TestParseHighRecallOptInStillHonorsExplicitDisable(t *testing.T) {
+	ids := rule.HighRecallRuleIDs()
+	if len(ids) == 0 {
+		t.Fatal("HighRecallRuleIDs must not be empty")
+	}
+	cfg, err := Parse(`
+[rules]
+high_recall = true
+disabled = ["` + ids[0] + `"]
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsString(cfg.Rules.Disabled, ids[0]) {
+		t.Fatalf("Disabled = %v, want explicit disable for %q", cfg.Rules.Disabled, ids[0])
+	}
+	for _, id := range ids[1:] {
+		if containsString(cfg.Rules.Disabled, id) {
+			t.Fatalf("Disabled = %v, want unrelated high-recall rule %q to remain enabled", cfg.Rules.Disabled, id)
+		}
+	}
+}
+
+func TestSetHighRecallTogglesAutoDisabledRules(t *testing.T) {
+	cfg, err := Parse(`
+[rules]
+disabled = ["person-name"]
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.SetHighRecall(true)
+	if !cfg.Rules.HighRecall {
+		t.Fatal("HighRecall = false, want true")
+	}
+	if !containsString(cfg.Rules.Disabled, "person-name") {
+		t.Fatalf("Disabled = %v, want explicit disable to remain", cfg.Rules.Disabled)
+	}
+	for _, id := range rule.HighRecallRuleIDs() {
+		if containsString(cfg.Rules.Disabled, id) {
+			t.Fatalf("Disabled = %v, want auto-disabled high-recall rule %q to be re-enabled", cfg.Rules.Disabled, id)
+		}
+	}
+
+	cfg.SetHighRecall(false)
+	for _, id := range rule.HighRecallRuleIDs() {
+		if !containsString(cfg.Rules.Disabled, id) {
+			t.Fatalf("Disabled = %v, want high-recall rule %q to be disabled again", cfg.Rules.Disabled, id)
+		}
+	}
+}
+
 func TestParseInvalidRegex(t *testing.T) {
 	if _, err := Parse("[allowlist]\npaths = [\"(\"]\n"); err == nil {
 		t.Error("expected error for invalid regex")
@@ -51,6 +132,14 @@ func TestDefault(t *testing.T) {
 	cfg := Default()
 	if cfg.MinConfidence != "medium" {
 		t.Errorf("MinConfidence = %q, want medium", cfg.MinConfidence)
+	}
+	if cfg.Rules.HighRecall {
+		t.Error("HighRecall = true, want false by default")
+	}
+	for _, id := range rule.HighRecallRuleIDs() {
+		if !containsString(cfg.Rules.Disabled, id) {
+			t.Fatalf("Disabled = %v, want high-recall rule %q disabled by Default()", cfg.Rules.Disabled, id)
+		}
 	}
 	if !cfg.PathAllowed("anything") {
 		t.Error("default should allow all paths")
@@ -131,4 +220,13 @@ func TestLoadStopsAtRepoRoot(t *testing.T) {
 	if cfg.MinConfidence != "medium" {
 		t.Errorf("MinConfidence = %q, want medium（リポジトリ外の設定を読んではならない）", cfg.MinConfidence)
 	}
+}
+
+func containsString(xs []string, want string) bool {
+	for _, x := range xs {
+		if x == want {
+			return true
+		}
+	}
+	return false
 }

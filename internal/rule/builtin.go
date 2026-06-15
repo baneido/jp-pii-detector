@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/baneido/jp-pii-detecter/internal/checksum"
+	"github.com/baneido/jp-pii-detecter/internal/dict"
 )
 
 // dg は数字エンティティ用の境界ガード付きパターンを生成する。
@@ -40,7 +41,17 @@ const (
 	kanji    = `\x{4E00}-\x{9FFF}\x{3005}` // 漢字 + 々
 	hiragana = `\x{3041}-\x{3096}`
 	katakana = `\x{30A1}-\x{30FA}\x{30FC}` // カタカナ + ー
+
+	digitRuleRequireContextWindow = 40
 )
+
+var digitRuleNegativeContext = []string{
+	"円", "¥", "￥", "$", "千", "万", "億", "人", "名", "件", "個", "回", "点", "%", "％",
+	// 注: "no." や "#" は採番ラベルだが、肯定文脈（口座・免許 等）が既に必須の
+	// ため FP 抑制効果は薄く、"license no." のような正規ラベルを誤って棄却する
+	// 副作用が大きいため除外している。
+	"注文", "伝票", "管理番号", "通し番号", "連番",
+}
 
 // Builtin は組み込みルール一覧を返す。
 func Builtin() []Rule {
@@ -82,6 +93,7 @@ func Builtin() []Rule {
 			Description: "郵便番号",
 			Prefilter:   PrefilterDigit,
 			Context:     []string{"郵便番号", "郵便", "住所", "postal", "zipcode", "zip code", "〒"},
+			Validate:    dict.ValidPostalCodePrefix,
 			Patterns: []Pattern{
 				{Re: dg(`〒\s?\d{3}-?\d{4}`), Base: High},
 				{Re: dg(`\d{3}-\d{4}`), Base: Medium, RequireContext: true},
@@ -99,6 +111,20 @@ func Builtin() []Rule {
 						`[` + kanji + hiragana + katakana + `0-9-]{0,30}?` +
 						`\d{1,4}(?:丁目|番地?|号|(?:-\d{1,4}){1,2}))`,
 				), Base: High},
+			},
+		},
+		{
+			ID:          "jp-address-high-recall",
+			Description: "住所（都道府県なし・高再現率）",
+			Prefilter:   PrefilterDigit,
+			Context:     []string{"住所", "所在地", "勤務地", "勤務先", "自宅", "address"},
+			Patterns: []Pattern{
+				{Re: regexp.MustCompile(
+					`(?:住所|所在地|勤務地|勤務先|自宅|address)?\s*[:=]?\s*(` +
+						`[` + kanji + hiragana + katakana + `]{1,15}[市区町村]` +
+						`[` + kanji + hiragana + katakana + `0-9-]{0,30}?` +
+						`\d{1,4}(?:丁目|番地?|号|(?:-\d{1,4}){1,2}))`,
+				), Base: Medium},
 			},
 		},
 		{
@@ -136,6 +162,8 @@ func Builtin() []Rule {
 			Prefilter:   PrefilterDigit,
 			Context: []string{"免許", "driver_license", "drivers_license", "driver's license",
 				"drivers license", "driver license", "license no", "license number", "licence"},
+			NegativeContext:      digitRuleNegativeContext,
+			RequireContextWindow: digitRuleRequireContextWindow,
 			Validate: func(m string) bool {
 				// 先頭 2 桁は公安委員会コードで 10 以上
 				// （= 先頭桁が 0 でないことと等価）
@@ -155,10 +183,12 @@ func Builtin() []Rule {
 			},
 		},
 		{
-			ID:          "jp-pension-number",
-			Description: "基礎年金番号",
-			Prefilter:   PrefilterDigit,
-			Context:     []string{"年金", "pension", "nenkin"},
+			ID:                   "jp-pension-number",
+			Description:          "基礎年金番号",
+			Prefilter:            PrefilterDigit,
+			Context:              []string{"年金", "pension", "nenkin"},
+			NegativeContext:      digitRuleNegativeContext,
+			RequireContextWindow: digitRuleRequireContextWindow,
 			Patterns: []Pattern{
 				{Re: dg(`\d{4}-?\d{6}`), Base: High, RequireContext: true},
 			},
@@ -173,19 +203,23 @@ func Builtin() []Rule {
 			},
 		},
 		{
-			ID:          "jp-bank-account",
-			Description: "銀行口座番号",
-			Prefilter:   PrefilterDigit,
-			Context:     []string{"口座", "普通預金", "当座預金", "支店番号", "account number", "account_no", "bank account", "kouza"},
+			ID:                   "jp-bank-account",
+			Description:          "銀行口座番号",
+			Prefilter:            PrefilterDigit,
+			Context:              []string{"口座", "普通預金", "当座預金", "支店番号", "account number", "account_no", "bank account", "kouza"},
+			NegativeContext:      digitRuleNegativeContext,
+			RequireContextWindow: digitRuleRequireContextWindow,
 			Patterns: []Pattern{
 				{Re: dg(`\d{7}`), Base: Medium, RequireContext: true},
 			},
 		},
 		{
-			ID:          "jp-health-insurance",
-			Description: "健康保険 保険者番号・被保険者番号",
-			Prefilter:   PrefilterDigit,
-			Context:     []string{"保険者番号", "被保険者", "保険証", "health insurance", "hokensha"},
+			ID:                   "jp-health-insurance",
+			Description:          "健康保険 保険者番号・被保険者番号",
+			Prefilter:            PrefilterDigit,
+			Context:              []string{"保険者番号", "被保険者", "保険証", "health insurance", "hokensha"},
+			NegativeContext:      digitRuleNegativeContext,
+			RequireContextWindow: digitRuleRequireContextWindow,
 			Patterns: []Pattern{
 				{Re: dg(`\d{8}`), Base: Medium, RequireContext: true},
 			},
@@ -199,6 +233,21 @@ func Builtin() []Rule {
 					`(?:氏名|名前|姓名|フリガナ|ふりがな)\s*[:=]\s*` +
 						`([` + kanji + hiragana + katakana + `]{2,12}(?:[ ][` + kanji + hiragana + katakana + `]{1,12})?)`,
 				), Base: Low},
+			},
+		},
+		{
+			ID:          "person-name-high-recall",
+			Description: "氏名（敬称・担当者アンカー付き・高再現率）",
+			Prefilter:   PrefilterCJK,
+			Patterns: []Pattern{
+				{Re: regexp.MustCompile(
+					`(?:担当|担当者|宛名|連絡先)\s*[:=]\s*` +
+						`([` + kanji + `]{2,8}(?:[ ][` + kanji + `]{1,8})?)`,
+				), Base: Medium},
+				{Re: regexp.MustCompile(
+					`(?:^|[^` + kanji + hiragana + katakana + `])` +
+						`([` + kanji + `]{2,8})(?:様|さん|氏|殿)`,
+				), Base: Medium},
 			},
 		},
 		{
@@ -271,7 +320,7 @@ func validEmail(m string) bool {
 	case "test", "invalid", "localhost", "example", "local":
 		return false
 	}
-	return !slices.Contains(labels, "example")
+	return !slices.Contains(labels, "example") && dict.ValidTLD(tld)
 }
 
 // containsASCIIAlnum はローカル部に英数字が 1 文字以上あるかを返す。

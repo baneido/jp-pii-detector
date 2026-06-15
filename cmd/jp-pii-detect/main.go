@@ -32,6 +32,8 @@ Scan flags:
   --config <path>          設定ファイル (既定: .jp-pii.toml をリポジトリルートまで上方探索)
   --min-confidence <lvl>   報告する最小信頼度: low|medium|high (既定: 設定ファイル値 or medium)
   --unmask                 検出値をマスクせず出力
+  --explain                JSON 出力に検出理由を含める
+  --high-recall            偽陽性リスクの高い再現率重視ルールを有効化
   --exit-zero              検出があっても終了コード 0 を返す
 
 Exit codes: 0=検出なし 1=検出あり 2=エラー
@@ -65,6 +67,8 @@ func runScan(args []string) int {
 	configPath := fs.String("config", "", "")
 	minConf := fs.String("min-confidence", "", "")
 	unmask := fs.Bool("unmask", false, "")
+	explain := fs.Bool("explain", false, "")
+	highRecall := fs.Bool("high-recall", false, "")
 	exitZero := fs.Bool("exit-zero", false, "")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(args); err != nil {
@@ -77,6 +81,9 @@ func runScan(args []string) int {
 	}
 	if *minConf != "" {
 		cfg.MinConfidence = *minConf
+	}
+	if *highRecall {
+		cfg.SetHighRecall(true)
 	}
 	det, err := detect.New(cfg)
 	if err != nil {
@@ -104,7 +111,7 @@ func runScan(args []string) int {
 	case "text":
 		report.Text(os.Stdout, findings, *unmask)
 	case "json":
-		if err := report.JSON(os.Stdout, findings, *unmask); err != nil {
+		if err := report.JSON(os.Stdout, findings, *unmask, *explain); err != nil {
 			return fail(err)
 		}
 	case "sarif":

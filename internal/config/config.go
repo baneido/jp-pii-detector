@@ -8,6 +8,7 @@ import (
 	"regexp"
 
 	"github.com/BurntSushi/toml"
+	"github.com/baneido/jp-pii-detecter/internal/rule"
 )
 
 // DefaultFileName は探索する設定ファイル名。
@@ -20,6 +21,9 @@ type Config struct {
 	Rules         struct {
 		// Disabled は無効化するルール ID の一覧。
 		Disabled []string `toml:"disabled"`
+		// HighRecall は高再現率ルールを明示的に有効化する。
+		// 偽陽性リスクが高いため既定では無効。
+		HighRecall bool `toml:"high_recall"`
 	} `toml:"rules"`
 	Allowlist struct {
 		// Paths は走査から除外するパスの正規表現。検出結果に報告される
@@ -36,10 +40,19 @@ type Config struct {
 
 	pathRes  []*regexp.Regexp
 	allowRes []*regexp.Regexp
+	// explicitDisabled は設定ファイル等で明示的に無効化されたルール ID。
+	// high_recall の切り替え時に、自動付与した無効化だけを戻すために保持する。
+	explicitDisabled []string
 }
 
 // Default は既定値の設定を返す。
 func Default() *Config {
+	cfg := defaultConfig()
+	cfg.SetHighRecall(false)
+	return cfg
+}
+
+func defaultConfig() *Config {
 	return &Config{MinConfidence: "medium"}
 }
 
@@ -54,7 +67,7 @@ func Load(path string) (*Config, error) {
 			return nil, err
 		}
 		if found == "" {
-			return Default(), nil
+			return Parse("")
 		}
 		path = found
 	}
@@ -90,7 +103,7 @@ func findUpward() (string, error) {
 
 // Parse は TOML 文字列から設定を構築する。
 func Parse(data string) (*Config, error) {
-	cfg := Default()
+	cfg := defaultConfig()
 	if _, err := toml.Decode(data, cfg); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
@@ -101,6 +114,8 @@ func Parse(data string) (*Config, error) {
 }
 
 func (c *Config) compile() error {
+	c.explicitDisabled = append([]string{}, c.Rules.Disabled...)
+	c.SetHighRecall(c.Rules.HighRecall)
 	for _, p := range c.Allowlist.Paths {
 		re, err := regexp.Compile(p)
 		if err != nil {
@@ -118,6 +133,24 @@ func (c *Config) compile() error {
 	return nil
 }
 
+// SetHighRecall は高再現率ルールの有効/無効を切り替える。
+// 明示的に disabled されたルールは維持し、自動で付与した既定無効化だけを更新する。
+func (c *Config) SetHighRecall(enabled bool) {
+	if c.explicitDisabled == nil {
+		c.explicitDisabled = append([]string{}, c.Rules.Disabled...)
+	}
+	c.Rules.HighRecall = enabled
+	c.Rules.Disabled = append([]string{}, c.explicitDisabled...)
+	if enabled {
+		return
+	}
+	for _, id := range rule.HighRecallRuleIDs() {
+		if !containsID(c.Rules.Disabled, id) {
+			c.Rules.Disabled = append(c.Rules.Disabled, id)
+		}
+	}
+}
+
 // PathAllowed はパスが走査対象かどうかを返す（除外なら false）。
 func (c *Config) PathAllowed(relPath string) bool {
 	for _, re := range c.pathRes {
@@ -130,3 +163,12 @@ func (c *Config) PathAllowed(relPath string) bool {
 
 // AllowRegexes はコンパイル済みのマッチ除外正規表現を返す。
 func (c *Config) AllowRegexes() []*regexp.Regexp { return c.allowRes }
+
+func containsID(ids []string, want string) bool {
+	for _, id := range ids {
+		if id == want {
+			return true
+		}
+	}
+	return false
+}

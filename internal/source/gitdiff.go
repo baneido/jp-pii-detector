@@ -33,13 +33,32 @@ func scanGitDiff(d *detect.Detector, cfg *config.Config, extra []string) ([]dete
 		return nil, fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
 	}
 	var findings []detect.Finding
-	for _, l := range ParseDiff(string(out)) {
+	findings = append(findings, scanAddedLines(d, cfg, ParseDiff(string(out)))...)
+	return findings, nil
+}
+
+func scanAddedLines(d *detect.Detector, cfg *config.Config, lines []AddedLine) []detect.Finding {
+	var findings []detect.Finding
+	for i := 0; i < len(lines); {
+		l := lines[i]
 		if !cfg.PathAllowed(l.File) {
+			i++
 			continue
 		}
-		findings = append(findings, d.ScanLine(l.File, l.Line, l.Text)...)
+		file := l.File
+		startLine := l.Line
+		texts := []string{l.Text}
+		i++
+		for i < len(lines) && lines[i].File == file && lines[i].Line == startLine+len(texts) {
+			texts = append(texts, lines[i].Text)
+			i++
+		}
+		for _, f := range d.ScanContent(file, strings.Join(texts, "\n")) {
+			f.Line += startLine - 1
+			findings = append(findings, f)
+		}
 	}
-	return findings, nil
+	return findings
 }
 
 // AddedLine は diff 内の追加行。

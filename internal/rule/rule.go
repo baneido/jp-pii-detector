@@ -75,8 +75,14 @@ type Rule struct {
 	ID          string
 	Description string
 	// Context は信頼度昇格・RequireContext 判定に使う周辺キーワード。
-	// 小文字で定義し、正規化・小文字化した行に対する部分一致で評価する。
+	// 小文字で定義し、ASCII 語は単語境界つき、日本語語は部分一致で評価する。
 	Context []string
+	// NegativeContext は同一行（または近傍）に存在する場合に検出を
+	// 棄却する語。金額・数量・連番 ID など PII でない数字列の文脈を表す。
+	NegativeContext []string
+	// RequireContextWindow は RequireContext の肯定語をマッチ前後の
+	// ルーン数に限定する。0 の場合は後方互換のため行全体を見る。
+	RequireContextWindow int
 	// Prefilter はパターンがマッチし得ない行を走査前に除外する事前判定。
 	// パターンの必須文字種（数字など）を含まない行をスキップする。
 	Prefilter Prefilter
