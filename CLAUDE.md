@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-`jp-pii-detect` is a Japan-specific static PII detector (My Number, phone, address, etc.) — a single Go binary meant to run as a pre-commit hook and in CI (GitHub Actions). Module path is `github.com/baneido/jp-pii-detecter` (note the repo name is spelled "detecter"; the binary/command is `jp-pii-detect`).
+`jp-pii-detect` is a Japan-specific static PII detector (My Number, phone, address, etc.) — a single Go binary meant to run as a pre-commit hook and in CI (GitHub Actions). The canonical Go module path is `github.com/baneido/jp-pii-detecter` (intentional legacy spelling for repo/module compatibility), while the binary/command name is `jp-pii-detect`.
 
 Source comments and docs are in Japanese; match that when editing them.
 
@@ -24,7 +24,7 @@ Run the built binary against this repo (what CI dogfoods): `./jp-pii-detect scan
 CI (`.github/workflows/ci.yml`) fails on more than just test failures:
 
 1. **Accuracy must not drift.** `internal/eval` measures precision/recall/F1 against a labeled dataset (`internal/eval/dataset.go`). `eval_test.go` asserts measured F1 equals each rule's `wantF1`, and `readme_test.go` asserts the README badges match. **Any change to rules or the dataset moves these numbers and breaks CI.** When that happens: update `wantF1`, then run `go test ./internal/eval -update` to regenerate the README badges and `docs/accuracy.md`. CI also runs `go test ./internal/eval -run TestGenerateDoc -update && git diff --exit-code docs/accuracy.md`.
-2. **Dogfooding.** CI scans this repo with itself and expects zero findings. New test fixtures / sample PII must be excluded (see `.jp-pii.toml` allowlist or `jp-pii-detector:ignore` markers) or they'll fail the build.
+2. **Dogfooding.** CI scans this repo with itself and expects zero findings. New test fixtures / sample PII must be excluded (see `.jp-pii.toml` allowlist or `jp-pii-detect:ignore` markers) or they'll fail the build.
 
 ## Architecture
 
