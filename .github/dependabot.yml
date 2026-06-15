@@ -1,0 +1,67 @@
+# Dependabot による依存関係の自動更新。
+# 対象は Go モジュールと GitHub Actions の 2 つ。
+# 参考: https://docs.github.com/code-security/dependabot/dependabot-options-reference
+#
+# 脆弱性アラートに連動した security updates は本ファイルではなく
+# リポジトリ設定（Settings > Code security）で有効化すること。
+version: 2
+
+updates:
+  # ----------------------------------------------------------------------
+  # Go モジュール（go.mod / go.sum）
+  # ----------------------------------------------------------------------
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Tokyo
+    open-pull-requests-limit: 5
+    commit-message:
+      # リポジトリの Conventional Commits 運用に合わせる（例: chore(deps): ...）
+      prefix: chore
+      include: scope
+    # 公開直後の不安定／汚染されたバージョンを即座に取り込まないための待機期間。
+    # サプライチェーン攻撃（リリース直後の改ざん版公開）への緩衝材になる。
+    cooldown:
+      default-days: 5
+      semver-major-days: 14
+    groups:
+      # minor / patch はまとめて 1 つの PR にしてレビュー負荷とノイズを下げる。
+      # major は破壊的変更を含みうるため、グループ外＝個別 PR で慎重にレビューする。
+      go-minor-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  # ----------------------------------------------------------------------
+  # GitHub Actions（.github/workflows/* と ルートの action.yml の両方が対象）
+  # 各アクションは SHA 固定＋バージョンコメント（例: @<sha> # v5.6.0）でピン留め
+  # 済み。Dependabot は最新 SHA へ追従しつつコメントの版数も更新するため、
+  # 固定の安全性と鮮度を両立できる。
+  # ----------------------------------------------------------------------
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Tokyo
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: ci
+      include: scope
+    cooldown:
+      default-days: 5
+    groups:
+      github-actions:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
