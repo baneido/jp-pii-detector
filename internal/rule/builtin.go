@@ -15,6 +15,13 @@ func dg(core string) *regexp.Regexp {
 	return regexp.MustCompile(`(?:^|[^0-9])(` + core + `)(?:[^0-9]|$)`)
 }
 
+// dgNoSlash は dg と同じ境界ガードに加え、直前のスラッシュも除外する。
+// URL のパス区切り（例: /articles/4608392522393）を数字列の一部と
+// みなして誤検出するのを防ぐ。
+func dgNoSlash(core string) *regexp.Regexp {
+	return regexp.MustCompile(`(?:^|[^0-9/])(` + core + `)(?:[^0-9]|$)`)
+}
+
 // ag は英数字エンティティ用の境界ガード付きパターンを生成する。
 func ag(core string) *regexp.Regexp {
 	return regexp.MustCompile(`(?:^|[^0-9A-Za-z])(` + core + `)(?:[^0-9A-Za-z]|$)`)
@@ -111,8 +118,16 @@ func Builtin() []Rule {
 			Validate: func(m string) bool {
 				return checksum.CreditCard(stripSeparators(m))
 			},
+			// パターンを 2 つに分ける理由:
+			//  1) 区切りなし・区切りあり両方を拾うが、直前がスラッシュの
+			//     数字列（URL パスの記事 ID 等）は誤検出を避けるため除外する。
+			//  2) 区切り（- または空白）を 1 つ以上含むカード番号は、直前が
+			//     スラッシュでも拾う（区切り付きの数字列はまず URL ID ではない）。
+			// この割り切りにより、スラッシュ直後の「区切りなし」カード番号は
+			// 検出できないが、URL の記事 ID と区別できないため意図的に許容する。
 			Patterns: []Pattern{
-				{Re: dg(`\d(?:[- ]?\d){12,18}`), Base: High},
+				{Re: dgNoSlash(`\d(?:[- ]?\d){12,18}`), Base: High},
+				{Re: dg(`\d(?:[- ]?\d){0,5}[- ]\d(?:[- ]?\d){6,17}`), Base: High},
 			},
 		},
 		{
@@ -234,12 +249,39 @@ func validPhone(m string) bool {
 // validEmail は予約済みドメイン（RFC 2606/6761）等のダミー値を除外する。
 func validEmail(m string) bool {
 	at := strings.LastIndexByte(m, '@')
+	if at <= 0 || at == len(m)-1 {
+		return false
+	}
+	local := m[:at]
+	if strings.HasPrefix(local, ".") || strings.HasSuffix(local, ".") || strings.Contains(local, "..") {
+		return false
+	}
+	if !containsASCIIAlnum(local) {
+		return false
+	}
 	domain := strings.ToLower(m[at+1:])
 	labels := strings.Split(domain, ".")
+	for _, label := range labels {
+		if label == "" || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return false
+		}
+	}
 	tld := labels[len(labels)-1]
 	switch tld {
 	case "test", "invalid", "localhost", "example", "local":
 		return false
 	}
 	return !slices.Contains(labels, "example")
+}
+
+// containsASCIIAlnum はローカル部に英数字が 1 文字以上あるかを返す。
+// ローカル部はパターンの文字クラス上 ASCII のみのためバイト走査でよい。
+func containsASCIIAlnum(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') {
+			return true
+		}
+	}
+	return false
 }
