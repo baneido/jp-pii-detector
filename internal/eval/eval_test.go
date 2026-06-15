@@ -27,7 +27,7 @@ var wantF1 = map[string]float64{
 	"jp-passport":         1.00,
 	"jp-pension-number":   1.00,
 	"jp-residence-card":   1.00,
-	"jp-bank-account":     0.80,
+	"jp-bank-account":     0.86,
 	"jp-health-insurance": 1.00,
 	"person-name":         0.75,
 	"jp-birthdate":        1.00,

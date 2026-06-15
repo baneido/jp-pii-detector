@@ -33,7 +33,7 @@
 | 旅券（パスポート）番号 | `パスポート: TK1234567` | ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 英字2+数字7 + 周辺の語が必要 |
 | 基礎年金番号 | `年金番号: 1234-567890` | ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 4桁-6桁 + 周辺の語が必要 |
 | 在留カード番号 | `在留カード AB12345678CD` | ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 英2+数8+英2 + 周辺の語が必要 |
-| 銀行口座番号 | `口座番号: 1234567` | △ | ![F1 0.80](https://img.shields.io/badge/F1-0.80-yellowgreen) | 7 桁 + 周辺の語が必要 |
+| 銀行口座番号 | `口座番号: 1234567` | △ | ![F1 0.86](https://img.shields.io/badge/F1-0.86-green) | 7 桁 + 周辺の語が必要 |
 | 健康保険 保険者番号等 | `保険者番号: 12345678` | △ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 8 桁 + 周辺の語が必要 |
 | 生年月日 | `生年月日: 1990年1月23日` | △ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | ラベル付き。西暦・和暦に対応 |
 | 氏名 | `氏名: 山田 太郎` | △ | ![F1 0.75](https://img.shields.io/badge/F1-0.75-yellowgreen) | ラベル付き。**既定では非表示**（後述） |

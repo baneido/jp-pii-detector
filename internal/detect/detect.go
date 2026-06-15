@@ -225,10 +225,8 @@ func (d *Detector) ScanLine(file string, lineNo int, line string) []Finding {
 	norm := normalize.Line(line)
 	hasDigit, hasAt, hasCJK := classifyLine(norm)
 
-	// 小文字化・コンテキスト判定・元行のルーン展開はコストが高いため、
+	// コンテキスト判定・元行のルーン展開はコストが高いため、
 	// 必要になるまで遅延させる（大半の行はどのパターンにもマッチしない）。
-	var lower string
-	lowered := false
 	var normRunes []rune
 	var origRunes []rune
 
@@ -254,11 +252,9 @@ func (d *Detector) ScanLine(file string, lineNo int, line string) []Finding {
 		var ctxKeywords []string
 		ctx := func() []string {
 			if !ctxComputed {
-				if !lowered {
-					lower = strings.ToLower(norm)
-					lowered = true
-				}
-				ctxKeywords = matchingContexts(lower, r.Context)
+				// matchingContexts は内部で小文字化しつつ、トークナイザ用に
+				// 元の大文字小文字（camelCase 境界）を保った norm を受け取る。
+				ctxKeywords = matchingContexts(norm, r.Context)
 				ctxComputed = true
 			}
 			return ctxKeywords
@@ -315,12 +311,12 @@ func (d *Detector) ScanLine(file string, lineNo int, line string) []Finding {
 				if hasNegativeNear(start, end) {
 					continue
 				}
-			if r.Validate != nil {
-				if !r.Validate(entity) {
-					continue
+				if r.Validate != nil {
+					if !r.Validate(entity) {
+						continue
+					}
+					reason.Validated = true
 				}
-				reason.Validated = true
-			}
 				if d.allowlisted(entity) {
 					continue
 				}
@@ -485,13 +481,112 @@ func isJapaneseLetter(r rune) bool {
 
 func matchingContexts(haystack string, kws []string) []string {
 	lower := strings.ToLower(haystack)
+	// 識別子トークンは ASCII キーワードが単語境界で見つからなかった
+	// 場合のみ必要になるため、最初に要求されるまで分割を遅延する。
+	var tokens []string
+	tokenized := false
 	var out []string
 	for _, kw := range kws {
 		if containsWord(lower, kw) {
 			out = append(out, kw)
+			continue
+		}
+		// 日本語など非 ASCII 語は部分一致（containsWord）が正しいので
+		// トークナイザは適用しない。ASCII 語のみ camelCase / snake_case /
+		// kebab-case の識別子に分割して照合する。
+		if !asciiOnly(kw) {
+			continue
+		}
+		if !tokenized {
+			// camelCase の境界を保つため小文字化前の元文字列を分割する。
+			tokens = tokenizeIdentifiers(haystack)
+			tokenized = true
+		}
+		if containsTokenSubsequence(tokens, kw) {
+			out = append(out, kw)
 		}
 	}
 	return out
+}
+
+// tokenizeIdentifiers は文字列を識別子の構成語トークン列に分割する。
+// ASCII 英数字の連なりを、大文字小文字の切れ目（camelCase）・英字と数字の
+// 切れ目・非英数字（_ - 空白など）の区切りで分割し、小文字化して返す。
+// 例: "bankAccountNo" -> ["bank", "account", "no"]、
+//
+//	"driver_license_no" -> ["driver", "license", "no"]。
+//
+// 単語境界（containsWord）では取りこぼす camelCase / snake_case /
+// kebab-case のラベルを、誤検出を増やさずにコンテキストとして拾うために使う。
+func tokenizeIdentifiers(s string) []string {
+	var tokens []string
+	var cur []byte
+	flush := func() {
+		if len(cur) > 0 {
+			tokens = append(tokens, string(cur))
+			cur = cur[:0]
+		}
+	}
+	prevClass := func() byte {
+		if len(cur) == 0 {
+			return 0
+		}
+		c := cur[len(cur)-1]
+		switch {
+		case c >= 'a' && c <= 'z':
+			return 'a'
+		case c >= '0' && c <= '9':
+			return '0'
+		}
+		return 0
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'A' && c <= 'Z':
+			// 直前が小文字または数字なら新しい語の先頭とみなす。
+			if p := prevClass(); p == 'a' || p == '0' {
+				flush()
+			}
+			cur = append(cur, c+('a'-'A'))
+		case c >= 'a' && c <= 'z':
+			if prevClass() == '0' {
+				flush()
+			}
+			cur = append(cur, c)
+		case c >= '0' && c <= '9':
+			if prevClass() == 'a' {
+				flush()
+			}
+			cur = append(cur, c)
+		default:
+			flush()
+		}
+	}
+	flush()
+	return tokens
+}
+
+// containsTokenSubsequence は kw を分割したトークン列が tokens の中に
+// 連続部分列として現れるかを返す。kw は小文字で定義されている前提。
+func containsTokenSubsequence(tokens []string, kw string) bool {
+	kwTokens := tokenizeIdentifiers(kw)
+	if len(kwTokens) == 0 || len(kwTokens) > len(tokens) {
+		return false
+	}
+	for i := 0; i+len(kwTokens) <= len(tokens); i++ {
+		match := true
+		for j, kt := range kwTokens {
+			if tokens[i+j] != kt {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
 }
 
 func containsWord(haystack, kw string) bool {

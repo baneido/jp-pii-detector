@@ -214,6 +214,59 @@ func TestASCIIContextRequiresWordBoundary(t *testing.T) {
 	}
 }
 
+func TestIdentifierTokenContext(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		// camelCase / snake_case / kebab-case のラベルでも、構成語に分割して
+		// コンテキストを満たせば RequireContext ルールが成立する。
+		{"camelCase 口座番号", "bankAccountNo: 1234567", []string{"jp-bank-account"}},
+		{"camelCase 免許番号", "driverLicenseNumber: 305012345678", []string{"jp-drivers-license"}},
+		{"camelCase 旅券番号", "passportNumber: TK1234567", []string{"jp-passport"}},
+		{"camelCase 在留カード", "residenceCardNumber: AB12345678CD", []string{"jp-residence-card"}},
+		{"snake_case 年金番号", "pension_number: 1234567890", []string{"jp-pension-number"}},
+		// 識別子の途中に語が埋もれている場合は成立しない（FP 抑制を維持）。
+		{"smartphone は phone の語ではない", "smartphone09012345678", []string{"jp-phone-number"}},
+		{"sublicense は license の語ではない", "sublicenseNumber: 305012345678", nil},
+		{"無関係な camelCase ラベル", "userId: 1234567", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+func TestTokenizeIdentifiers(t *testing.T) {
+	tests := []struct {
+		in   string
+		want []string
+	}{
+		{"bankAccountNo", []string{"bank", "account", "no"}},
+		{"driver_license_no", []string{"driver", "license", "no"}},
+		{"birth-date", []string{"birth", "date"}},
+		{"residenceCardNumber", []string{"residence", "card", "number"}},
+		{"phoneNumber: 09012345678", []string{"phone", "number", "09012345678"}},
+		{"smartphone", []string{"smartphone"}},
+		{"", nil},
+	}
+	for _, tt := range tests {
+		got := tokenizeIdentifiers(tt.in)
+		if len(got) != len(tt.want) {
+			t.Errorf("tokenizeIdentifiers(%q) = %v, want %v", tt.in, got, tt.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tt.want[i] {
+				t.Errorf("tokenizeIdentifiers(%q) = %v, want %v", tt.in, got, tt.want)
+				break
+			}
+		}
+	}
+}
+
 func TestDigitRulesRejectNearbyNegativeContext(t *testing.T) {
 	d := newDetector(t, "")
 	tests := []struct {

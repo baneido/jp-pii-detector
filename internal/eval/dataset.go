@@ -79,32 +79,39 @@ var Dataset = []Case{
 	// ---- jp-drivers-license（コンテキスト必須）----
 	{"免許証番号: 305012345678", []string{"jp-drivers-license"}, nil},
 	{"driver_license: 123456789012", []string{"jp-drivers-license"}, nil},
-	{"id: 305012345678", nil, nil},           // コンテキストなし
-	{"sublicense no 305012345678", nil, nil}, // ASCII 文脈語が単語の一部
-	{"免許の更新に行く", nil, nil},                   // 番号なし
+	{"driverLicenseNumber: 305012345678", []string{"jp-drivers-license"}, nil}, // camelCase ラベル
+	{"id: 305012345678", nil, nil},                                             // コンテキストなし
+	{"sublicense no 305012345678", nil, nil},                                   // ASCII 文脈語が単語の一部
+	{"sublicenseNumber: 305012345678", nil, nil},                               // camelCase でも語境界は維持
+	{"免許の更新に行く", nil, nil},                                                     // 番号なし
 
 	// ---- jp-passport（コンテキスト必須）----
 	{"パスポート番号: TK1234567", []string{"jp-passport"}, []Span{
 		{RuleID: "jp-passport", Start: 9, End: 18, Tags: []string{"easy"}},
 	}},
 	{"passport: AB1234567", []string{"jp-passport"}, nil},
-	{"TK1234567", nil, nil},         // コンテキストなし
-	{"コード AB1234567 を入力", nil, nil}, // パスポート文脈なし
+	{"passportNumber: TK1234567", []string{"jp-passport"}, nil}, // camelCase ラベル
+	{"TK1234567", nil, nil},                                     // コンテキストなし
+	{"コード AB1234567 を入力", nil, nil},                             // パスポート文脈なし
 
 	// ---- jp-pension-number（コンテキスト必須）----
 	{"基礎年金番号: 1234-567890", []string{"jp-pension-number"}, nil},
 	{"年金番号 1234567890", []string{"jp-pension-number"}, nil},
+	{"pension_number: 1234567890", []string{"jp-pension-number"}, nil}, // snake_case ラベル
 	{"1234-567890", nil, nil}, // コンテキストなし
 
 	// ---- jp-residence-card（コンテキスト必須）----
 	{"在留カード番号 AB12345678CD", []string{"jp-residence-card"}, nil},
 	{"zairyu: CD87654321EF", []string{"jp-residence-card"}, nil},
+	{"residenceCardNumber: AB12345678CD", []string{"jp-residence-card"}, nil}, // camelCase ラベル
 	{"AB12345678CD", nil, nil}, // コンテキストなし
 
 	// ---- jp-bank-account（コンテキスト必須）----
 	{"口座番号: 1234567", []string{"jp-bank-account"}, nil},
 	{"普通預金 7654321", []string{"jp-bank-account"}, nil},
-	{"1234567", nil, nil}, // コンテキストなし
+	{"bankAccountNo: 1234567", []string{"jp-bank-account"}, nil}, // camelCase ラベル
+	{"1234567", nil, nil},              // コンテキストなし
+	{"orderNumber: 1234567", nil, nil}, // 口座文脈ではない camelCase ラベル
 	{"口座番号は別紙に記載しています。" +
 		"ああああああああああああああああああああああああああああああ" +
 		"1234567", nil, nil}, // 口座文脈が遠い

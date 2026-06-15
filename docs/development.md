@@ -81,7 +81,10 @@ internal/
      `RequireContext` のルールはキーワードがなければ破棄する。`RequireContextWindow`
      が設定されたルールでは、キーワードをマッチ前後の指定ルーン数以内に限定する。
      ASCII キーワードは英数字の単語境界つきで照合し、`tel` が `hotel` の一部で成立する
-     ような誤昇格を避ける。`NegativeContext` が近傍にある場合は、金額・数量・連番 ID と
+     ような誤昇格を避ける。単語境界で見つからない場合は、行中の識別子を camelCase /
+     snake_case / kebab-case の構成語に分割して照合するため、`account_no` が
+     `bankAccountNo` を、`phone` が `phoneNumber` を拾える（`smartphone` のように
+     語の途中に埋もれた場合は成立しない）。`NegativeContext` が近傍にある場合は、金額・数量・連番 ID と
      みなして検出を棄却する。`RequireContext` のパターンはキーワードの存在が前提のため
      昇格せず、`Base` の信頼度のまま報告する。
    - **resolveOverlaps** で範囲が重なる検出を信頼度（同率なら長い方）で 1 件に集約する。
@@ -122,7 +125,9 @@ internal/
   偽陽性を抑える。検証だけで十分な精度なら `Base: High`。`RequireContext` の
   パターンはコンテキストによる昇格が起きないため、`Base` がそのまま報告される
   信頼度になる。
-- **コンテキストの設計**: ASCII キーワードは単語境界つきで照合される。桁数だけのルールは
+- **コンテキストの設計**: ASCII キーワードは単語境界つき、加えて camelCase /
+  snake_case / kebab-case の識別子を構成語に分割して照合される（`account_no` ⇔
+  `bankAccountNo`）。桁数だけのルールは
   `RequireContextWindow` で肯定語を近接必須にし、金額・数量・連番 ID と衝突しやすい場合は
   `NegativeContext` を設定する。
 - **Prefilter**: パターンが特定の文字種（数字・`@`・日本語）なしにマッチし得ない
