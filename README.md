@@ -141,11 +141,13 @@ regexes = ["@baneido\\.com$"]
 stopwords = ["090-0000-0000"]
 ```
 
-意図的なダミー値には行内コメントでマーカーを付けられます:
+意図的なダミー値には行内コメントで ignore マーカーを付けられます:
 
 ```python
-TEST_PHONE = "090-1234-5678"  # pii-allow テスト用ダミー
+TEST_PHONE = "090-1234-5678"  # jp-pii-detector:ignore テスト用ダミー
 ```
+
+旧マーカー `pii-allow` も互換性のため引き続き利用できます。
 
 ## ドキュメント
 

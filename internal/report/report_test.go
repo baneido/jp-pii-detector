@@ -51,7 +51,7 @@ func TestTextMasksByDefault(t *testing.T) {
 	if !strings.Contains(out, "users.csv:4:6") {
 		t.Errorf("missing location: %s", out)
 	}
-	if !strings.Contains(out, "1 件") || !strings.Contains(out, "pii-allow") {
+	if !strings.Contains(out, "1 件") || !strings.Contains(out, "jp-pii-detector:ignore") {
 		t.Errorf("missing summary with remediation hint: %s", out)
 	}
 }
