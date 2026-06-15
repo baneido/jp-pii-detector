@@ -169,30 +169,44 @@ func spanFromFinding(f detect.Finding) Span {
 }
 
 func matchSpans(want, got []Span, match func(Span, Span) bool) Score {
-	var score Score
-	used := make([]bool, len(got))
-	for _, w := range want {
-		found := false
-		for i, g := range got {
-			if used[i] || !match(w, g) {
+	matchTo := make([]int, len(want))
+	for i := range matchTo {
+		matchTo[i] = -1
+	}
+	gotMatch := make([]int, len(got))
+	for i := range gotMatch {
+		gotMatch[i] = -1
+	}
+
+	var augment func(wi int, visited []bool) bool
+	augment = func(wi int, visited []bool) bool {
+		for gi, g := range got {
+			if visited[gi] || !match(want[wi], g) {
 				continue
 			}
-			used[i] = true
-			found = true
-			break
+			visited[gi] = true
+			if gotMatch[gi] == -1 || augment(gotMatch[gi], visited) {
+				matchTo[wi] = gi
+				gotMatch[gi] = wi
+				return true
+			}
 		}
-		if found {
-			score.TP++
-		} else {
-			score.FN++
+		return false
+	}
+
+	matched := 0
+	for wi := range want {
+		visited := make([]bool, len(got))
+		if augment(wi, visited) {
+			matched++
 		}
 	}
-	for _, ok := range used {
-		if !ok {
-			score.FP++
-		}
+
+	return Score{
+		TP: matched,
+		FN: len(want) - matched,
+		FP: len(got) - matched,
 	}
-	return score
 }
 
 func spansEqual(a, b Span) bool {
