@@ -15,7 +15,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: actions/setup-go@v5
+    - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
       with:
         go-version: stable
         # setup-go 標準のキャッシュは利用側リポジトリの go.sum を前提と
@@ -26,7 +26,7 @@ runs:
         echo "modcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
         echo "buildcache=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
       shell: bash
-    - uses: actions/cache@v4
+    - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: |
           ${{ steps.go-env.outputs.modcache }}
