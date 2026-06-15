@@ -151,6 +151,10 @@ func TestCreditCardRule(t *testing.T) {
 		{"Visa 区切りあり", "card: 4111-1111-1111-1111", []string{"credit-card"}},
 		{"JCB 区切りなし", "3530111333300000", []string{"credit-card"}},
 		{"slash-prefixed separated card is still detected", "/4111-1111-1111-1111", []string{"credit-card"}},
+		// 区切りなしカードがスラッシュ直後にある場合は、URL の記事 ID と
+		// 区別できないため意図的に検出しない（割り切り）。同じ桁は
+		// 区切りありなら上で検出される Luhn 妥当な Visa 番号。
+		{"slash-prefixed contiguous card is intentionally not detected", "/4111111111111111", nil},
 		{"Luhn 不正", "4111-1111-1111-1112", nil},
 		{"URL article ID is not a card", "https://support.otetsutabi.com/hc/ja/articles/46129829524505", nil},
 		{"URL article ID with shorter Luhn-passing number is not a card", "https://support.otetsutabi.com/hc/ja/articles/4608392522393", nil},
