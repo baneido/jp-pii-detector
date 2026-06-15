@@ -213,6 +213,7 @@ regexes = ["@baneido\\.com$"]
 		{"stopword", "TEL: 090-0000-0001", nil},
 		{"regex 除外", "nakamura@baneido.com", nil},
 		{"インラインマーカー", "TEL: 090-1234-5678 // pii-allow ダミー", nil},
+		{"ignore コメント", "TEL: 090-1234-5678 # jp-pii-detector:ignore", nil},
 		{"除外対象外は検出", "TEL: 090-1234-5678", []string{"jp-phone-number"}},
 	}
 	for _, tt := range tests {

@@ -40,7 +40,7 @@ func Text(w io.Writer, findings []detect.Finding, unmask bool) {
 	}
 	if len(findings) > 0 {
 		fmt.Fprintf(w, "\n%d 件の個人情報らしき記述を検出しました。誤検出の場合は行末コメントに %q を付けるか、設定ファイルの allowlist に追加してください。\n",
-			len(findings), detect.AllowMarker)
+			len(findings), detect.IgnoreMarker)
 	}
 }
 

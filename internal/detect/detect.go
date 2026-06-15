@@ -9,7 +9,10 @@ import (
 	"github.com/baneido/jp-pii-detecter/internal/rule"
 )
 
-// AllowMarker を含む行は検出対象から除外される（意図的なダミー値向け）。
+// IgnoreMarker を含む行は検出対象から除外される（意図的なダミー値向け）。
+const IgnoreMarker = "jp-pii-detector:ignore"
+
+// AllowMarker は後方互換のために残している旧除外マーカー。
 const AllowMarker = "pii-allow"
 
 // Finding は 1 件の検出結果。
@@ -74,7 +77,7 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 
 // ScanLine は 1 行を走査する。lineNo は 1 始まり。
 func (d *Detector) ScanLine(file string, lineNo int, line string) []Finding {
-	if line == "" || strings.Contains(line, AllowMarker) {
+	if line == "" || ignoredLine(line) {
 		return nil
 	}
 	norm := normalize.Line(line)
@@ -183,6 +186,10 @@ func (d *Detector) ScanLine(file string, lineNo int, line string) []Finding {
 		}
 	}
 	return resolveOverlaps(found)
+}
+
+func ignoredLine(line string) bool {
+	return strings.Contains(line, IgnoreMarker) || strings.Contains(line, AllowMarker)
 }
 
 // classifyLine は Prefilter 判定に使う文字種の有無を 1 パスで調べる。
