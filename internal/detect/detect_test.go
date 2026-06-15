@@ -443,6 +443,15 @@ func TestReasonRecordsPromotionAndContext(t *testing.T) {
 	}
 }
 
+func TestReasonNotValidatedWhenNoValidator(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanLine("f.txt", 1, "住所: 東京都渋谷区道玄坂2-10-7")
+	assertRules(t, fs, "jp-address")
+	if fs[0].Reason.Validated {
+		t.Fatalf("validated = true, want false (jp-address has no validator)")
+	}
+}
+
 func TestReasonRecordsRequiredNearbyContext(t *testing.T) {
 	d := newDetector(t, "")
 	fs := d.ScanLine("f.txt", 1, "口座番号: 1234567")
@@ -548,4 +557,14 @@ func TestScanContentPreservesDocumentOrderWithAdjacentLineFindings(t *testing.T)
 	if fs[1].RuleID != "jp-phone-number" || fs[1].Line != 3 {
 		t.Fatalf("second finding = %s at line %d, want jp-phone-number at line 3", fs[1].RuleID, fs[1].Line)
 	}
+}
+
+func TestScanContentRejectsCrossLineNegativeContext(t *testing.T) {
+	d := newDetector(t, "")
+	// 口座番号に見えるが、次の行に金額マーカーがある場合は検出しない。
+	assertRules(t, d.ScanContent("f.txt", "口座番号: 1234567\n円"))
+	// 3 行にまたがるケースも、隣接行のネガティブコンテキストを抑制する。
+	assertRules(t, d.ScanContent("f.txt", "口座番号:\n1234567\n円"))
+	// ネガティブコンテキストが遠い場合は検出する。
+	assertRules(t, d.ScanContent("f.txt", "口座番号: 1234567"+strings.Repeat("あ", 25)+"\n円"), "jp-bank-account")
 }

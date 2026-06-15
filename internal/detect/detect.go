@@ -81,28 +81,33 @@ func (d *Detector) Rules() []rule.Rule { return d.rules }
 
 // ScanContent はファイル内容全体を行に分割して走査する。
 func (d *Detector) ScanContent(file, content string) []Finding {
-	var findings []Finding
 	var lines []string
 	for line := range strings.SplitSeq(content, "\n") {
 		lines = append(lines, strings.TrimSuffix(line, "\r"))
 	}
-	seen := map[string]bool{}
+
+	var candidates []Finding
 	for i, line := range lines {
-		for _, f := range d.ScanLine(file, i+1, line) {
-			findings = append(findings, f)
-			seen[findingKey(f)] = true
-		}
+		candidates = append(candidates, d.ScanLine(file, i+1, line)...)
 	}
 	for i := 0; i+1 < len(lines); i++ {
-		for _, f := range d.scanAdjacentLines(file, i+1, lines[i], lines[i+1]) {
-			key := findingKey(f)
-			if seen[key] {
-				continue
-			}
-			findings = append(findings, f)
-			seen[key] = true
-		}
+		candidates = append(candidates, d.scanAdjacentLines(file, i+1, lines[i], lines[i+1])...)
 	}
+
+	seen := map[string]bool{}
+	var findings []Finding
+	for _, f := range candidates {
+		if d.hasCrossLineNegativeContext(f, lines, f.Line-1) {
+			continue
+		}
+		key := findingKey(f)
+		if seen[key] {
+			continue
+		}
+		findings = append(findings, f)
+		seen[key] = true
+	}
+
 	sort.SliceStable(findings, func(i, j int) bool {
 		if findings[i].File != findings[j].File {
 			return findings[i].File < findings[j].File
@@ -134,6 +139,48 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(buf[i:])
+}
+
+func (d *Detector) hasCrossLineNegativeContext(f Finding, lines []string, lineIdx int) bool {
+	if lineIdx < 0 || lineIdx >= len(lines) {
+		return false
+	}
+	var negCtx []string
+	for _, r := range d.rules {
+		if r.ID == f.RuleID {
+			negCtx = r.NegativeContext
+			break
+		}
+	}
+	if len(negCtx) == 0 {
+		return false
+	}
+
+	var parts []string
+	offset := 0
+	if lineIdx > 0 {
+		prev := normalize.Line(lines[lineIdx-1])
+		parts = append(parts, prev)
+		offset = len(prev) + 1 // 改行 1 バイト分
+	}
+	curr := normalize.Line(lines[lineIdx])
+	currRunes := []rune(curr)
+	if f.start > len(currRunes) || f.end > len(currRunes) {
+		return false
+	}
+	byteStart := len(string(currRunes[:f.start]))
+	byteEnd := len(string(currRunes[:f.end]))
+	parts = append(parts, curr)
+	if lineIdx+1 < len(lines) {
+		parts = append(parts, normalize.Line(lines[lineIdx+1]))
+	}
+
+	combined := strings.Join(parts, "\n")
+	// 隣接行を同一視してチェックするため改行を空白に置き換える。
+	// 改行と空白は両方とも 1 バイトなのでオフセットは変わらない。
+	combined = strings.ReplaceAll(combined, "\n", " ")
+	var runes []rune
+	return hasNegativeContextNear(combined, offset+byteStart, offset+byteEnd, negativeContextWindowRunes, &runes, negCtx)
 }
 
 func (d *Detector) scanAdjacentLines(file string, firstLineNo int, first, second string) []Finding {
@@ -268,10 +315,12 @@ func (d *Detector) ScanLine(file string, lineNo int, line string) []Finding {
 				if hasNegativeNear(start, end) {
 					continue
 				}
-				if r.Validate != nil && !r.Validate(entity) {
+			if r.Validate != nil {
+				if !r.Validate(entity) {
 					continue
 				}
 				reason.Validated = true
+			}
 				if d.allowlisted(entity) {
 					continue
 				}
