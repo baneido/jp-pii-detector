@@ -249,6 +249,9 @@ func TestTokenizeIdentifiers(t *testing.T) {
 		{"birth-date", []string{"birth", "date"}},
 		{"residenceCardNumber", []string{"residence", "card", "number"}},
 		{"phoneNumber: 09012345678", []string{"phone", "number", "09012345678"}},
+		{"userID", []string{"user", "id"}},
+		{"APIKey", []string{"api", "key"}},
+		{"HTTPServer", []string{"http", "server"}},
 		{"smartphone", []string{"smartphone"}},
 		// 連続大文字（頭字語）: 末尾の大文字を語頭として扱う。
 		{"userID", []string{"user", "id"}},
