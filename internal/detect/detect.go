@@ -17,13 +17,18 @@ const IgnoreMarker = "jp-pii-detector:ignore"
 const AllowMarker = "pii-allow"
 
 // Finding は 1 件の検出結果。
+//
+// 注意: この型は出力スキーマではない。機械可読な出力（json/sarif 等）は
+// internal/report の jsonFinding を経由し、値は既定でマスクされる。Finding を
+// 直接 json.Marshal する経路は存在しないが、誤って marshal しても生の PII を
+// 漏らさないよう、生値を保持する Match は json:"-" でシリアライズ対象から外す。
 type Finding struct {
 	RuleID      string          `json:"rule_id"`
 	Description string          `json:"description"`
 	File        string          `json:"file"`
 	Line        int             `json:"line"`   // 1 始まり
 	Column      int             `json:"column"` // 1 始まり（ルーン単位）
-	Match       string          `json:"match"`  // 元テキスト（マスクは出力層で行う）
+	Match       string          `json:"-"`      // 元テキスト（生値。マスクは出力層で行う。直接 marshal では出さない）
 	Confidence  rule.Confidence `json:"-"`
 	// Reason は検出の根拠（調査・チューニング用。既定の出力には含めない）。
 	Reason DetectReason `json:"reason,omitempty"`
