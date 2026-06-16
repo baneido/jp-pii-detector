@@ -45,6 +45,15 @@ const (
 	digitRuleRequireContextWindow = 40
 )
 
+// digitRuleNegativeContext は桁ベースのルールを棄却する近傍語
+// （金額・数量・連番 ID など PII でない数字列の文脈）。
+//
+// 重要（隠れ結合）: 各語が「通貨接頭 / 通貨接尾 / カウンタ接尾 / 汎用」の
+// どれであるかは internal/detect 側の hasNegativeContextNear が分類する
+// （isCurrencyPrefix / isCurrencySuffix / isCounterSuffix・
+// negative_context.go）。ここに語を足しても detect 側の分類器を更新しないと
+// 黙って「汎用」扱いになり、前後の単位近接判定（数字の直後の「円」等）が
+// 効かない。語の追加時は両所を併せて更新すること。
 var digitRuleNegativeContext = []string{
 	"円", "¥", "￥", "$", "千", "万", "億", "人", "名", "件", "個", "回", "点", "%", "％",
 	// 注: "no." や "#" は採番ラベルだが、肯定文脈（口座・免許 等）が既に必須の

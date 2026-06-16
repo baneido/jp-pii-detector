@@ -237,23 +237,24 @@ func fillScore(s *Score) {
 
 // Micro は全ルール合算のマイクロ平均を返す。README 先頭の総合バッジと
 // docs/accuracy.md の合計行に使う。
+// 適合率・再現率・F1 の算出は fillScore に一元化する（式の二重実装を避ける）。
 func Micro(results []Result) Result {
-	m := Result{RuleID: "micro"}
+	var s Score
 	for _, r := range results {
-		m.TP += r.TP
-		m.FP += r.FP
-		m.FN += r.FN
+		s.TP += r.TP
+		s.FP += r.FP
+		s.FN += r.FN
 	}
-	if m.TP+m.FP > 0 {
-		m.Precision = float64(m.TP) / float64(m.TP+m.FP)
+	fillScore(&s)
+	return Result{
+		RuleID:    "micro",
+		TP:        s.TP,
+		FP:        s.FP,
+		FN:        s.FN,
+		Precision: s.Precision,
+		Recall:    s.Recall,
+		F1:        s.F1,
 	}
-	if m.TP+m.FN > 0 {
-		m.Recall = float64(m.TP) / float64(m.TP+m.FN)
-	}
-	if m.Precision+m.Recall > 0 {
-		m.F1 = 2 * m.Precision * m.Recall / (m.Precision + m.Recall)
-	}
-	return m
 }
 
 // MicroSpanExact は期待スパンが付いたケースだけを対象にした完全一致の
