@@ -553,41 +553,46 @@ func tokenizeIdentifiers(s string) []string {
 			cur = cur[:0]
 		}
 	}
-	prevClass := func() byte {
-		if len(cur) == 0 {
-			return 0
-		}
-		c := cur[len(cur)-1]
-		switch {
-		case c >= 'a' && c <= 'z':
-			return 'a'
-		case c >= '0' && c <= '9':
-			return '0'
-		}
-		return 0
-	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
+	classOf := func(c byte) byte {
 		switch {
 		case c >= 'A' && c <= 'Z':
-			// 直前が小文字または数字なら新しい語の先頭とみなす。
-			if p := prevClass(); p == 'a' || p == '0' {
-				flush()
-			}
-			cur = append(cur, c+('a'-'A'))
+			return 'U'
 		case c >= 'a' && c <= 'z':
-			if prevClass() == '0' {
-				flush()
-			}
-			cur = append(cur, c)
+			return 'L'
 		case c >= '0' && c <= '9':
-			if prevClass() == 'a' {
+			return 'D'
+		}
+		return 0 // 区切り文字
+	}
+	// prev は直前に取り込んだ文字の元の字種（U=大文字 / L=小文字 / D=数字）。
+	var prev byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		cc := classOf(c)
+		if cc == 0 {
+			flush()
+			prev = 0
+			continue
+		}
+		if len(cur) > 0 {
+			switch {
+			// camelCase / 数字→語: 小文字・数字の直後の大文字は新しい語。
+			case cc == 'U' && (prev == 'L' || prev == 'D'):
+				flush()
+			// 連続大文字（頭字語）の末尾: 直後が小文字なら、この大文字から
+			// 新しい語が始まる（例: HTTPServer→["http","server"]、APIKey→["api","key"]）。
+			case cc == 'U' && prev == 'U' && i+1 < len(s) && classOf(s[i+1]) == 'L':
+				flush()
+			// 英字と数字の境界で区切る（例: abc123→["abc","123"]）。
+			case cc == 'L' && prev == 'D', cc == 'D' && prev == 'L':
 				flush()
 			}
-			cur = append(cur, c)
-		default:
-			flush()
 		}
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		cur = append(cur, c)
+		prev = cc
 	}
 	flush()
 	return tokens
