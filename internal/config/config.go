@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 
 	"github.com/BurntSushi/toml"
 	"github.com/baneido/jp-pii-detecter/internal/rule"
@@ -145,7 +146,7 @@ func (c *Config) SetHighRecall(enabled bool) {
 		return
 	}
 	for _, id := range rule.HighRecallRuleIDs() {
-		if !containsID(c.Rules.Disabled, id) {
+		if !slices.Contains(c.Rules.Disabled, id) {
 			c.Rules.Disabled = append(c.Rules.Disabled, id)
 		}
 	}
@@ -163,12 +164,3 @@ func (c *Config) PathAllowed(relPath string) bool {
 
 // AllowRegexes はコンパイル済みのマッチ除外正規表現を返す。
 func (c *Config) AllowRegexes() []*regexp.Regexp { return c.allowRes }
-
-func containsID(ids []string, want string) bool {
-	for _, id := range ids {
-		if id == want {
-			return true
-		}
-	}
-	return false
-}
