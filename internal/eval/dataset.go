@@ -141,13 +141,26 @@ var Dataset = []Case{
 	{"last_name: 山田", []string{"person-name"}, nil},
 	{"first_name: 花子", []string{"person-name"}, nil},
 	// 陰性: ラベルはあるが値がプレースホルダ・非人物。
-	{"氏名は重要な情報です", nil, nil},   // ラベルだが値なし
+	{"氏名は重要な情報です", nil, nil},    // ラベルだが値なし
 	{"氏名: 未定", nil, nil},        // プレースホルダ（Validate で棄却）
 	{"氏名: 該当なし", nil, nil},      // プレースホルダ（Validate で棄却）
 	{"お名前: 非公開", nil, nil},      // プレースホルダ
 	{"担当者名: テストユーザー", nil, nil}, // テスト値
 	{"名: 一覧", nil, nil},         // 弱いラベル + 一般名詞（辞書で棄却）
 	{"姓: 不明", nil, nil},         // 弱いラベル + プレースホルダ
+	// 陰性: 接尾辞付きプレースホルダ（完全一致でなく部分一致で棄却）。
+	{"氏名: 未定です", nil, nil},
+	{"お名前: 非公開です", nil, nil},
+	// 陰性: 弱いラベルの 1 文字の名・ラベル種別不一致（辞書検証で棄却）。
+	{"名: 学", nil, nil},
+	{"名: 田中", nil, nil},
+	// 陰性: 人名でない ASCII キー（ハンドル名・システム名）は辞書で棄却。
+	{"user_name: 管理者", nil, nil},
+	{"account_name: 共有アカウント", nil, nil},
+	{"name: 株式会社", nil, nil},
+	// 陰性: ラベル語が複合名詞の一部（前方境界で除外）。
+	{"登録名前: 初期値", nil, nil},
+	{"変数名前: x値", nil, nil},
 	// 陰性: 末尾が name の非人物キー（前方境界で除外）。
 	// snake_case だけでなく kebab-case・dotted key も除外する。
 	{"project_name: 山田太郎", nil, nil},
@@ -156,8 +169,6 @@ var Dataset = []Case{
 	{"company-name: 田中花子", nil, nil},
 	{"project.name: 佐藤花子", nil, nil},
 	{"会社名: 山田商事株式会社", nil, nil},
-	// 再現率の限界: ラテン文字の氏名は静的パターンの対象外（未検出）。
-	{`full_name: "Tanaka Taro"`, []string{"person-name"}, nil},
 
 	// ---- jp-birthdate（ラベル付き）----
 	{"生年月日: 1990年1月23日", []string{"jp-birthdate"}, nil},

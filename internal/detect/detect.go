@@ -230,6 +230,11 @@ func (d *Detector) ScanLine(file string, lineNo int, line string) []Finding {
 				continue
 			}
 		}
+		// リテラルプレフィルタ: ラベル語を 1 つも含まない行は、このルールの
+		// 正規表現走査をまるごとスキップする（氏名ルールのホットパス最適化）。
+		if len(r.PrefilterLiterals) > 0 && !containsAnyLiteral(norm, r.PrefilterLiterals) {
+			continue
+		}
 		ctxComputed := false
 		var ctxKeywords []string
 		ctx := func() []string {
@@ -350,6 +355,17 @@ func (d *Detector) ScanLine(file string, lineNo int, line string) []Finding {
 
 func ignoredLine(line string) bool {
 	return strings.Contains(line, IgnoreMarker) || strings.Contains(line, AllowMarker)
+}
+
+// containsAnyLiteral は haystack に literals のいずれかが含まれるかを返す
+// （リテラルプレフィルタ用。OR 条件）。
+func containsAnyLiteral(haystack string, literals []string) bool {
+	for _, lit := range literals {
+		if strings.Contains(haystack, lit) {
+			return true
+		}
+	}
+	return false
 }
 
 // classifyLine は Prefilter 判定に使う文字種の有無を 1 パスで調べる。

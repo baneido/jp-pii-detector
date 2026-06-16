@@ -396,10 +396,72 @@ func TestPersonNameWeakFieldsDictGated(t *testing.T) {
 		// 辞書に載らない一般名詞は弱いラベルでは棄却する。
 		{"名 + 一般名詞", "名: 一覧", nil},
 		{"last_name + 一般名詞", "last_name: 合計", nil},
+		// ラベル種別を意識した検証: 名フィールドに姓だけが入る値は棄却する。
+		{"名 + 姓のみ", "名: 田中", nil},
+		{"first_name + 姓のみ", "first_name: 山田", nil},
+		// 1 文字の単独要素（日常語と衝突しやすい）は棄却する。
+		{"名 + 1文字", "名: 学", nil},
+		{"first_name + 1文字", "first_name: 実", nil},
+		// 「姓 + 名」に分割できる完全氏名はラベル種別を問わず許可する。
+		{"名フィールドに姓名", "名: 山田太郎", []string{"person-name"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestPersonNameAmbiguousASCIIKeysDictGated は user_name/account_name/contact_name/
+// 裸 name（ハンドル名・キーになりうる）を辞書照合で絞ることを確認する（レビュー #1）。
+func TestPersonNameAmbiguousASCIIKeysDictGated(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		// 人名らしくない値は棄却。
+		{"user_name + 管理者", "user_name: 管理者", nil},
+		{"account_name + システム名", "account_name: 共有アカウント", nil},
+		{"contact_name + 窓口", "contact_name: 問い合わせ窓口", nil},
+		{"name + 会社名", "name: 株式会社", nil},
+		// 人名らしい値は検出。
+		{"user_name + 姓名", "user_name: 山田太郎", []string{"person-name"}},
+		{"name + 姓名", "name: 田中太郎", []string{"person-name"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestPersonNameJPLabelBoundaryBlocksCompound は強い日本語ラベルが複合名詞の
+// 一部（登録名前・変数名前 等）では発火しないことを確認する（レビュー #1）。
+func TestPersonNameJPLabelBoundaryBlocksCompound(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	for _, line := range []string{
+		"登録名前: 初期値",
+		"変数名前: x値",
+		"項目名前: テスト",
+	} {
+		t.Run(line, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, line))
+		})
+	}
+}
+
+// TestPersonNamePlaceholderSuffix は接尾辞付きプレースホルダ（未定です 等）も
+// 棄却することを確認する（レビュー #2）。
+func TestPersonNamePlaceholderSuffix(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	for _, line := range []string{
+		"氏名: 未定です",
+		"お名前: 非公開です",
+		"氏名: 該当なしでした",
+	} {
+		t.Run(line, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, line))
 		})
 	}
 }
@@ -476,8 +538,13 @@ high_recall = true
 		// 姓名辞書に載る人名は敬称・担当ラベルで検出する。
 		{"敬称 + 姓", "山田様より連絡あり", []string{"person-name-high-recall"}},
 		{"担当 + 姓名", "担当: 山田太郎", []string{"person-name-high-recall"}},
-		// 組織名 + 敬称・部署名は姓名辞書で棄却する。
+		// 敬称は人物を強く示すため、辞書未収録の実在人名も取りこぼさない（レビュー #5）。
+		{"敬称 + 辞書外の姓", "桐谷太郎様より連絡", []string{"person-name-high-recall"}},
+		{"敬称 + 1文字名", "佐藤健様", []string{"person-name-high-recall"}},
+		// 組織名 + 敬称は組織語尾で棄却する。
 		{"組織 + 敬称", "田中商事様より連絡あり", nil},
+		{"株式会社 + 敬称", "山田工業株式会社様", nil},
+		// 担当ラベル（敬称なし）は姓名辞書で組織・部署を棄却する。
 		{"部署 + 担当", "担当: 営業部", nil},
 	}
 	for _, tt := range tests {

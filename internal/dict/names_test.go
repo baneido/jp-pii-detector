@@ -1,6 +1,57 @@
 package dict
 
-import "testing"
+import (
+	"iter"
+	"strings"
+	"testing"
+)
+
+func mustRead(name string) string {
+	data, err := namesFS.ReadFile(name)
+	if err != nil {
+		panic(err)
+	}
+	return string(data)
+}
+
+// splitLines は loadNameSet と同じ規則（# 行・空行を除く）で有効な行を列挙する。
+func splitLines(raw string) iter.Seq[string] {
+	return func(yield func(string) bool) {
+		for line := range strings.SplitSeq(raw, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if !yield(line) {
+				return
+			}
+		}
+	}
+}
+
+// TestNameDictIntegrity は姓名辞書の整合性を保証する（ファイル内重複・
+// 姓名の相互重複がないこと）。macOS の BSD comm/sort/uniq は CJK で誤検出
+// するため、シェルではなく Go で確実に検査する。
+func TestNameDictIntegrity(t *testing.T) {
+	dupCheck := func(name, raw string) {
+		// map は重複を吸収するため、生データを再走査して重複行を検出する。
+		seen := map[string]bool{}
+		for line := range splitLines(raw) {
+			if seen[line] {
+				t.Errorf("%s に重複エントリ: %q", name, line)
+			}
+			seen[line] = true
+		}
+	}
+	dupCheck("surnames.txt", mustRead("surnames.txt"))
+	dupCheck("given_names.txt", mustRead("given_names.txt"))
+
+	for s := range surnames {
+		if givenNames[s] {
+			t.Errorf("%q が姓・名の両方に収録されている（どちらかに統一すること）", s)
+		}
+	}
+}
 
 func TestIsSurnameAndGivenName(t *testing.T) {
 	if !IsSurname("山田") {

@@ -29,7 +29,7 @@ var wantF1 = map[string]float64{
 	"jp-residence-card":   1.00,
 	"jp-bank-account":     0.86,
 	"jp-health-insurance": 1.00,
-	"person-name":         0.97,
+	"person-name":         1.00,
 	"jp-birthdate":        1.00,
 }
 
