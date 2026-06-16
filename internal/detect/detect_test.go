@@ -360,6 +360,200 @@ high_recall = true
 	assertRules(t, d.ScanLine("f.txt", 1, "担当: 山田太郎"), "person-name-high-recall")
 }
 
+func TestPersonNameLabeledExpansion(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"お名前 全角コロン", "お名前：鈴木花子", []string{"person-name"}},
+		{"患者名", "患者名: 佐藤 一郎", []string{"person-name"}},
+		{"顧客名", "顧客名: 田中花子", []string{"person-name"}},
+		{"担当者名", "担当者名: 伊藤 美咲", []string{"person-name"}},
+		{"氏名カナ サフィックス", "氏名カナ: ヤマダ タロウ", []string{"person-name"}},
+		{"ASCII customer_name", "customer_name: 佐藤花子", []string{"person-name"}},
+		{"ASCII full_name 日本語値", "full_name: 山田太郎", []string{"person-name"}},
+		{"JSON 風キー引用符", `{"customer_name": "佐藤花子"}`, []string{"person-name"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+func TestPersonNameWeakFieldsDictGated(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		// 姓名辞書に載る値は検出する。
+		{"姓", "姓: 高橋", []string{"person-name"}},
+		{"名", "名: 健太", []string{"person-name"}},
+		{"last_name", "last_name: 山田", []string{"person-name"}},
+		{"first_name", "first_name: 花子", []string{"person-name"}},
+		// 辞書に載らない一般名詞は弱いラベルでは棄却する。
+		{"名 + 一般名詞", "名: 一覧", nil},
+		{"last_name + 一般名詞", "last_name: 合計", nil},
+		// ラベル種別を意識した検証: 名フィールドに姓だけが入る値は棄却する。
+		{"名 + 姓のみ", "名: 田中", nil},
+		{"first_name + 姓のみ", "first_name: 山田", nil},
+		// 1 文字の単独要素（日常語と衝突しやすい）は棄却する。
+		{"名 + 1文字", "名: 学", nil},
+		{"first_name + 1文字", "first_name: 実", nil},
+		// 「姓 + 名」に分割できる完全氏名はラベル種別を問わず許可する。
+		{"名フィールドに姓名", "名: 山田太郎", []string{"person-name"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestPersonNameAmbiguousASCIIKeysDictGated は user_name/account_name/contact_name/
+// 裸 name（ハンドル名・キーになりうる）を辞書照合で絞ることを確認する（レビュー #1）。
+func TestPersonNameAmbiguousASCIIKeysDictGated(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		// 人名らしくない値は棄却。
+		{"user_name + 管理者", "user_name: 管理者", nil},
+		{"account_name + システム名", "account_name: 共有アカウント", nil},
+		{"contact_name + 窓口", "contact_name: 問い合わせ窓口", nil},
+		{"name + 会社名", "name: 株式会社", nil},
+		// 人名らしい値は検出。
+		{"user_name + 姓名", "user_name: 山田太郎", []string{"person-name"}},
+		{"name + 姓名", "name: 田中太郎", []string{"person-name"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestPersonNameJPLabelBoundaryBlocksCompound は強い日本語ラベルが複合名詞の
+// 一部（登録名前・変数名前 等）では発火しないことを確認する（レビュー #1）。
+func TestPersonNameJPLabelBoundaryBlocksCompound(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	for _, line := range []string{
+		"登録名前: 初期値",
+		"変数名前: x値",
+		"項目名前: テスト",
+	} {
+		t.Run(line, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, line))
+		})
+	}
+}
+
+// TestPersonNamePlaceholderSuffix は接尾辞付きプレースホルダ（未定です 等）も
+// 棄却することを確認する（レビュー #2）。
+func TestPersonNamePlaceholderSuffix(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	for _, line := range []string{
+		"氏名: 未定です",
+		"お名前: 非公開です",
+		"氏名: 該当なしでした",
+	} {
+		t.Run(line, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, line))
+		})
+	}
+}
+
+func TestPersonNamePlaceholderRejected(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	for _, line := range []string{
+		"氏名: 未定",
+		"氏名: 該当なし",
+		"お名前: 非公開",
+		"担当者名: テストユーザー",
+		"customer_name: サンプル太郎",
+	} {
+		t.Run(line, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, line))
+		})
+	}
+}
+
+func TestPersonNameNonPersonKeysExcluded(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	// 末尾が name の非人物 ASCII キーは前方境界で除外する。snake_case だけでなく
+	// kebab-case（project-name）・dotted key（project.name）も裸の name ラベルの
+	// 前方境界で除外する。会社名・品名・件名は日本語の非人物キーで、単一ラベル 名
+	// の前方境界で除外する。
+	for _, line := range []string{
+		"project_name: 山田太郎",
+		"company_name: 田中花子",
+		"service_name: 鈴木システム",
+		"package_name: 佐藤モジュール",
+		"project-name: 山田太郎",
+		"company-name: 田中花子",
+		"service-name: 鈴木一郎",
+		"project.name: 佐藤花子",
+		"app.name: 高橋健太",
+		"会社名: 山田商事株式会社",
+		"品名: りんご",
+		"件名: 重要なお知らせ",
+	} {
+		t.Run(line, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, line))
+		})
+	}
+}
+
+func TestPersonNameBareNameLabelDetected(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	// 裸の name ラベルは行頭・引用符・区切り直後など、識別子の一部でない
+	// 位置でのみ人名として検出する（kebab/dotted の除外と両立させる回帰ガード）。
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"行頭 name", "name: 田中太郎", []string{"person-name"}},
+		{"JSON 風 name キー", `{"name": "佐藤花子"}`, []string{"person-name"}},
+		{"カンマ直後 name", "id,name: 鈴木一郎", []string{"person-name"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+func TestPersonNameHighRecallDictGated(t *testing.T) {
+	d := newDetector(t, `
+[rules]
+high_recall = true
+`)
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		// 姓名辞書に載る人名は敬称・担当ラベルで検出する。
+		{"敬称 + 姓", "山田様より連絡あり", []string{"person-name-high-recall"}},
+		{"担当 + 姓名", "担当: 山田太郎", []string{"person-name-high-recall"}},
+		// 敬称は人物を強く示すため、辞書未収録の実在人名も取りこぼさない（レビュー #5）。
+		{"敬称 + 辞書外の姓", "桐谷太郎様より連絡", []string{"person-name-high-recall"}},
+		{"敬称 + 1文字名", "佐藤健様", []string{"person-name-high-recall"}},
+		// 組織名 + 敬称は組織語尾で棄却する。
+		{"組織 + 敬称", "田中商事様より連絡あり", nil},
+		{"株式会社 + 敬称", "山田工業株式会社様", nil},
+		// 担当ラベル（敬称なし）は姓名辞書で組織・部署を棄却する。
+		{"部署 + 担当", "担当: 営業部", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
 func TestAllowlist(t *testing.T) {
 	d := newDetector(t, `
 [allowlist]

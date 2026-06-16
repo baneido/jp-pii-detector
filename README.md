@@ -1,6 +1,6 @@
 # jp-pii-detecter
 
-![PII detection F1](https://img.shields.io/badge/PII検出_F1（評価データセット）-0.96-brightgreen)
+![PII detection F1](https://img.shields.io/badge/PII検出_F1（評価データセット）-0.98-brightgreen)
 
 日本特化の個人情報（PII）静的検出器。リポジトリに混入したマイナンバー・電話番号・住所などを
 コミット前（git hook）や CI/CD（GitHub Actions）で検出します。
@@ -36,7 +36,7 @@
 | 銀行口座番号 | `口座番号: 1234567` | △ | ![F1 0.86](https://img.shields.io/badge/F1-0.86-green) | 7 桁 + 周辺の語が必要 |
 | 健康保険 保険者番号等 | `保険者番号: 12345678` | △ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 8 桁 + 周辺の語が必要 |
 | 生年月日 | `生年月日: 1990年1月23日` | △ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | ラベル付き。西暦・和暦に対応 |
-| 氏名 | `氏名: 山田 太郎` | △ | ![F1 0.75](https://img.shields.io/badge/F1-0.75-yellowgreen) | ラベル付き。**既定では非表示**（後述） |
+| 氏名 | `氏名: 山田 太郎` | △ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | ラベル付き（`氏名:`/`お名前:`/`customer_name:` 等）+ プレースホルダ・非人物キー除外。`姓:`/`名:` 等の弱いラベルは姓名辞書で検証。**既定では非表示**（後述） |
 
 > **既定の報告範囲**: 信頼度 `medium` 以上を報告します（`min_confidence` で変更可）。
 > 氏名のような誤検出が出やすい項目は `low` 扱いで、既定では報告されません。

@@ -45,6 +45,105 @@ const (
 	digitRuleRequireContextWindow = 40
 )
 
+// 氏名ルールで共用する部分パターン。正規化済みの行を前提とする
+// （全角コロン `：`・全角イコール `＝`・全角スペースは正規化で半角になる）。
+var (
+	// personNameLabelJP は値の前に来る氏名系の日本語ラベル（語そのものが人物を
+	// 表す強いラベル）。氏名漢字 / 氏名カナ / お名前カナ 等は末尾サフィックスで吸収する。
+	personNameLabelJP = `(?:氏名|お名前|ご氏名|名前|姓名|フリガナ|ふりがな|フルネーム|` +
+		`患者名|契約者名|利用者名|顧客名|会員名|申込者名|請求先名|受取人|担当者名)(?:漢字|カナ|かな)?`
+	// personNameLabelASCIIStrong は語そのものが「人」を表す ASCII キー。
+	// 辞書照合なしで検出する（収録外の人名も拾う）。user_name / account_name /
+	// contact_name はハンドル名・システム名でありうるため強ラベルには入れず、
+	// 辞書照合つきの弱ラベル側で扱う。
+	personNameLabelASCIIStrong = `(?:full_?name|customer_?name|patient_?name|applicant_?name)`
+	// personNameBoundary は強・弱ラベル共通の前方境界。識別子連結文字
+	// （英数字・_）に加えて漢字・かなも禁止し、登録名前 / 会社名 / 変数名前 のように
+	// ラベル語が複合名詞の一部になっているケースを除外する。
+	personNameBoundary = `(?:^|[^` + kanji + hiragana + katakana + `0-9A-Za-z_])`
+	// personNameBareNameBoundary は裸の name ラベル専用の前方境界。上記に加えて
+	// kebab-case の `-` と dotted key の `.` も禁止し、project-name / company-name /
+	// project.name など末尾が name の非人物キーを誤検出しないようにする。
+	personNameBareNameBoundary = `(?:^|[^-.` + kanji + hiragana + katakana + `0-9A-Za-z_])`
+	// personNameSep はラベルと値の区切り。キー側の閉じ引用符（"name":）と
+	// 値側の開き引用符・括弧（: "山田" / ：「山田」）の両方を許容する。
+	personNameSep = `["']?\s*[:=]\s*["'「『（(]?\s*`
+	// personNameValue は氏名の値（漢字・かな・カナ列。任意で半角スペース
+	// 区切りの 2 語）。強いラベル用に 2 文字以上を要求する。
+	// 既知の軽微な限界: `氏名: 山田 様` のように値の後に敬称が続くと、敬称まで
+	// マスク対象に含まれうる（検出の成否・評価には影響しない表示上の過剰取り込み）。
+	personNameValue = `[` + kanji + hiragana + katakana + `]{2,12}` +
+		`(?:[ ][` + kanji + hiragana + katakana + `]{1,12})?`
+	// personNameValueShort は弱いラベル（姓・名の単一フィールド）用。1 文字も
+	// 捕捉し、長さ・人名らしさの最終判断は validSurnameField 等の検証器に委ねる。
+	personNameValueShort = `[` + kanji + hiragana + katakana + `]{1,12}` +
+		`(?:[ ][` + kanji + hiragana + katakana + `]{1,12})?`
+)
+
+// personNamePlaceholders は氏名の値として現れるダミー語（人名ではない）。
+// 値の正規表現が末尾の仮名を貪欲に取り込む（未定 → 未定です）ため、完全一致では
+// なく部分一致（strings.Contains）で棄却する。
+var personNamePlaceholders = []string{
+	"未定", "不明", "該当なし", "該当無し", "なし", "無し", "非公開", "匿名",
+	"名無し", "未設定", "未記入", "記入例", "空欄", "テスト", "サンプル", "ダミー",
+}
+
+// notPlaceholderName は氏名候補 v がプレースホルダ（未定・テスト等）を含まない
+// ことを返す。氏名ルールの Validate に使い、ラベルはあるが値がダミーの行
+// （氏名: 未定 / 氏名: 未定です など）を棄却する。
+func notPlaceholderName(v string) bool {
+	v = strings.TrimSpace(v)
+	for _, s := range personNamePlaceholders {
+		if strings.Contains(v, s) {
+			return false
+		}
+	}
+	return true
+}
+
+// personNameOrgSuffixes は組織・団体名の語尾。高再現率の敬称パターンで
+// 「田中商事様」「○○株式会社様」のような組織名を棄却するために使う。
+// 単漢字の語尾（部・課・店・社 等）は姓（阿部・服部 等）と衝突するため含めない。
+var personNameOrgSuffixes = []string{
+	"株式会社", "有限会社", "合同会社", "合資会社", "会社", "商事", "商店", "銀行",
+	"信用金庫", "工業", "産業", "製作所", "事務所", "病院", "医院", "大学", "学校",
+	"学園", "学院", "協会", "財団", "法人", "組合", "支店", "本店", "支社", "本社",
+}
+
+// notOrgName は氏名候補 v が組織名の語尾で終わらないことを返す。敬称（様/さん）は
+// 人物を強く示すため、辞書照合（allowlist）ではなく組織語尾の除外（denylist）で
+// 偽陽性を抑え、辞書未収録の実在人名を巻き添えで落とさないようにする。
+func notOrgName(v string) bool {
+	v = strings.TrimSpace(v)
+	for _, s := range personNameOrgSuffixes {
+		if strings.HasSuffix(v, s) {
+			return false
+		}
+	}
+	return true
+}
+
+// 弱いラベル（姓・名・last_name 等）の値検証。1 文字の単独要素は日常語と
+// 衝突しやすいため、単独要素は 2 文字以上かつラベル種別（姓/名）に一致する
+// 場合のみ許可する。「姓 + 名」に分割できる完全な氏名はラベル種別を問わず許可する。
+func validSurnameField(v string) bool { return validNameField(v, true, false) }
+func validGivenField(v string) bool   { return validNameField(v, false, true) }
+
+// validFullNameField は姓・名のいずれか、または姓+名に分割できる値を許可する
+// （name / user_name など姓名どちらが入るか不定のフィールド用）。
+func validFullNameField(v string) bool { return validNameField(v, true, true) }
+
+func validNameField(v string, allowSurname, allowGiven bool) bool {
+	v = strings.TrimSpace(v)
+	if dict.SplitsAsFullName(v) {
+		return true
+	}
+	if len([]rune(v)) < 2 {
+		return false
+	}
+	return (allowSurname && dict.IsSurname(v)) || (allowGiven && dict.IsGivenName(v))
+}
+
 // digitRuleNegativeContext は桁ベースのルールを棄却する近傍語
 // （金額・数量・連番 ID など PII でない数字列の文脈）。
 //
@@ -237,26 +336,84 @@ func Builtin() []Rule {
 			ID:          "person-name",
 			Description: "氏名（ラベル付き）",
 			Prefilter:   PrefilterCJK,
+			// ラベル語を 1 つも含まない行（日本語コメント等）は正規表現走査を
+			// まるごとスキップする（ホットパス最適化）。
+			PrefilterLiterals: []string{
+				"名", "姓", "苗字", "フリガナ", "ふりがな", "フルネーム", "受取人", "name",
+			},
+			// プレースホルダ（未定・該当なし・テスト等）の値はすべてのパターンで
+			// 棄却する。非人物キー（project_name 等）はラベルの前方境界で除外する。
+			Validate: notPlaceholderName,
 			Patterns: []Pattern{
+				// 強いラベル: 氏名系の日本語ラベルと、語そのものが「人」を表す
+				// 複合 ASCII キー（full_name / customer_name 等）。値が人名らしいかは
+				// 問わず（収録外の人名も拾うため）辞書照合はしない。前方境界
+				// personNameBoundary で漢字・かな直後（登録名前: 等）を除外する。
+				// JSON/YAML のキー引用符（"氏名":）と値の引用符・括弧にも対応。
 				{Re: regexp.MustCompile(
-					`(?:氏名|名前|姓名|フリガナ|ふりがな)\s*[:=]\s*` +
-						`([` + kanji + hiragana + katakana + `]{2,12}(?:[ ][` + kanji + hiragana + katakana + `]{1,12})?)`,
+					personNameBoundary +
+						`(?:` + personNameLabelJP + `|` + personNameLabelASCIIStrong + `)` +
+						personNameSep +
+						`(` + personNameValue + `)`,
 				), Base: Low},
+				// 弱いラベル: 姓側（姓・名字・苗字・last_name）。単独要素は 2 文字以上の
+				// 姓、または姓+名に分割できる氏名のみ許可する（validSurnameField）。
+				{Re: regexp.MustCompile(
+					personNameBoundary +
+						`(?:姓|名字|苗字|last_?name)` +
+						personNameSep +
+						`(` + personNameValueShort + `)`,
+				), Base: Low, Validate: validSurnameField},
+				// 弱いラベル: 名側（名・first_name）。単独要素は 2 文字以上の名、
+				// または姓+名に分割できる氏名のみ許可する（validGivenField）。
+				// 1 文字名（学・実 等）と姓（名: 田中）は棄却される。
+				{Re: regexp.MustCompile(
+					personNameBoundary +
+						`(?:名|first_?name)` +
+						personNameSep +
+						`(` + personNameValueShort + `)`,
+				), Base: Low, Validate: validGivenField},
+				// 弱いラベル: 姓名どちらが入るか不定の ASCII キー
+				// （user_name / account_name / contact_name）。ハンドル名・システム名
+				// （管理者・共有アカウント 等）を姓名辞書で棄却する。
+				{Re: regexp.MustCompile(
+					personNameBoundary +
+						`(?:user_?name|account_?name|contact_?name)` +
+						personNameSep +
+						`(` + personNameValueShort + `)`,
+				), Base: Low, Validate: validFullNameField},
+				// 裸の name ラベル。kebab-case / dotted key（project-name /
+				// project.name 等）の末尾 name を誤検出しないよう前方境界で `-` `.`
+				// も禁止し、値は姓名辞書で検証する（name: 株式会社 等を棄却）。
+				{Re: regexp.MustCompile(
+					personNameBareNameBoundary +
+						`name` +
+						personNameSep +
+						`(` + personNameValueShort + `)`,
+				), Base: Low, Validate: validFullNameField},
 			},
 		},
 		{
-			ID:          "person-name-high-recall",
-			Description: "氏名（敬称・担当者アンカー付き・高再現率）",
-			Prefilter:   PrefilterCJK,
+			ID:                "person-name-high-recall",
+			Description:       "氏名（敬称・担当者アンカー付き・高再現率）",
+			Prefilter:         PrefilterCJK,
+			PrefilterLiterals: []string{"担当", "宛名", "連絡先", "様", "さん", "氏", "殿"},
+			Validate:          notPlaceholderName,
 			Patterns: []Pattern{
+				// 担当者・宛名・連絡先ラベル。敬称のような強い人物シグナルが無いため、
+				// 組織名・部署名（営業部 等）の誤検出を姓名辞書（allowlist）で抑える。
+				// 収録外の実在人名は取りこぼす（コンパクト辞書による再現率の上限）。
 				{Re: regexp.MustCompile(
-					`(?:担当|担当者|宛名|連絡先)\s*[:=]\s*` +
+					`(?:担当|担当者|宛名|連絡先)` + personNameSep +
 						`([` + kanji + `]{2,8}(?:[ ][` + kanji + `]{1,8})?)`,
-				), Base: Medium},
+				), Base: Medium, Validate: dict.IsPersonName},
+				// 敬称アンカー（様/さん/氏/殿）。敬称は人物を強く示すため、辞書 allowlist
+				// ではなく組織語尾の denylist（notOrgName）で「田中商事様」等を棄却する。
+				// これにより辞書未収録の実在人名（桐谷太郎様 等）を巻き添えで落とさない。
 				{Re: regexp.MustCompile(
 					`(?:^|[^` + kanji + hiragana + katakana + `])` +
 						`([` + kanji + `]{2,8})(?:様|さん|氏|殿)`,
-				), Base: Medium},
+				), Base: Medium, Validate: notOrgName},
 			},
 		},
 		{
