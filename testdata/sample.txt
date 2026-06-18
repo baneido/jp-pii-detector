@@ -4,8 +4,8 @@
 個人番号：１２３４５６７８９０１８
 TEL: 090-0000-0000
 電話番号：０９０ー００００ー００００
-代表: 03-1234-5678
-international: +81-90-1234-5678
+代表: 03-0000-0000
+international: +81-90-0000-0000
 mail: taro.yamada@gmail.invalid-not-detected
 contact: hanako.suzuki@dummymail.co.jp
 〒530-0001 大阪府大阪市北区梅田3丁目1番3号
@@ -23,4 +23,4 @@ JCB: 3530111333300000
 user@example.com
 version 150-0043
 timestamp: 20260611123456789
-allowed: 090-9999-8888 # pii-allow ダミー
+allowed: 080-0000-0000 # pii-allow ダミー

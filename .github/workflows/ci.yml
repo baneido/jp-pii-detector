@@ -22,6 +22,9 @@ jobs:
       # 評価データセット/テストフィクスチャのローカルパス。
       # 取得できなければ eval 系・PII フィクスチャ依存テストは t.Skip される。
       JP_PII_FIXTURES: ${{ runner.temp }}/pii-fixtures.json
+      # 信頼できる実行か（push か同一リポジトリの PR）。fork からの PR では false。
+      # fork PR には実在しうる PII を含むフィクスチャを取得させない（OIDC トークン悪用の防止）。
+      TRUSTED: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -32,21 +35,31 @@ jobs:
           go-version-file: go.mod
 
       # 実在しうる PII を含む評価データセット/フィクスチャを GCS から取得する。
-      # リポジトリ変数（vars.JP_PII_FIXTURES_PROVIDER ほか）が設定されたときだけ実行し、
-      # 未設定（fork からの PR など）では取得せず、依存テストを Skip させる。
+      # 取得は「信頼できる実行（push / 同一リポジトリ PR）」かつリポジトリ変数が設定された場合のみ。
+      # fork からの PR では TRUSTED=false のため取得せず、後続の PR 側コードがフィクスチャを読めない。
       # TODO: google-github-actions/* もコミット SHA でピン留めする（他の action と同様）。
       - name: Authenticate to Google Cloud (OIDC / Workload Identity)
-        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
+        if: ${{ env.TRUSTED == 'true' && vars.JP_PII_FIXTURES_PROVIDER != '' }}
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.JP_PII_FIXTURES_PROVIDER }}
           service_account: ${{ vars.JP_PII_FIXTURES_SA }}
       - name: Set up gcloud
-        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
+        if: ${{ env.TRUSTED == 'true' && vars.JP_PII_FIXTURES_PROVIDER != '' }}
         uses: google-github-actions/setup-gcloud@v2
       - name: Download PII fixtures from GCS
-        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
+        if: ${{ env.TRUSTED == 'true' && vars.JP_PII_FIXTURES_PROVIDER != '' }}
         run: gcloud storage cp "gs://${{ vars.JP_PII_FIXTURES_BUCKET }}/pii-fixtures.json" "$JP_PII_FIXTURES"
+
+      # 信頼できる実行ではフィクスチャ取得を必須にし、回帰ガード（精度・バッジ・検出器テスト）が
+      # 取得失敗で黙って Skip されないよう fail-fast する。fork PR では Skip のままでよい。
+      - name: Require fixtures on trusted runs
+        if: ${{ env.TRUSTED == 'true' }}
+        run: |
+          test -f "$JP_PII_FIXTURES" || {
+            echo "::error::PII フィクスチャを取得できませんでした。push / 同一リポジトリ PR では JP_PII_FIXTURES_PROVIDER / _SA / _BUCKET を設定してください。"
+            exit 1
+          }
 
       - run: go vet ./...
       # -race: 並列スキャン（internal/source）のデータ競合の回帰防止
