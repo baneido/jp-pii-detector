@@ -4,17 +4,30 @@ on:
     tags:
       - 'v*'
 
-permissions:
-  contents: write
+# 進行中のリリースを中断しないため cancel-in-progress は無効にする
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+# 既定では権限を与えず、必要なジョブにのみ最小権限を付与する
+permissions: {}
 
 jobs:
   release:
+    name: release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # GitHub Release の作成とアセットのアップロードに必要
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # 認証情報を作業ツリーに残さない（gh は GH_TOKEN を使うため不要）
+          persist-credentials: false
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
+          # リリースの再現性確保とキャッシュポイズニング防止のためキャッシュを無効化
+          cache: false
       - name: Test tagged commit
         run: go test ./...
       - name: Build release assets
