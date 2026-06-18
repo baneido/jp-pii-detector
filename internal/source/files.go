@@ -11,8 +11,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/baneido/jp-pii-detecter/internal/config"
-	"github.com/baneido/jp-pii-detecter/internal/detect"
+	"github.com/baneido/jp-pii-detector/internal/config"
+	"github.com/baneido/jp-pii-detector/internal/detect"
 )
 
 // MaxFileSize を超えるファイルは走査しない。

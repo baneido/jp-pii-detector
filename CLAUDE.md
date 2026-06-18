@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-`jp-pii-detect` is a Japan-specific static PII detector (My Number, phone, address, etc.) — a single Go binary meant to run as a pre-commit hook and in CI (GitHub Actions). The canonical Go module path is `github.com/baneido/jp-pii-detecter` (intentional legacy spelling for repo/module compatibility), while the binary/command name is `jp-pii-detect`.
+`jp-pii-detect` is a Japan-specific static PII detector (My Number, phone, address, etc.) — a single Go binary meant to run as a pre-commit hook and in CI (GitHub Actions). The canonical Go module path is `github.com/baneido/jp-pii-detector`, while the binary/command name is `jp-pii-detect`.
 
 Source comments and docs are in Japanese; match that when editing them.
 

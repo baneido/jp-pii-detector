@@ -1,4 +1,4 @@
-# jp-pii-detecter 自身の設定（dogfooding）。
+# jp-pii-detector 自身の設定（dogfooding）。
 # 検出サンプルを含むファイルを走査から除外する。
 min_confidence = "medium"
 

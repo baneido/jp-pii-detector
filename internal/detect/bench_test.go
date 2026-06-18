@@ -3,7 +3,7 @@ package detect
 import (
 	"testing"
 
-	"github.com/baneido/jp-pii-detecter/internal/config"
+	"github.com/baneido/jp-pii-detector/internal/config"
 )
 
 func benchDetector(b *testing.B) *Detector {

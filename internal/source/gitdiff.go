@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/baneido/jp-pii-detecter/internal/config"
-	"github.com/baneido/jp-pii-detecter/internal/detect"
+	"github.com/baneido/jp-pii-detector/internal/config"
+	"github.com/baneido/jp-pii-detector/internal/detect"
 )
 
 // ScanStaged は git のステージ済み変更の追加行を走査する（pre-commit 用）。

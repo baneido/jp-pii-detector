@@ -7,8 +7,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/baneido/jp-pii-detecter/internal/detect"
-	"github.com/baneido/jp-pii-detecter/internal/rule"
+	"github.com/baneido/jp-pii-detector/internal/detect"
+	"github.com/baneido/jp-pii-detector/internal/rule"
 )
 
 // Mask は検出値を伏せ字にする。長い値は先頭・末尾のみ残す。
@@ -165,7 +165,7 @@ func SARIF(w io.Writer, findings []detect.Finding, rules []rule.Rule, unmask boo
 			"tool": map[string]any{
 				"driver": map[string]any{
 					"name":           "jp-pii-detect",
-					"informationUri": "https://github.com/baneido/jp-pii-detecter",
+					"informationUri": "https://github.com/baneido/jp-pii-detector",
 					"rules":          ruleDefs,
 				},
 			},

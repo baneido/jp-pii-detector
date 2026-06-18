@@ -8,8 +8,8 @@ import (
 	"math"
 	"sort"
 
-	"github.com/baneido/jp-pii-detecter/internal/config"
-	"github.com/baneido/jp-pii-detecter/internal/detect"
+	"github.com/baneido/jp-pii-detector/internal/config"
+	"github.com/baneido/jp-pii-detector/internal/detect"
 )
 
 // Case は 1 行の評価ケース。Want は、その行で検出されるべき

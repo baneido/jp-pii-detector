@@ -5,8 +5,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/baneido/jp-pii-detecter/internal/checksum"
-	"github.com/baneido/jp-pii-detecter/internal/dict"
+	"github.com/baneido/jp-pii-detector/internal/checksum"
+	"github.com/baneido/jp-pii-detector/internal/dict"
 )
 
 // dg は数字エンティティ用の境界ガード付きパターンを生成する。

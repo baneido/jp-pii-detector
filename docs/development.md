@@ -172,6 +172,6 @@ GitHub Action と pre-commit フックはこの Release asset を取得して実
 利用側の環境に Go は不要です。installer は `checksums.txt` で SHA-256 を検証してから
 展開します。Windows 向け asset も POSIX shell から扱えるよう `.tar.gz` に統一しています。
 Go が入っている開発環境向けには
-`go install github.com/baneido/jp-pii-detecter/cmd/jp-pii-detect@<version>` も引き続き使えます。
+`go install github.com/baneido/jp-pii-detector/cmd/jp-pii-detect@<version>` も引き続き使えます。
 
 README・action.yml の例で参照しているバージョン（`rev: v0.1.0` 等）も合わせて更新してください。

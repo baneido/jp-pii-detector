@@ -1,4 +1,4 @@
-module github.com/baneido/jp-pii-detecter
+module github.com/baneido/jp-pii-detector
 
 go 1.26.1
 

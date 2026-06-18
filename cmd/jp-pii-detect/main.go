@@ -8,11 +8,11 @@ import (
 	"os"
 	"runtime/debug"
 
-	"github.com/baneido/jp-pii-detecter/internal/config"
-	"github.com/baneido/jp-pii-detecter/internal/detect"
-	"github.com/baneido/jp-pii-detecter/internal/report"
-	"github.com/baneido/jp-pii-detecter/internal/rule"
-	"github.com/baneido/jp-pii-detecter/internal/source"
+	"github.com/baneido/jp-pii-detector/internal/config"
+	"github.com/baneido/jp-pii-detector/internal/detect"
+	"github.com/baneido/jp-pii-detector/internal/report"
+	"github.com/baneido/jp-pii-detector/internal/rule"
+	"github.com/baneido/jp-pii-detector/internal/source"
 )
 
 var version = "dev" // -ldflags "-X main.version=..." で上書き
