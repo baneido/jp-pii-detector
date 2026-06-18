@@ -15,7 +15,7 @@ Downloads a prebuilt jp-pii-detect binary from GitHub Releases.
 Environment:
   JP_PII_DETECT_VERSION           Release tag to install (default: latest)
   JP_PII_DETECT_INSTALL_DIR       Destination directory (default: $HOME/.local/bin)
-  JP_PII_DETECT_REPO              GitHub repo (default: baneido/jp-pii-detecter)
+  JP_PII_DETECT_REPO              GitHub repo (default: baneido/jp-pii-detector)
   JP_PII_DETECT_RELEASE_BASE_URL  Override release base URL for tests/mirrors
   JP_PII_DETECT_OS                Override detected GOOS (linux/darwin/windows)
   JP_PII_DETECT_ARCH              Override detected GOARCH (amd64/arm64)
@@ -74,7 +74,7 @@ verify_checksum() {
 	fi
 }
 
-repo=${JP_PII_DETECT_REPO:-baneido/jp-pii-detecter}
+repo=${JP_PII_DETECT_REPO:-baneido/jp-pii-detector}
 version=${JP_PII_DETECT_VERSION:-latest}
 install_dir=${JP_PII_DETECT_INSTALL_DIR:-}
 print_url=0

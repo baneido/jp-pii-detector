@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/baneido/jp-pii-detecter/internal/rule"
+	"github.com/baneido/jp-pii-detector/internal/rule"
 )
 
 func TestParse(t *testing.T) {

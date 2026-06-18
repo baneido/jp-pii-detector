@@ -28,9 +28,9 @@ fi
 cache_root=${JP_PII_DETECT_CACHE_DIR:-}
 if [ -z "$cache_root" ]; then
 	if [ -n "${XDG_CACHE_HOME:-}" ]; then
-		cache_root="${XDG_CACHE_HOME}/jp-pii-detecter/pre-commit"
+		cache_root="${XDG_CACHE_HOME}/jp-pii-detector/pre-commit"
 	else
-		cache_root="${HOME:-.}/.cache/jp-pii-detecter/pre-commit"
+		cache_root="${HOME:-.}/.cache/jp-pii-detector/pre-commit"
 	fi
 fi
 

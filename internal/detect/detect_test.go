@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/baneido/jp-pii-detecter/internal/config"
-	"github.com/baneido/jp-pii-detecter/internal/rule"
+	"github.com/baneido/jp-pii-detector/internal/config"
+	"github.com/baneido/jp-pii-detector/internal/rule"
 )
 
 func newDetector(t *testing.T, toml string) *Detector {

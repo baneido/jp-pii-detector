@@ -9,7 +9,7 @@ import (
 	"slices"
 
 	"github.com/BurntSushi/toml"
-	"github.com/baneido/jp-pii-detecter/internal/rule"
+	"github.com/baneido/jp-pii-detector/internal/rule"
 )
 
 // DefaultFileName は探索する設定ファイル名。

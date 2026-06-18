@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/baneido/jp-pii-detecter/internal/detect"
-	"github.com/baneido/jp-pii-detecter/internal/rule"
+	"github.com/baneido/jp-pii-detector/internal/detect"
+	"github.com/baneido/jp-pii-detector/internal/rule"
 )
 
 func sample() []detect.Finding {

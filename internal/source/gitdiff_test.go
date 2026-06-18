@@ -7,8 +7,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/baneido/jp-pii-detecter/internal/config"
-	"github.com/baneido/jp-pii-detecter/internal/detect"
+	"github.com/baneido/jp-pii-detector/internal/config"
+	"github.com/baneido/jp-pii-detector/internal/detect"
 )
 
 func TestParseDiff(t *testing.T) {

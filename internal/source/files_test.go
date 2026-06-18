@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/baneido/jp-pii-detecter/internal/config"
-	"github.com/baneido/jp-pii-detecter/internal/detect"
+	"github.com/baneido/jp-pii-detector/internal/config"
+	"github.com/baneido/jp-pii-detector/internal/detect"
 )
 
 func writeFile(t *testing.T, path string, data []byte) {

@@ -5,9 +5,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/baneido/jp-pii-detecter/internal/config"
-	"github.com/baneido/jp-pii-detecter/internal/normalize"
-	"github.com/baneido/jp-pii-detecter/internal/rule"
+	"github.com/baneido/jp-pii-detector/internal/config"
+	"github.com/baneido/jp-pii-detector/internal/normalize"
+	"github.com/baneido/jp-pii-detector/internal/rule"
 )
 
 // IgnoreMarker を含む行は検出対象から除外される（意図的なダミー値向け）。

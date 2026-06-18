@@ -3,7 +3,7 @@ package detect
 import (
 	"strings"
 
-	"github.com/baneido/jp-pii-detecter/internal/normalize"
+	"github.com/baneido/jp-pii-detector/internal/normalize"
 )
 
 const negativeContextWindowRunes = 20
