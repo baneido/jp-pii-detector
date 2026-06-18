@@ -385,6 +385,8 @@ func TestReleaseWorkflowUpdatesHomebrewTap(t *testing.T) {
 		"github.com/baneido/homebrew-tap.git",
 		"tap/Formula/jp-pii-detect.rb",
 		"scripts/jp-pii-detect.rb.tmpl",
+		// tap の main はレビュー必須のため直接 push せず PR を作る。
+		"gh pr create --repo baneido/homebrew-tap",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("release workflow homebrew job missing %q", want)

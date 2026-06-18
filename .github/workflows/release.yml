@@ -84,9 +84,9 @@ jobs:
         with:
           # tap の push には TAP_TOKEN を使うため checkout の認証情報は残さない
           persist-credentials: false
-      - name: Update baneido/homebrew-tap
+      - name: Open Homebrew formula PR on baneido/homebrew-tap
         env:
-          # baneido/homebrew-tap への push 権限を持つトークン（shipsafe と共用）。
+          # baneido/homebrew-tap への push / PR 作成権限を持つトークン（shipsafe と共用）。
           # 未設定ならスキップする。
           TAP_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
@@ -119,8 +119,23 @@ jobs:
               -e "s|{{SHA256_LINUX_AMD64}}|${linux_amd64}|g" \
               scripts/jp-pii-detect.rb.tmpl > tap/Formula/jp-pii-detect.rb
           cd tap
+          # tap の main は protect-main ルールでレビュー必須のため、直接 push せず PR を作る
+          if [ -z "$(git status --porcelain Formula/jp-pii-detect.rb)" ]; then
+            echo "formula already up to date for ${version}; nothing to do"
+            exit 0
+          fi
+          branch="jp-pii-detect-${version}"
           git config user.name "jp-pii-detect-release-bot"
           git config user.email "contact@baneido.com" # jp-pii-detector:ignore リリース bot の連絡先
+          git checkout -b "$branch"
           git add Formula/jp-pii-detect.rb
-          git commit -m "jp-pii-detect ${version}" || echo "no changes"
-          git push
+          git commit -m "jp-pii-detect ${version}"
+          git push -f origin "$branch"
+          export GH_TOKEN="$TAP_TOKEN"
+          if gh pr view "$branch" --repo baneido/homebrew-tap >/dev/null 2>&1; then
+            echo "PR for ${branch} already exists; branch updated"
+          else
+            gh pr create --repo baneido/homebrew-tap --base main --head "$branch" \
+              --title "jp-pii-detect ${version}" \
+              --body "jp-pii-detect ${version} の formula 自動更新です。リリース: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
+          fi
