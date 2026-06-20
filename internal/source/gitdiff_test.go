@@ -172,6 +172,72 @@ func TestScanStagedSplitLabelAndValue(t *testing.T) {
 	}
 }
 
+// ラベルが既存（未変更）行にあり、値だけを追加したケースを検出できること。
+// 旧 -U0 実装では文脈行が走査対象に入らず、コンテキスト必須ルール
+// （jp-bank-account）が発火しなかった。
+func TestScanDiffContextLabelOnUnchangedLine(t *testing.T) {
+	repo := initTestRepo(t)
+	name := "pii.txt"
+	// base: ラベル行のみをコミット。
+	if err := os.WriteFile(filepath.Join(repo, name), []byte("口座番号:\nメモ\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, "add", ".")
+	git(t, "commit", "-q", "-m", "base")
+	// 値だけをラベルの直後（既存ラベル行は未変更）に追加する。
+	if err := os.WriteFile(filepath.Join(repo, name), []byte("口座番号:\n1234567\nメモ\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, "add", ".")
+
+	cfg := config.Default()
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, err := ScanStaged(d, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("findings = %+v, want 1 件（ラベルは未変更行・値は追加行）", findings)
+	}
+	if f := findings[0]; f.File != name || f.RuleID != "jp-bank-account" || f.Line != 2 {
+		t.Errorf("finding = %+v, want %s:2 jp-bank-account", f, name)
+	}
+}
+
+// 文脈行（未変更行）に既存 PII があり、追加行には PII がない場合は報告しない。
+// 文脈行は近傍コンテキストの補完にだけ使い、既存 PII は新規追加ではないため。
+func TestScanDiffDoesNotReportContextLinePII(t *testing.T) {
+	repo := initTestRepo(t)
+	name := "pii.txt"
+	// base: ラベルと値（既存 PII）をコミット。
+	if err := os.WriteFile(filepath.Join(repo, name), []byte("口座番号: 1234567\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, "add", ".")
+	git(t, "commit", "-q", "-m", "base")
+	// 既存 PII 行の直後に PII でない行を追加する。
+	if err := os.WriteFile(filepath.Join(repo, name), []byte("口座番号: 1234567\n備考なし\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, "add", ".")
+
+	cfg := config.Default()
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, err := ScanStaged(d, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 0 {
+		t.Fatalf("findings = %+v, want 0 件（既存 PII は文脈行・追加行に PII なし）", findings)
+	}
+}
+
 // ScanDiff がコミット間の追加行のみを走査すること。
 func TestScanDiffRange(t *testing.T) {
 	piifixtures.Require(t)

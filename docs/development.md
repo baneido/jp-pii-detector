@@ -28,8 +28,11 @@ $ go build -ldflags "-X main.version=v0.1.0" ./cmd/jp-pii-detect
 $ go test -bench . -benchmem ./internal/normalize/ ./internal/detect/
 ```
 
-純 ASCII 行（ソースコードの大半）は `normalize.Line` のファストパスで
-アロケーションが発生しない（0 allocs/op）ことが回帰テストで保証されています。
+純 ASCII 行（ソースコードの大半）に加え、変換対象（全角英数字・全角スペース・
+ハイフン類・数字隣接の長音記号）を含まない通常の日本語行も、`normalize.Line` の
+ファストパスでアロケーションが発生しない（0 allocs/op）ことが回帰テストで
+保証されています。変換が必要な行でも `[]rune` は 1 本だけ確保します
+（旧実装は漢字・かなを含むほぼ全ての日本語行が遅いパスへ入り 2 本確保していました）。
 
 ## 検出精度の計測
 
@@ -98,7 +101,10 @@ internal/
 
 1. **source** が走査対象を列挙する。フルスキャンはファイルツリーを walk し、
    バイナリ（先頭 8KB に NUL）、5MB 超、`node_modules` 等の依存ディレクトリを除外。
-   git モードは `git diff -U0` の追加行のみを対象にする。
+   git モードは `git diff -U3` で文脈行付きの差分を取得し、各 hunk 全体を走査する。
+   検出値が**追加行に乗っているもののみ**を報告し、文脈行（未変更行）上の既存 PII は
+   報告しない。これにより、ラベルが既存行にあり値だけを追加したケースでも
+   コンテキスト必須ルールが発火する。
 2. **detect.ScanLine** が 1 行ごとに処理する。
    - **normalize.Line** で全角英数字、ハイフン類、数字隣接の長音記号を半角化する。
      変換はルーン単位の 1:1 に限定しているため、正規化後の位置がそのまま元テキストの
@@ -177,16 +183,29 @@ IANA TLD 一覧は公式の `https://data.iana.org/TLD/tlds-alpha-by-domain.txt`
 [`internal/dict/tlds-alpha-by-domain.txt`](../internal/dict/tlds-alpha-by-domain.txt) に保存している。
 更新時は同 URL から取得し、`go test ./internal/dict ./internal/detect ./internal/eval` で検証する。
 
-郵便番号プレフィックスは日本郵便の UTF-8 版「住所の郵便番号」全データから上位 3 桁を抽出し、
-[`internal/dict/postal_prefixes.txt`](../internal/dict/postal_prefixes.txt) に保存している。
-更新時は `https://www.post.japanpost.jp/service/search/zipcode/download/utf-zip.html` の
-最新全データを取得し、次のコマンドで再生成してから同じテストで検証する。
+郵便番号は日本郵便の UTF-8 版「住所の郵便番号」全データから 7 桁の実在集合を
+ビットセット化し、[`internal/dict/postal_codes.bitset`](../internal/dict/postal_codes.bitset)
+（10,000,000 ビット = 1,250,000 バイト）に保存して `//go:embed` で取り込む。
+`dict.ValidPostalCode` はこのビットセットで 7 桁完全一致を判定する。
+
+> リポジトリに含まれる `postal_codes.bitset` は小さな**プレースホルダ**で、その間は
+> 上位 3 桁の実在チェック（[`postal_prefixes.txt`](../internal/dict/postal_prefixes.txt)）に
+> フォールバックする。7 桁完全一致を有効にするには、下記コマンドで実データを生成・コミットする。
+
+更新時は `https://www.post.japanpost.jp/zipcode/dl/utf-zip.html` の最新全データ
+（`utf_ken_all.zip`）を取得し、次のコマンドでビットセットとフォールバック用プレフィックスを
+再生成してから `go test ./internal/dict ./internal/detect ./internal/eval` で検証する。
 
 ```console
-$ go run ./internal/dict/gen -input /path/to/utf_ken_all.zip -output internal/dict/postal_prefixes.txt
+$ go run ./internal/dict/gen \
+    -input /path/to/utf_ken_all.zip \
+    -output internal/dict/postal_codes.bitset \
+    -prefixes internal/dict/postal_prefixes.txt
 ```
 
-`-input` には展開済みの UTF-8 版 KEN_ALL CSV も指定できる。
+`-input` には展開済みの UTF-8 版 KEN_ALL CSV も指定できる。`-prefixes` は省略可
+（ビットセットのみ生成）。プレフィックスからビットセットへ切り替えると `jp-postal-code` の
+精度数値が動くため、実データのビットセットをコミットしたら eval / バッジの再生成も行うこと。
 
 新ルールは `jp-pii-detect rules` に自動で表示されます。
 

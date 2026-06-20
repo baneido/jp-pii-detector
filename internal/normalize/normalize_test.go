@@ -54,6 +54,31 @@ func TestLineASCIIFastPathReturnsSameString(t *testing.T) {
 	}
 }
 
+// 変換対象を含まない通常の日本語行もファストパスで割り当てなしに返す
+// （漢字・かな・数字非隣接の長音記号だけの行）。フィクスチャ非依存。
+func TestLineJapaneseNoConversionFastPath(t *testing.T) {
+	for _, in := range []string{
+		"これは普通の日本語の文章です。",
+		"サーバーの設定を確認する", // 数字に隣接しない長音記号は保持
+		"顧客の連絡先を控える",
+	} {
+		if got := Line(in); got != in {
+			t.Errorf("Line(%q) = %q, want unchanged", in, got)
+		}
+		if testing.AllocsPerRun(10, func() { Line(in) }) != 0 {
+			t.Errorf("変換不要な日本語行は割り当てなしで返すべき: %q", in)
+		}
+	}
+}
+
+func BenchmarkLineJapaneseNoConversion(b *testing.B) {
+	line := "顧客の氏名と連絡先をサーバーで管理する設定について"
+	b.ReportAllocs()
+	for b.Loop() {
+		Line(line)
+	}
+}
+
 func BenchmarkLineASCII(b *testing.B) {
 	line := `	if err := json.NewEncoder(w).Encode(resp); err != nil { return err }`
 	b.ReportAllocs()

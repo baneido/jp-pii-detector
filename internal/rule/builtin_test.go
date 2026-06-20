@@ -85,6 +85,47 @@ func TestValidEmail(t *testing.T) {
 	}
 }
 
+// validBirthdate は形式が成立する生年月日のうち、実在する暦日だけを有効とする。
+// 西暦・和暦の双方で、無効な月日（暦上ありえない値）と和暦の元号年範囲外を棄却する。
+func TestValidBirthdate(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		// ---- 有効: 西暦 ----
+		{"西暦 ハイフン", "2023-03-15", true},
+		{"西暦 年月日", "2000年1月1日", true},
+		{"西暦 スラッシュ", "1995/12/31", true},
+		{"閏年の2月29日", "2000-02-29", true},
+		// ---- 無効: 西暦の暦日 ----
+		{"月が99", "2023-99-99", false},
+		{"非閏年の2月29日", "2023-02-29", false},
+		{"100で割れる非閏年(1900)の2月29日", "1900-02-29", false},
+		{"13月", "2023-13-01", false},
+		{"0月", "2023-00-10", false},
+		{"4月31日", "2023-04-31", false},
+		{"0日", "2023-05-00", false},
+		// ---- 有効: 和暦 ----
+		{"平成 元号年", "平成5年4月1日", true},
+		{"令和", "令和3年12月31日", true},
+		{"昭和の最終年(64)", "昭和64年1月1日", true},
+		// ---- 無効: 和暦の元号年範囲外 ----
+		{"昭和65年は存在しない", "昭和65年1月1日", false},
+		{"平成32年は存在しない", "平成32年1月1日", false},
+		{"大正16年は存在しない", "大正16年1月1日", false},
+		// ---- 無効: 和暦でも暦日が不正 ----
+		{"和暦で2月30日", "令和2年2月30日", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := validBirthdate(tt.in); got != tt.want {
+				t.Errorf("validBirthdate(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 // stripSeparators はハイフンと半角スペースのみを除去し、その他の文字
 // （'+' を含む）は保持する。
 func TestStripSeparators(t *testing.T) {

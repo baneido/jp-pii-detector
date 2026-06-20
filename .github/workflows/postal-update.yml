@@ -1,0 +1,117 @@
+name: postal-update
+
+on:
+  schedule:
+    # 毎月 1 日 00:00 UTC（= 09:00 JST、いずれも 1 日）に実行する。
+    # 日本郵便は月次でデータを更新するため、月初に最新を取り込む。
+    - cron: '0 0 1 * *'
+  # 手動実行も許可する（初回投入や臨時更新用）。
+  workflow_dispatch: {}
+
+# 多重実行を避ける（コミット/PR 作成の競合防止）。進行中のランは中断しない。
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+# 既定では権限を与えず、必要なジョブにのみ最小権限を付与する。
+permissions: {}
+
+env:
+  # 日本郵便「住所の郵便番号（1 レコード 1 行、UTF-8）」全国一括 zip。
+  # 配布ページ: https://www.post.japanpost.jp/zipcode/dl/utf-zip.html
+  POSTAL_URL: https://www.post.japanpost.jp/zipcode/dl/utf/zip/utf_ken_all.zip
+  # PR を載せる作業ブランチ（毎回 force-push して 1 本に集約する）。
+  POSTAL_BRANCH: automated/postal-codes
+
+jobs:
+  update:
+    name: update postal bitset
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # 作業ブランチの push に必要
+      pull-requests: write # PR の作成・更新に必要
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # 認証情報を作業ツリーに残さない。push は GITHUB_TOKEN を URL に埋めて行う。
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          # 生成物の再現性のためキャッシュは使わない
+          cache: false
+
+      - name: Download Japan Post KEN_ALL (UTF-8)
+        run: |
+          set -eu
+          # -f: HTTP エラー（404 等）で失敗させる。--retry: 一時的な失敗を再試行。
+          curl -fsSL --retry 3 --retry-delay 5 -o utf_ken_all.zip "$POSTAL_URL"
+          # 取得物が壊れていない zip であることを検証する。
+          unzip -tq utf_ken_all.zip
+
+      - name: Regenerate postal bitset and prefixes
+        run: |
+          set -eu
+          go run ./internal/dict/gen \
+            -input utf_ken_all.zip \
+            -output internal/dict/postal_codes.bitset \
+            -prefixes internal/dict/postal_prefixes.txt
+
+          # サニティチェック 1: ビットセットは 10,000,000 ビット = 1,250,000 バイト固定。
+          size=$(wc -c < internal/dict/postal_codes.bitset)
+          if [ "$size" -ne 1250000 ]; then
+            echo "::error::postal_codes.bitset のサイズが不正: ${size} バイト（期待 1250000）"
+            exit 1
+          fi
+          # サニティチェック 2: 切り詰められた CSV を取り込んでいないか、3 桁プレフィックス数で確認。
+          # 全国の上位 3 桁はおよそ 900 種以上あるため、800 未満は異常とみなす。
+          prefixes=$(grep -c . internal/dict/postal_prefixes.txt)
+          if [ "$prefixes" -lt 800 ]; then
+            echo "::error::プレフィックス数が少なすぎる: ${prefixes}（ダウンロード破損の可能性）"
+            exit 1
+          fi
+          echo "生成完了: bitset ${size} バイト / プレフィックス ${prefixes} 種"
+
+      - name: Verify build, embed, and dogfooding
+        run: |
+          set -eu
+          go vet ./...
+          # フィクスチャ非依存のテスト（dict 含む）で埋め込み・ビルドを検証する。
+          # eval/PII フィクスチャ依存テストは未取得のため t.Skip される。
+          go test ./...
+          go build ./cmd/jp-pii-detect
+          # 生の zip は走査対象に含めないよう削除する（.gitignore 済みだが念のため）。
+          rm -f utf_ken_all.zip
+          ./jp-pii-detect scan --format github .
+
+      - name: Open PR if the data changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          if git diff --quiet internal/dict/postal_codes.bitset internal/dict/postal_prefixes.txt; then
+            echo "郵便番号データに変更なし。PR は作成しない。"
+            exit 0
+          fi
+
+          today=$(date -u +%Y-%m-%d)
+          git config user.name "jp-pii-detect-bot"
+          git config user.email "contact@baneido.com" # jp-pii-detector:ignore bot の連絡先
+          git checkout -b "$POSTAL_BRANCH"
+          git add internal/dict/postal_codes.bitset internal/dict/postal_prefixes.txt
+          git commit -m "chore(dict): 郵便番号データを更新（${today}）"
+          # 同一リポジトリへの push。認証情報は URL に都度埋め、作業ツリーには残さない。
+          git push -f \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "HEAD:${POSTAL_BRANCH}"
+
+          # PR 本文は静的なテンプレート（コミット済み）を使う。シェルの引用と無縁で、
+          # Markdown のコードスパンもそのまま表示される。
+          if gh pr view "$POSTAL_BRANCH" >/dev/null 2>&1; then
+            echo "既存 PR を更新した（${POSTAL_BRANCH}）。"
+          else
+            gh pr create --base main --head "$POSTAL_BRANCH" \
+              --title "chore(dict): 郵便番号データ更新（${today}）" \
+              --body-file .github/postal-pr-body.md
+          fi
