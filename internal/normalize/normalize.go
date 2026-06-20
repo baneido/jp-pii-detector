@@ -76,8 +76,8 @@ func Line(s string) string {
 	if !needsConversion(s) {
 		return s
 	}
-	// \u5909\u63db\u304c\u5fc5\u8981\u306a\u5834\u5408\u306e\u307f []rune \u3092 1 \u56de\u3060\u3051\u78ba\u4fdd\u3057\u3001\u305d\u306e\u5834\u3067\u66f8\u304d\u63db\u3048\u308b\u3002
-	// \u5165\u529b\u7528\u3068\u51fa\u529b\u7528\u306b 2 \u672c\u306e\u30eb\u30fc\u30f3\u5217\u3092\u6301\u305f\u306a\u3044\uff08\u5272\u308a\u5f53\u3066\u3092 2\u21921 \u306b\u524a\u6e1b\uff09\u3002
+	// 変換が必要な場合のみ []rune を 1 回だけ確保し、その場で書き換える。
+	// 入力用と出力用に 2 本のルーン列を持たない（割り当てを 2→1 に削減）。
 	rs := []rune(s)
 	for i, r := range rs {
 		rs[i] = mapRune(r)
