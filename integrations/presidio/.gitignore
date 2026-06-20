@@ -1,0 +1,4 @@
+# Python 仮想環境・キャッシュ（コミットしない）
+.venv/
+__pycache__/
+*.pyc

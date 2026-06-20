@@ -129,6 +129,43 @@ func TestJSON(t *testing.T) {
 	}
 }
 
+// TestJSONOffsets は scan --stdin で付与される offset/end_offset の JSON 出力を確認する。
+// 特に offset==0（テキスト先頭一致）が省略されず "offset": 0 として出ること
+// （*int + omitempty をうっかり int + omitempty に戻すと 0 が欠落する回帰の防止）と、
+// HasOffset でない finding には両フィールドが現れないことを検証する。フィクスチャ不要。
+func TestJSONOffsets(t *testing.T) {
+	findings := []detect.Finding{
+		{RuleID: "a", File: "<stdin>", Line: 1, Column: 1, Match: "abc",
+			HasOffset: true, Offset: 0, EndOffset: 3},
+		{RuleID: "b", File: "<stdin>", Line: 1, Column: 5, Match: "de"}, // HasOffset=false
+	}
+	var buf bytes.Buffer
+	if err := JSON(&buf, findings, true, false); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, `"offset": 0`) {
+		t.Errorf(`offset==0 が省略された（"offset": 0 が無い）: %s`, out)
+	}
+
+	var got struct {
+		Findings []struct {
+			Offset    *int `json:"offset"`
+			EndOffset *int `json:"end_offset"`
+		} `json:"findings"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	f0 := got.Findings[0]
+	if f0.Offset == nil || *f0.Offset != 0 || f0.EndOffset == nil || *f0.EndOffset != 3 {
+		t.Errorf("finding[0] offsets = %v/%v, want 0/3: %s", f0.Offset, f0.EndOffset, out)
+	}
+	if f1 := got.Findings[1]; f1.Offset != nil || f1.EndOffset != nil {
+		t.Errorf("HasOffset でない finding に offset が出ている: %s", out)
+	}
+}
+
 func TestJSONExplainIncludesReason(t *testing.T) {
 	piifixtures.Require(t)
 	phone := piifixtures.MustGet(t, "report.phone_match")

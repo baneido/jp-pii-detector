@@ -50,6 +50,11 @@ type jsonFinding struct {
 	File        string               `json:"file"`
 	Line        int                  `json:"line"`
 	Column      int                  `json:"column"`
+	// Offset/EndOffset はテキスト全体先頭からのルーン単位の半開区間。単一テキスト
+	// 走査（scan --stdin）で ComputeOffsets により付与されたときのみ出力する。
+	// 文字オフセット基準の利用側（Microsoft Presidio 連携など）向け。
+	Offset      *int                 `json:"offset,omitempty"`
+	EndOffset   *int                 `json:"end_offset,omitempty"`
 	Match       string               `json:"match"`
 	Confidence  string               `json:"confidence"`
 	Reason      *detect.DetectReason `json:"reason,omitempty"`
@@ -70,6 +75,10 @@ func JSON(w io.Writer, findings []detect.Finding, unmask, explain bool) error {
 			Column:      f.Column,
 			Match:       display(f, unmask),
 			Confidence:  f.Confidence.String(),
+		}
+		if f.HasOffset {
+			off, end := f.Offset, f.EndOffset
+			jf.Offset, jf.EndOffset = &off, &end
 		}
 		if explain {
 			jf.Reason = &f.Reason

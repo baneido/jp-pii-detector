@@ -1059,3 +1059,74 @@ func TestBirthdateRejectsInvalidDates(t *testing.T) {
 	assertRules(t, d.ScanLine("f.txt", 1, "生年月日: 2023-02-29"))
 	assertRules(t, d.ScanLine("f.txt", 1, "生年月日: 2000-01-01"), "jp-birthdate")
 }
+
+// --- ComputeOffsets（scan --stdin 用の文字オフセット付与）---
+
+// TestComputeOffsets は行・列ベースの検出位置を、テキスト全体先頭からの
+// ルーン単位の半開区間 [Offset, EndOffset) へ正しく変換することを確認する。
+// マルチバイト文字・複数行・CRLF・先頭一致を網羅する。
+func TestComputeOffsets(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		f       Finding
+		want    string // content のルーン列を [Offset:EndOffset) で切り出した結果
+	}{
+		{
+			name:    "マルチバイト＋複数行",
+			content: "あいう\nname: 山田太郎!\n",
+			f:       Finding{Line: 2, Column: 7, Match: "山田太郎"},
+			want:    "山田太郎",
+		},
+		{
+			name:    "先頭一致（offset 0）",
+			content: "taro@kaisha.co.jp\n",
+			f:       Finding{Line: 1, Column: 1, Match: "taro@kaisha.co.jp"},
+			want:    "taro@kaisha.co.jp",
+		},
+		{
+			name:    "CRLF 改行",
+			content: "ヘッダ\r\nmail: a@kaisha.co\r\n",
+			f:       Finding{Line: 2, Column: 7, Match: "a@kaisha.co"},
+			want:    "a@kaisha.co",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ComputeOffsets(tt.content, []Finding{tt.f})[0]
+			if !got.HasOffset {
+				t.Fatal("HasOffset = false, want true")
+			}
+			runes := []rune(tt.content)
+			if got.Offset < 0 || got.EndOffset > len(runes) || got.Offset > got.EndOffset {
+				t.Fatalf("offset 範囲外: [%d, %d) len=%d", got.Offset, got.EndOffset, len(runes))
+			}
+			if s := string(runes[got.Offset:got.EndOffset]); s != tt.want {
+				t.Errorf("content[%d:%d] = %q, want %q", got.Offset, got.EndOffset, s, tt.want)
+			}
+		})
+	}
+}
+
+// TestComputeOffsetsOutOfRange は範囲外の行・Column<1 では panic せず、HasOffset を
+// 付けず、Offset/EndOffset も 0 のまま（ゴミ値が漏れない）ことを確認する。
+func TestComputeOffsetsOutOfRange(t *testing.T) {
+	cases := []struct {
+		name string
+		f    Finding
+	}{
+		{"行が範囲外", Finding{Line: 99, Column: 1, Match: "x"}},
+		{"Column<1", Finding{Line: 1, Column: 0, Match: "x"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ComputeOffsets("一行のみ\n", []Finding{tc.f})[0]
+			if got.HasOffset {
+				t.Errorf("無効な位置に HasOffset が付いた: %+v", got)
+			}
+			if got.Offset != 0 || got.EndOffset != 0 {
+				t.Errorf("無効な位置で Offset/EndOffset が 0 でない: %d/%d", got.Offset, got.EndOffset)
+			}
+		})
+	}
+}

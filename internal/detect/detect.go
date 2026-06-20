@@ -4,6 +4,7 @@ package detect
 import (
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/baneido/jp-pii-detector/internal/config"
 	"github.com/baneido/jp-pii-detector/internal/normalize"
@@ -32,6 +33,14 @@ type Finding struct {
 	Confidence  rule.Confidence `json:"-"`
 	// Reason は検出の根拠（調査・チューニング用。既定の出力には含めない）。
 	Reason DetectReason `json:"reason,omitempty"`
+	// Offset/EndOffset は走査対象テキスト全体の先頭からのルーン単位の半開区間
+	// [Offset, EndOffset)。ComputeOffsets を呼んだときのみ設定され、その場合
+	// HasOffset が true になる。行・列ベースの位置を文字オフセットへ変換したい
+	// 利用側（例: Microsoft Presidio の RecognizerResult）向けの情報で、
+	// 単一テキスト走査でのみ意味を持つ（ファイル/差分走査では付与されない）。
+	HasOffset bool `json:"-"`
+	Offset    int  `json:"-"`
+	EndOffset int  `json:"-"`
 	// span（ルーン単位、重複解決用）
 	start, end int
 }
@@ -139,6 +148,48 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 		filtered = append(filtered, f)
 	}
 	return dedupAndSortFindings(filtered)
+}
+
+// ComputeOffsets は ScanContent に渡したのと同一の content を使い、各 finding に
+// テキスト全体の先頭からのルーン単位オフセット（半開区間 [Offset, EndOffset)）を
+// 付与して返す。行・列ベースの検出位置を文字オフセットベースへ変換したい利用側
+// （例: Microsoft Presidio の RecognizerResult は文字オフセットを要求する）向けの
+// ヘルパー。
+//
+// content は ScanContent と同じく "\n" 区切りで行に分割されるため、ここで求める
+// 行頭のルーン位置は ScanContent が見た行と一致する。正規化は 1 ルーン = 1 ルーンの
+// 1:1 変換なので、列はそのまま行頭からのルーン数として使える。
+func ComputeOffsets(content string, findings []Finding) []Finding {
+	starts := lineStartRuneOffsets(content)
+	for i := range findings {
+		f := &findings[i]
+		idx := f.Line - 1
+		// 行・列の境界を対称に防御する（Column は通常 1 始まりだが、Column<1 だと
+		// Offset が負になり [Offset,EndOffset) 不変条件を破るため弾く）。
+		if idx < 0 || idx >= len(starts) || f.Column < 1 {
+			continue
+		}
+		f.Offset = starts[idx] + (f.Column - 1)
+		f.EndOffset = f.Offset + utf8.RuneCountInString(f.Match)
+		f.HasOffset = true
+	}
+	return findings
+}
+
+// lineStartRuneOffsets は content の各行（"\n" 区切り、1 始まり）の先頭が、
+// テキスト全体の先頭から何ルーン目に当たるかを返す。戻り値の index i は (i+1) 行目の
+// 行頭オフセット。CRLF の場合も \r は行内のルーンとして数えられるため、行内の列は
+// そのまま行頭オフセットに加算できる（\r は行末側にあり、検出値より後ろにある）。
+func lineStartRuneOffsets(content string) []int {
+	starts := []int{0}
+	runes := 0
+	for _, r := range content {
+		runes++
+		if r == '\n' {
+			starts = append(starts, runes)
+		}
+	}
+	return starts
 }
 
 // dedupAndSortFindings は候補から重複を除き、ファイル・行・列・終端で安定ソートする。

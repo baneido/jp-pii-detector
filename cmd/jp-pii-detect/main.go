@@ -5,6 +5,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"runtime/debug"
 
@@ -68,12 +69,16 @@ Usage:
   jp-pii-detect scan [flags] [path...]   パス配下を走査（既定: カレントディレクトリ）
   jp-pii-detect scan --staged            git のステージ済み追加行を走査（pre-commit 用）
   jp-pii-detect scan --diff <range>      git diff の追加行を走査（例: origin/main...HEAD）
+  jp-pii-detect scan --stdin             標準入力のテキスト 1 本を走査（外部連携用）
   jp-pii-detect rules                    検出ルール一覧を表示
   jp-pii-detect version                  バージョンを表示
 
 Scan flags:
   --staged                 ステージ済み変更のみ走査
   --diff <range>           指定リビジョン範囲の追加行を走査
+  --stdin                  標準入力のテキストを 1 本のテキストとして走査。json 出力に
+                           offset/end_offset（テキスト先頭からのルーン単位の半開区間）を
+                           付与する。Microsoft Presidio など文字オフセット基準の連携用
   --format <fmt>           出力形式: text|json|sarif|github (既定: text)
   --config <path>          設定ファイル (既定: .jp-pii.toml をリポジトリルートまで上方探索)
   --min-confidence <lvl>   報告する最小信頼度: low|medium|high (既定: 設定ファイル値 or medium)
@@ -109,6 +114,7 @@ func runScan(args []string) int {
 	fs := flag.NewFlagSet("scan", flag.ExitOnError)
 	staged := fs.Bool("staged", false, "")
 	diffRange := fs.String("diff", "", "")
+	stdin := fs.Bool("stdin", false, "")
 	format := fs.String("format", "text", "")
 	configPath := fs.String("config", "", "")
 	minConf := fs.String("min-confidence", "", "")
@@ -138,6 +144,13 @@ func runScan(args []string) int {
 
 	var findings []detect.Finding
 	switch {
+	case *stdin:
+		var data []byte
+		data, err = io.ReadAll(os.Stdin)
+		if err == nil {
+			text := string(data)
+			findings = detect.ComputeOffsets(text, det.ScanContent("<stdin>", text))
+		}
 	case *staged:
 		findings, err = source.ScanStaged(det, cfg)
 	case *diffRange != "":

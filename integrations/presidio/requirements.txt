@@ -1,0 +1,10 @@
+# Presidio 連携アダプタの依存（Python 3.9+）。
+# jp-pii-detect 本体（Go バイナリ）は別途ビルドして PATH に通すこと:
+#   go build ./cmd/jp-pii-detect
+presidio-analyzer>=2.2
+presidio-anonymizer>=2.2
+
+# 任意: 日本語の NLP 解析（住所/氏名のコンテキスト補完を Presidio 側でも使う場合）。
+# jp-pii-detect 自体は NLP 非依存なので無くても動く。
+#   python -m spacy download ja_core_news_sm
+# spacy>=3.4

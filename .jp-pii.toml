@@ -10,4 +10,6 @@ paths = [
   "_test\\.go$",
   # 外部フィクスチャのローカルコピー（実在しうる PII を含む。.gitignore 済みで未コミット）
   "^pii-fixtures\\.json$",
+  # Presidio 連携アダプタのサンプル/デモ（架空の PII を含む）
+  "^integrations/",
 ]

@@ -185,6 +185,87 @@ func TestScanJSONExplain(t *testing.T) {
 	}
 }
 
+// TestScanStdinOffsets は scan --stdin が標準入力を 1 本のテキストとして走査し、
+// json 出力に offset/end_offset（テキスト先頭からのルーン単位の半開区間）を付与
+// すること、そのオフセットで元テキストを切り出すと検出値に一致することを確認する。
+// メールアドレスは機微でない架空ドメインを使うため外部フィクスチャ不要。
+func TestScanStdinOffsets(t *testing.T) {
+	input := "連絡先一覧\n担当: test.user@kaisha.co.jp まで\n"
+	// 一時ディレクトリで実行し、リポジトリの .jp-pii.toml を拾わない（既定設定で走査）。
+	cmd := exec.Command(binPath, "scan", "--stdin", "--format", "json", "--unmask")
+	cmd.Dir = t.TempDir()
+	cmd.Stdin = strings.NewReader(input)
+	out, err := cmd.Output()
+	code := 0
+	if err != nil {
+		ee, ok := err.(*exec.ExitError)
+		if !ok {
+			t.Fatalf("run --stdin: %v", err)
+		}
+		code = ee.ExitCode()
+	}
+	if code != 1 {
+		t.Errorf("exit = %d, want 1（検出あり）\n%s", code, out)
+	}
+	var doc struct {
+		Findings []struct {
+			RuleID    string `json:"rule_id"`
+			Match     string `json:"match"`
+			Offset    *int   `json:"offset"`
+			EndOffset *int   `json:"end_offset"`
+		} `json:"findings"`
+	}
+	if err := json.Unmarshal(out, &doc); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, out)
+	}
+	runes := []rune(input)
+	var found bool
+	for _, f := range doc.Findings {
+		if f.RuleID != "email-address" {
+			continue
+		}
+		found = true
+		if f.Offset == nil || f.EndOffset == nil {
+			t.Fatalf("offset/end_offset が無い: %s", out)
+		}
+		if *f.Offset < 0 || *f.EndOffset > len(runes) || *f.Offset > *f.EndOffset {
+			t.Fatalf("offset 範囲外: [%d, %d) len=%d", *f.Offset, *f.EndOffset, len(runes))
+		}
+		if got := string(runes[*f.Offset:*f.EndOffset]); got != f.Match {
+			t.Errorf("input[%d:%d] = %q, want match %q", *f.Offset, *f.EndOffset, got, f.Match)
+		}
+		if f.Match != "test.user@kaisha.co.jp" {
+			t.Errorf("match = %q, want %q", f.Match, "test.user@kaisha.co.jp")
+		}
+	}
+	if !found {
+		t.Fatalf("email-address が検出されなかった: %s", out)
+	}
+}
+
+// TestScanStdinNoFindings は scan --stdin の負例: PII を含まない入力と空入力は
+// いずれも検出なし（exit 0、count 0）になることを確認する。
+func TestScanStdinNoFindings(t *testing.T) {
+	for _, in := range []string{"ここには個人情報は含まれません\n", ""} {
+		cmd := exec.Command(binPath, "scan", "--stdin", "--format", "json")
+		cmd.Dir = t.TempDir()
+		cmd.Stdin = strings.NewReader(in)
+		out, err := cmd.Output() // 検出なしなら exit 0 → err == nil
+		if err != nil {
+			t.Fatalf("clean stdin %q should exit 0: %v\n%s", in, err, out)
+		}
+		var doc struct {
+			Count int `json:"count"`
+		}
+		if err := json.Unmarshal(out, &doc); err != nil {
+			t.Fatalf("invalid JSON: %v\n%s", err, out)
+		}
+		if doc.Count != 0 {
+			t.Errorf("count = %d, want 0 for %q: %s", doc.Count, in, out)
+		}
+	}
+}
+
 func TestRulesCommand(t *testing.T) {
 	out, code := run(t, t.TempDir(), "rules")
 	if code != 0 {
