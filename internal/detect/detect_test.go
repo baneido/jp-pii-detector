@@ -892,3 +892,80 @@ func TestScanContentRejectsCrossLineNegativeContext(t *testing.T) {
 	// ネガティブコンテキストが遠い場合は検出する。
 	assertRules(t, d.ScanContent("f.txt", "口座番号: "+bankAccount+strings.Repeat("あ", 25)+"\n円"), "jp-bank-account")
 }
+
+// メールアドレスの右境界ガード。直後が英数字・_ % + - で続く部分一致を棄却し、
+// 文末ピリオドや句点で終わる正当なアドレスは検出する。実在 PII ではない
+// gmail.com の合成アドレスを inline で用いる。
+func TestEmailRightBoundary(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       string // 期待する検出値。"" は非検出。
+	}{
+		{"通常", "連絡先: taro@gmail.com", "taro@gmail.com"},
+		{"文末ピリオド", "連絡は taro@gmail.com.", "taro@gmail.com"},
+		{"日本語句点", "連絡は taro@gmail.com。", "taro@gmail.com"},
+		{"空白で区切り", "foo taro@gmail.com bar", "taro@gmail.com"},
+		{"アンダースコアで継続は棄却", "value=taro@gmail.com_suffix", ""},
+		{"プラスで継続は棄却", "value=taro@gmail.com+suffix", ""},
+		{"英数字で継続は棄却", "id=taro@gmail.com2", ""},
+		{"ハイフンで継続は棄却", "x taro@gmail.com-foo", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			var got string
+			for _, f := range fs {
+				if f.RuleID == "email-address" {
+					got = f.Match
+				}
+			}
+			if got != tt.want {
+				t.Errorf("ScanLine(%q) email = %q, want %q", tt.line, got, tt.want)
+			}
+		})
+	}
+}
+
+// 住所の番地連鎖（丁目→番→号）を最後まで捕捉する。合成住所を inline で用いる。
+func TestAddressBanchiChain(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line, want string
+	}{
+		{"丁目番号の連鎖", "住所: 東京都渋谷区道玄坂2丁目10番7号", "東京都渋谷区道玄坂2丁目10番7号"},
+		{"丁目とダッシュ", "住所: 大阪府大阪市北区梅田1丁目2-3", "大阪府大阪市北区梅田1丁目2-3"},
+		{"ダッシュ連結3組", "住所: 東京都千代田区丸の内2-1-5", "東京都千代田区丸の内2-1-5"},
+		{"番地の号", "住所: 神奈川県横浜市西区みなとみらい10番地の7", "神奈川県横浜市西区みなとみらい10番地の7"},
+		{"番直後の号", "住所: 大阪府大阪市北区梅田10番7号", "大阪府大阪市北区梅田10番7号"},
+		{"丁目のみ", "住所: 東京都渋谷区道玄坂2丁目", "東京都渋谷区道玄坂2丁目"},
+		// 号は終端。号の後ろの部屋番号・電話番号、丁目の後ろの「階」の数字など、
+		// 単位もダッシュも伴わない裸の数字列は吸収しない。
+		{"号の後の部屋番号は含めない", "住所: 東京都渋谷区道玄坂2丁目10番7号101", "東京都渋谷区道玄坂2丁目10番7号"},
+		{"号の後の電話番号は含めない", "住所: 大阪府大阪市北区梅田1丁目2番3号09012345678", "大阪府大阪市北区梅田1丁目2番3号"},
+		{"丁目の後の階数は含めない", "住所: 東京都渋谷区道玄坂2丁目10階", "東京都渋谷区道玄坂2丁目"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			var got string
+			for _, f := range fs {
+				if f.RuleID == "jp-address" {
+					got = f.Match
+				}
+			}
+			if got != tt.want {
+				t.Errorf("ScanLine(%q) jp-address = %q, want %q", tt.line, got, tt.want)
+			}
+		})
+	}
+}
+
+// jp-birthdate ルール全体として、無効な暦日が検出されないことを確認する
+// （validBirthdate の単体テストは internal/rule/builtin_test.go）。
+func TestBirthdateRejectsInvalidDates(t *testing.T) {
+	d := newDetector(t, "")
+	assertRules(t, d.ScanLine("f.txt", 1, "生年月日: 2023-99-99"))
+	assertRules(t, d.ScanLine("f.txt", 1, "生年月日: 2023-02-29"))
+	assertRules(t, d.ScanLine("f.txt", 1, "生年月日: 2000-01-01"), "jp-birthdate")
+}

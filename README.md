@@ -28,7 +28,7 @@
 | クレジットカード番号 | `4111-1111-1111-1111` | ◎ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | Luhn + ブランド判定（Visa/Master/JCB/Amex 等） |
 | メールアドレス | `taro@example.jp` | ◎ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | パターン + IANA TLD 実在チェック + 予約ドメイン除外 |
 | 電話番号 | `090-XXXX-XXXX` | ◎ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 携帯/IP/固定/+81 + 桁数検証 |
-| 郵便番号 | `〒150-0043` | ◎ / ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 上位3桁の実在チェック。〒マーク付きは単独、なしは周辺の語が必要 |
+| 郵便番号 | `〒150-0043` | ◎ / ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 7桁完全一致の実在チェック。〒マーク付きは単独、なしは周辺の語が必要 |
 | 住所 | `東京都渋谷区道玄坂2-10-7` | ○ | ![F1 0.89](https://img.shields.io/badge/F1-0.89-green) | 都道府県〜番地のパターン |
 | 運転免許証番号 | `免許証番号: 305012345678` | ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 12 桁 + 周辺の語が必要 |
 | 旅券（パスポート）番号 | `パスポート: TK1234567` | ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 英字2+数字7 + 周辺の語が必要 |

@@ -30,12 +30,20 @@ CI (`.github/workflows/ci.yml`) fails on more than just test failures:
 
 Detection pipeline (`source → normalize → detect → report`):
 
-- **`internal/source`** enumerates scan targets: full file-tree walk (parallel) or git-diff added-lines only (`--staged` / `--diff <range>`, via `git diff -U0`). Skips binaries, >5MB files, and dependency dirs like `node_modules`.
+- **`internal/source`** enumerates scan targets: full file-tree walk (parallel) or git-diff (`--staged` / `--diff <range>`). The diff is fetched with `git diff -U3` so each hunk carries surrounding context lines; `scanHunk` → `detect.ScanDiffHunk` scans the hunk so a label on an **immediately adjacent** unchanged line can promote a value on an added line (cross-line correlation is ±1 line only — `ScanContent`'s 2-line window), but **only reports findings whose detected value lands on an added line**. Context (unchanged) lines supply positive context *only* — they never drive suppression, so a stale `jp-pii-detector:ignore` or a negative-context unit (`円` etc.) on a context line does not silence a newly-added secret. Skips binaries, >5MB files, and dependency dirs like `node_modules`.
 - **`internal/normalize`** (`normalize.Line`) folds full-width alphanumerics, hyphen variants, and digit-adjacent long-vowel marks to half-width. **Critical invariant:** conversion is strictly 1:1 per rune, so a match position in the normalized line is the same column in the original — no reverse mapping needed. Preserve this when editing. Pure-ASCII lines take a fast path with **0 allocs/op**, guaranteed by a regression test.
 - **`internal/detect`** (`ScanLine` / `ScanContent`) runs each rule per line. A rule's `Prefilter` (digit / `@` / CJK required) skips regex entirely on lines that can't match. Matches are filtered by `Validate` (checksums) and the allowlist. Context keywords on the same line promote confidence to High; `RequireContext` rules are dropped without a keyword (and report at `Base`, never promoted). `resolveOverlaps` collapses overlapping detections (higher confidence, then longer, wins). `ScanContent` additionally re-scans 2-adjacent-line windows for `RequireContext` rules, remapping positions back to original line/column.
 - **`internal/report`** emits `text|json|sarif|github`, masking detected values by default (`--unmask` for local only). Exit codes: `0`=none, `1`=found, `2`=error.
 
-Supporting packages: `internal/checksum` (My Number check digit, Luhn, card brand), `internal/dict` (`//go:embed`-ed IANA TLD list and postal-code prefixes; regenerate via `go run ./internal/dict/gen`), `internal/config` (`.jp-pii.toml`, searched upward to the repo root), `internal/rule` (rule type + `Builtin()`).
+Supporting packages: `internal/checksum` (My Number check digit, Luhn, card brand), `internal/dict` (`//go:embed`-ed IANA TLD list and Japan-Post postal codes; regenerate via `go run ./internal/dict/gen`), `internal/config` (`.jp-pii.toml`, searched upward to the repo root), `internal/rule` (rule type + `Builtin()`).
+
+Postal codes use **7-digit exact matching** against a committed bitset (`postal_codes.bitset`, a 10,000,000-bit / 1.25 MB `//go:embed` holding every real Japan-Post 7-digit code). `dict.ValidPostalCode` indexes that bitset directly, so `150-9999` (prefix `150` is real, but the full code is unassigned) is rejected. `internal/dict/gen` builds the bitset from the official Japan-Post UTF-8 KEN_ALL CSV/zip; the index encoding and size constant are shared with `internal/dict` so the two can't drift. Refresh it (monthly automation: `.github/workflows/postal-update.yml`, or by hand) with:
+
+```console
+go run ./internal/dict/gen -input utf_ken_all.zip -output internal/dict/postal_codes.bitset
+```
+
+A bitset refresh that adds/removes codes can move the `jp-postal-code` accuracy numbers, so re-run the eval/badge regeneration (see CI gates below) after committing a new bitset.
 
 ## Adding / editing detection rules
 

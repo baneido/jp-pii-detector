@@ -3,7 +3,9 @@ package rule
 import (
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/baneido/jp-pii-detector/internal/checksum"
 	"github.com/baneido/jp-pii-detector/internal/dict"
@@ -43,6 +45,18 @@ const (
 	katakana = `\x{30A1}-\x{30FA}\x{30FC}` // カタカナ + ー
 
 	digitRuleRequireContextWindow = 40
+
+	// banchi は番地表現（丁目→番地→号）を最後まで捕捉する終端パターン。次を捕捉:
+	//   2丁目10番7号 / 2丁目10-7 / 2-10-7 / 10番地の7 / 10番7号 / 2丁目（番地なし）
+	// 構造は「任意の N丁目」＋「番地ブロック（番/号/ダッシュ連結のいずれかを必須）」、
+	// または「N丁目」単独。番地ブロックは 番[地] か 号 か ダッシュ連結のいずれかを
+	// 必ず含み、号は終端（号の後ろは続かない）とすることで、号の後ろの部屋番号・
+	// 電話番号や、丁目の後ろの「階」の数字など、単位もダッシュも伴わない裸の数字列を
+	// 吸収しない。RE2 は線形時間なので連鎖長による破滅的バックトラックは起きない。
+	banchi = `(?:` +
+		`(?:\d{1,4}丁目)?(?:\d{1,4}番地?(?:の?\d{1,4})?号?|\d{1,4}号|\d{1,4}(?:-\d{1,4})+)` +
+		`|\d{1,4}丁目` +
+		`)`
 )
 
 // 氏名ルールで共用する部分パターン。正規化済みの行を前提とする
@@ -201,7 +215,8 @@ func Builtin() []Rule {
 			Description: "郵便番号",
 			Prefilter:   PrefilterDigit,
 			Context:     []string{"郵便番号", "郵便", "住所", "postal", "zipcode", "zip code", "〒"},
-			Validate:    dict.ValidPostalCodePrefix,
+			// 7 桁完全一致（ビットセット生成済みのとき。未生成なら上位 3 桁実在チェック）。
+			Validate: dict.ValidPostalCode,
 			Patterns: []Pattern{
 				{Re: dg(`〒\s?\d{3}-?\d{4}`), Base: High},
 				{Re: dg(`\d{3}-\d{4}`), Base: Medium, RequireContext: true},
@@ -217,7 +232,7 @@ func Builtin() []Rule {
 					`((?:北海道|東京都|京都府|大阪府|[` + kanji + `]{2,3}県)` +
 						`[` + kanji + hiragana + katakana + `0-9A-Za-z]{1,20}?[市区町村]` +
 						`[` + kanji + hiragana + katakana + `0-9-]{0,30}?` +
-						`\d{1,4}(?:丁目|番地?|号|(?:-\d{1,4}){1,2}))`,
+						banchi + `)`,
 				), Base: High},
 			},
 		},
@@ -231,7 +246,7 @@ func Builtin() []Rule {
 					`(?:住所|所在地|勤務地|勤務先|自宅|address)?\s*[:=]?\s*(` +
 						`[` + kanji + hiragana + katakana + `]{1,15}[市区町村]` +
 						`[` + kanji + hiragana + katakana + `0-9-]{0,30}?` +
-						`\d{1,4}(?:丁目|番地?|号|(?:-\d{1,4}){1,2}))`,
+						banchi + `)`,
 				), Base: Medium},
 			},
 		},
@@ -241,7 +256,12 @@ func Builtin() []Rule {
 			Prefilter:   PrefilterAt,
 			Validate:    validEmail,
 			Patterns: []Pattern{
-				{Re: regexp.MustCompile(`(?:^|[^A-Za-z0-9._%+-])([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})`), Base: High},
+				// 右境界ガード `(?:[^A-Za-z0-9_%+-]|$)` を捕捉グループの外に置き、
+				// user@gmail.com_suffix / user@gmail.com+suffix のように直後が
+				// 英数字・_ % + - で続く（メールアドレスの一部ではない）部分一致を
+				// 棄却する。`.` は除外集合に含めないため、文末ピリオド
+				// （…は user@example.com.）は従来どおり検出できる。
+				{Re: regexp.MustCompile(`(?:^|[^A-Za-z0-9._%+-])([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})(?:[^A-Za-z0-9_%+-]|$)`), Base: High},
 			},
 		},
 		{
@@ -420,6 +440,9 @@ func Builtin() []Rule {
 			ID:          "jp-birthdate",
 			Description: "生年月日（ラベル付き）",
 			Prefilter:   PrefilterDigit,
+			// 形式（西暦・和暦）だけでなく、実在する暦日かを検証する。
+			// 2023-99-99 や 2023-02-29（閏年でない）などを棄却する。
+			Validate: validBirthdate,
 			Patterns: []Pattern{
 				{Re: regexp.MustCompile(
 					`(?:生年月日|誕生日)\s*[:=]?\s*` +
@@ -459,6 +482,65 @@ func validPhone(m string) bool {
 		return d[1] >= '5' && d[1] <= '9' && d[2] == '0'
 	}
 	return false
+}
+
+// birthdateRe は jp-birthdate の捕捉値（西暦 4 桁 or 和暦元号＋年・月・日）を
+// 分解する。グループ: 1=西暦年 / 2=元号 / 3=和暦年 / 4=月 / 5=日。
+// 区切りはルールの正規表現と同じ（年→月は [年/.-]、月→日は [月/.-]、末尾 日?）。
+var birthdateRe = regexp.MustCompile(
+	`^(?:((?:19|20)\d{2})|(明治|大正|昭和|平成|令和)(\d{1,2}))[年/.-](\d{1,2})[月/.-](\d{1,2})日?$`)
+
+// warekiEra は元号の改元年（西暦）と、その元号で取りうる最大の和暦年を返す。
+// 改元年を元年（1 年）とし、西暦 = start + 和暦年 - 1 で換算する。令和は
+// 現時点で終期がないため正規表現の上限（2 桁）まで許容する。
+func warekiEra(era string) (start, maxYear int, ok bool) {
+	switch era {
+	case "明治": // 1868–1912（明治45年7月30日まで）
+		return 1868, 45, true
+	case "大正": // 1912–1926（大正15年12月25日まで）
+		return 1912, 15, true
+	case "昭和": // 1926–1989（昭和64年1月7日まで）
+		return 1926, 64, true
+	case "平成": // 1989–2019（平成31年4月30日まで）
+		return 1989, 31, true
+	case "令和": // 2019–（終期なし）
+		return 2019, 99, true
+	}
+	return 0, 0, false
+}
+
+// validBirthdate は捕捉した生年月日が実在する暦日かを検証する。形式上は
+// 成立しても暦として無効な値（2023-99-99 / 2023-02-29 / 昭和65年… 等）を棄却する。
+// 未来日や年齢の妥当性までは判定しない（信頼度ではなく検出可否のみを扱うため）。
+func validBirthdate(m string) bool {
+	sub := birthdateRe.FindStringSubmatch(m)
+	if sub == nil {
+		return false
+	}
+	var year int
+	if sub[1] != "" {
+		year, _ = strconv.Atoi(sub[1])
+	} else {
+		eraYear, _ := strconv.Atoi(sub[3])
+		start, maxYear, ok := warekiEra(sub[2])
+		if !ok || eraYear < 1 || eraYear > maxYear {
+			return false
+		}
+		year = start + eraYear - 1
+	}
+	month, _ := strconv.Atoi(sub[4])
+	day, _ := strconv.Atoi(sub[5])
+	return validCalendarDate(year, month, day)
+}
+
+// validCalendarDate は西暦の年月日が実在する日付かを time.Date の
+// ラウンドトリップで検証する（閏年・月ごとの日数を含む）。
+func validCalendarDate(year, month, day int) bool {
+	if month < 1 || month > 12 || day < 1 || day > 31 {
+		return false
+	}
+	t := time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC)
+	return t.Year() == year && int(t.Month()) == month && t.Day() == day
 }
 
 // validEmail は予約済みドメイン（RFC 2606/6761）等のダミー値を除外する。

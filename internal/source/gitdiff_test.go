@@ -172,6 +172,186 @@ func TestScanStagedSplitLabelAndValue(t *testing.T) {
 	}
 }
 
+// ラベルが既存（未変更）行にあり、値だけを追加したケースを検出できること。
+// 旧 -U0 実装では文脈行が走査対象に入らず、コンテキスト必須ルール
+// （jp-bank-account）が発火しなかった。
+func TestScanDiffContextLabelOnUnchangedLine(t *testing.T) {
+	repo := initTestRepo(t)
+	name := "pii.txt"
+	// base: ラベル行のみをコミット。
+	if err := os.WriteFile(filepath.Join(repo, name), []byte("口座番号:\nメモ\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, "add", ".")
+	git(t, "commit", "-q", "-m", "base")
+	// 値だけをラベルの直後（既存ラベル行は未変更）に追加する。
+	if err := os.WriteFile(filepath.Join(repo, name), []byte("口座番号:\n1234567\nメモ\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, "add", ".")
+
+	cfg := config.Default()
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, err := ScanStaged(d, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("findings = %+v, want 1 件（ラベルは未変更行・値は追加行）", findings)
+	}
+	if f := findings[0]; f.File != name || f.RuleID != "jp-bank-account" || f.Line != 2 {
+		t.Errorf("finding = %+v, want %s:2 jp-bank-account", f, name)
+	}
+}
+
+// 文脈行（未変更行）に既存 PII があり、追加行には PII がない場合は報告しない。
+// 文脈行は近傍コンテキストの補完にだけ使い、既存 PII は新規追加ではないため。
+func TestScanDiffDoesNotReportContextLinePII(t *testing.T) {
+	repo := initTestRepo(t)
+	name := "pii.txt"
+	// base: ラベルと値（既存 PII）をコミット。
+	if err := os.WriteFile(filepath.Join(repo, name), []byte("口座番号: 1234567\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, "add", ".")
+	git(t, "commit", "-q", "-m", "base")
+	// 既存 PII 行の直後に PII でない行を追加する。
+	if err := os.WriteFile(filepath.Join(repo, name), []byte("口座番号: 1234567\n備考なし\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, "add", ".")
+
+	cfg := config.Default()
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, err := ScanStaged(d, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 0 {
+		t.Fatalf("findings = %+v, want 0 件（既存 PII は文脈行・追加行に PII なし）", findings)
+	}
+}
+
+// 内容が "++" で始まる追加行（diff 上は "+++ " と出力される）を、diff ヘッダと
+// 誤認せず追加行として扱い、後続の追加行 PII を取りこぼさないこと（回帰: #1）。
+func TestScanStagedPlusPlusAddedLine(t *testing.T) {
+	repo := initTestRepo(t)
+	name := "pii.txt"
+	// 1 行目の内容が "++ ..." なので diff では "+++ ..." と出力される。
+	content := []byte("++ サンプル差分マーカー\n口座番号: 1234567\n")
+	if err := os.WriteFile(filepath.Join(repo, name), content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, "add", name)
+
+	cfg := config.Default()
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, err := ScanStaged(d, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("findings = %+v, want 1 件（++ 始まりの追加行で後続が脱落しない）", findings)
+	}
+	if f := findings[0]; f.File != name || f.RuleID != "jp-bank-account" || f.Line != 2 {
+		t.Errorf("finding = %+v, want %s:2 jp-bank-account", f, name)
+	}
+}
+
+// 文脈行（未変更行）の負コンテキスト単位（円 等）が、隣の追加行 PII を抑制
+// しないこと（回帰: #2）。文脈行はラベル等の正のコンテキスト補完にのみ使う。
+func TestScanStagedContextNegativeDoesNotSuppress(t *testing.T) {
+	repo := initTestRepo(t)
+	name := "pii.txt"
+	if err := os.WriteFile(filepath.Join(repo, name), []byte("口座番号:\n円\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, "add", ".")
+	git(t, "commit", "-q", "-m", "base")
+	// ラベル（文脈）と 円（文脈）の間に値を追加する。
+	if err := os.WriteFile(filepath.Join(repo, name), []byte("口座番号:\n1234567\n円\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, "add", ".")
+
+	cfg := config.Default()
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, err := ScanStaged(d, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("findings = %+v, want 1 件（文脈行の円で抑制しない）", findings)
+	}
+	if f := findings[0]; f.RuleID != "jp-bank-account" || f.Line != 2 {
+		t.Errorf("finding = %+v, want pii.txt:2 jp-bank-account", f)
+	}
+}
+
+// 文脈行（未変更行）に残った古い ignore マーカーが、隣の追加行 PII を抑制
+// しないこと（回帰: #3）。一方、値そのものの追加行にマーカーがあれば抑制する。
+func TestScanStagedContextIgnoreMarkerScope(t *testing.T) {
+	cfg := config.Default()
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("文脈行のマーカーでは抑制しない", func(t *testing.T) {
+		repo := initTestRepo(t)
+		name := "pii.txt"
+		if err := os.WriteFile(filepath.Join(repo, name), []byte("口座番号: jp-pii-detector:ignore\nメモ\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		git(t, "add", ".")
+		git(t, "commit", "-q", "-m", "base")
+		if err := os.WriteFile(filepath.Join(repo, name), []byte("口座番号: jp-pii-detector:ignore\n7654321\nメモ\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		git(t, "add", ".")
+		findings, err := ScanStaged(d, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(findings) != 1 || findings[0].Line != 2 {
+			t.Fatalf("findings = %+v, want pii.txt:2 の 1 件（文脈行マーカーは無効）", findings)
+		}
+	})
+
+	t.Run("値そのものの追加行のマーカーは抑制する", func(t *testing.T) {
+		repo := initTestRepo(t)
+		name := "pii.txt"
+		if err := os.WriteFile(filepath.Join(repo, name), []byte("口座番号:\nメモ\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		git(t, "add", ".")
+		git(t, "commit", "-q", "-m", "base")
+		if err := os.WriteFile(filepath.Join(repo, name), []byte("口座番号:\n7654321 jp-pii-detector:ignore\nメモ\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		git(t, "add", ".")
+		findings, err := ScanStaged(d, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(findings) != 0 {
+			t.Fatalf("findings = %+v, want 0 件（値の行のマーカーで抑制）", findings)
+		}
+	})
+}
+
 // ScanDiff がコミット間の追加行のみを走査すること。
 func TestScanDiffRange(t *testing.T) {
 	piifixtures.Require(t)

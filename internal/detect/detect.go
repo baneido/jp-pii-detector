@@ -118,12 +118,22 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 		candidates = append(candidates, d.scanAdjacentLines(file, i+1, lines[i], lines[i+1])...)
 	}
 
-	seen := map[string]bool{}
-	var findings []Finding
+	// 隣接行の負コンテキスト（金額・数量・連番 ID 等）で抑制してから重複解決する。
+	filtered := candidates[:0]
 	for _, f := range candidates {
 		if d.hasCrossLineNegativeContext(f, lines, f.Line-1) {
 			continue
 		}
+		filtered = append(filtered, f)
+	}
+	return dedupAndSortFindings(filtered)
+}
+
+// dedupAndSortFindings は候補から重複を除き、ファイル・行・列・終端で安定ソートする。
+func dedupAndSortFindings(candidates []Finding) []Finding {
+	seen := map[string]bool{}
+	var findings []Finding
+	for _, f := range candidates {
 		key := findingKey(f)
 		if seen[key] {
 			continue
@@ -131,7 +141,6 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 		findings = append(findings, f)
 		seen[key] = true
 	}
-
 	sort.SliceStable(findings, func(i, j int) bool {
 		if findings[i].File != findings[j].File {
 			return findings[i].File < findings[j].File
@@ -145,6 +154,45 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 		return findings[i].end < findings[j].end
 	})
 	return findings
+}
+
+// DiffLine は差分 hunk の 1 行（新ファイル側）。Added が true なら追加行、
+// false なら文脈行（未変更行）。
+type DiffLine struct {
+	Text  string
+	Added bool
+}
+
+// ScanDiffHunk は差分 hunk（文脈行＋追加行）を走査し、検出値が追加行に乗る
+// finding だけを返す（行番号はウィンドウ内 1 始まり）。
+//
+// 設計意図: 文脈行（未変更行）は正のコンテキスト（ラベル等）の補完にのみ使い、
+// 抑制（ignore マーカー・負コンテキスト）の駆動には使わない。これにより、
+// 追加した値の隣の既存行に「円」等の負コンテキストや古い jp-pii-detector:ignore が
+// あっても、追加行の新規 PII を取りこぼさない（セキュリティ検出器として偽陰性を避ける）。
+// 同一行の抑制（値そのものの行）は通常どおり適用される。
+func (d *Detector) ScanDiffHunk(file string, lines []DiffLine) []Finding {
+	texts := make([]string, len(lines))
+	added := make([]bool, len(lines))
+	for i, l := range lines {
+		texts[i] = l.Text
+		added[i] = l.Added
+	}
+
+	var candidates []Finding
+	// 追加行は単独走査（同一行コンテキスト・同一行抑制が正しく適用される）。
+	for i, line := range texts {
+		if added[i] {
+			candidates = append(candidates, d.ScanLine(file, i+1, line)...)
+		}
+	}
+	// 隣接 2 行は RequireContext を文脈行ラベルで昇格させる。抑制は値の行（追加行）基準。
+	for i := 0; i+1 < len(texts); i++ {
+		candidates = append(candidates,
+			d.scanAdjacentLinesDiff(file, i+1, texts[i], texts[i+1], added[i], added[i+1])...)
+	}
+	// 文脈行起因の cross-line 負コンテキストは適用しない（上記の設計意図）。
+	return dedupAndSortFindings(candidates)
 }
 
 func findingKey(f Finding) string {
@@ -199,9 +247,65 @@ func (d *Detector) scanAdjacentLines(file string, firstLineNo int, first, second
 	return out
 }
 
+// scanAdjacentLinesDiff は scanAdjacentLines の差分版。検出値が追加行に乗る
+// RequireContext finding だけを残す。文脈行の ignore マーカーでは抑制せず
+// （scanLineNoIgnore を使う）、抑制判定は値が乗る行（必ず追加行）に対してのみ行う。
+func (d *Detector) scanAdjacentLinesDiff(file string, firstLineNo int, first, second string, firstAdded, secondAdded bool) []Finding {
+	if !firstAdded && !secondAdded {
+		return nil
+	}
+	combined := first + "\n" + second
+	firstRunes := []rune(first)
+	secondRunes := []rune(second)
+	sep := len(firstRunes)
+
+	var out []Finding
+	for _, f := range d.scanLineNoIgnore(file, firstLineNo, combined) {
+		if !f.Reason.RequireContext {
+			continue
+		}
+		switch {
+		case f.end <= sep: // 値は 1 行目
+			if !firstAdded || ignoredLine(first) {
+				continue
+			}
+			f.Line = firstLineNo
+			f.Column = f.start + 1
+			f.Match = string(firstRunes[f.start:f.end])
+		case f.start > sep: // 値は 2 行目
+			if !secondAdded || ignoredLine(second) {
+				continue
+			}
+			start := f.start - sep - 1
+			end := f.end - sep - 1
+			if start < 0 || end > len(secondRunes) {
+				continue
+			}
+			f.Line = firstLineNo + 1
+			f.Column = start + 1
+			f.Match = string(secondRunes[start:end])
+			f.start, f.end = start, end
+		default:
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
 // ScanLine は 1 行を走査する。lineNo は 1 始まり。
 func (d *Detector) ScanLine(file string, lineNo int, line string) []Finding {
 	if line == "" || ignoredLine(line) {
+		return nil
+	}
+	return d.scanLineNoIgnore(file, lineNo, line)
+}
+
+// scanLineNoIgnore は ScanLine の本体（ignore マーカー判定を除く）。差分の
+// 隣接行走査では、文脈行に残った ignore マーカーで追加行の値を抑制しないよう、
+// この経路を使って結合文字列を走査する。
+func (d *Detector) scanLineNoIgnore(file string, lineNo int, line string) []Finding {
+	if line == "" {
 		return nil
 	}
 	norm := normalize.Line(line)

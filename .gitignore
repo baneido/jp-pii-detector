@@ -4,3 +4,9 @@ dist/
 # 評価データセット/テストフィクスチャのローカルコピー（実在しうる PII を含むため非コミット）。
 # CI と開発者は GCS から取得し、JP_PII_FIXTURES でパスを渡す。docs/development.md 参照。
 /pii-fixtures.json
+
+# 郵便番号ビットセットの生成入力（日本郵便 KEN_ALL）。生成物の postal_codes.bitset は
+# コミットするが、ダウンロードした生の zip/CSV はコミットしない。internal/dict/gen 参照。
+/utf_ken_all.zip
+/ken_all.zip
+/KEN_ALL.CSV
