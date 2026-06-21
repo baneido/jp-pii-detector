@@ -142,13 +142,22 @@ class JpPiiRecognizer(EntityRecognizer):
             if start is None or end is None:
                 # offset は --stdin 走査でのみ付与される。無ければスキップ。
                 continue
-            score = self._score_map.get(f.get("confidence", ""), 0.5)
+            try:
+                start, end = int(start), int(end)
+                score = float(self._score_map.get(f.get("confidence", ""), 0.5))
+            except (TypeError, ValueError) as e:
+                # 出力契約違反（offset 等が非数値）を制御された失敗に変換する。
+                # 生値（match）は漏らさないよう rule_id だけを示す。
+                raise RuntimeError(
+                    "jp-pii-detect の finding に不正な数値（offset/end_offset/"
+                    f"confidence）が含まれます: rule_id={f.get('rule_id', '')!r}"
+                ) from e
             results.append(
                 RecognizerResult(
                     entity_type=entity,
-                    start=int(start),
-                    end=int(end),
-                    score=float(score),
+                    start=start,
+                    end=end,
+                    score=score,
                     analysis_explanation=None,
                     recognition_metadata={
                         RecognizerResult.RECOGNIZER_NAME_KEY: self.name,
@@ -189,12 +198,12 @@ class JpPiiRecognizer(EntityRecognizer):
             raise RuntimeError(
                 f"jp-pii-detect がタイムアウトしました（{self._timeout}s）"
             ) from e
-        except FileNotFoundError as e:
-            # load() を呼ばずに analyze() された場合などに、サブプロセス起動失敗を
-            # 分かりやすいメッセージへ変換する。
+        except OSError as e:
+            # バイナリ不在（FileNotFoundError）や実行権限なし（PermissionError）など、
+            # サブプロセス起動失敗をまとめて分かりやすいメッセージへ変換する。
             raise RuntimeError(
-                f"jp-pii-detect が見つかりません: {self._binary!r}. "
-                "binary_path を指定するか PATH を通してください。"
+                f"jp-pii-detect を起動できません: {self._binary!r}: {e}. "
+                "binary_path・PATH・実行権限を確認してください。"
             ) from e
 
         # 終了コード: 0=検出なし, 1=検出あり, 2=エラー。
@@ -212,6 +221,11 @@ class JpPiiRecognizer(EntityRecognizer):
             raise RuntimeError(
                 f"jp-pii-detect の出力を JSON として解釈できませんでした: {e}"
             ) from e
+        if not isinstance(doc, dict):
+            raise RuntimeError(
+                "jp-pii-detect の出力が JSON オブジェクトではありません: "
+                f"{type(doc).__name__}"
+            )
         findings = doc.get("findings", [])
         if not isinstance(findings, list):
             raise RuntimeError(

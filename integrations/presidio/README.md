@@ -48,6 +48,13 @@ pip install -r requirements.txt
 python example.py
 ```
 
+> [!NOTE]
+> クリーンな環境では、spacy の推移依存が解決しきれず import 時に
+> `ModuleNotFoundError: No module named 'click'` 等で失敗することがあります。
+> その場合は不足分を明示的に入れてください（例: `pip install click`）。
+> AnalyzerEngine 経由（spaCy ja）を試す場合のみ `python -m spacy download ja_core_news_sm`
+> も必要です（未導入なら example.py は Recognizer 直接呼び出しにフォールバック）。
+
 `example.py` の出力イメージ（検出結果は Presidio の型、最後に匿名化後テキスト）:
 
 ```

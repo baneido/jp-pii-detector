@@ -4,7 +4,11 @@
 presidio-analyzer>=2.2
 presidio-anonymizer>=2.2
 
-# 任意: 日本語の NLP 解析（住所/氏名のコンテキスト補完を Presidio 側でも使う場合）。
-# jp-pii-detect 自体は NLP 非依存なので無くても動く。
+# 注: presidio-analyzer は spacy を必須依存として自動で引き込む（ここに spacy を
+# 書かなくてもインストールされる）。jp-pii-detect 自体は NLP 非依存なので spacy を
+# 直接は使わないが、Presidio の AnalyzerEngine を通すには spacy が必要。
+#
+# 任意なのは「日本語モデル」だけ。AnalyzerEngine 経由（住所/氏名のコンテキスト補完を
+# Presidio 側でも使う場合）には次を入れる。未導入なら example.py は Recognizer 直接
+# 呼び出しにフォールバックする:
 #   python -m spacy download ja_core_news_sm
-# spacy>=3.4

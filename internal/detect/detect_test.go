@@ -1090,6 +1090,15 @@ func TestComputeOffsets(t *testing.T) {
 			f:       Finding{Line: 2, Column: 7, Match: "a@kaisha.co"},
 			want:    "a@kaisha.co",
 		},
+		{
+			// 非BMP（サロゲートペア）。Go の rune と Python のコードポイントは
+			// どちらも 1 文字＝1 とする。UTF-16 単位で数える回帰を弾く。
+			// 𠮷(U+20BB7) と 😀(U+1F600) を前置し、Column はルーン基準。
+			name:    "非BMP文字を含む行",
+			content: "前置 𠮷😀\nname: a@kaisha.co\n",
+			f:       Finding{Line: 1, Column: 4, Match: "𠮷😀"},
+			want:    "𠮷😀",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
