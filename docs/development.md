@@ -76,8 +76,8 @@ $ go test ./...
 
 `pii-fixtures.json` は `.gitignore` 済みでコミットされません。JSON スキーマは
 `{ "strings": { "<key>": "<値>" }, "dataset": [ { "line", "content", "diff", "want", "spans" } ] }` で、
-`line` / `content` / `diff` のいずれか 1 つを入力として指定します。`line` は単一行の
-`ScanLine`、`content` は複数行の `ScanContent`、`diff` は `{ "text", "added" }` の配列で
+`line` / `content` / `diff` のいずれか 1 つを入力として指定します。`want` または `spans` が
+あるケースでは入力指定漏れをエラーにします。`line` は単一行の `ScanLine`、`content` は複数行の `ScanContent`、`diff` は `{ "text", "added" }` の配列で
 `ScanDiffHunk`（追加行だけを報告）を評価します。`spans` は `{ "rule_id", "line", "start", "end" }`
 で、`line` は 1 始まり、`start` / `end` はその行内の 0 始まりルーンオフセットです
 （`line` 省略時は後方互換のため 1 行目）。詳細は `internal/piifixtures/piifixtures.go` の

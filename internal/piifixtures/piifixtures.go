@@ -47,6 +47,8 @@ type DiffLine struct {
 }
 
 // Case は 1 つの評価ケース。Line / Content / Diff のいずれか 1 つで入力を表す。
+// Want または Spans があるケースでは入力指定を必須とし、フィクスチャの指定漏れを
+// 検出する。入力も期待値も空のケースは、後方互換のため空行の陰性ケースとして扱う。
 // Line は従来どおり 1 行の ScanLine、Content は複数行の ScanContent、Diff は
 // 追加行だけを評価する ScanDiffHunk に対応する。Want は、そのケースで検出されるべき
 // ルール ID の集合（空なら「何も検出されないべき」陰性ケース）。

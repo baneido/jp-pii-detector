@@ -204,6 +204,9 @@ func scanCase(d *detect.Detector, c Case) ([]detect.Finding, error) {
 	if inputs > 1 {
 		return nil, fmt.Errorf("ambiguous eval case %q: set only one of line, content, diff", caseLabel(c))
 	}
+	if inputs == 0 && (len(c.Want) > 0 || len(c.Spans) > 0) {
+		return nil, fmt.Errorf("missing eval case input for expected case %q: set one of line, content, diff", caseLabel(c))
+	}
 	switch {
 	case len(c.Diff) > 0:
 		lines := make([]detect.DiffLine, len(c.Diff))

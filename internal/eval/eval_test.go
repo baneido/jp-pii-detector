@@ -214,6 +214,37 @@ func TestEvaluateCasesRejectsAmbiguousInputs(t *testing.T) {
 	}
 }
 
+func TestEvaluateCasesRejectsExpectedCaseWithoutInput(t *testing.T) {
+	tests := []struct {
+		name string
+		c    Case
+	}{
+		{
+			name: "want",
+			c:    Case{Want: []string{"email-address"}},
+		},
+		{
+			name: "span",
+			c: Case{Spans: []Span{{
+				RuleID: "email-address",
+				Start:  0,
+				End:    14,
+			}}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := EvaluateCases([]Case{tt.c})
+			if err == nil {
+				t.Fatal("EvaluateCases accepted a case with expectations but no input")
+			}
+			if !strings.Contains(err.Error(), "missing eval case input") {
+				t.Fatalf("error = %v, want missing input error", err)
+			}
+		})
+	}
+}
+
 func TestEvaluateCasesErrorsDoNotEchoInput(t *testing.T) {
 	_, err := EvaluateCases([]Case{{
 		Line:    "連絡先: taro@gmail.com",
