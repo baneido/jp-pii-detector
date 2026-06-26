@@ -20,6 +20,7 @@
 [docs/development.md](docs/development.md)）に対する
 **F1 スコア**（適合率と再現率の調和平均）です。`JP_PII_FIXTURES` を設定して `go test ./internal/eval` で検証しており
 （数値が動くと CI が落ちる）、内訳は [docs/accuracy.md](docs/accuracy.md) を参照してください。
+バッジはルール自体の検出能力を見るため `min_confidence=low`、高再現率ルール無効で計測しています。
 評価データセットに対する値であり、あらゆる入力での精度を保証するものではありません。
 
 | 種別 | 例（すべて架空のダミー） | 精度 | 実測 F1 | 検出の決め手 |

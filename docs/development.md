@@ -40,8 +40,11 @@ $ go test -bench . -benchmem ./internal/normalize/ ./internal/detect/
 適合率、再現率、F1 を計測するハーネスがあります。データセットは実在しうる PII を含むため
 リポジトリにはコミットせず、外部ストレージ（GCS）で管理して `JP_PII_FIXTURES` 経由で読み込みます
 （後述の「評価データセット・テストフィクスチャの取得」を参照）。README の検出精度バッジと
-[accuracy.md](accuracy.md) はこの実測値です。`JP_PII_FIXTURES` が未設定の環境では eval 系テストは
-`t.Skip` され、ローカル/オフラインでも `go test ./...` は緑のままになります。
+[accuracy.md](accuracy.md) は、ルール自体の検出能力を見るため `min_confidence=low`、
+高再現率ルール無効のプロファイルで測った実測値です。`EvaluateWithOptions` /
+`EvaluateCasesWithOptions` を使うと、既定 CLI 相当（`min_confidence=medium`）や
+高再現率ルール有効時も同じハーネスで評価できます。`JP_PII_FIXTURES` が未設定の環境では
+eval 系テストは `t.Skip` され、ローカル/オフラインでも `go test ./...` は緑のままになります。
 
 ```console
 $ export JP_PII_FIXTURES=$PWD/pii-fixtures.json   # GCS から取得（取得手順は後述）
@@ -72,8 +75,13 @@ $ go test ./...
 ```
 
 `pii-fixtures.json` は `.gitignore` 済みでコミットされません。JSON スキーマは
-`{ "strings": { "<key>": "<値>" }, "dataset": [ { "line", "want", "spans" } ] }` で、
-`internal/piifixtures/piifixtures.go` のコメントに定義があります。値を編集したら GCS に再アップロードします。
+`{ "strings": { "<key>": "<値>" }, "dataset": [ { "line", "content", "diff", "want", "spans" } ] }` で、
+`line` / `content` / `diff` のいずれか 1 つを入力として指定します。`want` または `spans` が
+あるケースでは入力指定漏れをエラーにします。`line` は単一行の `ScanLine`、`content` は複数行の `ScanContent`、`diff` は `{ "text", "added" }` の配列で
+`ScanDiffHunk`（追加行だけを報告）を評価します。`spans` は `{ "rule_id", "line", "start", "end" }`
+で、`line` は 1 始まり、`start` / `end` はその行内の 0 始まりルーンオフセットです
+（`line` 省略時は後方互換のため 1 行目）。詳細は `internal/piifixtures/piifixtures.go` の
+コメントに定義があります。値を編集したら GCS に再アップロードします。
 
 CI（GitHub Actions）は GitHub OIDC → GCP Workload Identity Federation で認証し、サービスアカウントの
 鍵を持たずに取得します。リポジトリ変数 `JP_PII_FIXTURES_PROVIDER`（プロバイダのリソース名）・

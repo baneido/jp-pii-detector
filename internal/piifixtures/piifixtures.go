@@ -12,7 +12,11 @@
 //
 //	{
 //	  "strings": { "<key>": "<生 PII 文字列>" },
-//	  "dataset": [ { "line": "...", "want": ["rule-id"], "spans": [ ... ] } ]
+//	  "dataset": [
+//	    { "line": "...", "want": ["rule-id"], "spans": [ ... ] },
+//	    { "content": "...\n...", "spans": [ ... ] },
+//	    { "diff": [ { "text": "...", "added": true } ], "spans": [ ... ] }
+//	  ]
 //	}
 package piifixtures
 
@@ -25,21 +29,35 @@ import (
 // EnvVar はフィクスチャ JSON のローカルパスを指す環境変数名。
 const EnvVar = "JP_PII_FIXTURES"
 
-// Span は 1 件の期待検出範囲。Start/End は 0 始まりのルーンオフセット
+// Span は 1 件の期待検出範囲。Line は 1 始まりの行番号で、0 は後方互換のため
+// 1 行目として扱う。Start/End はその行内の 0 始まりルーンオフセット
 // （End は半開区間）。Tags は easy/hard などの層化用メタデータ。
 type Span struct {
 	RuleID string   `json:"rule_id"`
+	Line   int      `json:"line,omitempty"`
 	Start  int      `json:"start"`
 	End    int      `json:"end"`
 	Tags   []string `json:"tags,omitempty"`
 }
 
-// Case は 1 行の評価ケース。Want は、その行で検出されるべきルール ID の集合
-// （空なら「何も検出されないべき」陰性ケース）。
+// DiffLine は diff hunk 内の 1 行。Added が true なら追加行、false なら文脈行。
+type DiffLine struct {
+	Text  string `json:"text"`
+	Added bool   `json:"added"`
+}
+
+// Case は 1 つの評価ケース。Line / Content / Diff のいずれか 1 つで入力を表す。
+// Want または Spans があるケースでは入力指定を必須とし、フィクスチャの指定漏れを
+// 検出する。入力も期待値も空のケースは、後方互換のため空行の陰性ケースとして扱う。
+// Line は従来どおり 1 行の ScanLine、Content は複数行の ScanContent、Diff は
+// 追加行だけを評価する ScanDiffHunk に対応する。Want は、そのケースで検出されるべき
+// ルール ID の集合（空なら「何も検出されないべき」陰性ケース）。
 type Case struct {
-	Line  string   `json:"line"`
-	Want  []string `json:"want,omitempty"`
-	Spans []Span   `json:"spans,omitempty"`
+	Line    string     `json:"line,omitempty"`
+	Content string     `json:"content,omitempty"`
+	Diff    []DiffLine `json:"diff,omitempty"`
+	Want    []string   `json:"want,omitempty"`
+	Spans   []Span     `json:"spans,omitempty"`
 }
 
 type data struct {

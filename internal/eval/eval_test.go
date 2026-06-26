@@ -122,6 +122,175 @@ func TestEvaluateCasesCountsExactAndRelaxedSpans(t *testing.T) {
 	}
 }
 
+func TestEvaluateCasesScansContentWithLineAwareSpans(t *testing.T) {
+	results, err := EvaluateCases([]Case{
+		{
+			Content: "memo\n連絡先: taro@gmail.com",
+			Spans: []Span{{
+				RuleID: "email-address",
+				Line:   2,
+				Start:  5,
+				End:    19,
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := findResult(t, results, "email-address")
+	if r.TP != 1 || r.FP != 0 || r.FN != 0 {
+		t.Fatalf("row counts = TP:%d FP:%d FN:%d, want TP:1 FP:0 FN:0", r.TP, r.FP, r.FN)
+	}
+	if r.SpanExact.TP != 1 || r.SpanExact.FP != 0 || r.SpanExact.FN != 0 {
+		t.Fatalf("exact span counts = TP:%d FP:%d FN:%d, want TP:1 FP:0 FN:0",
+			r.SpanExact.TP, r.SpanExact.FP, r.SpanExact.FN)
+	}
+}
+
+func TestEvaluateCasesSpanLineMustMatch(t *testing.T) {
+	results, err := EvaluateCases([]Case{
+		{
+			Content: "連絡先: taro@gmail.com\nmemo",
+			Spans: []Span{{
+				RuleID: "email-address",
+				Line:   2,
+				Start:  5,
+				End:    19,
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := findResult(t, results, "email-address")
+	if r.TP != 1 || r.FP != 0 || r.FN != 0 {
+		t.Fatalf("row counts = TP:%d FP:%d FN:%d, want TP:1 FP:0 FN:0", r.TP, r.FP, r.FN)
+	}
+	if r.SpanExact.TP != 0 || r.SpanExact.FP != 1 || r.SpanExact.FN != 1 {
+		t.Fatalf("exact span counts = TP:%d FP:%d FN:%d, want TP:0 FP:1 FN:1",
+			r.SpanExact.TP, r.SpanExact.FP, r.SpanExact.FN)
+	}
+}
+
+func TestEvaluateCasesScansDiffAddedLines(t *testing.T) {
+	results, err := EvaluateCases([]Case{
+		{
+			Diff: []DiffLine{
+				{Text: "連絡先: old@gmail.com", Added: false},
+				{Text: "連絡先: taro@gmail.com", Added: true},
+			},
+			Spans: []Span{{
+				RuleID: "email-address",
+				Line:   2,
+				Start:  5,
+				End:    19,
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := findResult(t, results, "email-address")
+	if r.TP != 1 || r.FP != 0 || r.FN != 0 {
+		t.Fatalf("row counts = TP:%d FP:%d FN:%d, want only the added-line email as TP",
+			r.TP, r.FP, r.FN)
+	}
+	if r.SpanExact.TP != 1 || r.SpanExact.FP != 0 || r.SpanExact.FN != 0 {
+		t.Fatalf("exact span counts = TP:%d FP:%d FN:%d, want TP:1 FP:0 FN:0",
+			r.SpanExact.TP, r.SpanExact.FP, r.SpanExact.FN)
+	}
+}
+
+func TestEvaluateCasesRejectsAmbiguousInputs(t *testing.T) {
+	_, err := EvaluateCases([]Case{{
+		Line:    "memo",
+		Content: "memo",
+	}})
+	if err == nil {
+		t.Fatal("EvaluateCases accepted a case with both line and content set")
+	}
+}
+
+func TestEvaluateCasesRejectsExpectedCaseWithoutInput(t *testing.T) {
+	tests := []struct {
+		name string
+		c    Case
+	}{
+		{
+			name: "want",
+			c:    Case{Want: []string{"email-address"}},
+		},
+		{
+			name: "span",
+			c: Case{Spans: []Span{{
+				RuleID: "email-address",
+				Start:  0,
+				End:    14,
+			}}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := EvaluateCases([]Case{tt.c})
+			if err == nil {
+				t.Fatal("EvaluateCases accepted a case with expectations but no input")
+			}
+			if !strings.Contains(err.Error(), "missing eval case input") {
+				t.Fatalf("error = %v, want missing input error", err)
+			}
+		})
+	}
+}
+
+func TestEvaluateCasesErrorsDoNotEchoInput(t *testing.T) {
+	_, err := EvaluateCases([]Case{{
+		Line:    "連絡先: taro@gmail.com",
+		Content: "memo",
+	}})
+	if err == nil {
+		t.Fatal("EvaluateCases accepted an ambiguous case")
+	}
+	if strings.Contains(err.Error(), "taro@gmail.com") {
+		t.Fatalf("error echoed input containing PII-like data: %v", err)
+	}
+}
+
+func TestEvaluateCasesWithOptionsUsesMinConfidence(t *testing.T) {
+	results, err := EvaluateCasesWithOptions([]Case{
+		{Line: "氏名: 山田太郎", Want: []string{"person-name"}},
+	}, Options{MinConfidence: "medium"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := findResult(t, results, "person-name")
+	if r.TP != 0 || r.FP != 0 || r.FN != 1 {
+		t.Fatalf("row counts = TP:%d FP:%d FN:%d, want low-confidence name to be below medium threshold",
+			r.TP, r.FP, r.FN)
+	}
+}
+
+func TestEvaluateCasesWithOptionsEnablesHighRecallRules(t *testing.T) {
+	results, err := EvaluateCasesWithOptions([]Case{
+		{
+			Content: "氏名:\n山田太郎",
+			Want:    []string{"person-name-structured"},
+		},
+	}, Options{MinConfidence: "medium", HighRecall: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := findResult(t, results, "person-name-structured")
+	if r.TP != 1 || r.FP != 0 || r.FN != 0 {
+		t.Fatalf("row counts = TP:%d FP:%d FN:%d, want high-recall structured name to be evaluated",
+			r.TP, r.FP, r.FN)
+	}
+}
+
 func TestSpanMacroAveragesScoredRules(t *testing.T) {
 	piifixtures.Require(t)
 	results, err := EvaluateCases([]Case{
@@ -220,6 +389,9 @@ func TestGenerateDoc(t *testing.T) {
 	b.WriteString("適合率（precision）、再現率（recall）、F1 スコアです。`JP_PII_FIXTURES` を設定して\n")
 	b.WriteString("`go test ./internal/eval` で検証され（[eval_test.go](../internal/eval/eval_test.go)）、\n")
 	b.WriteString("`-update` で本ファイルを再生成します。\n\n")
+	b.WriteString("README バッジと下表の主指標は、ルール自体の検出能力を見るため `min_confidence=low`、\n")
+	b.WriteString("高再現率ルール無効の既存プロファイルで計測しています。評価ケースは単一行（`line`）に加え、\n")
+	b.WriteString("複数行入力（`content`）と diff hunk（`diff`: 追加行のみを報告）も表現できます。\n\n")
 	b.WriteString("> この数値は、実在しうる PII を含むためリポジトリ外で管理する評価データセット\n")
 	b.WriteString("> （陽性と陰性の代表例と、実運用での限界を表す難ケース）に対する値であり、あらゆる\n")
 	b.WriteString("> 入力での精度を保証するものではありません。データセットの取得方法は\n")
@@ -242,8 +414,8 @@ func TestGenerateDoc(t *testing.T) {
 	}
 	if len(spanRows) > 0 {
 		b.WriteString("\n## スパン評価\n\n")
-		b.WriteString("期待スパンが設定されたケースのみを対象にした、ルーンオフセット範囲の評価です。")
-		b.WriteString("exact はルール ID と範囲の完全一致、relaxed は同じルール ID で範囲が重なる場合を一致として数えます。\n\n")
+		b.WriteString("期待スパンが設定されたケースのみを対象にした、行番号とルーンオフセット範囲の評価です。")
+		b.WriteString("exact はルール ID・行番号・範囲の完全一致、relaxed は同じルール ID・同じ行で範囲が重なる場合を一致として数えます。\n\n")
 		b.WriteString("| ルール ID | exact F1 | exact 適合率 | exact 再現率 | exact TP | exact FP | exact FN | relaxed F1 | relaxed 適合率 | relaxed 再現率 | relaxed TP | relaxed FP | relaxed FN |\n")
 		b.WriteString("|---|:--:|:--:|:--:|--:|--:|--:|:--:|:--:|:--:|--:|--:|--:|\n")
 		for _, r := range spanRows {

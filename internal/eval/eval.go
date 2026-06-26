@@ -18,8 +18,9 @@ import (
 // 評価データセットは piifixtures（リポジトリ外 JSON）から読み込むため、
 // 型定義は piifixtures に置き、ここでは型別名で参照する。
 type (
-	Case = piifixtures.Case
-	Span = piifixtures.Span
+	Case     = piifixtures.Case
+	Span     = piifixtures.Span
+	DiffLine = piifixtures.DiffLine
 )
 
 // Score は TP/FP/FN と、それらから算出した指標。
@@ -37,6 +38,13 @@ type Result struct {
 	SpanRelaxed           Score
 }
 
+// Options は評価時の検出器設定。ゼロ値では従来どおり min_confidence=low、
+// high-recall ルール無効で評価する。
+type Options struct {
+	MinConfidence string
+	HighRecall    bool
+}
+
 // Evaluate はデータセット全体を走査し、ルールごとの指標を返す。
 // すべてのルールを評価対象にするため min_confidence=low で検出する。
 // ErrNoDataset は評価データセット（piifixtures）が取得できないことを表す。
@@ -44,17 +52,35 @@ type Result struct {
 var ErrNoDataset = errors.New("評価データセットが利用できません（" + piifixtures.EnvVar + " を設定してください）")
 
 func Evaluate() ([]Result, error) {
+	return EvaluateWithOptions(Options{MinConfidence: "low"})
+}
+
+// EvaluateWithOptions はデータセット全体を指定オプションで走査し、ルールごとの
+// 指標を返す。README の既存バッジは Evaluate の low 閾値評価を使い続けるが、
+// 開発時には既定 CLI 相当（medium）や high-recall 有効時の指標も同じハーネスで
+// 計測できる。
+func EvaluateWithOptions(opts Options) ([]Result, error) {
 	cases, ok := piifixtures.Dataset()
 	if !ok {
 		return nil, ErrNoDataset
 	}
-	return EvaluateCases(cases)
+	return EvaluateCasesWithOptions(cases, opts)
 }
 
 // EvaluateCases は指定されたケース集合を評価する。Evaluate は piifixtures から
 // 読み込んだ外部データセットをこれに渡す薄いラッパーで、テストは任意のケースを渡せる。
 func EvaluateCases(cases []Case) ([]Result, error) {
-	cfg, err := config.Parse(`min_confidence = "low"`)
+	return EvaluateCasesWithOptions(cases, Options{MinConfidence: "low"})
+}
+
+// EvaluateCasesWithOptions は指定されたケース集合を、指定オプションで評価する。
+func EvaluateCasesWithOptions(cases []Case, opts Options) ([]Result, error) {
+	minConfidence := opts.MinConfidence
+	if minConfidence == "" {
+		minConfidence = "low"
+	}
+	cfg, err := config.Parse(fmt.Sprintf("min_confidence = %q\n[rules]\nhigh_recall = %t\n",
+		minConfidence, opts.HighRecall))
 	if err != nil {
 		return nil, err
 	}
@@ -84,17 +110,20 @@ func EvaluateCases(cases []Case) ([]Result, error) {
 		}
 		for _, s := range c.Spans {
 			if s.RuleID == "" {
-				return nil, fmt.Errorf("span rule id is empty for line %q", c.Line)
+				return nil, fmt.Errorf("span rule id is empty for case %q", caseLabel(c))
 			}
-			if s.Start < 0 || s.End < s.Start {
-				return nil, fmt.Errorf("invalid span for %s in line %q: [%d,%d)",
-					s.RuleID, c.Line, s.Start, s.End)
+			if s.Line < 0 || s.Start < 0 || s.End < s.Start {
+				return nil, fmt.Errorf("invalid span for %s in case %q: line %d [%d,%d)",
+					s.RuleID, caseLabel(c), s.Line, s.Start, s.End)
 			}
 			want[s.RuleID] = true
 			at(s.RuleID)
 		}
 		got := map[string]bool{}
-		findings := d.ScanLine("dataset", 1, c.Line)
+		findings, err := scanCase(d, c)
+		if err != nil {
+			return nil, err
+		}
 		for _, f := range findings {
 			got[f.RuleID] = true
 		}
@@ -161,10 +190,53 @@ func EvaluateCases(cases []Case) ([]Result, error) {
 	return results, nil
 }
 
+func scanCase(d *detect.Detector, c Case) ([]detect.Finding, error) {
+	inputs := 0
+	if c.Line != "" {
+		inputs++
+	}
+	if c.Content != "" {
+		inputs++
+	}
+	if len(c.Diff) > 0 {
+		inputs++
+	}
+	if inputs > 1 {
+		return nil, fmt.Errorf("ambiguous eval case %q: set only one of line, content, diff", caseLabel(c))
+	}
+	if inputs == 0 && (len(c.Want) > 0 || len(c.Spans) > 0) {
+		return nil, fmt.Errorf("missing eval case input for expected case %q: set one of line, content, diff", caseLabel(c))
+	}
+	switch {
+	case len(c.Diff) > 0:
+		lines := make([]detect.DiffLine, len(c.Diff))
+		for i, l := range c.Diff {
+			lines[i] = detect.DiffLine{Text: l.Text, Added: l.Added}
+		}
+		return d.ScanDiffHunk("dataset", lines), nil
+	case c.Content != "":
+		return d.ScanContent("dataset", c.Content), nil
+	default:
+		return d.ScanLine("dataset", 1, c.Line), nil
+	}
+}
+
+func caseLabel(c Case) string {
+	switch {
+	case len(c.Diff) > 0:
+		return fmt.Sprintf("diff:%d lines", len(c.Diff))
+	case c.Content != "":
+		return fmt.Sprintf("content:%d runes", len([]rune(c.Content)))
+	default:
+		return fmt.Sprintf("line:%d runes", len([]rune(c.Line)))
+	}
+}
+
 func spanFromFinding(f detect.Finding) Span {
 	start := f.Column - 1
 	return Span{
 		RuleID: f.RuleID,
+		Line:   f.Line,
 		Start:  start,
 		End:    start + len([]rune(f.Match)),
 	}
@@ -212,11 +284,18 @@ func matchSpans(want, got []Span, match func(Span, Span) bool) Score {
 }
 
 func spansEqual(a, b Span) bool {
-	return a.RuleID == b.RuleID && a.Start == b.Start && a.End == b.End
+	return a.RuleID == b.RuleID && spanLine(a) == spanLine(b) && a.Start == b.Start && a.End == b.End
 }
 
 func spansOverlap(a, b Span) bool {
-	return a.RuleID == b.RuleID && a.Start < b.End && b.Start < a.End
+	return a.RuleID == b.RuleID && spanLine(a) == spanLine(b) && a.Start < b.End && b.Start < a.End
+}
+
+func spanLine(s Span) int {
+	if s.Line <= 0 {
+		return 1
+	}
+	return s.Line
 }
 
 func addScore(dst *Score, src Score) {
