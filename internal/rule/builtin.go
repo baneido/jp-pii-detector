@@ -18,11 +18,30 @@ func dg(core string) *regexp.Regexp {
 	return regexp.MustCompile(`(?:^|[^0-9])(` + core + `)(?:[^0-9]|$)`)
 }
 
+// dgNoAlnum は dg と同じ境界ガードに加え、前後の ASCII 英字も除外する。
+// hex ハッシュや UUID など英数字トークンの内部に偶然現れた数字列を、
+// 独立した番号として切り出さないために使う。
+func dgNoAlnum(core string) *regexp.Regexp {
+	return regexp.MustCompile(`(?:^|[^0-9A-Za-z])(` + core + `)(?:[^0-9A-Za-z]|$)`)
+}
+
+// dgNoAlnumHyphen は英数字とハイフンで連結されたトークンの内部を除外する。
+// UUID のようなハイフン区切り識別子の一部を、番号として切り出さないために使う。
+func dgNoAlnumHyphen(core string) *regexp.Regexp {
+	return regexp.MustCompile(`(?:^|[^0-9A-Za-z-])(` + core + `)(?:[^0-9A-Za-z-]|$)`)
+}
+
 // dgNoSlash は dg と同じ境界ガードに加え、直前のスラッシュも除外する。
 // URL のパス区切り（例: /articles/4608392522393）を数字列の一部と
 // みなして誤検出するのを防ぐ。
 func dgNoSlash(core string) *regexp.Regexp {
 	return regexp.MustCompile(`(?:^|[^0-9/])(` + core + `)(?:[^0-9]|$)`)
+}
+
+// dgNoSlashAlnumHyphen は dgNoSlash と dgNoAlnumHyphen を組み合わせた
+// 境界ガード。URL パス直後の数字列と、英数字・ハイフン連結トークン内部を除外する。
+func dgNoSlashAlnumHyphen(core string) *regexp.Regexp {
+	return regexp.MustCompile(`(?:^|[^0-9A-Za-z/-])(` + core + `)(?:[^0-9A-Za-z-]|$)`)
 }
 
 // ag は英数字エンティティ用の境界ガード付きパターンを生成する。
@@ -187,10 +206,10 @@ func Builtin() []Rule {
 				return checksum.MyNumber(stripSeparators(m))
 			},
 			Patterns: []Pattern{
-				{Re: dg(`\d{12}`), Base: Medium},
+				{Re: dgNoAlnumHyphen(`\d{12}`), Base: Medium},
 				// 前後にハイフンが続く場合はクレジットカード等の
 				// 4-4-4-4 グループの一部とみなして除外する。
-				{Re: regexp.MustCompile(`(?:^|[^0-9-])(\d{4}-\d{4}-\d{4})(?:[^0-9-]|$)`), Base: Medium},
+				{Re: regexp.MustCompile(`(?:^|[^0-9A-Za-z-])(\d{4}-\d{4}-\d{4})(?:[^0-9A-Za-z-]|$)`), Base: Medium},
 			},
 		},
 		{
@@ -201,13 +220,13 @@ func Builtin() []Rule {
 			Validate:    validPhone,
 			Patterns: []Pattern{
 				// 区切りあり携帯・IP 電話（060/070/080/090/050）
-				{Re: dg(`0[5-9]0-\d{4}-\d{4}`), Base: High},
+				{Re: dgNoAlnum(`0[5-9]0-\d{4}-\d{4}`), Base: High},
 				// 区切りなし携帯・IP 電話
-				{Re: dg(`0[5-9]0\d{8}`), Base: Medium},
+				{Re: dgNoAlnum(`0[5-9]0\d{8}`), Base: Medium},
 				// 区切りあり固定電話（市外局番 2〜5 桁）
-				{Re: dg(`0\d{1,4}-\d{1,4}-\d{4}`), Base: Medium},
+				{Re: dgNoAlnum(`0\d{1,4}-\d{1,4}-\d{4}`), Base: Medium},
 				// 国際表記 +81
-				{Re: dg(`\+81[- ]?\d{1,4}[- ]?\d{1,4}[- ]?\d{3,4}`), Base: High},
+				{Re: dgNoAlnum(`\+81[- ]?\d{1,4}[- ]?\d{1,4}[- ]?\d{3,4}`), Base: High},
 			},
 		},
 		{
@@ -280,8 +299,8 @@ func Builtin() []Rule {
 			// この割り切りにより、スラッシュ直後の「区切りなし」カード番号は
 			// 検出できないが、URL の記事 ID と区別できないため意図的に許容する。
 			Patterns: []Pattern{
-				{Re: dgNoSlash(`\d(?:[- ]?\d){12,18}`), Base: High},
-				{Re: dg(`\d(?:[- ]?\d){0,5}[- ]\d(?:[- ]?\d){6,17}`), Base: High},
+				{Re: dgNoSlashAlnumHyphen(`\d(?:[- ]?\d){12,18}`), Base: High},
+				{Re: dgNoAlnumHyphen(`\d(?:[- ]?\d){0,5}[- ]\d(?:[- ]?\d){6,17}`), Base: High},
 			},
 		},
 		{

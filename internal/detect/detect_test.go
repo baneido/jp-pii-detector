@@ -75,6 +75,23 @@ func TestMyNumberRule(t *testing.T) {
 	}
 }
 
+func TestNumericEntitiesInsideASCIIIdentifiersExcluded(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+	}{
+		{"hex ハッシュ内のマイナンバー候補", "AssetHash: 100d177e8a8a510247564347f3827927"},
+		{"ASCII トークン内の有効な電話番号", "id: tokenA09012345678Z"},
+		{"ASCII トークン内の有効なクレジットカード番号", "id: tokenA4111111111111111Z"},
+		{"UUID 内の数字混在 hex", "id: 510919b2-bbfe-4452-826e-a3d8d0674f59"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line))
+		})
+	}
+}
+
 func TestPhoneRule(t *testing.T) {
 	piifixtures.Require(t)
 	d := newDetector(t, "")
