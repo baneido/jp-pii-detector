@@ -505,6 +505,9 @@ func (d *Detector) scanLineNoIgnore(file string, lineNo int, line string) []Find
 				}
 				pos = next
 				entity := norm[start:end]
+				if insideUUIDv4Token(norm, start, end) {
+					continue
+				}
 				reason := DetectReason{
 					BaseConfidence: p.Base.String(),
 					RequireContext: p.RequireContext,
@@ -606,6 +609,69 @@ func classifyLine(s string) (hasDigit, hasAt, hasCJK bool) {
 		}
 	}
 	return
+}
+
+// insideUUIDv4Token は検出候補 [start,end) が UUIDv4 トークンの内部に
+// 完全に含まれるかを返す。UUID は PII ではないため、内部の数字列や
+// 英数字列を郵便番号・口座番号などとして部分一致させない。
+func insideUUIDv4Token(s string, start, end int) bool {
+	if start < 0 || end < start || end > len(s) {
+		return false
+	}
+	left, right := start, end
+	for left > 0 && isUUIDTokenByte(s[left-1]) {
+		left--
+	}
+	for right < len(s) && isUUIDTokenByte(s[right]) {
+		right++
+	}
+	token := s[left:right]
+	return isHyphenatedUUIDv4(token) || isCompactUUIDv4(token)
+}
+
+func isHyphenatedUUIDv4(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		switch i {
+		case 8, 13, 18, 23:
+			if s[i] != '-' {
+				return false
+			}
+		default:
+			if !isHexByte(s[i]) {
+				return false
+			}
+		}
+	}
+	return s[14] == '4' && isUUIDVariantByte(s[19])
+}
+
+func isCompactUUIDv4(s string) bool {
+	if len(s) != 32 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if !isHexByte(s[i]) {
+			return false
+		}
+	}
+	return s[12] == '4' && isUUIDVariantByte(s[16])
+}
+
+func isUUIDTokenByte(c byte) bool {
+	return c == '-' || isHexByte(c)
+}
+
+func isHexByte(c byte) bool {
+	return (c >= '0' && c <= '9') ||
+		(c >= 'a' && c <= 'f') ||
+		(c >= 'A' && c <= 'F')
+}
+
+func isUUIDVariantByte(c byte) bool {
+	return c == '8' || c == '9' || c == 'a' || c == 'A' || c == 'b' || c == 'B'
 }
 
 // allowlisted は entity（正規化済みのマッチ文字列）が除外対象かを返す。

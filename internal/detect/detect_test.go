@@ -84,6 +84,28 @@ func TestNumericEntitiesInsideASCIIIdentifiersExcluded(t *testing.T) {
 		{"ASCII トークン内の有効な電話番号", "id: tokenA09012345678Z"},
 		{"ASCII トークン内の有効なクレジットカード番号", "id: tokenA4111111111111111Z"},
 		{"UUID 内の数字混在 hex", "id: 510919b2-bbfe-4452-826e-a3d8d0674f59"},
+		{"UUID 内の固定電話風部分", "id: 01adf5d1-0a06-4946-9681-49f35f03cf58"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line))
+		})
+	}
+}
+
+func TestUUIDv4FragmentsWithPIIContextExcluded(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+	}{
+		{"電話番号文脈", "電話番号: 01adf5d1-0a06-4946-9681-49f35f03cf58"},
+		{"郵便番号文脈", "郵便番号: aaaaa100-0001-4abc-8def-123456789abc"},
+		{"口座番号文脈", "口座番号: a1234567-bbbb-4abc-8def-123456789abc"},
+		{"保険者番号文脈", "保険者番号: 12345678-bbbb-4abc-8def-123456789abc"},
+		{"免許番号文脈", "免許番号: aaaaaaaa-bbbb-4abc-8def-123456789012"},
+		{"年金番号文脈", "年金番号: aaaaaaaa-bbbb-4abc-8def-1234567890ab"},
+		{"在留カード文脈", "在留カード番号: aaaaaaaa-bbbb-4abc-8def-AB12345678CD"},
+		{"コンパクト UUID の口座番号文脈", "口座番号: a1234567bbbb4abc8def123456789abc"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
