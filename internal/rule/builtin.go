@@ -283,12 +283,14 @@ func Builtin() []Rule {
 			Prefilter:   PrefilterAt,
 			Validate:    validEmail,
 			Patterns: []Pattern{
-				// 右境界ガード `(?:[^A-Za-z0-9_%+-]|$)` を捕捉グループの外に置き、
+				// 右境界ガード `(?:[^A-Za-z0-9_%+:-]|$)` を捕捉グループの外に置き、
 				// user@gmail.com_suffix / user@gmail.com+suffix のように直後が
-				// 英数字・_ % + - で続く（メールアドレスの一部ではない）部分一致を
-				// 棄却する。`.` は除外集合に含めないため、文末ピリオド
+				// 英数字・_ % + - : で続く（メールアドレスの一部ではない）部分一致を
+				// 棄却する。`:` は git@github.com:owner/repo.git のような
+				// scp 形式の SSH URL をメールとして切り出さないために含める。
+				// `.` は除外集合に含めないため、文末ピリオド
 				// （…は user@example.com.）は従来どおり検出できる。
-				{Re: regexp.MustCompile(`(?:^|[^A-Za-z0-9._%+-])([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})(?:[^A-Za-z0-9_%+-]|$)`), Base: High},
+				{Re: regexp.MustCompile(`(?:^|[^A-Za-z0-9._%+-])([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})(?:[^A-Za-z0-9_%+:-]|$)`), Base: High},
 			},
 		},
 		{
