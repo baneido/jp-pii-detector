@@ -148,6 +148,42 @@ func TestEvaluateCasesScansContentWithLineAwareSpans(t *testing.T) {
 	}
 }
 
+func TestEvaluateCaseUsesFileOverride(t *testing.T) {
+	results, err := EvaluateCases([]Case{
+		{
+			File:    "sample.ts",
+			Content: "contact: taro@gmail.com",
+			Want:    []string{"email-address"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := findResult(t, results, "email-address")
+	if r.TP != 1 || r.FN != 0 {
+		t.Fatalf("row counts = TP:%d FN:%d, want TP:1 FN:0", r.TP, r.FN)
+	}
+}
+
+func TestEvaluateCaseFileOverrideEnablesSourceContext(t *testing.T) {
+	results, err := EvaluateCases([]Case{
+		{
+			File:    "sample.ts",
+			Content: "bankAccountNo:\n  \"1234567\"",
+			Want:    []string{"jp-bank-account"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := findResult(t, results, "jp-bank-account")
+	if r.TP != 1 || r.FN != 0 {
+		t.Fatalf("row counts = TP:%d FN:%d, want TP:1 FN:0", r.TP, r.FN)
+	}
+}
+
 func TestEvaluateCasesSpanLineMustMatch(t *testing.T) {
 	results, err := EvaluateCases([]Case{
 		{

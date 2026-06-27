@@ -918,6 +918,52 @@ func TestScanContentRejectsCrossLineNegativeContext(t *testing.T) {
 	assertRules(t, d.ScanContent("f.txt", "口座番号: "+bankAccount+strings.Repeat("あ", 25)+"\n円"), "jp-bank-account")
 }
 
+func TestScanContentUsesSourceContext(t *testing.T) {
+	d := newDetector(t, "")
+	assertRules(t, d.ScanContent("user.ts", `const bankAccountNo = "1234567"`), "jp-bank-account")
+}
+
+func TestScanContentSourceNegativeContext(t *testing.T) {
+	d := newDetector(t, "")
+	assertRules(t, d.ScanContent("user.ts", `const bankAccountId = "1234567"`))
+}
+
+func TestScanContentSourceContextDoesNotLeakAcrossCommaStatements(t *testing.T) {
+	d := newDetector(t, "")
+	content := `const values = { bankAccountNo: "none", orderId: "1234567" }`
+	assertRules(t, d.ScanContent("user.ts", content))
+}
+
+func TestScanContentSourceContextSplitKeyValue(t *testing.T) {
+	d := newDetector(t, "")
+	content := "bankAccountNo:\n" + strings.Repeat(" ", 48) + `"1234567"`
+	assertRules(t, d.ScanContent("user.yaml", content), "jp-bank-account")
+}
+
+func TestScanContentAdjacentKeepsSourceNegativeContextOnValueLine(t *testing.T) {
+	d := newDetector(t, "")
+	content := "bankAccountId:\n" + `bankAccountId: "1234567"`
+	assertRules(t, d.ScanContent("user.yaml", content))
+}
+
+func TestScanDiffHunkSourceContextFromContextLine(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanDiffHunk("user.yaml", []DiffLine{
+		{Text: "bankAccountNo:", Added: false},
+		{Text: strings.Repeat(" ", 48) + `"1234567"`, Added: true},
+	})
+	assertRules(t, fs, "jp-bank-account")
+}
+
+func TestScanDiffHunkKeepsSourceNegativeContextOnAddedLine(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanDiffHunk("user.yaml", []DiffLine{
+		{Text: "bankAccountId:", Added: false},
+		{Text: `bankAccountId: "1234567"`, Added: true},
+	})
+	assertRules(t, fs)
+}
+
 // 構造化・複数行の氏名検出（person-name-structured）。値は埋め込み姓名辞書に
 // 含まれる一般的な氏名（山田太郎 等）のリテラルを使い、外部フィクスチャ無しでも
 // 実行できるようにしている（dict/names_test.go と同じ方針）。

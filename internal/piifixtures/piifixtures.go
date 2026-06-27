@@ -14,7 +14,7 @@
 //	  "strings": { "<key>": "<生 PII 文字列>" },
 //	  "dataset": [
 //	    { "line": "...", "want": ["rule-id"], "spans": [ ... ] },
-//	    { "content": "...\n...", "spans": [ ... ] },
+//	    { "file": "sample.ts", "content": "...\n...", "spans": [ ... ] },
 //	    { "diff": [ { "text": "...", "added": true } ], "spans": [ ... ] }
 //	  ]
 //	}
@@ -51,8 +51,10 @@ type DiffLine struct {
 // 検出する。入力も期待値も空のケースは、後方互換のため空行の陰性ケースとして扱う。
 // Line は従来どおり 1 行の ScanLine、Content は複数行の ScanContent、Diff は
 // 追加行だけを評価する ScanDiffHunk に対応する。Want は、そのケースで検出されるべき
-// ルール ID の集合（空なら「何も検出されないべき」陰性ケース）。
+// ルール ID の集合（空なら「何も検出されないべき」陰性ケース）。File は
+// ソースコード文脈などファイル名依存の挙動を評価したい場合だけ指定する。
 type Case struct {
+	File    string     `json:"file,omitempty"`
 	Line    string     `json:"line,omitempty"`
 	Content string     `json:"content,omitempty"`
 	Diff    []DiffLine `json:"diff,omitempty"`

@@ -127,13 +127,14 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 	for line := range strings.SplitSeq(content, "\n") {
 		lines = append(lines, strings.TrimSuffix(line, "\r"))
 	}
+	lineContexts := sourceLineContexts(file, lines)
 
 	var candidates []Finding
 	for i, line := range lines {
-		candidates = append(candidates, d.ScanLine(file, i+1, line)...)
+		candidates = append(candidates, d.scanLineWithContext(file, i+1, line, lineContexts[i])...)
 	}
 	for i := 0; i+1 < len(lines); i++ {
-		candidates = append(candidates, d.scanAdjacentLines(file, i+1, lines[i], lines[i+1])...)
+		candidates = append(candidates, d.scanAdjacentLines(file, i+1, lines[i], lines[i+1], lineContexts[i], lineContexts[i+1])...)
 	}
 	if d.crossLineName != nil {
 		candidates = append(candidates, d.scanCrossLineNames(file, lines)...)
@@ -241,18 +242,19 @@ func (d *Detector) ScanDiffHunk(file string, lines []DiffLine) []Finding {
 		texts[i] = l.Text
 		added[i] = l.Added
 	}
+	lineContexts := sourceLineContextsForDiff(file, texts, added)
 
 	var candidates []Finding
 	// 追加行は単独走査（同一行コンテキスト・同一行抑制が正しく適用される）。
 	for i, line := range texts {
 		if added[i] {
-			candidates = append(candidates, d.ScanLine(file, i+1, line)...)
+			candidates = append(candidates, d.scanLineWithContext(file, i+1, line, lineContexts[i])...)
 		}
 	}
 	// 隣接 2 行は RequireContext を文脈行ラベルで昇格させる。抑制は値の行（追加行）基準。
 	for i := 0; i+1 < len(texts); i++ {
 		candidates = append(candidates,
-			d.scanAdjacentLinesDiff(file, i+1, texts[i], texts[i+1], added[i], added[i+1])...)
+			d.scanAdjacentLinesDiff(file, i+1, texts[i], texts[i+1], added[i], added[i+1], lineContexts[i], lineContexts[i+1])...)
 	}
 	// 文脈行起因の cross-line 負コンテキストは適用しない（上記の設計意図）。
 	return dedupAndSortFindings(candidates)
@@ -276,7 +278,7 @@ func itoa(n int) string {
 	return string(buf[i:])
 }
 
-func (d *Detector) scanAdjacentLines(file string, firstLineNo int, first, second string) []Finding {
+func (d *Detector) scanAdjacentLines(file string, firstLineNo int, first, second string, firstCtx, secondCtx lineContext) []Finding {
 	combined := first + "\n" + second
 	firstRunes := []rune(first)
 	secondRunes := []rune(second)
@@ -292,6 +294,9 @@ func (d *Detector) scanAdjacentLines(file string, firstLineNo int, first, second
 			f.Line = firstLineNo
 			f.Column = f.start + 1
 			f.Match = string(firstRunes[f.start:f.end])
+			if d.hasSourceNegativeForFinding(f, first, firstCtx) {
+				continue
+			}
 		case f.start > sep:
 			start := f.start - sep - 1
 			end := f.end - sep - 1
@@ -302,6 +307,9 @@ func (d *Detector) scanAdjacentLines(file string, firstLineNo int, first, second
 			f.Column = start + 1
 			f.Match = string(secondRunes[start:end])
 			f.start, f.end = start, end
+			if d.hasSourceNegativeForFinding(f, second, secondCtx) {
+				continue
+			}
 		default:
 			continue
 		}
@@ -368,7 +376,7 @@ func (d *Detector) scanCrossLineNames(file string, lines []string) []Finding {
 // scanAdjacentLinesDiff は scanAdjacentLines の差分版。検出値が追加行に乗る
 // RequireContext finding だけを残す。文脈行の ignore マーカーでは抑制せず
 // （scanLineNoIgnore を使う）、抑制判定は値が乗る行（必ず追加行）に対してのみ行う。
-func (d *Detector) scanAdjacentLinesDiff(file string, firstLineNo int, first, second string, firstAdded, secondAdded bool) []Finding {
+func (d *Detector) scanAdjacentLinesDiff(file string, firstLineNo int, first, second string, firstAdded, secondAdded bool, firstCtx, secondCtx lineContext) []Finding {
 	if !firstAdded && !secondAdded {
 		return nil
 	}
@@ -390,6 +398,9 @@ func (d *Detector) scanAdjacentLinesDiff(file string, firstLineNo int, first, se
 			f.Line = firstLineNo
 			f.Column = f.start + 1
 			f.Match = string(firstRunes[f.start:f.end])
+			if d.hasSourceNegativeForFinding(f, first, firstCtx) {
+				continue
+			}
 		case f.start > sep: // 値は 2 行目
 			if !secondAdded || ignoredLine(second) {
 				continue
@@ -403,12 +414,58 @@ func (d *Detector) scanAdjacentLinesDiff(file string, firstLineNo int, first, se
 			f.Column = start + 1
 			f.Match = string(secondRunes[start:end])
 			f.start, f.end = start, end
+			if d.hasSourceNegativeForFinding(f, second, secondCtx) {
+				continue
+			}
 		default:
 			continue
 		}
 		out = append(out, f)
 	}
 	return out
+}
+
+func (d *Detector) hasSourceNegativeForFinding(f Finding, line string, lineCtx lineContext) bool {
+	if len(lineCtx.Statements) == 0 || !d.ruleHasNegativeContext(f.RuleID) {
+		return false
+	}
+	norm := normalize.Line(line)
+	start, ok := runeOffsetToByteOffset(norm, f.start)
+	if !ok {
+		return false
+	}
+	end, ok := runeOffsetToByteOffset(norm, f.end)
+	if !ok {
+		return false
+	}
+	st := lineCtx.statementFor(start, end)
+	return st != nil && st.NegativeText != ""
+}
+
+func (d *Detector) ruleHasNegativeContext(ruleID string) bool {
+	for _, r := range d.rules {
+		if r.ID == ruleID {
+			return len(r.NegativeContext) > 0
+		}
+	}
+	return false
+}
+
+func runeOffsetToByteOffset(s string, target int) (int, bool) {
+	if target < 0 {
+		return 0, false
+	}
+	idx := 0
+	for pos := range s {
+		if idx == target {
+			return pos, true
+		}
+		idx++
+	}
+	if idx == target {
+		return len(s), true
+	}
+	return 0, false
 }
 
 // ScanLine は 1 行を走査する。lineNo は 1 始まり。
@@ -419,10 +476,21 @@ func (d *Detector) ScanLine(file string, lineNo int, line string) []Finding {
 	return d.scanLineNoIgnore(file, lineNo, line)
 }
 
+func (d *Detector) scanLineWithContext(file string, lineNo int, line string, lineCtx lineContext) []Finding {
+	if line == "" || ignoredLine(line) {
+		return nil
+	}
+	return d.scanLineNoIgnoreWithContext(file, lineNo, line, lineCtx)
+}
+
 // scanLineNoIgnore は ScanLine の本体（ignore マーカー判定を除く）。差分の
 // 隣接行走査では、文脈行に残った ignore マーカーで追加行の値を抑制しないよう、
 // この経路を使って結合文字列を走査する。
 func (d *Detector) scanLineNoIgnore(file string, lineNo int, line string) []Finding {
+	return d.scanLineNoIgnoreWithContext(file, lineNo, line, lineContext{})
+}
+
+func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line string, lineCtx lineContext) []Finding {
 	if line == "" {
 		return nil
 	}
@@ -457,33 +525,33 @@ func (d *Detector) scanLineNoIgnore(file string, lineNo int, line string) []Find
 		if len(r.PrefilterLiterals) > 0 && !containsAnyLiteral(norm, r.PrefilterLiterals) {
 			continue
 		}
-		ctxComputed := false
-		var ctxKeywords []string
-		ctx := func() []string {
-			if !ctxComputed {
-				// matchingContexts は内部で小文字化しつつ、トークナイザ用に
-				// 元の大文字小文字（camelCase 境界）を保った norm を受け取る。
-				ctxKeywords = d.matchingContexts(norm, r.Context)
-				ctxComputed = true
-			}
-			return ctxKeywords
-		}
-		ctxNear := func(start, end int) []string {
+		ctxForMatch := func(start, end int, useWindow bool) []string {
+			var kws []string
 			if r.RequireContextWindow <= 0 {
-				return ctx()
+				kws = d.matchingContexts(norm, r.Context)
+			} else if useWindow {
+				kws = d.matchingContexts(contextWindow(norm, start, end, r.RequireContextWindow, &normRunes), r.Context)
+			} else {
+				kws = d.matchingContexts(norm, r.Context)
 			}
-			return d.matchingContexts(contextWindow(norm, start, end, r.RequireContextWindow, &normRunes), r.Context)
+			if st := lineCtx.statementFor(start, end); st != nil && st.PositiveText != "" {
+				kws = append(kws, d.matchingContexts(st.PositiveText, r.Context)...)
+			}
+			return kws
 		}
 		hasNegativeNear := func(start, end int) bool {
 			if len(r.NegativeContext) == 0 {
 				return false
 			}
-			return d.hasNegativeContextNear(norm, start, end, negativeContextWindowRunes, &normRunes, r.NegativeContext)
+			if d.hasNegativeContextNear(norm, start, end, negativeContextWindowRunes, &normRunes, r.NegativeContext) {
+				return true
+			}
+			if st := lineCtx.statementFor(start, end); st != nil && st.NegativeText != "" {
+				return true
+			}
+			return false
 		}
 		for _, p := range r.Patterns {
-			if p.RequireContext && r.RequireContextWindow <= 0 && len(ctx()) == 0 {
-				continue
-			}
 			// FindAll はマッチ全体（末尾の境界ガード文字を含む）の直後から
 			// 次を探すため、`090-…-2222,090-…-4444` のように区切りが 1 文字
 			// だけの隣接エンティティを取りこぼす。キャプチャ終端から再検索
@@ -511,7 +579,7 @@ func (d *Detector) scanLineNoIgnore(file string, lineNo int, line string) []Find
 					ContextWindow:  r.RequireContextWindow,
 				}
 				if p.RequireContext {
-					kws := ctxNear(start, end)
+					kws := ctxForMatch(start, end, true)
 					if len(kws) == 0 {
 						continue
 					}
@@ -540,7 +608,7 @@ func (d *Detector) scanLineNoIgnore(file string, lineNo int, line string) []Find
 				// （口座番号などの△ルールが常に high になるのを防ぐ）。
 				conf := p.Base
 				if !p.RequireContext && conf < rule.High {
-					kws := ctx()
+					kws := ctxForMatch(start, end, false)
 					if len(kws) > 0 {
 						reason.ContextKeywords = kws
 						reason.ContextPromoted = true
