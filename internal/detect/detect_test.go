@@ -1025,6 +1025,7 @@ func TestEmailRightBoundary(t *testing.T) {
 		{"プラスで継続は棄却", "value=taro@gmail.com+suffix", ""},
 		{"英数字で継続は棄却", "id=taro@gmail.com2", ""},
 		{"ハイフンで継続は棄却", "x taro@gmail.com-foo", ""},
+		{"GitHub SSH URL は棄却", "repoURL: git@github.com:SingColor/singcolor-server.git", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
