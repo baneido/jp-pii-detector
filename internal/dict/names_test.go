@@ -104,3 +104,24 @@ func TestIsPersonName(t *testing.T) {
 		})
 	}
 }
+
+func TestExpandedNameDictionaryExamples(t *testing.T) {
+	tests := []struct {
+		in   string
+		want bool
+	}{
+		{"一ノ瀬", true},
+		{"越智", true},
+		{"凪沙", true},
+		{"伊織", true},
+		{"越智凪沙", true},
+		{"一ノ瀬 伊織", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			if got := IsPersonName(tt.in); got != tt.want {
+				t.Errorf("IsPersonName(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}

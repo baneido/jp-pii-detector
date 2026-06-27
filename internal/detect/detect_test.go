@@ -491,6 +491,22 @@ func TestPersonNameWeakFieldsDictGated(t *testing.T) {
 	}
 }
 
+func TestPersonNameExpandedDictionaryWeakFields(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	tests := []struct {
+		name, line string
+	}{
+		{"追加姓", "姓: 一ノ瀬"},
+		{"追加名", "名: 凪沙"},
+		{"曖昧 name キーの姓名", "name: 一ノ瀬 伊織"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), "person-name")
+		})
+	}
+}
+
 // TestPersonNameAmbiguousASCIIKeysDictGated は user_name/account_name/contact_name/
 // 裸 name（ハンドル名・キーになりうる）を辞書照合で絞ることを確認する（レビュー #1）。
 func TestPersonNameAmbiguousASCIIKeysDictGated(t *testing.T) {
@@ -1032,6 +1048,11 @@ func TestCrossLineNameRejectsNonNames(t *testing.T) {
 	for _, value := range []string{"株式会社", "未定", "プロジェクト", "該当なし"} {
 		assertRules(t, d.ScanContent("f.txt", "氏名:\n"+value))
 	}
+}
+
+func TestCrossLineNameExpandedDictionary(t *testing.T) {
+	d := newDetector(t, highRecallTOML)
+	assertRules(t, d.ScanContent("f.txt", "氏名:\n越智凪沙"), "person-name-structured")
 }
 
 func TestCrossLineNameOnlyStrongLabels(t *testing.T) {
