@@ -45,6 +45,51 @@ func TestSourceLineContextsNegativeText(t *testing.T) {
 	}
 }
 
+func TestFindSourceAssignmentOperatorSkipsQuotedOperators(t *testing.T) {
+	tests := []struct {
+		name      string
+		segment   string
+		wantPos   int
+		wantWidth int
+	}{
+		{
+			name:      "colon in assigned string",
+			segment:   `const bankAccountNo = "version:1234567"`,
+			wantPos:   strings.IndexByte(`const bankAccountNo = "version:1234567"`, '='),
+			wantWidth: 1,
+		},
+		{
+			name:      "walrus in assigned string",
+			segment:   `bankAccountNo: "prefix:=1234567"`,
+			wantPos:   strings.IndexByte(`bankAccountNo: "prefix:=1234567"`, ':'),
+			wantWidth: 1,
+		},
+		{
+			name:      "equals in quoted map key",
+			segment:   `values["bank=account"] = "1234567"`,
+			wantPos:   strings.LastIndexByte(`values["bank=account"] = "1234567"`, '='),
+			wantWidth: 1,
+		},
+		{
+			name:      "escaped quote before colon in assigned string",
+			segment:   `bankAccountNo = "prefix\":1234567"`,
+			wantPos:   strings.IndexByte(`bankAccountNo = "prefix\":1234567"`, '='),
+			wantWidth: 1,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotPos, gotWidth, ok := findSourceAssignmentOperator(tt.segment)
+			if !ok {
+				t.Fatalf("findSourceAssignmentOperator(%q) ok = false, want true", tt.segment)
+			}
+			if gotPos != tt.wantPos || gotWidth != tt.wantWidth {
+				t.Fatalf("findSourceAssignmentOperator(%q) = (%d, %d), want (%d, %d)", tt.segment, gotPos, gotWidth, tt.wantPos, tt.wantWidth)
+			}
+		})
+	}
+}
+
 func TestSourceLineContextsSkipUnknownFiles(t *testing.T) {
 	ctxs := sourceLineContexts("memo.txt", []string{`const bankAccountNo = "1234567"`})
 	if len(ctxs) != 1 {
