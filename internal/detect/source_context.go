@@ -215,7 +215,7 @@ func splitSourceStatements(line string) []sourceSegment {
 			}
 			continue
 		}
-		if c == '"' || c == '\'' {
+		if c == '"' || c == '\'' || c == '`' {
 			quote = c
 			continue
 		}

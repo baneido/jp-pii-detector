@@ -90,6 +90,50 @@ func TestFindSourceAssignmentOperatorSkipsQuotedOperators(t *testing.T) {
 	}
 }
 
+func TestSplitSourceStatementsKeepsBacktickStrings(t *testing.T) {
+	// バッククォート（Go の raw string / JS テンプレートリテラル）内の
+	// カンマ・セミコロンは文の区切りではない。findSourceAssignmentOperator が
+	// バッククォートを文字列リテラルとして扱う（indexUnquotedByte）のと整合させる。
+	tests := []struct {
+		name string
+		line string
+		want []string
+	}{
+		{
+			name: "comma inside backtick raw string",
+			line: "config := `timeout=30,bankAccountNo:1234567`",
+			want: []string{"config := `timeout=30,bankAccountNo:1234567`"},
+		},
+		{
+			name: "semicolon inside backtick raw string",
+			line: "q := `SELECT a; SELECT b`",
+			want: []string{"q := `SELECT a; SELECT b`"},
+		},
+		{
+			name: "real comma between statements still splits",
+			line: "a := `x`, b := `y`",
+			want: []string{"a := `x`", " b := `y`"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			segs := splitSourceStatements(tt.line)
+			got := make([]string, 0, len(segs))
+			for _, sg := range segs {
+				got = append(got, tt.line[sg.start:sg.end])
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("splitSourceStatements(%q) = %#v, want %#v", tt.line, got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Fatalf("splitSourceStatements(%q) = %#v, want %#v", tt.line, got, tt.want)
+				}
+			}
+		})
+	}
+}
+
 func TestSourceLineContextsSkipUnknownFiles(t *testing.T) {
 	ctxs := sourceLineContexts("memo.txt", []string{`const bankAccountNo = "1234567"`})
 	if len(ctxs) != 1 {
