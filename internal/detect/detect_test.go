@@ -961,6 +961,11 @@ func TestScanContentUsesSourceContext(t *testing.T) {
 	assertRules(t, d.ScanContent("user.ts", `const bankAccountNo = "1234567"`), "jp-bank-account")
 }
 
+func TestScanContentSourceContextIgnoresQuotedOperators(t *testing.T) {
+	d := newDetector(t, "")
+	assertRules(t, d.ScanContent("user.ts", `const bankAccountNo = "version:1234567"`), "jp-bank-account")
+}
+
 func TestScanContentSourceNegativeContext(t *testing.T) {
 	d := newDetector(t, "")
 	assertRules(t, d.ScanContent("user.ts", `const bankAccountId = "1234567"`))

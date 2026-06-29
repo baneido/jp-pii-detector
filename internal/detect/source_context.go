@@ -215,7 +215,7 @@ func splitSourceStatements(line string) []sourceSegment {
 			}
 			continue
 		}
-		if c == '"' || c == '\'' {
+		if c == '"' || c == '\'' || c == '`' {
 			quote = c
 			continue
 		}
@@ -258,28 +258,61 @@ func statementContextFromSegment(line string, start, end int) (statementContext,
 }
 
 func findSourceAssignmentOperator(segment string) (pos, width int, ok bool) {
-	if i := strings.Index(segment, ":="); i >= 0 {
+	if i := indexUnquotedByte(segment, func(i int) bool {
+		return i+1 < len(segment) && segment[i] == ':' && segment[i+1] == '='
+	}); i >= 0 {
 		return i, 2, true
 	}
-	if i := strings.IndexByte(segment, ':'); i >= 0 {
+	if i := indexUnquotedByte(segment, func(i int) bool {
+		return segment[i] == ':'
+	}); i >= 0 {
 		return i, 1, true
 	}
-	for i := 0; i < len(segment); i++ {
+	if i := indexUnquotedByte(segment, func(i int) bool {
 		if segment[i] != '=' {
-			continue
+			return false
 		}
 		if i > 0 {
 			switch segment[i-1] {
 			case '=', '!', '<', '>':
-				continue
+				return false
 			}
 		}
-		if i+1 < len(segment) && segment[i+1] == '=' {
-			continue
-		}
+		return i+1 >= len(segment) || segment[i+1] != '='
+	}); i >= 0 {
 		return i, 1, true
 	}
 	return 0, 0, false
+}
+
+func indexUnquotedByte(s string, match func(i int) bool) int {
+	var quote byte
+	escaped := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if quote != 0 {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if c == '\\' {
+				escaped = true
+				continue
+			}
+			if c == quote {
+				quote = 0
+			}
+			continue
+		}
+		if c == '"' || c == '\'' || c == '`' {
+			quote = c
+			continue
+		}
+		if match(i) {
+			return i
+		}
+	}
+	return -1
 }
 
 func sourceLabelTokens(label string) []string {
