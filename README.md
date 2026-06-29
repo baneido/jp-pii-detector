@@ -162,10 +162,11 @@ disabled = ["person-name"]
 high_recall = false
 
 [allowlist]
-# スキャン対象から除外するパス（正規表現）。フルスキャンでは走査時のパス表記に加えて
+# スキャン対象から除外するパス（glob または正規表現）。glob の * は 1 階層、
+# ** は 0 階層以上にマッチします。フルスキャンでは走査時のパス表記に加えて
 # リポジトリルートからの相対パスにも適用されるため、サブディレクトリから
-# 実行しても ^testdata/ のようなルート相対の指定が機能します。
-paths = ["^testdata/", "\\.lock$"]
+# 実行しても ^testdata/ や path/to/*.txt のようなルート相対の指定が機能します。
+paths = ["path/to/*.txt", "path/to/**/target", "^testdata/", "\\.lock$"]
 # マッチ文字列に対する除外（正規表現）。例: 自社ドメインのメール
 regexes = ["@baneido\\.com$"]
 # 完全一致で除外するダミー値

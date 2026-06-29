@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/BurntSushi/toml"
 	"github.com/baneido/jp-pii-detector/internal/rule"
@@ -27,8 +29,8 @@ type Config struct {
 		HighRecall bool `toml:"high_recall"`
 	} `toml:"rules"`
 	Allowlist struct {
-		// Paths は走査から除外するパスの正規表現。検出結果に報告される
-		// パス（フルスキャンは走査ルートを含むパス、git diff は
+		// Paths は走査から除外するパスの正規表現または glob。検出結果に
+		// 報告されるパス（フルスキャンは走査ルートを含むパス、git diff は
 		// リポジトリ相対パス）に適用する。フルスキャンではさらに
 		// リポジトリルートからの相対パスにも適用されるため、
 		// サブディレクトリからの実行でもルート相対の指定が機能する。
@@ -118,7 +120,7 @@ func (c *Config) compile() error {
 	c.explicitDisabled = append([]string{}, c.Rules.Disabled...)
 	c.SetHighRecall(c.Rules.HighRecall)
 	for _, p := range c.Allowlist.Paths {
-		re, err := regexp.Compile(p)
+		re, err := compilePathPattern(p)
 		if err != nil {
 			return fmt.Errorf("config: allowlist.paths %q: %w", p, err)
 		}
@@ -132,6 +134,52 @@ func (c *Config) compile() error {
 		c.allowRes = append(c.allowRes, re)
 	}
 	return nil
+}
+
+func compilePathPattern(pattern string) (*regexp.Regexp, error) {
+	if looksLikePathGlob(pattern) {
+		return compilePathGlob(pattern)
+	}
+	return regexp.Compile(pattern)
+}
+
+func looksLikePathGlob(pattern string) bool {
+	if strings.ContainsAny(pattern, `^\(){}+|$`) || strings.Contains(pattern, `.*`) {
+		return false
+	}
+	return strings.Contains(pattern, "**") || strings.ContainsAny(pattern, "*?")
+}
+
+func compilePathGlob(pattern string) (*regexp.Regexp, error) {
+	pattern = filepath.ToSlash(pattern)
+	var b strings.Builder
+	b.WriteString("^")
+	for i := 0; i < len(pattern); {
+		switch pattern[i] {
+		case '*':
+			if i+1 < len(pattern) && pattern[i+1] == '*' {
+				i += 2
+				if i < len(pattern) && pattern[i] == '/' {
+					b.WriteString("(?:.*/)?")
+					i++
+				} else {
+					b.WriteString(".*")
+				}
+				continue
+			}
+			b.WriteString("[^/]*")
+			i++
+		case '?':
+			b.WriteString("[^/]")
+			i++
+		default:
+			r, size := utf8.DecodeRuneInString(pattern[i:])
+			b.WriteString(regexp.QuoteMeta(string(r)))
+			i += size
+		}
+	}
+	b.WriteString("$")
+	return regexp.Compile(b.String())
 }
 
 // SetHighRecall は高再現率ルールの有効/無効を切り替える。

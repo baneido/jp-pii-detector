@@ -43,6 +43,53 @@ stopwords = ["090-0000-0000"]
 	}
 }
 
+func TestPathAllowedSupportsGlobPatterns(t *testing.T) {
+	cfg, err := Parse(`
+[allowlist]
+paths = ["path/to/**/target", "path/to/*.txt"]
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PathAllowed("path/to/deep/target") {
+		t.Error("** should exclude nested target paths")
+	}
+	if cfg.PathAllowed("path/to/a/b/target") {
+		t.Error("** should exclude deeply nested target paths")
+	}
+	if cfg.PathAllowed("path/to/target") {
+		t.Error("** should also exclude paths with no intermediate directory")
+	}
+	if cfg.PathAllowed("path/to/memo.txt") {
+		t.Error("*.txt should exclude direct child txt files")
+	}
+	if !cfg.PathAllowed("path/to/nested/memo.txt") {
+		t.Error("*.txt should not cross directory boundaries")
+	}
+	if !cfg.PathAllowed("path/to/memo.md") {
+		t.Error("unmatched paths should be allowed")
+	}
+}
+
+func TestPathAllowedKeepsRegexPatterns(t *testing.T) {
+	cfg, err := Parse(`
+[allowlist]
+paths = ["^testdata/", "\\.lock$"]
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PathAllowed("testdata/sample.txt") {
+		t.Error("regex ^testdata/ should still exclude testdata paths")
+	}
+	if cfg.PathAllowed("go.sum.lock") {
+		t.Error("regex \\.lock$ should still exclude lock files")
+	}
+	if !cfg.PathAllowed("internal/main.go") {
+		t.Error("unmatched paths should be allowed")
+	}
+}
+
 func TestParseHighRecallRulesDisabledByDefault(t *testing.T) {
 	cfg, err := Parse("")
 	if err != nil {
