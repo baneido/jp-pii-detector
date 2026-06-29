@@ -191,6 +191,10 @@ func EvaluateCasesWithOptions(cases []Case, opts Options) ([]Result, error) {
 }
 
 func scanCase(d *detect.Detector, c Case) ([]detect.Finding, error) {
+	file := c.File
+	if file == "" {
+		file = "dataset"
+	}
 	inputs := 0
 	if c.Line != "" {
 		inputs++
@@ -213,11 +217,11 @@ func scanCase(d *detect.Detector, c Case) ([]detect.Finding, error) {
 		for i, l := range c.Diff {
 			lines[i] = detect.DiffLine{Text: l.Text, Added: l.Added}
 		}
-		return d.ScanDiffHunk("dataset", lines), nil
+		return d.ScanDiffHunk(file, lines), nil
 	case c.Content != "":
-		return d.ScanContent("dataset", c.Content), nil
+		return d.ScanContent(file, c.Content), nil
 	default:
-		return d.ScanLine("dataset", 1, c.Line), nil
+		return d.ScanLine(file, 1, c.Line), nil
 	}
 }
 
