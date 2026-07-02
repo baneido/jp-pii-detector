@@ -43,22 +43,31 @@ var skipDirs = map[string]bool{
 // 収集済み findings は失わずに返す。err は listFiles 自体の失敗（走査対象の
 // ルートが存在しない等）のみを表す。
 func ScanPaths(d *detect.Detector, cfg *config.Config, paths []string) ([]detect.Finding, []error, error) {
-	files, err := listFiles(cfg, paths)
+	files, warnings, err := listFiles(cfg, paths)
 	if err != nil {
 		return nil, nil, err
 	}
-	findings, warnings := scanFiles(d, files)
+	findings, readWarnings := scanFiles(d, files)
+	warnings = append(warnings, readWarnings...)
 	return findings, warnings, nil
 }
 
 // listFiles は走査対象ファイルを walk 順に列挙する。
-func listFiles(cfg *config.Config, paths []string) ([]string, error) {
+func listFiles(cfg *config.Config, paths []string) ([]string, []error, error) {
 	repoRoot := gitRoot()
 	var files []string
+	var warnings []error
 	for _, root := range paths {
 		err := filepath.WalkDir(root, func(path string, ent fs.DirEntry, err error) error {
 			if err != nil {
-				return err
+				if path == root {
+					return err
+				}
+				warnings = append(warnings, fmt.Errorf("walk %s: %w", path, err))
+				if ent != nil && ent.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
 			}
 			if ent.IsDir() {
 				if skipDirs[ent.Name()] {
@@ -80,10 +89,10 @@ func listFiles(cfg *config.Config, paths []string) ([]string, error) {
 			return nil
 		})
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	return files, nil
+	return files, warnings, nil
 }
 
 // pathAllowed は allowlist.paths を、走査時のパス表記とリポジトリルート

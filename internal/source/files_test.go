@@ -189,6 +189,39 @@ func TestScanPathsUnreadableFileDoesNotAbortOthers(t *testing.T) {
 	}
 }
 
+func TestScanPathsUnreadableDirectoryDoesNotAbortOthers(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root では読み取り権限のチェックが効かないためスキップ")
+	}
+	tmp := t.TempDir()
+	content := []byte("口座番号: 1234567\n")
+	writeFile(t, filepath.Join(tmp, "ok", "a.txt"), content)
+	denied := filepath.Join(tmp, "denied")
+	if err := os.Mkdir(denied, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(denied, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(denied, 0o755) })
+
+	cfg := config.Default()
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, warnings, err := ScanPaths(d, cfg, []string{tmp})
+	if err != nil {
+		t.Fatalf("ScanPaths エラー: %v（個別ディレクトリの走査エラーは致命的にしない）", err)
+	}
+	if len(findings) != 1 || !strings.HasSuffix(findings[0].File, "/ok/a.txt") {
+		t.Fatalf("findings = %+v, want ok/a.txt の 1 件のみ", findings)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0].Error(), "denied") {
+		t.Fatalf("warnings = %+v, want denied ディレクトリの走査エラー 1 件", warnings)
+	}
+}
+
 func TestIsBinary(t *testing.T) {
 	if isBinary([]byte("plain text")) {
 		t.Error("plain text should not be binary")
