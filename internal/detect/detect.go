@@ -948,6 +948,7 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 					if len(kws) > 0 {
 						reason.ContextKeywords = kws
 						reason.ContextPromoted = true
+						reason.ContextWindow = window
 						conf = rule.High
 					}
 				}

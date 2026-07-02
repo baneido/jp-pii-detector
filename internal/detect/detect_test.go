@@ -3,6 +3,7 @@ package detect
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/baneido/jp-pii-detector/internal/config"
 	"github.com/baneido/jp-pii-detector/internal/piifixtures"
@@ -1424,6 +1425,119 @@ func TestReasonRecordsRequiredNearbyContext(t *testing.T) {
 		t.Fatalf("context keywords = %v, want first keyword 口座", reason.ContextKeywords)
 	}
 }
+
+// High 昇格判定（RequireContext ではない Base<High パターン）は #54 以前は
+// 行全体を無制限に探索していたため、minified JSON や長い 1 行ではラベルが
+// 1 つあるだけで行内の全マッチが昇格してしまっていた（P12 #54 (a)）。
+// 昇格は promotionContextWindowRunes（既定 40 ルーン）の窓に限定される。
+// 昇格対象は Base<High かつ RequireContext ではないパターンを持ち、かつ
+// Context を設定している 3 ルール（jp-my-number・jp-phone-number・
+// jp-address-high-recall）に限られる（他のルールは RequireContext か、
+// Context 未設定のため昇格判定自体が働かない。#54 issue 記載の確認済み事項）。
+func TestPromotionContextWindowBoundary(t *testing.T) {
+	tests := []struct {
+		name       string
+		toml       string
+		label      string
+		value      string
+		wantRuleID string
+	}{
+		{name: "jp-my-number", label: "個人番号", value: "123456789018", wantRuleID: "jp-my-number"},
+		{name: "jp-phone-number", label: "電話", value: "09012345678", wantRuleID: "jp-phone-number"},
+		{
+			name: "jp-address-high-recall",
+			toml: "[rules]\nhigh_recall = true\n",
+			// 都道府県を含まない住所（jp-address ではなく high-recall 版のみが
+			// マッチする。jp-address の方は常に Base: High で昇格判定を経由しない）。
+			label:      "住所",
+			value:      "渋谷区道玄坂1-2-3",
+			wantRuleID: "jp-address-high-recall",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := newDetector(t, tt.toml)
+			labelRunes := utf8.RuneCountInString(tt.label)
+			// inN: ラベル終端がちょうど窓の起点に来る境界（内側）。
+			// outN: そのすぐ外側（1 ルーンだけ超える）。
+			inN := promotionContextWindowRunes - labelRunes
+			outN := inN + 1
+			mk := func(n int) string {
+				return tt.label + strings.Repeat(" ", n) + tt.value
+			}
+
+			inFs := d.ScanLine("f.txt", 1, mk(inN))
+			assertRules(t, inFs, tt.wantRuleID)
+			if inFs[0].Confidence != rule.High || !inFs[0].Reason.ContextPromoted {
+				t.Fatalf("filler=%d(窓内): confidence=%v promoted=%v, want high/promoted",
+					inN, inFs[0].Confidence, inFs[0].Reason.ContextPromoted)
+			}
+
+			outFs := d.ScanLine("f.txt", 1, mk(outN))
+			assertRules(t, outFs, tt.wantRuleID)
+			if outFs[0].Confidence == rule.High || outFs[0].Reason.ContextPromoted {
+				t.Fatalf("filler=%d(窓外): confidence=%v promoted=%v, want base confidence / not promoted",
+					outN, outFs[0].Confidence, outFs[0].Reason.ContextPromoted)
+			}
+		})
+	}
+}
+
+// jp-postal-code は #54 以前 RequireContextWindow 未設定（行全体探索）だったため、
+// 「品番 150-0002 は廃番。郵便での返送は不可。」のように離れた場所の「郵便」の
+// 部分一致だけで Medium 成立していた（P12 #54 (b)）。他の digit 系 RequireContext
+// ルール（jp-bank-account 等）と同じ 40 ルーン窓を追加したことを確認する。
+func TestPostalCodeRequireContextWindowBoundary(t *testing.T) {
+	d := newDetector(t, "")
+	postal := "150-0043" // 渋谷区道玄坂（実在の郵便番号）
+
+	tests := []struct {
+		name      string
+		label     string
+		wantFound bool
+	}{
+		{"近傍の郵便番号は検出する", "郵便番号", true},
+		{"近傍の郵便だけでも検出する", "郵便", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			labelRunes := utf8.RuneCountInString(tt.label)
+			inN := digitRuleRequireContextWindowForTest - labelRunes
+			line := tt.label + strings.Repeat(" ", inN) + postal
+			fs := d.ScanLine("f.txt", 1, line)
+			if tt.wantFound {
+				assertRules(t, fs, "jp-postal-code")
+			} else {
+				assertRules(t, fs)
+			}
+		})
+	}
+
+	// 離れた場所（窓の外）の「郵便番号」「郵便」はどちらも検出しない
+	// （#54 で報告された実例の一般形）。
+	far := []struct {
+		name  string
+		label string
+	}{
+		{"離れた場所の郵便番号は検出しない", "郵便番号"},
+		{"離れた場所の郵便だけでは検出しない", "郵便"},
+	}
+	for _, tt := range far {
+		t.Run(tt.name, func(t *testing.T) {
+			labelRunes := utf8.RuneCountInString(tt.label)
+			outN := digitRuleRequireContextWindowForTest - labelRunes + 1
+			line := tt.label + strings.Repeat(" ", outN) + postal
+			assertRules(t, d.ScanLine("f.txt", 1, line))
+		})
+	}
+}
+
+// digitRuleRequireContextWindowForTest は jp-postal-code の RequireContextWindow
+// （internal/rule 側の非公開定数 digitRuleRequireContextWindow）と同じ値。
+// パッケージが異なり参照できないため、テスト側で値を複製する
+// （internal/rule.digitRuleRequireContextWindow と乖離しないよう
+// TestReasonRecordsRequiredNearbyContext が 40 を別途アサートしている）。
+const digitRuleRequireContextWindowForTest = 40
 
 func TestMinConfidenceHigh(t *testing.T) {
 	piifixtures.Require(t)

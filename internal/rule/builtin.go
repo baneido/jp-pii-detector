@@ -428,6 +428,12 @@ func Builtin() []Rule {
 			Prefilter:       PrefilterDigit,
 			Context:         []string{"郵便番号", "郵便", "住所", "postal", "zipcode", "zip code", "〒"},
 			NegativeContext: digitRuleUnitAdjacentNegativeContext,
+			// RequireContextWindow: 未設定（行全体探索）だと、廃番の品番のような
+			// NNN-NNNN 形式の数字列が、行のずっと離れた場所にある「郵便」の
+			// 部分一致だけで Medium 成立してしまっていた（#54）。他の digit 系
+			// RequireContext ルール（jp-bank-account 等）と同じ
+			// digitRuleRequireContextWindow に揃える。
+			RequireContextWindow: digitRuleRequireContextWindow,
 			// 7 桁完全一致（ビットセット生成済みのとき。未生成なら上位 3 桁実在チェック）。
 			Validate: dict.ValidPostalCode,
 			Patterns: []Pattern{

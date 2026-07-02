@@ -90,6 +90,11 @@ type Rule struct {
 	NegativeContext []string
 	// RequireContextWindow は RequireContext の肯定語をマッチ前後の
 	// ルーン数に限定する。0 の場合は後方互換のため行全体を見る。
+	// Base<High（RequireContext ではない）パターンの High 昇格判定にも同じ値を
+	// 使うが、そちらは未設定（0）でも行全体には広げず、既定の窓
+	// （internal/detect.promotionContextWindowRunes）にフォールバックする。
+	// 昇格は検出の成立条件ではなく補助情報のため、無制限に広げると長い 1 行で
+	// キーワード 1 個だけで行内の全マッチが昇格してしまうため（#54）。
 	RequireContextWindow int
 	// Prefilter はパターンがマッチし得ない行を走査前に除外する事前判定。
 	// パターンの必須文字種（数字など）を含まない行をスキップする。
