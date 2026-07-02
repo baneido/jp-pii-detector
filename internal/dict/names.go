@@ -2,6 +2,7 @@ package dict
 
 import (
 	"embed"
+	"sort"
 	"strings"
 )
 
@@ -11,6 +12,12 @@ var namesFS embed.FS
 var (
 	surnames   = loadNameSet("surnames.txt")
 	givenNames = loadNameSet("given_names.txt")
+	// surnameList / givenNameList は SurnameSample / GivenNameSample 用に、
+	// 辞書を決定的な（バイト列順にソート済みの）スライスへ複製したもの。
+	// map のイテレーション順は不定なため、合成ケース生成のような再現性が
+	// 必要な用途向けに別途保持する。
+	surnameList   = sortedKeys(surnames)
+	givenNameList = sortedKeys(givenNames)
 )
 
 func loadNameSet(name string) map[string]bool {
@@ -26,6 +33,15 @@ func loadNameSet(name string) map[string]bool {
 		}
 		out[line] = true
 	}
+	return out
+}
+
+func sortedKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
 	return out
 }
 
@@ -78,4 +94,25 @@ func IsPersonName(s string) bool {
 		return false
 	}
 	return surnames[s] || givenNames[s] || SplitsAsFullName(s)
+}
+
+// SurnameSample は姓辞書から先頭 n 件を決定的に返す（バイト列でソート済み）。
+// n が辞書サイズを超える場合は辞書全体を返す。合成テストケース生成
+// （internal/fixturegen）や、辞書に実在する値だけを使いたいテストのための
+// 列挙用エクスポート関数で、非公開の map を外部から直読みさせないために用意する。
+func SurnameSample(n int) []string { return sampleList(surnameList, n) }
+
+// GivenNameSample は名辞書から先頭 n 件を決定的に返す。SurnameSample を参照。
+func GivenNameSample(n int) []string { return sampleList(givenNameList, n) }
+
+func sampleList(list []string, n int) []string {
+	if n <= 0 {
+		return nil
+	}
+	if n > len(list) {
+		n = len(list)
+	}
+	out := make([]string, n)
+	copy(out, list[:n])
+	return out
 }

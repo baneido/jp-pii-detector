@@ -363,6 +363,145 @@ func TestSpanMacroAveragesScoredRules(t *testing.T) {
 	}
 }
 
+// TestEvaluateCasesStratifiedByTag は Case.Tags 単位の層別集計（Stratified.Tags）が
+// 複数ケース・複数タグにまたがって正しく合算されることを検証する。JP_PII_FIXTURES
+// 不要の合成データのみを使う（P27: タグ層化評価の基盤）。
+func TestEvaluateCasesStratifiedByTag(t *testing.T) {
+	s, err := EvaluateCasesStratifiedWithOptions([]Case{
+		{
+			Line: "連絡先: taro@gmail.com",
+			Want: []string{"email-address"},
+			Tags: []string{"source:synthetic", "notation:halfwidth"},
+		},
+		{
+			Content: "memo\n連絡先: hanako@gmail.com",
+			Want:    []string{"email-address"},
+			Tags:    []string{"source:synthetic", "layout:cross-line"},
+		},
+		{Line: "メモだけの行"}, // 期待も検出もない陰性ケース（タグなし）
+	}, Options{MinConfidence: "low"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := s.Tags["source:synthetic"]; got.TP != 2 || got.FP != 0 || got.FN != 0 {
+		t.Fatalf("Tags[source:synthetic] = %+v, want TP:2 FP:0 FN:0", got)
+	}
+	if got := s.Tags["notation:halfwidth"]; got.TP != 1 || got.FP != 0 || got.FN != 0 {
+		t.Fatalf("Tags[notation:halfwidth] = %+v, want TP:1 FP:0 FN:0", got)
+	}
+	if got := s.Tags["layout:cross-line"]; got.TP != 1 || got.FP != 0 || got.FN != 0 {
+		t.Fatalf("Tags[layout:cross-line] = %+v, want TP:1 FP:0 FN:0", got)
+	}
+	if _, ok := s.Tags[""]; ok {
+		t.Fatal("タグなしの陰性ケースが空文字列タグのバケツを作ってはいけない")
+	}
+	if len(s.Tags) != 3 {
+		t.Fatalf("len(s.Tags) = %d, want 3 (got %v)", len(s.Tags), s.Tags)
+	}
+}
+
+// TestEvaluateCasesStratifiedByKind は line/content/diff のケース種別ごとの
+// 層別集計（Stratified.Kinds）を検証する。
+func TestEvaluateCasesStratifiedByKind(t *testing.T) {
+	s, err := EvaluateCasesStratifiedWithOptions([]Case{
+		{Line: "連絡先: taro@gmail.com", Want: []string{"email-address"}},
+		{Content: "memo\n連絡先: hanako@gmail.com", Want: []string{"email-address"}},
+		{
+			Diff: []DiffLine{
+				{Text: "連絡先: old@gmail.com", Added: false},
+				{Text: "連絡先: jiro@gmail.com", Added: true},
+			},
+			Want: []string{"email-address"},
+		},
+		{Line: "メモだけの行"}, // line 種別の陰性ケース
+	}, Options{MinConfidence: "low"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := s.Kinds["line"]; got.TP != 1 || got.FP != 0 || got.FN != 0 {
+		t.Fatalf("Kinds[line] = %+v, want TP:1 FP:0 FN:0", got)
+	}
+	if got := s.Kinds["content"]; got.TP != 1 || got.FP != 0 || got.FN != 0 {
+		t.Fatalf("Kinds[content] = %+v, want TP:1 FP:0 FN:0", got)
+	}
+	if got := s.Kinds["diff"]; got.TP != 1 || got.FP != 0 || got.FN != 0 {
+		t.Fatalf("Kinds[diff] = %+v, want TP:1 FP:0 FN:0", got)
+	}
+	if len(s.Kinds) != 3 {
+		t.Fatalf("len(s.Kinds) = %d, want 3 (got %v)", len(s.Kinds), s.Kinds)
+	}
+}
+
+// TestEvaluateCasesWithOptionsMatchesStratifiedResults は、Stratified 集計を
+// 追加してもルール別 Result（EvaluateCasesWithOptions の戻り値）が従来と
+// 完全に一致することを検証する（後方互換の回帰ガード）。
+func TestEvaluateCasesWithOptionsMatchesStratifiedResults(t *testing.T) {
+	cases := []Case{
+		{Line: "連絡先: taro@gmail.com", Want: []string{"email-address"}, Tags: []string{"source:synthetic"}},
+	}
+	results, err := EvaluateCasesWithOptions(cases, Options{MinConfidence: "low"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := EvaluateCasesStratifiedWithOptions(cases, Options{MinConfidence: "low"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != len(s.Results) {
+		t.Fatalf("len(results) = %d, len(s.Results) = %d, want equal", len(results), len(s.Results))
+	}
+	for i := range results {
+		if results[i] != s.Results[i] {
+			t.Fatalf("EvaluateCasesWithOptions[%d] = %+v, EvaluateCasesStratifiedWithOptions.Results[%d] = %+v, want equal",
+				i, results[i], i, s.Results[i])
+		}
+	}
+}
+
+// knownCaseTagPrefixes は Case.Tags の既知の語彙プレフィックス
+// （docs/development.md にドキュメント化）。
+var knownCaseTagPrefixes = []string{
+	"notation:", "sep:", "format:", "label:", "layout:", "source:", "polarity:", "rule:",
+}
+
+// knownCaseTag は tag が既知のケースタグ語彙に従っているかを返す。
+// easy/hard は Span.Tags と表記を揃えた慣用タグとして許容する。
+func knownCaseTag(tag string) bool {
+	if tag == "easy" || tag == "hard" {
+		return true
+	}
+	for _, p := range knownCaseTagPrefixes {
+		if strings.HasPrefix(tag, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestCaseTagsAreKnown は評価データセットの Case.Tags が既知の語彙に従っているかを
+// 緩く検査する。フェーズ1では CI を落とさない非致命的な警告（t.Logf）に留め、
+// typo によるタグの分裂に早期に気づけるようにする。
+func TestCaseTagsAreKnown(t *testing.T) {
+	piifixtures.Require(t)
+	cases, ok := piifixtures.Dataset()
+	if !ok {
+		t.Skip("データセットを取得できません")
+	}
+	unknown := map[string]int{}
+	for _, c := range cases {
+		for _, tag := range c.Tags {
+			if !knownCaseTag(tag) {
+				unknown[tag]++
+			}
+		}
+	}
+	for tag, n := range unknown {
+		t.Logf("未知のケースタグ %q が %d 件（typo の可能性。既知の語彙は docs/development.md を参照）", tag, n)
+	}
+}
+
 func findResult(t *testing.T, results []Result, id string) Result {
 	t.Helper()
 	for _, r := range results {
@@ -408,10 +547,11 @@ func TestGenerateDoc(t *testing.T) {
 		t.Skip("-update 指定時のみ docs/accuracy.md を再生成する")
 	}
 	piifixtures.Require(t)
-	results, err := Evaluate()
+	strat, err := EvaluateStratified()
 	if err != nil {
 		t.Fatal(err)
 	}
+	results := strat.Results
 	sort.Slice(results, func(i, j int) bool {
 		if results[i].F1 == results[j].F1 {
 			return results[i].RuleID < results[j].RuleID
@@ -475,8 +615,71 @@ func TestGenerateDoc(t *testing.T) {
 			relaxedMacro.F1, relaxedMacro.Precision, relaxedMacro.Recall)
 	}
 
+	writeStratifiedTable(&b, "ケース種別別", "ケース種別",
+		"評価ケースの入力形式（line/content/diff）別の内訳です。行レベル（Result.TP 等と同じ定義）の"+
+			"TP/FP/FN で、1 ケースに複数ルールの期待・検出があれば同じ種別へ合算します。",
+		strat.Kinds, kindOrder(strat.Kinds))
+
+	if len(strat.Tags) > 0 {
+		tags := make([]string, 0, len(strat.Tags))
+		for tag := range strat.Tags {
+			tags = append(tags, tag)
+		}
+		sort.Strings(tags)
+		writeStratifiedTable(&b, "タグ別（表記ゆれ等）", "タグ",
+			"評価ケースの `Case.Tags`（表記ゆれ・ラベル語彙・合成データ由来などのメタデータ。"+
+				"語彙は [docs/development.md](../docs/development.md) を参照）別の内訳です。"+
+				"タグ未設定のケースは含まれません。",
+			strat.Tags, tags)
+	}
+
 	if err := os.WriteFile("../../docs/accuracy.md", []byte(b.String()), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	t.Log("docs/accuracy.md を再生成しました")
+}
+
+// kindOrder は Stratified.Kinds の表示順（line → content → diff → その他は
+// 名前順）を返す。
+func kindOrder(kinds map[string]Score) []string {
+	preferred := []string{"line", "content", "diff"}
+	seen := map[string]bool{}
+	order := make([]string, 0, len(kinds))
+	for _, k := range preferred {
+		if _, ok := kinds[k]; ok {
+			order = append(order, k)
+			seen[k] = true
+		}
+	}
+	var rest []string
+	for k := range kinds {
+		if !seen[k] {
+			rest = append(rest, k)
+		}
+	}
+	sort.Strings(rest)
+	return append(order, rest...)
+}
+
+// writeStratifiedTable は Stratified.Kinds / Stratified.Tags のような
+// 層別集計を Markdown 表として書き出す（キー列見出し・説明文だけ差し替え可能な
+// 共通ヘルパー）。
+func writeStratifiedTable(b *strings.Builder, heading, keyLabel, desc string, scores map[string]Score, keys []string) {
+	if len(keys) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "\n## %s\n\n", heading)
+	b.WriteString(desc + "\n\n")
+	fmt.Fprintf(b, "| %s | F1 | 適合率 | 再現率 | TP | FP | FN |\n", keyLabel)
+	b.WriteString("|---|:--:|:--:|:--:|--:|--:|--:|\n")
+	var total Score
+	for _, k := range keys {
+		s := scores[k]
+		fmt.Fprintf(b, "| `%s` | %.2f | %.2f | %.2f | %d | %d | %d |\n",
+			k, s.F1, s.Precision, s.Recall, s.TP, s.FP, s.FN)
+		addScore(&total, s)
+	}
+	fillScore(&total)
+	fmt.Fprintf(b, "| **全体（マイクロ平均）** | **%.2f** | **%.2f** | **%.2f** | %d | %d | %d |\n",
+		total.F1, total.Precision, total.Recall, total.TP, total.FP, total.FN)
 }

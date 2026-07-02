@@ -75,6 +75,49 @@ func EvaluateCases(cases []Case) ([]Result, error) {
 
 // EvaluateCasesWithOptions は指定されたケース集合を、指定オプションで評価する。
 func EvaluateCasesWithOptions(cases []Case, opts Options) ([]Result, error) {
+	s, err := EvaluateCasesStratifiedWithOptions(cases, opts)
+	if err != nil {
+		return nil, err
+	}
+	return s.Results, nil
+}
+
+// Stratified はルール別の Result に加えて、ケース単位のタグ（Case.Tags）と
+// ケース種別（line/content/diff、どの入力フィールドを使ったか）で層別集計した
+// 行レベル（TP/FP/FN の和集合、Result.TP 等と同じ定義）の Score を保持する。
+// ルール別スコアと違い、1 ケースに複数ルールの Want/検出があれば同じタグ・
+// 種別のバケツへまとめて加算する。表記ゆれ耐性の可視化・回帰検出用
+// （docs/accuracy.md のタグ別・ケース種別別表、P27）。
+type Stratified struct {
+	Results []Result
+	// Tags はケースの Tags（例: notation:fullwidth, sep:hyphen, source:synthetic）
+	// をキーにした行レベル Score。タグを持たないケースは含まれない。
+	Tags map[string]Score
+	// Kinds は "line" / "content" / "diff" をキーにした行レベル Score。
+	// すべてのケースがいずれか 1 つに属する。
+	Kinds map[string]Score
+}
+
+// EvaluateStratified は piifixtures の外部データセットを Evaluate 相当の
+// 既定オプション（min_confidence=low）で評価し、タグ別・ケース種別別の
+// 層別集計も返す。
+func EvaluateStratified() (Stratified, error) {
+	return EvaluateStratifiedWithOptions(Options{MinConfidence: "low"})
+}
+
+// EvaluateStratifiedWithOptions は piifixtures の外部データセットを指定
+// オプションで評価し、タグ別・ケース種別別の層別集計も返す。
+func EvaluateStratifiedWithOptions(opts Options) (Stratified, error) {
+	cases, ok := piifixtures.Dataset()
+	if !ok {
+		return Stratified{}, ErrNoDataset
+	}
+	return EvaluateCasesStratifiedWithOptions(cases, opts)
+}
+
+// EvaluateCasesStratifiedWithOptions は EvaluateCasesWithOptions と同じ評価を
+// 1 パスで行い、ルール別 Result に加えてタグ別・ケース種別別の層別集計も返す。
+func EvaluateCasesStratifiedWithOptions(cases []Case, opts Options) (Stratified, error) {
 	minConfidence := opts.MinConfidence
 	if minConfidence == "" {
 		minConfidence = "low"
@@ -82,11 +125,11 @@ func EvaluateCasesWithOptions(cases []Case, opts Options) ([]Result, error) {
 	cfg, err := config.Parse(fmt.Sprintf("min_confidence = %q\n[rules]\nhigh_recall = %t\n",
 		minConfidence, opts.HighRecall))
 	if err != nil {
-		return nil, err
+		return Stratified{}, err
 	}
 	d, err := detect.New(cfg)
 	if err != nil {
-		return nil, err
+		return Stratified{}, err
 	}
 
 	type counts struct {
@@ -101,6 +144,8 @@ func EvaluateCasesWithOptions(cases []Case, opts Options) ([]Result, error) {
 		}
 		return stat[id]
 	}
+	tagStat := map[string]*Score{}
+	kindStat := map[string]*Score{}
 
 	for _, c := range cases {
 		want := map[string]bool{}
@@ -110,10 +155,10 @@ func EvaluateCasesWithOptions(cases []Case, opts Options) ([]Result, error) {
 		}
 		for _, s := range c.Spans {
 			if s.RuleID == "" {
-				return nil, fmt.Errorf("span rule id is empty for case %q", caseLabel(c))
+				return Stratified{}, fmt.Errorf("span rule id is empty for case %q", caseLabel(c))
 			}
 			if s.Line < 0 || s.Start < 0 || s.End < s.Start {
-				return nil, fmt.Errorf("invalid span for %s in case %q: line %d [%d,%d)",
+				return Stratified{}, fmt.Errorf("invalid span for %s in case %q: line %d [%d,%d)",
 					s.RuleID, caseLabel(c), s.Line, s.Start, s.End)
 			}
 			want[s.RuleID] = true
@@ -122,23 +167,40 @@ func EvaluateCasesWithOptions(cases []Case, opts Options) ([]Result, error) {
 		got := map[string]bool{}
 		findings, err := scanCase(d, c)
 		if err != nil {
-			return nil, err
+			return Stratified{}, err
 		}
 		for _, f := range findings {
 			got[f.RuleID] = true
 		}
-		// 期待・検出の和集合でルールごとに TP/FP/FN を加算する。
+		// 期待・検出の和集合でルールごとに TP/FP/FN を加算する。ケース単位の
+		// タグ・種別バケツにも同じ加算結果をまとめて足し、ケース内で複数ルールの
+		// 期待・検出があれば層別スコアへ合算する。
+		var caseScore Score
 		for id := range want {
 			if got[id] {
 				at(id).row.TP++
+				caseScore.TP++
 			} else {
 				at(id).row.FN++
+				caseScore.FN++
 			}
 		}
 		for id := range got {
 			if !want[id] {
 				at(id).row.FP++
+				caseScore.FP++
 			}
+		}
+		kind := caseKind(c)
+		if kindStat[kind] == nil {
+			kindStat[kind] = &Score{}
+		}
+		addScore(kindStat[kind], caseScore)
+		for _, tag := range c.Tags {
+			if tagStat[tag] == nil {
+				tagStat[tag] = &Score{}
+			}
+			addScore(tagStat[tag], caseScore)
 		}
 
 		if len(c.Spans) > 0 {
@@ -187,7 +249,31 @@ func EvaluateCasesWithOptions(cases []Case, opts Options) ([]Result, error) {
 		results = append(results, r)
 	}
 	sort.Slice(results, func(i, j int) bool { return results[i].RuleID < results[j].RuleID })
-	return results, nil
+
+	tags := make(map[string]Score, len(tagStat))
+	for tag, s := range tagStat {
+		fillScore(s)
+		tags[tag] = *s
+	}
+	kinds := make(map[string]Score, len(kindStat))
+	for kind, s := range kindStat {
+		fillScore(s)
+		kinds[kind] = *s
+	}
+	return Stratified{Results: results, Tags: tags, Kinds: kinds}, nil
+}
+
+// caseKind はケースがどの入力フィールドを使うかを "line" / "content" / "diff" で
+// 返す。scanCase の分岐（diff > content > line の優先順）と一致させる。
+func caseKind(c Case) string {
+	switch {
+	case len(c.Diff) > 0:
+		return "diff"
+	case c.Content != "":
+		return "content"
+	default:
+		return "line"
+	}
 }
 
 func scanCase(d *detect.Detector, c Case) ([]detect.Finding, error) {
