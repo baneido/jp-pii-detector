@@ -210,13 +210,16 @@ func TestCreditCardRule(t *testing.T) {
 		name, line string
 		want       []string
 	}{
-		{"Visa 区切りあり", "card: 4111-1111-1111-1111", []string{"credit-card"}},
-		{"JCB 区切りなし", "3530111333300000", []string{"credit-card"}},
-		{"slash-prefixed separated card is still detected", "/4111-1111-1111-1111", []string{"credit-card"}},
+		// 4111111111111111 / 3530111333300000 等の公知テスト用ダミー PAN は
+		// isKnownTestPAN の denylist で棄却されるため、ここでは denylist に
+		// 含まれない合成番号（Luhn 妥当・ブランドプレフィックス妥当）を使う。
+		{"Visa 区切りあり", "card: 4000-0012-3456-7899", []string{"credit-card"}},
+		{"JCB 区切りなし", "3528000000123452", []string{"credit-card"}},
+		{"slash-prefixed separated card is still detected", "/4000-0012-3456-7899", []string{"credit-card"}},
 		// 区切りなしカードがスラッシュ直後にある場合は、URL の記事 ID と
 		// 区別できないため意図的に検出しない（割り切り）。同じ桁は
 		// 区切りありなら上で検出される Luhn 妥当な Visa 番号。
-		{"slash-prefixed contiguous card is intentionally not detected", "/4111111111111111", nil},
+		{"slash-prefixed contiguous card is intentionally not detected", "/4000001234567899", nil},
 		{"Luhn 不正", "4111-1111-1111-1112", nil},
 		{"URL article ID is not a card", "https://support.otetsutabi.com/hc/ja/articles/46129829524505", nil},
 		{"URL article ID with shorter Luhn-passing number is not a card", "https://support.otetsutabi.com/hc/ja/articles/4608392522393", nil},
@@ -346,7 +349,7 @@ func TestDigitRulesRejectNearbyNegativeContext(t *testing.T) {
 	tests := []struct {
 		name, line string
 	}{
-		{"口座文脈下の金額", "口座開設は1234567円から可能"},
+		{"口座文脈下の金額", "口座開設は1234569円から可能"},
 		{"免許文脈下の手数料", "免許の更新手数料 123456789012 円"},
 		{"年金文脈下の受給額", "年金の受給額 1234567890 円"},
 		{"保険文脈下の人数", "被保険者数は12345678人"},
@@ -1655,34 +1658,34 @@ func TestScanContentRejectsCrossLineNegativeContextAcrossBlankLine(t *testing.T)
 
 func TestScanContentUsesSourceContext(t *testing.T) {
 	d := newDetector(t, "")
-	assertRules(t, d.ScanContent("user.ts", `const bankAccountNo = "1234567"`), "jp-bank-account")
+	assertRules(t, d.ScanContent("user.ts", `const bankAccountNo = "1234569"`), "jp-bank-account")
 }
 
 func TestScanContentSourceContextIgnoresQuotedOperators(t *testing.T) {
 	d := newDetector(t, "")
-	assertRules(t, d.ScanContent("user.ts", `const bankAccountNo = "version:1234567"`), "jp-bank-account")
+	assertRules(t, d.ScanContent("user.ts", `const bankAccountNo = "version:1234569"`), "jp-bank-account")
 }
 
 func TestScanContentSourceNegativeContext(t *testing.T) {
 	d := newDetector(t, "")
-	assertRules(t, d.ScanContent("user.ts", `const bankAccountId = "1234567"`))
+	assertRules(t, d.ScanContent("user.ts", `const bankAccountId = "1234569"`))
 }
 
 func TestScanContentSourceContextDoesNotLeakAcrossCommaStatements(t *testing.T) {
 	d := newDetector(t, "")
-	content := `const values = { bankAccountNo: "none", orderId: "1234567" }`
+	content := `const values = { bankAccountNo: "none", orderId: "1234569" }`
 	assertRules(t, d.ScanContent("user.ts", content))
 }
 
 func TestScanContentSourceContextSplitKeyValue(t *testing.T) {
 	d := newDetector(t, "")
-	content := "bankAccountNo:\n" + strings.Repeat(" ", 48) + `"1234567"`
+	content := "bankAccountNo:\n" + strings.Repeat(" ", 48) + `"1234569"`
 	assertRules(t, d.ScanContent("user.yaml", content), "jp-bank-account")
 }
 
 func TestScanContentAdjacentKeepsSourceNegativeContextOnValueLine(t *testing.T) {
 	d := newDetector(t, "")
-	content := "bankAccountId:\n" + `bankAccountId: "1234567"`
+	content := "bankAccountId:\n" + `bankAccountId: "1234569"`
 	assertRules(t, d.ScanContent("user.yaml", content))
 }
 
@@ -1713,7 +1716,7 @@ func TestScanDiffHunkSourceContextFromContextLine(t *testing.T) {
 	d := newDetector(t, "")
 	fs := d.ScanDiffHunk("user.yaml", []DiffLine{
 		{Text: "bankAccountNo:", Added: false},
-		{Text: strings.Repeat(" ", 48) + `"1234567"`, Added: true},
+		{Text: strings.Repeat(" ", 48) + `"1234569"`, Added: true},
 	})
 	assertRules(t, fs, "jp-bank-account")
 }
@@ -1722,7 +1725,7 @@ func TestScanDiffHunkKeepsSourceNegativeContextOnAddedLine(t *testing.T) {
 	d := newDetector(t, "")
 	fs := d.ScanDiffHunk("user.yaml", []DiffLine{
 		{Text: "bankAccountId:", Added: false},
-		{Text: `bankAccountId: "1234567"`, Added: true},
+		{Text: `bankAccountId: "1234569"`, Added: true},
 	})
 	assertRules(t, fs)
 }
