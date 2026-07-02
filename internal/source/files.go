@@ -37,12 +37,18 @@ var skipDirs = map[string]bool{
 // 区切りパス）に加え、リポジトリルートからの相対パスに対しても評価する。
 // サブディレクトリから実行しても、ルートの設定に書いたルート相対の
 // 正規表現（^testdata/ 等）が機能する。
-func ScanPaths(d *detect.Detector, cfg *config.Config, paths []string) ([]detect.Finding, error) {
+//
+// 個々のファイルの読み取りエラー（権限拒否・走査中の削除等）は致命的として
+// 扱わない。該当ファイルをスキップして戻り値の warnings に集約し、他ファイルの
+// 収集済み findings は失わずに返す。err は listFiles 自体の失敗（走査対象の
+// ルートが存在しない等）のみを表す。
+func ScanPaths(d *detect.Detector, cfg *config.Config, paths []string) ([]detect.Finding, []error, error) {
 	files, err := listFiles(cfg, paths)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return scanFiles(d, files)
+	findings, warnings := scanFiles(d, files)
+	return findings, warnings, nil
 }
 
 // listFiles は走査対象ファイルを walk 順に列挙する。
@@ -122,7 +128,12 @@ func gitRoot() string {
 
 // scanFiles はファイル群を並列に読み込み・走査し、入力順の結果を返す。
 // Detector は走査中は読み取り専用のため、ゴルーチン間で安全に共有できる。
-func scanFiles(d *detect.Detector, files []string) ([]detect.Finding, error) {
+//
+// 個々のファイルの読み取りエラーは致命的にせず warnings に集約して走査を
+// 継続する（セキュリティツールとして、1 ファイルのエラーで収集済みの他
+// findings を握りつぶさないため）。呼び出し元（ScanPaths）が warnings の
+// 有無を呼び出し元にさらに伝える。
+func scanFiles(d *detect.Detector, files []string) ([]detect.Finding, []error) {
 	workers := max(min(runtime.GOMAXPROCS(0), len(files)), 1)
 	results := make([][]detect.Finding, len(files))
 	errs := make([]error, len(files))
@@ -151,13 +162,15 @@ func scanFiles(d *detect.Detector, files []string) ([]detect.Finding, error) {
 	wg.Wait()
 
 	var findings []detect.Finding
+	var warnings []error
 	for i := range files {
 		if errs[i] != nil {
-			return nil, errs[i]
+			warnings = append(warnings, errs[i])
+			continue
 		}
 		findings = append(findings, results[i]...)
 	}
-	return findings, nil
+	return findings, warnings
 }
 
 // isBinary は先頭 8KB に NUL バイトが含まれるかで判定する。
