@@ -9,6 +9,7 @@ import (
 	"os"
 	"runtime/debug"
 
+	"github.com/baneido/jp-pii-detector/internal/baseline"
 	"github.com/baneido/jp-pii-detector/internal/config"
 	"github.com/baneido/jp-pii-detector/internal/detect"
 	"github.com/baneido/jp-pii-detector/internal/report"
@@ -86,6 +87,14 @@ Scan flags:
   --explain                JSON 出力に検出理由を含める
   --high-recall            偽陽性リスクの高い再現率重視ルールを有効化
   --exit-zero              検出があっても終了コード 0 を返す
+  --baseline <path>        ベースラインファイルを読み込み、記録済み（fingerprint が
+                           一致）の検出を結果と終了コードから除外する。--staged /
+                           --diff / フルスキャンいずれとも併用可能
+  --update-baseline        現在の検出内容でベースラインファイルを新規作成、または
+                           既存ファイルに追記して終了コード 0 で終了する
+                           （--baseline <path> の指定が必須）
+  --show-baseline          ベースラインで除外された検出も参考表示する（終了コードには
+                           影響しない。--baseline <path> の指定が必須）
 
 Exit codes: 0=検出なし 1=検出あり 2=エラー
 `
@@ -122,9 +131,18 @@ func runScan(args []string) int {
 	explain := fs.Bool("explain", false, "")
 	highRecall := fs.Bool("high-recall", false, "")
 	exitZero := fs.Bool("exit-zero", false, "")
+	baselinePath := fs.String("baseline", "", "")
+	updateBaseline := fs.Bool("update-baseline", false, "")
+	showBaseline := fs.Bool("show-baseline", false, "")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+	if *updateBaseline && *baselinePath == "" {
+		return fail(fmt.Errorf("--update-baseline には --baseline <path> の指定が必要です"))
+	}
+	if *showBaseline && *baselinePath == "" {
+		return fail(fmt.Errorf("--show-baseline には --baseline <path> の指定が必要です"))
 	}
 
 	cfg, err := config.Load(*configPath)
@@ -166,26 +184,83 @@ func runScan(args []string) int {
 		return fail(err)
 	}
 
+	// --update-baseline: 現在の findings（--staged / --diff / フルスキャンいずれの
+	// モードでも同じ findings 変数に集約されている）でベースラインファイルを
+	// 新規作成、または既存ファイルへ追記して終了コード 0 で終了する。他の
+	// フラグ（--baseline での既存フィルタ・出力形式）とは独立した早期リターン。
+	if *updateBaseline {
+		return updateBaselineFile(*baselinePath, findings)
+	}
+
+	// --baseline: 記録済み（fingerprint 一致）の検出を結果・終了コードから除外する。
+	// detect パッケージ側の走査（並列）はここまでで完了しており、Filter は
+	// 単一 goroutine の後処理なので追加のデータレース懸念はない。
+	reportFindings := findings
+	exitFindings := findings
+	var fpSalt string
+	if *baselinePath != "" {
+		bf, err := baseline.Load(*baselinePath)
+		if err != nil {
+			return fail(err)
+		}
+		fpSalt = bf.Salt
+		kept, baselined := baseline.Filter(findings, bf)
+		exitFindings = kept
+		reportFindings = kept
+		if *showBaseline {
+			// 参考表示用: フィルタ済み分も併せて出力するが、終了コードの判定には使わない。
+			reportFindings = append(append([]detect.Finding{}, kept...), baselined...)
+		}
+	}
+	var fpArgs []string
+	if fpSalt != "" {
+		fpArgs = []string{fpSalt}
+	}
+
 	switch *format {
 	case "text":
-		report.Text(os.Stdout, findings, *unmask)
+		report.Text(os.Stdout, reportFindings, *unmask)
 	case "json":
-		if err := report.JSON(os.Stdout, findings, *unmask, *explain); err != nil {
+		if err := report.JSON(os.Stdout, reportFindings, *unmask, *explain, fpArgs...); err != nil {
 			return fail(err)
 		}
 	case "sarif":
-		if err := report.SARIF(os.Stdout, findings, det.Rules(), *unmask); err != nil {
+		if err := report.SARIF(os.Stdout, reportFindings, det.Rules(), *unmask); err != nil {
 			return fail(err)
 		}
 	case "github":
-		report.GitHub(os.Stdout, findings, *unmask)
+		report.GitHub(os.Stdout, reportFindings, *unmask)
 	default:
 		return fail(fmt.Errorf("unknown format %q (text|json|sarif|github)", *format))
 	}
 
-	if len(findings) > 0 && !*exitZero {
+	if len(exitFindings) > 0 && !*exitZero {
 		return 1
 	}
+	return 0
+}
+
+// updateBaselineFile は現在の findings でベースラインファイルを新規作成、
+// または既存ファイルに追記して保存する。gitleaks --baseline-path / detect-secrets
+// の baseline 更新運用と同様、常に終了コード 0 で返す（走査・書き込み自体の
+// エラーのみ 2 を返す）。
+func updateBaselineFile(path string, findings []detect.Finding) int {
+	bf, err := baseline.Load(path)
+	switch {
+	case err == nil:
+		baseline.Merge(bf, findings)
+	case baseline.IsNotExist(err):
+		bf, err = baseline.FromFindings(findings, "")
+		if err != nil {
+			return fail(err)
+		}
+	default:
+		return fail(err)
+	}
+	if err := baseline.Save(path, bf); err != nil {
+		return fail(err)
+	}
+	fmt.Printf("baseline を更新しました: %s（%d 件）\n", path, len(bf.Entries))
 	return 0
 }
 
