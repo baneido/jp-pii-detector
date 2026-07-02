@@ -35,15 +35,17 @@ Detection pipeline (`source → normalize → detect → report`):
 - **`internal/detect`** (`ScanLine` / `ScanContent`) runs each rule per line. A rule's `Prefilter` (digit / `@` / CJK required) skips regex entirely on lines that can't match. Matches are filtered by `Validate` (checksums) and the allowlist. Context keywords on the same line promote confidence to High; `RequireContext` rules are dropped without a keyword (and report at `Base`, never promoted). `resolveOverlaps` collapses overlapping detections (higher confidence, then longer, wins). `ScanContent` additionally re-scans 2-adjacent-line windows for `RequireContext` rules, remapping positions back to original line/column.
 - **`internal/report`** emits `text|json|sarif|github`, masking detected values by default (`--unmask` for local only). Exit codes: `0`=none, `1`=found, `2`=error.
 
-Supporting packages: `internal/checksum` (My Number check digit, Luhn, card brand), `internal/dict` (`//go:embed`-ed IANA TLD list and Japan-Post postal codes; regenerate via `go run ./internal/dict/gen`), `internal/config` (`.jp-pii.toml`, searched upward to the repo root), `internal/rule` (rule type + `Builtin()`).
+Supporting packages: `internal/checksum` (My Number check digit, Luhn, card brand), `internal/dict` (`//go:embed`-ed IANA TLD list, Japan-Post postal codes, and municipality names; regenerate via `go run ./internal/dict/gen`), `internal/config` (`.jp-pii.toml`, searched upward to the repo root), `internal/rule` (rule type + `Builtin()`).
 
-Postal codes use **7-digit exact matching** against a committed bitset (`postal_codes.bitset`, a 10,000,000-bit / 1.25 MB `//go:embed` holding every real Japan-Post 7-digit code). `dict.ValidPostalCode` indexes that bitset directly, so `150-9999` (prefix `150` is real, but the full code is unassigned) is rejected. `internal/dict/gen` builds the bitset from the official Japan-Post UTF-8 KEN_ALL CSV/zip; the index encoding and size constant are shared with `internal/dict` so the two can't drift. Refresh it (monthly automation: `.github/workflows/postal-update.yml`, or by hand) with:
+Postal codes use **7-digit exact matching** against a committed bitset (`postal_codes.bitset`, a 10,000,000-bit / 1.25 MB `//go:embed` holding every real Japan-Post 7-digit code). `dict.ValidPostalCode` indexes that bitset directly, so `150-9999` (prefix `150` is real, but the full code is unassigned) is rejected. `internal/dict/gen` builds the bitset (and, from the same input, `municipalities.txt`; see below) from the official Japan-Post UTF-8 KEN_ALL CSV/zip; the index encoding and size constant are shared with `internal/dict` so the two can't drift. Refresh it (monthly automation: `.github/workflows/postal-update.yml`, or by hand) with:
 
 ```console
-go run ./internal/dict/gen -input utf_ken_all.zip -output internal/dict/postal_codes.bitset
+go run ./internal/dict/gen -input utf_ken_all.zip -output internal/dict/postal_codes.bitset -municipalities-output internal/dict/municipalities.txt
 ```
 
 A bitset refresh that adds/removes codes can move the `jp-postal-code` accuracy numbers, so re-run the eval/badge regeneration (see CI gates below) after committing a new bitset.
+
+`municipalities.txt` (one real 市区町村 name per line, `//go:embed`-ed as `dict.MunicipalitySuffixMatch`) is generated from the same KEN_ALL rows' prefecture/municipality fields: county-attached entries (`石狩郡当別町`) also get the county-omitted abbreviation (`当別町`), and ordinance-designated cities' wards (`札幌市中央区`) also get the city-alone form (`札幌市`); `ヶ`/`ケ` variants are normalized to `ケ` on both the generation and lookup sides. It's wired into `jp-address-high-recall`'s `Validate` only (not the default `jp-address`) — see `internal/rule/builtin.go`.
 
 ## Adding / editing detection rules
 

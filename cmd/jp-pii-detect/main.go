@@ -190,7 +190,15 @@ func runScan(args []string) int {
 }
 
 func runRules() {
+	// 同一 ID の Rule が複数エントリ持つ場合がある（例: jp-address は数字番地用と
+	// 漢数字番地用で Prefilter が異なる別エントリを同一 ID で持つ。
+	// internal/rule/builtin.go 参照）。一覧表示では 1 行にまとめる。
+	seen := map[string]bool{}
 	for _, r := range rule.Builtin() {
+		if seen[r.ID] {
+			continue
+		}
+		seen[r.ID] = true
 		ctx := ""
 		for _, p := range r.Patterns {
 			if p.RequireContext {

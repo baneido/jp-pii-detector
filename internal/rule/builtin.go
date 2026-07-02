@@ -71,18 +71,51 @@ const (
 	hiragana = `\x{3041}-\x{3096}`
 	katakana = `\x{30A1}-\x{30FA}\x{30FC}` // カタカナ + ー
 
+	// hiraganaNoParticle は hiragana から助詞「で・に・は・を」を除いた文字クラス
+	// （\x{3067}=で \x{306B}=に \x{306F}=は \x{3092}=を を穴あきで除外）。市区町村と
+	// banchiDash（マーカーなしダッシュ連結）の間のギャップ専用。ひらがな全体を
+	// 除外すると「丸の内2-1-5」「霞が関3-2-1」のような実在住所（間に「の」「が」を
+	// 含む）まで棄却してしまうため、スコア表記「3-2で勝利」・ISO 日付「2025-07-02に」
+	// のように市区町村へ直結しやすい助詞だけを狙って除く。「はりまや町」等ひらがなを
+	// 含む町名がダッシュ表記住所の直前に来るケースの FN は許容範囲とする
+	// （現状でもマーカーなしダッシュ形は取れておらず実質的後退は限定的）。
+	hiraganaNoParticle = `\x{3041}-\x{3066}\x{3068}-\x{306A}\x{306C}-\x{306E}\x{3070}-\x{3091}\x{3093}-\x{3096}`
+
+	// kanjiDigits は漢数字の位取り表現に使う文字（〇・一〜九・十・百・千）。
+	kanjiDigits = `〇一二三四五六七八九十百千`
+
 	digitRuleRequireContextWindow = 40
 
-	// banchi は番地表現（丁目→番地→号）を最後まで捕捉する終端パターン。次を捕捉:
-	//   2丁目10番7号 / 2丁目10-7 / 2-10-7 / 10番地の7 / 10番7号 / 2丁目（番地なし）
-	// 構造は「任意の N丁目」＋「番地ブロック（番/号/ダッシュ連結のいずれかを必須）」、
-	// または「N丁目」単独。番地ブロックは 番[地] か 号 か ダッシュ連結のいずれかを
-	// 必ず含み、号は終端（号の後ろは続かない）とすることで、号の後ろの部屋番号・
-	// 電話番号や、丁目の後ろの「階」の数字など、単位もダッシュも伴わない裸の数字列を
-	// 吸収しない。RE2 は線形時間なので連鎖長による破滅的バックトラックは起きない。
-	banchi = `(?:` +
-		`(?:\d{1,4}丁目)?(?:\d{1,4}番地?(?:の?\d{1,4})?号?|\d{1,4}号|\d{1,4}(?:-\d{1,4})+)` +
-		`|\d{1,4}丁目` +
+	// banchiMarked は番地表現（丁目→番地→号）のうち、丁目・番・号のいずれかの
+	// マーカーが必ず含まれる形だけを最後まで捕捉する終端パターン。次を捕捉:
+	//   2丁目10番7号 / 2丁目10-7 / 10番地の7 / 10番7号 / 2丁目（番地なし）
+	// 構造は「N丁目」＋「任意の番地ブロック（番/号/ダッシュ連結）」、または
+	// マーカー付き番地ブロック単独（丁目なし）。号は終端（号の後ろは続かない）と
+	// することで、号の後ろの部屋番号・電話番号や、丁目の後ろの「階」の数字など、
+	// 単位もダッシュも伴わない裸の数字列を吸収しない。RE2 は線形時間なので
+	// 連鎖長による破滅的バックトラックは起きない。
+	banchiMarked = `(?:` +
+		`\d{1,4}丁目(?:\d{1,4}番地?(?:の?\d{1,4})?号?|\d{1,4}号|\d{1,4}(?:-\d{1,4})+)?` +
+		`|\d{1,4}番地?(?:の?\d{1,4})?号?` +
+		`|\d{1,4}号` +
+		`)`
+
+	// banchiDash はマーカー（丁目/番/号）を伴わない、ダッシュ連結のみの番地表現
+	// （2-1-5 等）。丁目/番/号のような明示的な番地マーカーが一切ないため、
+	// 市区町村名の直後に他の数字列（試合のスコア「3-2」・ISO 日付
+	// 「2025-07-02」等）が来ただけの文を誤って番地とみなしやすい。そのため
+	// jp-address / jp-address-high-recall では、このパターン専用に市区町村と
+	// の間のギャップを hiraganaNoParticle に制限し、末尾が実在する暦日形なら
+	// 棄却する Validate（notCalendarDateBanchi）を追加で必須にする。
+	banchiDash = `\d{1,4}(?:-\d{1,4})+`
+
+	// banchiKanji は漢数字表記の番地（神南一丁目十九番十一号 等）。ASCII 数字は
+	// 使わずダッシュ形も持たない（ダッシュ連結は漢数字では実質使われないため）。
+	// 丁目・番・号のいずれかのマーカーを必ず含む。
+	banchiKanji = `(?:` +
+		`[` + kanjiDigits + `]{1,6}丁目(?:[` + kanjiDigits + `]{1,6}番地?(?:の?[` + kanjiDigits + `]{1,6})?号?)?` +
+		`|[` + kanjiDigits + `]{1,6}番地?(?:の?[` + kanjiDigits + `]{1,6})?号?` +
+		`|[` + kanjiDigits + `]{1,6}号` +
 		`)`
 )
 
@@ -250,16 +283,50 @@ func Builtin() []Rule {
 			},
 		},
 		{
+			// 数字番地（マーカー付き / ダッシュ連結のみ）。漢数字番地は Prefilter が
+			// 異なる（数字を含まない行もありうる）ため、同一 ID "jp-address" の
+			// 第 2 エントリとして下に分けて定義する（detect.New は ID セットで
+			// disable 判定するため、同一 ID の複数エントリは両立する）。
 			ID:          "jp-address",
 			Description: "住所（都道府県〜番地）",
 			Prefilter:   PrefilterDigit,
 			Context:     []string{"住所", "所在地", "自宅", "address", "居住"},
 			Patterns: []Pattern{
+				// マーカー付き番地（丁目/番/号）。既存どおり緩いギャップを許す
+				// （マーカー自体が強いシグナルのため誤検出リスクが低い）。
 				{Re: regexp.MustCompile(
 					`((?:北海道|東京都|京都府|大阪府|[` + kanji + `]{2,3}県)` +
 						`[` + kanji + hiragana + katakana + `0-9A-Za-z]{1,20}?[市区町村]` +
 						`[` + kanji + hiragana + katakana + `0-9-]{0,30}?` +
-						banchi + `)`,
+						banchiMarked + `)`,
+				), Base: High},
+				// マーカーなしダッシュ連結（2-1-5 等）。市区町村直後の助詞「で・に・
+				// は・を」を挟んだスコア表記・ISO 日付の誤検出を避けるため、
+				// ギャップを助詞抜き文字クラスに制限し、さらに末尾が実在する
+				// 暦日形（YYYY-MM-DD）なら Validate で棄却する。
+				{Re: regexp.MustCompile(
+					`((?:北海道|東京都|京都府|大阪府|[` + kanji + `]{2,3}県)` +
+						`[` + kanji + hiragana + katakana + `0-9A-Za-z]{1,20}?[市区町村]` +
+						`[` + kanji + hiraganaNoParticle + katakana + `0-9-]{0,30}?` +
+						banchiDash + `)`,
+				), Base: High, Validate: notCalendarDateBanchi},
+			},
+		},
+		{
+			// 漢数字番地（神南一丁目十九番十一号 等）。ASCII 数字を含まない行にも
+			// マッチさせる必要があるため、既存の PrefilterDigit ではなく
+			// PrefilterCJK + 都道府県リテラルで別途プリフィルタする。
+			ID:                "jp-address",
+			Description:       "住所（都道府県〜番地）",
+			Prefilter:         PrefilterCJK,
+			PrefilterLiterals: []string{"都", "道", "府", "県"},
+			Context:           []string{"住所", "所在地", "自宅", "address", "居住"},
+			Patterns: []Pattern{
+				{Re: regexp.MustCompile(
+					`((?:北海道|東京都|京都府|大阪府|[` + kanji + `]{2,3}県)` +
+						`[` + kanji + hiragana + katakana + `0-9A-Za-z]{1,20}?[市区町村]` +
+						`[` + kanji + hiragana + katakana + `0-9-]{0,30}?` +
+						banchiKanji + `)`,
 				), Base: High},
 			},
 		},
@@ -268,13 +335,24 @@ func Builtin() []Rule {
 			Description: "住所（都道府県なし・高再現率）",
 			Prefilter:   PrefilterDigit,
 			Context:     []string{"住所", "所在地", "勤務地", "勤務先", "自宅", "address"},
+			// 市区町村として辞書に実在しない語（「通学区域」等の一般語尾）を
+			// municipality と誤認した検出を棄却する。既定の jp-address には
+			// 付けない（郡省略・表記揺れで実在住所を drop する FN リスクが
+			// 高再現率でない既定ルールでは相対的に大きいため）。
+			Validate: dict.MunicipalitySuffixMatch,
 			Patterns: []Pattern{
 				{Re: regexp.MustCompile(
 					`(?:住所|所在地|勤務地|勤務先|自宅|address)?\s*[:=]?\s*(` +
 						`[` + kanji + hiragana + katakana + `]{1,15}[市区町村]` +
 						`[` + kanji + hiragana + katakana + `0-9-]{0,30}?` +
-						banchi + `)`,
+						banchiMarked + `)`,
 				), Base: Medium},
+				{Re: regexp.MustCompile(
+					`(?:住所|所在地|勤務地|勤務先|自宅|address)?\s*[:=]?\s*(` +
+						`[` + kanji + hiragana + katakana + `]{1,15}[市区町村]` +
+						`[` + kanji + hiraganaNoParticle + katakana + `0-9-]{0,30}?` +
+						banchiDash + `)`,
+				), Base: Medium, Validate: notCalendarDateBanchi},
 			},
 		},
 		{
@@ -580,6 +658,33 @@ func validCalendarDate(year, month, day int) bool {
 	}
 	t := time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC)
 	return t.Year() == year && int(t.Month()) == month && t.Day() == day
+}
+
+// addressTailDashRe は住所候補の末尾にあるダッシュ連結の番地ブロック
+// （マーカーなし。banchiDash と同じ形）を切り出す。
+var addressTailDashRe = regexp.MustCompile(`(\d{1,4}(?:-\d{1,4})+)$`)
+
+// notCalendarDateBanchi は banchiDash（マーカーなしダッシュ連結）で終わる住所候補
+// v の末尾が「YYYY-MM-DD」形の 3 成分で、かつ先頭が西暦として妥当な範囲
+// （1900〜2100）かつ実在する暦日のときだけ棄却する（ISO 日付の誤検出対策）。
+// 2 成分（例: 大字直番地の「1993-1」）は年月とも解釈できてしまい、その形の FN が
+// 大きいため意図的に棄却しない（助詞除外のギャップ制限で実質カバーする）。
+func notCalendarDateBanchi(v string) bool {
+	m := addressTailDashRe.FindStringSubmatch(v)
+	if m == nil {
+		return true
+	}
+	parts := strings.Split(m[1], "-")
+	if len(parts) != 3 {
+		return true
+	}
+	year, err1 := strconv.Atoi(parts[0])
+	month, err2 := strconv.Atoi(parts[1])
+	day, err3 := strconv.Atoi(parts[2])
+	if err1 != nil || err2 != nil || err3 != nil || year < 1900 || year > 2100 {
+		return true
+	}
+	return !validCalendarDate(year, month, day)
 }
 
 // validEmail は予約済みドメイン（RFC 2606/6761）等のダミー値を除外する。

@@ -217,20 +217,34 @@ IANA TLD 一覧は公式の `https://data.iana.org/TLD/tlds-alpha-by-domain.txt`
 未割当の番号は棄却される）。インデックスのエンコーディングとサイズ定数は `internal/dict` 側で
 公開し、ジェネレータと共有する（両者が無言で乖離しないため）。
 
+同じ KEN_ALL データの record[6]（都道府県名）・record[7]（市区町村名）から、実在する
+市区町村名の一覧 [`internal/dict/municipalities.txt`](../internal/dict/municipalities.txt)
+（1 行 1 エントリ、ソート・重複排除済み）も生成し `//go:embed` で取り込む。
+`dict.MunicipalitySuffixMatch` が jp-address-high-recall の `Validate` に使い、
+「通学区域」のような市区町村ではない語を municipality と誤認した検出を棄却する
+（既定の `jp-address` には付けない。郡・表記揺れによる FN リスクが高再現率でない
+既定ルールでは相対的に大きいため）。郡付きエントリ（石狩郡当別町）は郡を省いた
+省略形（当別町）も、政令指定都市の区（札幌市中央区）は市単独形（札幌市）も併録し、
+`ヶ`/`ケ` の表記揺れは生成側・照合側の両方で `ケ` に正規化する
+（詳細は `internal/dict/gen/postal.go` の `addMunicipalityVariants` を参照）。
+
 更新は通常 [`.github/workflows/postal-update.yml`](../.github/workflows/postal-update.yml) が
 毎月 1 日に自動で行う。手動で更新する場合は `https://www.post.japanpost.jp/zipcode/dl/utf-zip.html`
-の最新全データ（`utf_ken_all.zip`）を取得し、次のコマンドでビットセットを再生成してから
-`go test ./internal/dict ./internal/detect ./internal/eval` で検証する。
+の最新全データ（`utf_ken_all.zip`）を取得し、次のコマンドでビットセットと市区町村名一覧を
+再生成してから `go test ./internal/dict ./internal/dict/gen ./internal/detect ./internal/eval` で検証する。
 
 ```console
 $ go run ./internal/dict/gen \
     -input /path/to/utf_ken_all.zip \
-    -output internal/dict/postal_codes.bitset
+    -output internal/dict/postal_codes.bitset \
+    -municipalities-output internal/dict/municipalities.txt
 ```
 
-`-input` には展開済みの UTF-8 版 KEN_ALL CSV も指定できる。郵便番号の増減で
+`-input` には展開済みの UTF-8 版 KEN_ALL CSV も指定できる。`-output` /
+`-municipalities-output` はそれぞれ省略でき、省略した方は生成しない。郵便番号の増減で
 `jp-postal-code` の精度数値が動くことがあるため、新しいビットセットをコミットしたら
-eval / バッジの再生成も行うこと。
+eval / バッジの再生成も行うこと（市区町村名一覧は jp-address-high-recall のみに使い、
+eval は既定で high-recall ルールを評価しないため精度ゲートへの影響はない）。
 
 新ルールは `jp-pii-detect rules` に自動で表示されます。
 

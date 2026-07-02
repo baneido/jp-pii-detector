@@ -140,8 +140,17 @@ func SARIF(w io.Writer, findings []detect.Finding, rules []rule.Rule, unmask boo
 		Locations []sarifLocation `json:"locations"`
 	}
 
+	// 同一 ID の Rule が複数エントリ持つ場合がある（例: jp-address は数字番地用と
+	// 漢数字番地用で Prefilter が異なる別エントリを同一 ID で持つ。
+	// internal/rule/builtin.go 参照）。SARIF は driver.rules 内の id が一意である
+	// ことを前提とするツールがあるため、ID で重複排除して 1 件だけ載せる。
+	seenRuleID := map[string]bool{}
 	var ruleDefs []sarifRule
 	for _, r := range rules {
+		if seenRuleID[r.ID] {
+			continue
+		}
+		seenRuleID[r.ID] = true
 		ruleDefs = append(ruleDefs, sarifRule{ID: r.ID, Name: r.ID, Desc: sarifMsg{Text: r.Description}})
 	}
 	results := []sarifResult{}
