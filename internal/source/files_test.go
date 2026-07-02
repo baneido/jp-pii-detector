@@ -46,9 +46,12 @@ func TestScanPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	findings, err := ScanPaths(d, cfg, []string{tmp})
+	findings, warnings, err := ScanPaths(d, cfg, []string{tmp})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %+v, want なし", warnings)
 	}
 	if len(findings) != 1 {
 		t.Fatalf("findings = %d 件 %+v, want 1", len(findings), findings)
@@ -82,7 +85,7 @@ func TestScanPathsAllowlistMatchesReportedPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	// サブディレクトリを走査ルートに指定しても、報告パス基準で除外される。
-	findings, err := ScanPaths(d, cfg, []string{filepath.Join(tmp, "src")})
+	findings, _, err := ScanPaths(d, cfg, []string{filepath.Join(tmp, "src")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +116,7 @@ func TestScanPathsAllowlistRepoRootRelative(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	findings, err := ScanPaths(d, cfg, []string{".."})
+	findings, _, err := ScanPaths(d, cfg, []string{".."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +140,7 @@ func TestScanPathsDeterministicOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 5 {
-		findings, err := ScanPaths(d, cfg, []string{tmp})
+		findings, _, err := ScanPaths(d, cfg, []string{tmp})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -149,6 +152,40 @@ func TestScanPathsDeterministicOrder(t *testing.T) {
 				t.Fatalf("findings[%d].File = %q, want %s", i, findings[i].File, base)
 			}
 		}
+	}
+}
+
+// 個々のファイルの読み取りエラー（権限拒否等）は致命的にせず、そのファイルを
+// スキップして走査を継続すること。他ファイルの収集済み findings は失われず、
+// エラーは戻り値の warnings に集約される（err は nil のまま）。
+func TestScanPathsUnreadableFileDoesNotAbortOthers(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root では読み取り権限のチェックが効かないためスキップ")
+	}
+	content := []byte("口座番号: 1234567\n")
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "ok.txt"), content)
+	denied := filepath.Join(tmp, "denied.txt")
+	writeFile(t, denied, content)
+	if err := os.Chmod(denied, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(denied, 0o644) })
+
+	cfg := config.Default()
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, warnings, err := ScanPaths(d, cfg, []string{tmp})
+	if err != nil {
+		t.Fatalf("ScanPaths エラー: %v（個別ファイルの読み取りエラーは致命的にしない）", err)
+	}
+	if len(findings) != 1 || !strings.HasSuffix(findings[0].File, "/ok.txt") {
+		t.Fatalf("findings = %+v, want ok.txt の 1 件のみ", findings)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0].Error(), "denied.txt") {
+		t.Fatalf("warnings = %+v, want denied.txt の読み取りエラー 1 件", warnings)
 	}
 }
 
