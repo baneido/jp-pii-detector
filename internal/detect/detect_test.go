@@ -712,7 +712,12 @@ func TestResolveOverlaps(t *testing.T) {
 		{"重複なしは全件残る", []Finding{mk("a", rule.High, 0, 5), mk("b", rule.High, 5, 10)}, []string{"a", "b"}},
 		{"信頼度が高い方が勝つ", []Finding{mk("lo", rule.Medium, 0, 8), mk("hi", rule.High, 4, 10)}, []string{"hi"}},
 		{"同率なら長い方が勝つ", []Finding{mk("short", rule.High, 0, 6), mk("long", rule.High, 4, 16)}, []string{"long"}},
-		{"同率同長は先勝ち", []Finding{mk("first", rule.High, 0, 6), mk("second", rule.High, 3, 9)}, []string{"first"}},
+		// 信頼度・長さが同率のときは RuleID の辞書順で決める（挿入順＝
+		// Builtin() 定義順には依存しない、issue #64 の付随改善）。
+		{"同率同長は RuleID の辞書順", []Finding{mk("first", rule.High, 0, 6), mk("second", rule.High, 3, 9)}, []string{"first"}},
+		// 挿入順を逆にしても RuleID の辞書順という結果は変わらないことを
+		// 確認する（旧実装は挿入順＝先勝ちだったため、ここが "zzz" になっていた）。
+		{"同率同長は挿入順に依存しない", []Finding{mk("zzz", rule.High, 0, 6), mk("aaa", rule.High, 3, 9)}, []string{"aaa"}},
 		// 後から来た 1 件が既存の複数と重なるケース（旧実装は最初の 1 件
 		// としか比較せず重複が残った）。
 		{"複数と重なる場合は全部置き換える",
@@ -722,6 +727,57 @@ func TestResolveOverlaps(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assertRules(t, resolveOverlaps(tt.in), tt.want...)
+		})
+	}
+}
+
+// TestResolveOverlapsPerLine は resolveOverlapsPerLine 単体のテスト（issue #64）。
+// File+Line でグループ化してから resolveOverlaps を再適用することを確認する。
+func TestResolveOverlapsPerLine(t *testing.T) {
+	mk := func(file string, line int, id string, conf rule.Confidence, start, end int) Finding {
+		return Finding{File: file, Line: line, RuleID: id, Confidence: conf, start: start, end: end}
+	}
+	tests := []struct {
+		name string
+		in   []Finding
+		want []string
+	}{
+		{
+			"同一行で重なるパス間 finding は高信頼度のみ残る",
+			[]Finding{
+				mk("f.txt", 2, "jp-my-number", rule.Medium, 0, 12),
+				mk("f.txt", 2, "jp-drivers-license", rule.High, 0, 12),
+			},
+			[]string{"jp-drivers-license"},
+		},
+		{
+			"別の行にある finding は行を無視して統合されない（同じ列・同じ長さでも別行なら両方残る）",
+			[]Finding{
+				mk("f.txt", 1, "jp-phone-number", rule.High, 5, 18),
+				mk("f.txt", 2, "jp-phone-number", rule.High, 5, 18),
+			},
+			[]string{"jp-phone-number", "jp-phone-number"},
+		},
+		{
+			"別ファイルの finding も行を無視して統合されない",
+			[]Finding{
+				mk("a.txt", 1, "jp-phone-number", rule.High, 5, 18),
+				mk("b.txt", 1, "jp-phone-number", rule.High, 5, 18),
+			},
+			[]string{"jp-phone-number", "jp-phone-number"},
+		},
+		{
+			"重ならない finding は同一行でも両方残る",
+			[]Finding{
+				mk("f.txt", 1, "a", rule.High, 0, 5),
+				mk("f.txt", 1, "b", rule.High, 5, 10),
+			},
+			[]string{"a", "b"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, resolveOverlapsPerLine(tt.in), tt.want...)
 		})
 	}
 }
@@ -1258,4 +1314,95 @@ func TestComputeOffsetsOutOfRange(t *testing.T) {
 			}
 		})
 	}
+}
+
+// --- パスをまたぐ finding の重複解決（issue #64）---
+//
+// resolveOverlaps は単行走査 1 回分の候補にしか適用されておらず、単行パス・
+// 隣接行ペアパス・クロスライン氏名パスが独立に出す候補は findingKey
+// （RuleID+行+範囲の完全一致）でしか dedup されなかった。異なるルールが同じ
+// 値・重なる範囲に別々のパスからマッチすると、矛盾する複数 finding が
+// 二重報告される。以下は resolveOverlapsPerLine 追加の回帰テスト。
+
+// 12345678901 から検査用数字を計算した既知のマイナンバー値（internal/checksum の
+// TestMyNumberKnownValue と同じ値）。運転免許証番号の Validate
+// （先頭 2 桁が公安委員会コードで 0 以外・全桁同一でない）も満たすため、
+// 「免許番号:」ラベルの次行に置くと jp-my-number（単行パス、Medium）と
+// jp-drivers-license（隣接行ペアパス、High）の双方の候補になる。
+const knownMyNumberDriversLicenseCollision = "123456789018"
+
+// TestScanContentCrossPassDedupDriversLicenseVsMyNumber は本 issue で確認された
+// 再現ケース: 前行「免許番号:」＋次行に MyNumber の検査用数字も満たす 12 桁。
+// 単行パスが吐く jp-my-number（Medium）と隣接行ペアパスが吐く
+// jp-drivers-license（High, RequireContext 充足）が同じ範囲に重なるが、
+// ScanContent の結果は confidence の高い jp-drivers-license のみを含み、
+// jp-my-number を含まないこと。
+func TestScanContentCrossPassDedupDriversLicenseVsMyNumber(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanContent("f.txt", "免許番号:\n"+knownMyNumberDriversLicenseCollision)
+	assertRules(t, fs, "jp-drivers-license")
+	if fs[0].Confidence != rule.High {
+		t.Fatalf("confidence = %v, want high", fs[0].Confidence)
+	}
+	if fs[0].Line != 2 || fs[0].Column != 1 {
+		t.Fatalf("location = %d:%d, want 2:1", fs[0].Line, fs[0].Column)
+	}
+	if fs[0].Match != knownMyNumberDriversLicenseCollision {
+		t.Fatalf("match = %q, want %q", fs[0].Match, knownMyNumberDriversLicenseCollision)
+	}
+}
+
+// TestScanDiffHunkCrossPassDedupDriversLicenseVsMyNumber は同じ衝突ケースを
+// ScanDiffHunk（単行パス＋隣接行ペアパスの 2 系統）でも確認する。
+func TestScanDiffHunkCrossPassDedupDriversLicenseVsMyNumber(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanDiffHunk("f.txt", []DiffLine{
+		{Text: "免許番号:", Added: false},
+		{Text: knownMyNumberDriversLicenseCollision, Added: true},
+	})
+	assertRules(t, fs, "jp-drivers-license")
+	if fs[0].Confidence != rule.High {
+		t.Fatalf("confidence = %v, want high", fs[0].Confidence)
+	}
+}
+
+// TestScanContentCrossPassDedupKeepsUnrelatedFindingsOnDifferentLines は
+// resolveOverlapsPerLine が File+Line でグループ化せずグローバルに
+// resolveOverlaps を適用してしまう回帰を防ぐ。Finding.start/end は行内
+// オフセットのため、たまたま同じ列位置・同じ長さの無関係な finding が
+// 別々の行にあると、行を無視した重複解決では誤って片方だけに間引かれて
+// しまう。ここでは 2 行それぞれの電話番号が同じ列・同じ長さで検出される
+// ケースを使い、両方とも残ることを確認する。
+func TestScanContentCrossPassDedupKeepsUnrelatedFindingsOnDifferentLines(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanContent("f.txt", "TEL: 090-1234-5678\nTEL: 080-9876-5432")
+	assertRules(t, fs, "jp-phone-number", "jp-phone-number")
+	if fs[0].Line != 1 || fs[0].Column != 6 || fs[0].Match != "090-1234-5678" {
+		t.Fatalf("finding[0] = %+v, want line 1 col 6 090-1234-5678", fs[0])
+	}
+	if fs[1].Line != 2 || fs[1].Column != 6 || fs[1].Match != "080-9876-5432" {
+		t.Fatalf("finding[1] = %+v, want line 2 col 6 080-9876-5432", fs[1])
+	}
+}
+
+// TestScanContentCrossPassDedupKeepsSinglePassFinding は、1 つのパスからしか
+// 出ない finding（他パスと重ならない）が resolveOverlapsPerLine の追加後も
+// 素通りで残ることを確認する（単行パスのみ・隣接行ペアパスのみ・
+// クロスライン氏名パスのみのケースを 1 つずつ）。
+func TestScanContentCrossPassDedupKeepsSinglePassFinding(t *testing.T) {
+	t.Run("単行パスのみ", func(t *testing.T) {
+		d := newDetector(t, "")
+		fs := d.ScanContent("f.txt", "TEL: 090-1234-5678")
+		assertRules(t, fs, "jp-phone-number")
+	})
+	t.Run("隣接行ペアパスのみ", func(t *testing.T) {
+		d := newDetector(t, "")
+		fs := d.ScanContent("f.txt", "口座番号:\n1234567")
+		assertRules(t, fs, "jp-bank-account")
+	})
+	t.Run("クロスライン氏名パスのみ", func(t *testing.T) {
+		d := newDetector(t, highRecallTOML)
+		fs := d.ScanContent("f.txt", "氏名:\n山田太郎")
+		assertRules(t, fs, "person-name-structured")
+	})
 }
