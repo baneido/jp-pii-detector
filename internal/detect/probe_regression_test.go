@@ -58,10 +58,6 @@ func TestProbeRegressionKnownFalseNegatives(t *testing.T) {
 		{"probe-fn:mynumber-paren-grouped", "mynumber: (123456)000007"},
 		{"probe-fn:mynumber-slash-separated", "my_number: 123456/000007"},
 
-		// jp-phone-number: 区切りなし固定電話（携帯・IP 以外のプレフィックス）
-		// のパターンが存在しない。issue 記載の「0312345678」系統。
-		{"probe-fn:phone-fixed-tokyo-no-separator", "電話番号: 0312345678"},
-		{"probe-fn:phone-fixed-osaka-no-separator", "TEL: 0662345678"},
 		// 市外局番を括弧でくくる表記（(03)1234-5678）は区切りあり固定電話の
 		// パターン（0\d{1,4}-\d{1,4}-\d{4}）に一致しない。
 		{"probe-fn:phone-parenthesized-area-code", "本社: (03)1234-5678"},
@@ -107,6 +103,13 @@ func TestProbeRegressionKnownFalseNegatives(t *testing.T) {
 func TestProbeResolvedAddressKanjiNumeralFalseNegative(t *testing.T) {
 	d := newDetector(t, "")
 	assertRules(t, d.ScanLine("f.txt", 1, "住所: 東京都渋谷区神南二丁目十番七号"), "jp-address")
+}
+
+func TestProbeResolvedFixedPhoneWithoutSeparator(t *testing.T) {
+	d := newDetector(t, "")
+	for _, line := range []string{"電話番号: 0312345678", "TEL: 0662345678"} {
+		assertRules(t, d.ScanLine("f.txt", 1, line), "jp-phone-number")
+	}
 }
 
 // TestProbeRegressionCSVAdjacentRowContextLimitation は issue 記載の

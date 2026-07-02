@@ -27,6 +27,11 @@ func TestValidPhone(t *testing.T) {
 		{"携帯 区切りあり", piifixtures.MustGet(t, "rule.phone_mobile_sep"), true},
 		{"携帯 区切りなし", piifixtures.MustGet(t, "rule.phone_mobile_nosep"), true},
 		{"固定 10 桁", piifixtures.MustGet(t, "rule.phone_landline_sep"), true},
+		// 固定電話・区切りなし 10 桁（P10: 市外局番辞書による validPhone 拡張で
+		// 新たに検出可能になったパターン）。フィクスチャの市外局番が
+		// internal/dict/area_codes.txt のシードデータに含まれていない場合、
+		// この行は失敗する（要: シードデータの拡充、または実データへの差し替え）。
+		{"固定 10 桁 区切りなし", piifixtures.MustGet(t, "rule.phone_landline_nosep"), true},
 		{"IP 電話", piifixtures.MustGet(t, "rule.phone_ip_sep"), true},
 		{"国際表記 携帯", piifixtures.MustGet(t, "rule.phone_mobile_intl"), true},
 		{"国際表記 固定 9 桁", piifixtures.MustGet(t, "rule.phone_landline_intl"), true},
@@ -36,6 +41,29 @@ func TestValidPhone(t *testing.T) {
 		{"11 桁の固定様式は実在しない", "0123-456-7890", false},
 		{"国際表記 +81 + 10 桁で携帯以外は不正", "+81-12-3456-7890", false},
 		{"全桁同一はダミー値として棄却", "00000000000", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := validPhone(tt.in); got != tt.want {
+				t.Errorf("validPhone(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// P10（#56）: 固定電話・区切りなし 10 桁は市外局番辞書（dict.ValidAreaCode）で
+// 先頭一致の実在性を検証する。ここで使う値は市外局番として実在しない
+// プレフィックス（internal/dict/area_codes.txt のシードデータに未収録）なので、
+// 実在 PII 形式ではなくフィクスチャ不要（インラインで安全）。
+func TestValidPhoneRejectsUnknownAreaCode(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"区切りなし・辞書に存在しないプレフィックス", "0212345678", false},
+		{"区切りあり・辞書に存在しないプレフィックス", "021-234-5678", false},
+		{"連番のみ・辞書に存在しないプレフィックス", "0123456789", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

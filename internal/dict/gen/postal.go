@@ -1,7 +1,9 @@
-// Command gen は日本郵便の郵便番号データから、7 桁郵便番号の実在集合をビットセット
-// として、また市区町村名の実在集合をテキスト辞書として生成する。ビットセットの入力は
-// 2 種類あり、いずれか一方または両方を指定できる（両方指定時はマージされ、重複は
-// 自動的に排除される）。
+// Command gen は internal/dict の埋め込み辞書データを外部データから生成する。
+//
+// 既定（-phone なし）は日本郵便の郵便番号データから、7 桁郵便番号の実在集合を
+// ビットセットとして、また市区町村名の実在集合をテキスト辞書として生成する。
+// ビットセットの入力は 2 種類あり、いずれか一方または両方を指定できる
+// （両方指定時はマージされ、重複は自動的に排除される）。
 //
 //   - -ken-all-input: 「住所の郵便番号」CSV（1 レコード 1 行、UTF-8）、または
 //     それを含む zip。配布元:
@@ -31,6 +33,11 @@
 //	    -jigyosyo-input jigyosyo.zip \
 //	    -output internal/dict/postal_codes.bitset \
 //	    -municipalities-output internal/dict/municipalities.txt
+//
+// -phone を指定すると、市外局番の一覧 CSV から internal/dict/area_codes.txt
+// 形式の一覧を生成する（詳細は phone.go を参照）。
+//
+//	go run ./internal/dict/gen -phone -input area_codes_raw.csv -output internal/dict/area_codes.txt
 package main
 
 import (
@@ -61,11 +68,25 @@ const (
 )
 
 func main() {
+	input := flag.String("input", "", "input path for -phone (area-code CSV)")
 	kenAllInput := flag.String("ken-all-input", "", "Japan Post UTF-8 KEN_ALL (住所の郵便番号) CSV or zip path")
 	jigyosyoInput := flag.String("jigyosyo-input", "", "Japan Post Shift_JIS jigyosyo (事業所の個別郵便番号) CSV or zip path")
-	output := flag.String("output", "", "output path for postal_codes.bitset (7-digit exact bitset); omit to skip")
+	output := flag.String("output", "", "output path (postal: postal_codes.bitset / -phone: area_codes.txt); omit to skip postal bitset")
 	municipalitiesOutput := flag.String("municipalities-output", "", "output path for municipalities.txt (実在市区町村名の一覧、-ken-all-input が必須); omit to skip")
+	phone := flag.Bool("phone", false, "generate internal/dict/area_codes.txt from an area-code CSV instead of the postal bitset")
 	flag.Parse()
+
+	if *phone {
+		if *input == "" || *output == "" || flag.NArg() != 0 {
+			flag.Usage()
+			os.Exit(2)
+		}
+		if err := generatePhone(*input, *output); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	if (*kenAllInput == "" && *jigyosyoInput == "") || (*output == "" && *municipalitiesOutput == "") || flag.NArg() != 0 {
 		flag.Usage()
@@ -75,7 +96,6 @@ func main() {
 		fmt.Fprintln(os.Stderr, "error: -municipalities-output requires -ken-all-input")
 		os.Exit(2)
 	}
-
 	if err := generate(*kenAllInput, *jigyosyoInput, *output, *municipalitiesOutput); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)

@@ -471,6 +471,33 @@ internal/
 判定しており検査数字は未検証（法人番号にはチェックディジットが存在する）。将来的に
 `internal/checksum` へ実装できれば `Validate` に昇格させ、精度を高められる余地がある。
 
+固定電話の市外局番は総務省の電気通信番号指定状況（「市外局番の一覧」）由来の実在集合を
+[`internal/dict/area_codes.txt`](../internal/dict/area_codes.txt) にテキストで保存して
+`//go:embed` で取り込む。`dict.ValidAreaCode` は電話番号の先頭から**最長一致**する
+市外局番を探し、`validPhone`（`internal/rule/builtin.go`）が区切りなし固定電話 10 桁の
+実在性検証に使う。市外局番はほぼ変化しないため、郵便番号のような月次自動更新ワークフローは
+設けていない。
+
+> **既知の制限（#56 時点）**: `area_codes.txt` は総務省の公式データそのものではなく、
+> 都道府県庁所在地・政令指定都市クラスの市外局番（46 件、2〜3 桁のみ）に絞った
+> **代表的なシードデータ**である。総務省が公開する市外局番は全国で約 500 件（4〜5 桁の
+> 中小都市分を含む）あり、このシードはそのごく一部にすぎない。未収録の実在市外局番を使う
+> 固定電話番号は誤って未検出（false negative）になる。総務省の公式データを取得できる環境で、
+> 市外局番列を抽出した CSV（1 列目が市外局番。ヘッダ行や他の列があっても無視される）を用意し、
+> 次のコマンドで完全な一覧に差し替えること。
+
+```console
+$ go run ./internal/dict/gen -phone \
+    -input /path/to/area_codes_raw.csv \
+    -output internal/dict/area_codes.txt
+```
+
+差し替え後は `go test ./internal/dict ./internal/detect ./internal/rule` に加えて、
+`JP_PII_FIXTURES=<path> go test ./internal/eval` で `jp-phone-number` の F1 を再測定し、
+必要なら `wantF1` を更新のうえ `-update` で README バッジと `docs/accuracy.md` を
+再生成すること（区切りなし固定電話 10 桁の正例・未割当プレフィックスの負例を
+評価データセットに追加した場合は特に）。
+
 新ルールは `jp-pii-detect rules` に自動で表示されます。
 
 #### コード変更なしでルールを追加する（`.jp-pii.toml` のカスタムルール）

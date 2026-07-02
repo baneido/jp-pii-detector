@@ -443,7 +443,11 @@ func Builtin() []Rule {
 			Description: "電話番号（携帯・固定・IP・国際表記）",
 			Prefilter:   PrefilterDigit,
 			Context:     []string{"電話", "携帯", "連絡先", "tel", "phone", "fax", "mobile", "denwa"},
-			Validate:    validPhone,
+			// 桁ベースの区切りなし固定電話パターンは業務 ID・型番等と衝突しやすいため、
+			// 金額・数量・連番 ID 文脈での棄却（NegativeContext）を全パターンに適用する。
+			NegativeContext:      digitRuleNegativeContext,
+			RequireContextWindow: digitRuleRequireContextWindow,
+			Validate:             validPhone,
 			Patterns: []Pattern{
 				// 区切りあり携帯・IP 電話（060/070/080/090/050）
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0-\d{4}-\d{4}`), Base: High},
@@ -451,6 +455,12 @@ func Builtin() []Rule {
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0\d{8}`), Base: Medium},
 				// 区切りあり固定電話（市外局番 2〜5 桁）
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}-\d{1,4}-\d{4}`), Base: Medium},
+				// 区切りなし固定電話（10 桁）。裸の \d{10} は型番・伝票番号等との
+				// 衝突が非常に多く単独では出せないため、コンテキストキーワード必須
+				// （RequireContext）にした上で validPhone が市外局番辞書
+				// （dict.ValidAreaCode）で先頭一致の実在性を検証する。市外局番として
+				// 実在しないプレフィックスの数字列は棄却される。
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{9}`), Base: Medium, RequireContext: true},
 				// 国際表記 +81
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`\+81[- ]?\d{1,4}[- ]?\d{1,4}[- ]?\d{3,4}`), Base: High},
 			},
@@ -1005,14 +1015,17 @@ func validPhone(m string) bool {
 		}
 		return false
 	}
-	// 国内表記は先頭 0、第 2 桁は 0 以外。固定電話は計 10 桁、
-	// 11 桁は携帯・IP（0[5-9]0）のみ。
+	// 国内表記は先頭 0。固定電話は計 10 桁、11 桁は携帯・IP（0[5-9]0）のみ。
 	if len(d) == 0 || d[0] != '0' {
 		return false
 	}
 	switch len(d) {
 	case 10:
-		return d[1] != '0'
+		// 固定電話は市外局番辞書（dict.ValidAreaCode）で先頭一致の実在性を
+		// 検証する。市外局番として実在しないプレフィックス（第 2 桁 0 の
+		// IDD アクセス番号帯や、桁数体系に一致しない数字列）は棄却される。
+		_, ok := dict.ValidAreaCode(d)
+		return ok
 	case 11:
 		return d[1] >= '5' && d[1] <= '9' && d[2] == '0'
 	}
