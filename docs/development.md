@@ -39,8 +39,9 @@ $ go test -bench . -benchmem ./internal/normalize/ ./internal/detect/
 `internal/eval` にルールごとの陽性と陰性のケースを集めたラベル付き評価データセットと、
 適合率、再現率、F1 を計測するハーネスがあります。データセットは実在しうる PII を含むため
 リポジトリにはコミットせず、外部ストレージ（GCS）で管理して `JP_PII_FIXTURES` 経由で読み込みます
-（後述の「評価データセット・テストフィクスチャの取得」を参照）。README の検出精度バッジと
-[accuracy.md](accuracy.md) は、ルール自体の検出能力を見るため `min_confidence=low`、
+（後述の「評価データセット・テストフィクスチャの取得」を参照）。README の検出精度バッジ、
+[accuracy.md](accuracy.md)、`docs/accuracy.json`（ゴールデンファイル）は、ルール自体の
+検出能力を見るため `min_confidence=low`、
 高再現率ルール無効のプロファイルで測った実測値です。`EvaluateWithOptions` /
 `EvaluateCasesWithOptions` を使うと、既定 CLI 相当（`min_confidence=medium`）や
 高再現率ルール有効時も同じハーネスで評価できます。`JP_PII_FIXTURES` が未設定の環境では
@@ -48,15 +49,20 @@ eval 系テストは `t.Skip` され、ローカル/オフラインでも `go te
 
 ```console
 $ export JP_PII_FIXTURES=$PWD/pii-fixtures.json   # GCS から取得（取得手順は後述）
-$ go test ./internal/eval            # 実測 F1 と wantF1・README バッジの一致を検証
-$ go test ./internal/eval -update    # docs/accuracy.md と README のバッジを実測値で再生成
+$ go test ./internal/eval                                      # 実測値と docs/accuracy.json・README バッジの一致を検証
+$ go test ./internal/eval -run 'TestGenerateDoc|TestReadmeBadges' -update  # docs/accuracy.md・docs/accuracy.json・README のバッジを実測値で再生成
 ```
 
-`eval_test.go` の `TestAccuracy` は実測 F1 が `wantF1` と一致するか、
-`readme_test.go` の `TestReadmeBadges` は README の総合バッジとルール別バッジが
-実測値と一致するかを検証します。ルールやデータセットを変えて精度が動くと
-CI が落ちるので、**`wantF1` を更新し、`-update` で README のバッジと
-`docs/accuracy.md` を再生成**してください。
+`internal/eval/golden.go` が定義する `docs/accuracy.json` が、検出精度に関する
+単一の情報源（ゴールデンファイル）です。`eval_test.go` の `TestAccuracy` は実測結果を
+`BuildGolden` で組み立て、コミット済み `docs/accuracy.json` と `DiffGolden` で完全一致
+比較します（許容誤差なし）。`readme_test.go` の `TestReadmeBadges` は README の総合
+バッジとルール別バッジが実測値と一致するかを検証します。`dataset_quality_test.go` の
+`TestDatasetQuality` は、F1 の一致だけでは検出できないデータセット自体の劣化
+（`want`/`spans` の未知のルール ID・完全重複ケース・期待スパン付与の後退）を検証します。
+ルールやデータセットを変えて精度が動くと CI が落ちるので、**`go test ./internal/eval -run
+'TestGenerateDoc|TestReadmeBadges' -update` で `docs/accuracy.md`・`docs/accuracy.json`・
+README のバッジをまとめて再生成してコミット**してください（手動での数値編集は不要です）。
 
 ## 評価データセット・テストフィクスチャの取得
 
@@ -103,7 +109,9 @@ internal/
   dict/      IANA TLD などの埋め込み辞書
   report/    出力フォーマット（text/json/sarif/github）とマスキング
   piifixtures/ 実在しうる PII を含む外部フィクスチャ（JP_PII_FIXTURES の JSON）のローダ
-  eval/      ラベル付き評価データセットと検出精度（適合率・再現率・F1）の計測
+  eval/      ラベル付き評価データセットと検出精度（適合率・再現率・F1）の計測。
+             golden.go は docs/accuracy.json（ゴールデンファイル）の生成・比較・
+             データセット品質統計（匿名の件数）を担う
 ```
 
 ### 検出パイプライン

@@ -3,7 +3,6 @@ package eval
 import (
 	"flag"
 	"fmt"
-	"math"
 	"os"
 	"sort"
 	"strings"
@@ -12,54 +11,41 @@ import (
 	"github.com/baneido/jp-pii-detector/internal/piifixtures"
 )
 
-var update = flag.Bool("update", false, "docs/accuracy.md を再生成する")
+var update = flag.Bool("update", false, "docs/accuracy.md・docs/accuracy.json・README.md のバッジを再生成する")
 
-// wantF1 は各ルールの期待 F1（評価データセットに対する実測値）。
-// README の検出精度バッジと一致させること（TestReadmeBadges が検証する）。
-// ルールやデータセットを変更して値が動いたら、ここを更新したうえで
-// `-update` で README のバッジと docs/accuracy.md を再生成する。
-var wantF1 = map[string]float64{
-	"jp-my-number":        1.00,
-	"jp-phone-number":     1.00,
-	"jp-postal-code":      1.00,
-	"jp-address":          0.89,
-	"email-address":       1.00,
-	"credit-card":         1.00,
-	"jp-drivers-license":  1.00,
-	"jp-passport":         1.00,
-	"jp-pension-number":   1.00,
-	"jp-residence-card":   1.00,
-	"jp-bank-account":     0.86,
-	"jp-health-insurance": 1.00,
-	"person-name":         1.00,
-	"jp-birthdate":        1.00,
-}
+// accuracyMDPath / accuracyJSONPath は、検出精度のゴールデンファイル
+// （docs/accuracy.md・docs/accuracy.json）へのパス。README のバッジ・
+// docs/accuracy.md・TestAccuracy の回帰ガードは、すべて同じ評価結果から
+// 生成されるこの2ファイルを単一の情報源にする。
+const (
+	accuracyMDPath   = "../../docs/accuracy.md"
+	accuracyJSONPath = "../../docs/accuracy.json"
+)
 
-// TestAccuracy は実測 F1 が期待値と一致することを検証する（CI の回帰ガード）。
-// バッジに掲げた精度をコードと評価データセットで裏付ける。
+// TestAccuracy は実測結果がコミット済みの docs/accuracy.json（ゴールデンファイル）
+// と完全一致することを検証する（CI の回帰ガード）。ルールやデータセットを変更して
+// 数値が動いたら、`go test ./internal/eval -run 'TestGenerateDoc|TestReadmeBadges' -update`
+// で docs/accuracy.md・docs/accuracy.json・README.md をまとめて再生成してコミットする。
 func TestAccuracy(t *testing.T) {
 	piifixtures.Require(t)
 	results, err := Evaluate()
 	if err != nil {
 		t.Fatal(err)
 	}
-	seen := map[string]bool{}
-	for _, r := range results {
-		seen[r.RuleID] = true
-		want, ok := wantF1[r.RuleID]
-		if !ok {
-			t.Errorf("ルール %q の期待 F1 が未登録（wantF1 に追加してください）", r.RuleID)
-			continue
-		}
-		if math.Abs(r.F1-want) > 0.005 {
-			t.Errorf("%s: F1 = %.3f, want %.2f（README バッジ・wantF1・docs/accuracy.md を更新してください）",
-				r.RuleID, r.F1, want)
-		}
+	cases, ok := piifixtures.Dataset()
+	if !ok {
+		t.Fatal("評価データセットを取得できません")
 	}
-	for id := range wantF1 {
-		if !seen[id] {
-			t.Errorf("ルール %q が評価結果に存在しない", id)
-		}
+	got := BuildGolden(results, SpanlessPositiveCount(cases))
+
+	want, err := LoadGolden(accuracyJSONPath)
+	if err != nil {
+		t.Fatalf("docs/accuracy.json を読み込めません: %v"+
+			"（`go test ./internal/eval -run 'TestGenerateDoc|TestReadmeBadges' -update` で生成してください）", err)
+	}
+
+	for _, msg := range DiffGolden(got, want) {
+		t.Error(msg)
 	}
 }
 
@@ -400,17 +386,23 @@ func hasSpanScore(r Result) bool {
 		r.SpanRelaxed.TP+r.SpanRelaxed.FP+r.SpanRelaxed.FN > 0
 }
 
-// TestGenerateDoc は -update 指定時に docs/accuracy.md を再生成する。
+// TestGenerateDoc は -update 指定時に docs/accuracy.md と docs/accuracy.json
+// （ゴールデンファイル。TestAccuracy・TestDatasetQuality・README バッジの
+// 単一の情報源）を再生成する。
 //
-//	go test ./internal/eval -run TestGenerateDoc -update
+//	go test ./internal/eval -run 'TestGenerateDoc|TestReadmeBadges' -update
 func TestGenerateDoc(t *testing.T) {
 	if !*update {
-		t.Skip("-update 指定時のみ docs/accuracy.md を再生成する")
+		t.Skip("-update 指定時のみ docs/accuracy.md・docs/accuracy.json を再生成する")
 	}
 	piifixtures.Require(t)
 	results, err := Evaluate()
 	if err != nil {
 		t.Fatal(err)
+	}
+	cases, ok := piifixtures.Dataset()
+	if !ok {
+		t.Fatal("評価データセットを取得できません")
 	}
 	sort.Slice(results, func(i, j int) bool {
 		if results[i].F1 == results[j].F1 {
@@ -475,8 +467,35 @@ func TestGenerateDoc(t *testing.T) {
 			relaxedMacro.F1, relaxedMacro.Precision, relaxedMacro.Recall)
 	}
 
-	if err := os.WriteFile("../../docs/accuracy.md", []byte(b.String()), 0o644); err != nil {
+	stats := ComputeDatasetStats(cases)
+	b.WriteString("\n## データセットの統計（匿名）\n\n")
+	b.WriteString("評価データセットはリポジトリ外（GCS）で管理され、レビュー時に中身が見えないため、\n")
+	b.WriteString("PII やケース本文を含まない件数だけの統計をここに記録します。\n\n")
+	fmt.Fprintf(&b, "- 総ケース数: %d\n", stats.TotalCases)
+	fmt.Fprintf(&b, "- 陽性ケース数: %d（うちスパン付与 %d 件、付与率 %s）\n",
+		stats.PositiveCases, stats.SpanAnnotatedCases, spanCoverageText(stats))
+	fmt.Fprintf(&b, "- 陰性ケース数: %d\n\n", stats.NegativeCases)
+	b.WriteString("| ルール ID | 陽性ケース数 |\n|---|--:|\n")
+	for _, rc := range stats.PerRule {
+		fmt.Fprintf(&b, "| `%s` | %d |\n", rc.RuleID, rc.Cases)
+	}
+
+	if err := os.WriteFile(accuracyMDPath, []byte(b.String()), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Log("docs/accuracy.md を再生成しました")
+
+	golden := BuildGolden(results, SpanlessPositiveCount(cases))
+	if err := SaveGolden(accuracyJSONPath, golden); err != nil {
+		t.Fatal(err)
+	}
+	t.Log("docs/accuracy.md と docs/accuracy.json を再生成しました")
+}
+
+// spanCoverageText は陽性ケースのうちスパンが付与された割合を百分率表記で返す。
+// 陽性ケースが 0 件のときはゼロ除算を避けて "-" を返す。
+func spanCoverageText(stats DatasetStats) string {
+	if stats.PositiveCases == 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%.0f%%", float64(stats.SpanAnnotatedCases)/float64(stats.PositiveCases)*100)
 }
