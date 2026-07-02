@@ -29,6 +29,21 @@ var (
 	CrossLineNameValueRe = regexp.MustCompile(
 		`^\s*["'「『（(]?(` + personNameValue + `)["'」』）)]?\s*$`,
 	)
+	// CSVNameHeaderRe は CSV/TSV のヘッダの 1 フィールド本文が、氏名系の強い
+	// ラベルそのものと完全一致するかを判定する（列全体をアンカーし、
+	// 部分一致は誤検出が増えるため許可しない）。CrossLineNameLabelRe と違い
+	// 区切り記号（:/=）は伴わない（ヘッダセルはラベル語そのものなため）。
+	// personNameLabelJP は「氏名カナ」等カナ接尾辞も許容するが、埋め込み
+	// 姓名辞書は漢字ベースのため、フリガナ列は ValidCrossLineName が値を
+	// 通さず自然に対象外になる（意図した挙動）。
+	CSVNameHeaderRe = regexp.MustCompile(
+		`^(?:` + personNameLabelJP + `|` + personNameLabelASCIIStrong + `)$`,
+	)
+	// CSVNameValueRe は CSV/TSV データ行の 1 フィールド本文全体が氏名の値と
+	// して妥当な形かを判定する（前後の空白のみ許容）。値をグループ 1 で返す。
+	CSVNameValueRe = regexp.MustCompile(
+		`^\s*(` + personNameValue + `)\s*$`,
+	)
 )
 
 // ValidCrossLineName は次行の値 v が氏名として妥当かを返す。クロスライン検出は

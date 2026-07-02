@@ -138,6 +138,9 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 	}
 	if d.crossLineName != nil {
 		candidates = append(candidates, d.scanCrossLineNames(file, lines)...)
+		if sourceKindForPath(file) == sourceKindCSV {
+			candidates = append(candidates, d.scanCSVNameColumns(file, lines)...)
+		}
 	}
 
 	// 隣接行の負コンテキスト（金額・数量・連番 ID 等）で抑制してから重複解決する。

@@ -1,10 +1,12 @@
 package source
 
 import (
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/baneido/jp-pii-detector/internal/config"
 	"github.com/baneido/jp-pii-detector/internal/detect"
@@ -158,5 +160,110 @@ func TestIsBinary(t *testing.T) {
 	}
 	if !isBinary([]byte{'a', 0x00, 'b'}) {
 		t.Error("NUL byte should be binary")
+	}
+}
+
+// utf16WithBOM は s を BOM 付き UTF-16（order で指定したバイト順）へ
+// エンコードする（テスト用ヘルパー。実ファイルをコミットせず実行時に生成する）。
+func utf16WithBOM(s string, order binary.ByteOrder) []byte {
+	units := utf16.Encode([]rune(s))
+	buf := make([]byte, 2+2*len(units))
+	if order == binary.LittleEndian {
+		buf[0], buf[1] = 0xFF, 0xFE
+	} else {
+		buf[0], buf[1] = 0xFE, 0xFF
+	}
+	for i, u := range units {
+		order.PutUint16(buf[2+i*2:], u)
+	}
+	return buf
+}
+
+// decodeUTF16 の往復（LE/BE）を検証する。UTF-16 は半角文字の直後に NUL
+// バイトが並ぶため、BOM チェックより先に isBinary を通すと確実にバイナリ
+// 扱いされる（decodeUTF16 が isBinary より前に呼ばれることの回帰確認も兼ねる）。
+func TestDecodeUTF16RoundTrip(t *testing.T) {
+	text := "口座番号: 1234567\n有効な本文です。"
+	for _, tc := range []struct {
+		name  string
+		order binary.ByteOrder
+	}{
+		{"リトルエンディアン", binary.LittleEndian},
+		{"ビッグエンディアン", binary.BigEndian},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := utf16WithBOM(text, tc.order)
+			// BOM 付き UTF-16 は半角文字の隣に NUL バイトが並ぶため、
+			// decodeUTF16 を経ない従来判定ではバイナリ扱いされることを確認する
+			// （BOM チェックが isBinary より先である必要性の裏取り）。
+			if !isBinary(data) {
+				t.Fatal("UTF-16 encoded data should look binary under the NUL-byte heuristic alone")
+			}
+			got, ok := decodeUTF16(data)
+			if !ok {
+				t.Fatalf("decodeUTF16(%s) ok = false, want true", tc.name)
+			}
+			if got != text {
+				t.Fatalf("decodeUTF16(%s) = %q, want %q", tc.name, got, text)
+			}
+		})
+	}
+}
+
+// BOM が無い通常の UTF-8/ASCII は decodeUTF16 の対象外（ok=false）で、
+// 従来どおり isBinary 判定に委ねられること。
+func TestDecodeUTF16NoBOMIsNotUTF16(t *testing.T) {
+	if _, ok := decodeUTF16([]byte("plain ascii, no bom")); ok {
+		t.Fatal("data without a UTF-16 BOM should not be decoded as UTF-16")
+	}
+}
+
+// 不正なバイト列（奇数長・孤立サロゲート）はデコード失敗として
+// 従来のバイナリ判定へフォールバックすること。
+func TestDecodeUTF16InvalidFallsBack(t *testing.T) {
+	tests := []struct {
+		name string
+		data []byte
+	}{
+		{"奇数長の本文", []byte{0xFF, 0xFE, 'a', 0, 'b'}},
+		{"孤立した上位サロゲート", []byte{0xFF, 0xFE, 0x00, 0xD8, 0x41, 0x00}},
+		{"孤立した下位サロゲート", []byte{0xFF, 0xFE, 0x00, 0xDC, 0x41, 0x00}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, ok := decodeUTF16(tt.data); ok {
+				t.Fatalf("decodeUTF16(%v) ok = true, want false (fallback to binary handling)", tt.data)
+			}
+		})
+	}
+}
+
+// ScanPaths が UTF-16LE/BE ファイルを検出できること（フル走査の end-to-end）。
+// UTF-16 フィクスチャは本変更後にドッグフード走査対象化するため、コミットせず
+// t.TempDir() に実行時生成する。
+func TestScanPathsDecodesUTF16(t *testing.T) {
+	tmp := t.TempDir()
+	text := "口座番号: 1234567\n"
+	writeFile(t, filepath.Join(tmp, "utf16le.txt"), utf16WithBOM(text, binary.LittleEndian))
+	writeFile(t, filepath.Join(tmp, "utf16be.txt"), utf16WithBOM(text, binary.BigEndian))
+	// 通常の UTF-8（BOM 無し）は従来どおり検出できること（回帰確認）。
+	writeFile(t, filepath.Join(tmp, "utf8.txt"), []byte(text))
+
+	cfg := config.Default()
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, err := ScanPaths(d, cfg, []string{tmp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 3 {
+		t.Fatalf("findings = %d 件 %+v, want 3", len(findings), findings)
+	}
+	for _, f := range findings {
+		if f.RuleID != "jp-bank-account" || f.Line != 1 {
+			t.Errorf("finding = %+v, want jp-bank-account at line 1", f)
+		}
 	}
 }

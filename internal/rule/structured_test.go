@@ -65,3 +65,46 @@ func TestCrossLineNameRegexes(t *testing.T) {
 		}
 	}
 }
+
+// CSVNameHeaderRe / CSVNameValueRe は CSV/TSV のヘッダ・データ行の 1 フィールド
+// 本文全体をアンカーする（CrossLineNameLabelRe/ValueRe と違い区切り記号
+// `:`/`=` や引用符・括弧は伴わない。フィールド分割は internal/detect の
+// splitCSVLine が既に引用符を剥がした本文を渡す前提）。
+func TestCSVNameRegexes(t *testing.T) {
+	headerMatch := []string{"氏名", "お名前", "姓名", "フリガナ", "full_name", "customer_name"}
+	for _, s := range headerMatch {
+		if !CSVNameHeaderRe.MatchString(s) {
+			t.Errorf("CSVNameHeaderRe should match %q", s)
+		}
+	}
+	headerNoMatch := []string{
+		"郵便番号", // 氏名系ラベルではない
+		"口座番号",
+		"氏名:",  // 区切り記号は伴わない（ヘッダセルはラベル語そのもの）
+		"氏名メモ", // 複合語の一部は列全体アンカーで除外
+		"",
+	}
+	for _, s := range headerNoMatch {
+		if CSVNameHeaderRe.MatchString(s) {
+			t.Errorf("CSVNameHeaderRe should NOT match %q", s)
+		}
+	}
+
+	valueMatch := map[string]string{
+		"山田太郎":   "山田太郎",
+		"山田 太郎":  "山田 太郎",
+		" 鈴木花子 ": "鈴木花子",
+	}
+	for in, want := range valueMatch {
+		m := CSVNameValueRe.FindStringSubmatch(in)
+		if m == nil || m[1] != want {
+			t.Errorf("CSVNameValueRe(%q) group1 = %v, want %q", in, m, want)
+		}
+	}
+	valueNoMatch := []string{"100-0001", "1234567", ""}
+	for _, s := range valueNoMatch {
+		if CSVNameValueRe.MatchString(s) {
+			t.Errorf("CSVNameValueRe should NOT match %q", s)
+		}
+	}
+}
