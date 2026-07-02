@@ -844,13 +844,8 @@ func Builtin() []Rule {
 }
 
 // validMyNumber はマイナンバー（個人番号）の検査用数字に加え、ダミー値で
-// よく使われる「先頭ゼロ埋め連番」（0000001 等）と、先頭 8 桁が実在する
-// 暦日（YYYYMMDD）に一致するパターンを棄却する。後者は「ジョブ ID・伝票
-// 番号のような 日付+連番 の値がマイナンバーの検査用数字に偶然一致する」
-// 誤検出（約 1/11 の確率）に対応するための追加棄却で、マイナンバー特有の
-// 12 桁構造を前提にしているため運転免許証番号・銀行口座番号等には適用しない
-// （実在するマイナンバーが偶然この形になる確率は低いが皆無ではなく、
-// 見逃しのトレードオフは docs/detection-methods.md を参照）。
+// よく使われる「先頭ゼロ埋め連番」（0000001 等）を棄却する。マイナンバーは
+// 日付を符号化しないため、先頭 8 桁が暦日に見えることだけでは棄却しない。
 func validMyNumber(m string) bool {
 	d := stripSeparators(m)
 	if !checksum.MyNumber(d) {
@@ -859,22 +854,7 @@ func validMyNumber(m string) bool {
 	if checksum.IsZeroPaddedSequential(d) {
 		return false
 	}
-	return !myNumberHasDateLikePrefix(d)
-}
-
-// myNumberHasDateLikePrefix はマイナンバー（12 桁）の先頭 8 桁が実在する
-// 暦日（YYYYMMDD）として解釈できるかを返す。
-func myNumberHasDateLikePrefix(digits string) bool {
-	if len(digits) < 8 {
-		return false
-	}
-	year, errYear := strconv.Atoi(digits[0:4])
-	month, errMonth := strconv.Atoi(digits[4:6])
-	day, errDay := strconv.Atoi(digits[6:8])
-	if errYear != nil || errMonth != nil || errDay != nil {
-		return false
-	}
-	return validCalendarDate(year, month, day)
+	return true
 }
 
 // validDriversLicense は運転免許証番号（12 桁）のダミー値を棄却する。

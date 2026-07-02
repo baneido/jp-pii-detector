@@ -137,10 +137,9 @@ func genMyNumber(first11 string) string {
 	return first11 + fmt.Sprint(check)
 }
 
-// validMyNumber は検査用数字に加え、先頭ゼロ埋め連番と、先頭 8 桁が実在する
-// 暦日（YYYYMMDD）に一致するダミー値を棄却する。後者は「job_id=202506300004
-// のような 日付+連番 の値が検査用数字に偶然一致する」誤検出（FP プローブで
-// 実測）を狙い撃ちする。
+// validMyNumber は検査用数字に加え、先頭ゼロ埋め連番を棄却する。マイナンバーは
+// 日付を符号化しないため、先頭 8 桁が実在する暦日（YYYYMMDD）に見えるだけでは
+// 棄却しない。
 func TestValidMyNumber(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -149,7 +148,8 @@ func TestValidMyNumber(t *testing.T) {
 	}{
 		{"検査用数字一致・連番でも日付でもない", "12345678901", true}, // = 123456789018
 		{"先頭ゼロ埋め＋末尾昇順連番は棄却", "00000023456", false},  // = 000000234567
-		{"先頭8桁が実在する暦日（2025-06-30）は棄却", "20250630123", false},
+		{"先頭8桁が実在する暦日（2025-06-30）でも許容", "20250630123", true},
+		{"先頭8桁が実在する暦日（1990-01-23）でも許容", "19900123000", true}, // = 199001230000
 		{"先頭8桁が暦日として不正（月56日78）は許容", "12345678901", true},
 	}
 	for _, tt := range tests {
@@ -163,25 +163,8 @@ func TestValidMyNumber(t *testing.T) {
 	if validMyNumber("123456789012") {
 		t.Error("validMyNumber(検査用数字不一致) = true, want false")
 	}
-}
-
-// myNumberHasDateLikePrefix 単体の境界値も確認する。
-func TestMyNumberHasDateLikePrefix(t *testing.T) {
-	tests := []struct {
-		in   string
-		want bool
-	}{
-		{"202506300004", true},  // 2025-06-30（FP プローブの job_id 例そのもの）
-		{"123456789018", false}, // 月が 56 で不正
-		{"000000000191", false}, // 月日が 0 で不正
-		{"1234567", false},      // 8 桁未満
-	}
-	for _, tt := range tests {
-		t.Run(tt.in, func(t *testing.T) {
-			if got := myNumberHasDateLikePrefix(tt.in); got != tt.want {
-				t.Errorf("myNumberHasDateLikePrefix(%q) = %v, want %v", tt.in, got, tt.want)
-			}
-		})
+	if !validMyNumber("199001230000") {
+		t.Error("validMyNumber(199001230000) = false, want true")
 	}
 }
 
