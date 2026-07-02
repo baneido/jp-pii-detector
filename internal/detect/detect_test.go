@@ -1357,6 +1357,8 @@ high_recall = true
 		{"name ラベル 名→姓の順（語順不問）", "name: Tarou Yamada", []string{"person-name-romaji"}},
 		{"full_name ラベル", "full_name: Yamada Tarou", []string{"person-name-romaji"}},
 		{"JSON 風キー引用符", `{"full_name": "Yamada Tarou"}`, []string{"person-name-romaji"}},
+		{"name ラベル 3 語は先頭 2 語だけ検出しない", "name: Yamada Tarou Extra", nil},
+		{"full_name ラベル 3 語は先頭 2 語だけ検出しない", "full_name: Yamada Tarou Extra", nil},
 		// 辞書外の英単語は棄却する。
 		{"辞書外の英単語 2 語", "name: Hello World", nil},
 		// 裸の name ラベルの前方境界（kebab-case・dotted key）は除外する。

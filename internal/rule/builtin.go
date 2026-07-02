@@ -127,6 +127,10 @@ var (
 	// 捕捉し、長さ・人名らしさの最終判断は validSurnameField 等の検証器に委ねる。
 	personNameValueShort = `[` + kanji + hiragana + katakana + `]{1,12}` +
 		`(?:[ ][` + kanji + hiragana + katakana + `]{1,12})?`
+	romajiNameValue = `[A-Za-z]{2,15}[ ][A-Za-z]{2,15}`
+	// romajiNameEndBoundary は 2 語の直後にさらに英字語が続くケースを除外する。
+	// RE2 は lookahead 非対応のため、値の外側で終端・記号・空白終端を消費する。
+	romajiNameEndBoundary = `(?:$|[^A-Za-z[:space:]]|[[:space:]]+(?:$|[^A-Za-z[:space:]]))`
 )
 
 // personNamePlaceholders は氏名の値として現れるダミー語（人名ではない）。
@@ -520,7 +524,7 @@ func Builtin() []Rule {
 					personNameBoundary +
 						personNameLabelASCIIStrong +
 						personNameSep +
-						`([A-Za-z]{2,15}[ ][A-Za-z]{2,15})`,
+						`(` + romajiNameValue + `)` + romajiNameEndBoundary,
 				), Base: Medium},
 				// 裸の name ラベル。kebab-case / dotted key は除外する
 				// （personNameBareNameBoundary、person-name ルールと同様）。
@@ -528,7 +532,7 @@ func Builtin() []Rule {
 					personNameBareNameBoundary +
 						`name` +
 						personNameSep +
-						`([A-Za-z]{2,15}[ ][A-Za-z]{2,15})`,
+						`(` + romajiNameValue + `)` + romajiNameEndBoundary,
 				), Base: Medium},
 			},
 		},
