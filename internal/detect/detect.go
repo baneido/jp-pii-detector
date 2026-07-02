@@ -54,6 +54,9 @@ type DetectReason struct {
 	RequireContext  bool     `json:"require_context,omitempty"`
 	ContextWindow   int      `json:"context_window,omitempty"`
 	Validated       bool     `json:"validated,omitempty"`
+	// CooccurrenceBoosted は、[rules] cooccurrence_boost 有効時に近傍の別カテゴリ
+	// 高信頼 PII との共起で信頼度が 1 段昇格したことを示す（調査・チューニング用）。
+	CooccurrenceBoosted bool `json:"cooccurrence_boosted,omitempty"`
 }
 
 // Detector は設定を適用済みの検出エンジン。
@@ -70,6 +73,9 @@ type Detector struct {
 	// 複数行の氏名検出を ScanContent で行うかの判定と、検出結果の ID・説明の
 	// 単一の出所として使う。高再現率モードでのみ有効になる。
 	crossLineName *rule.Rule
+	// cooccurrenceBoost は [rules] cooccurrence_boost の opt-in フラグ。
+	// ScanContent のみで使う（ScanLine/ScanDiffHunk の既定挙動は変えない）。
+	cooccurrenceBoost bool
 }
 
 // New は設定に基づいて Detector を構築する。
@@ -115,7 +121,15 @@ func New(cfg *config.Config) (*Detector, error) {
 			}
 		}
 	}
-	return &Detector{rules: rules, cfg: cfg, minConf: minConf, normStopwords: normStopwords, ctxTokens: ctxTokens, crossLineName: crossLineName}, nil
+	return &Detector{
+		rules:             rules,
+		cfg:               cfg,
+		minConf:           minConf,
+		normStopwords:     normStopwords,
+		ctxTokens:         ctxTokens,
+		crossLineName:     crossLineName,
+		cooccurrenceBoost: cfg.Rules.CooccurrenceBoost,
+	}, nil
 }
 
 // Rules は有効なルール一覧を返す。
@@ -129,9 +143,20 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 	}
 	lineContexts := sourceLineContexts(file, lines)
 
+	// cooccurrence_boost が有効なときだけ、minConf 未満でも昇格候補となりうる
+	// Low 候補（Validated またはコンテキスト有りの cooccurrenceBoostRuleIDs）を
+	// 保持する。retainBudget は本呼び出し（1 ファイル分の ScanContent）専用の
+	// ローカル変数で、ゴルーチン間共有はしない（internal/source の並列走査は
+	// ファイル単位でこの関数を呼ぶだけなので新たな共有可変状態にはならない）。
+	var retainBudget *int
+	if d.cooccurrenceBoost {
+		budget := maxCooccurrenceRetainedCandidates
+		retainBudget = &budget
+	}
+
 	var candidates []Finding
 	for i, line := range lines {
-		candidates = append(candidates, d.scanLineWithContext(file, i+1, line, lineContexts[i])...)
+		candidates = append(candidates, d.scanLineWithContext(file, i+1, line, lineContexts[i], retainBudget)...)
 	}
 	for i := 0; i+1 < len(lines); i++ {
 		candidates = append(candidates, d.scanAdjacentLines(file, i+1, lines[i], lines[i+1], lineContexts[i], lineContexts[i+1])...)
@@ -139,16 +164,111 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 	if d.crossLineName != nil {
 		candidates = append(candidates, d.scanCrossLineNames(file, lines)...)
 	}
+	if d.cooccurrenceBoost {
+		candidates = d.applyCooccurrenceBoost(candidates)
+	}
 
 	// 隣接行の負コンテキスト（金額・数量・連番 ID 等）で抑制してから重複解決する。
+	// Confidence < minConf のふるい落としをここでも行う（cooccurrence_boost 無効時は
+	// scanLineNoIgnoreWithContext 内で既に minConf 未満が除かれているため無害な
+	// 二重チェック。有効時は、昇格しなかった保持済み Low 候補をここで最終的に除く）。
 	filtered := candidates[:0]
 	for _, f := range candidates {
+		if f.Confidence < d.minConf {
+			continue
+		}
 		if d.hasCrossLineNegativeContext(f, lines, f.Line-1) {
 			continue
 		}
 		filtered = append(filtered, f)
 	}
 	return dedupAndSortFindings(filtered)
+}
+
+// maxCooccurrenceRetainedCandidates は cooccurrence_boost 有効時に、minConf 未満でも
+// 昇格候補として保持する Low 候補の上限（1 ファイルあたり）。氏名系ルールの
+// PrefilterLiterals は既に大半の行を除外するが、「name:」等のラベル語が大量に並ぶ
+// 病的なファイルでもメモリ・処理時間が線形を超えて悪化しないための安全弁。
+const maxCooccurrenceRetainedCandidates = 2000
+
+// cooccurrenceWindowLines は共起昇格を判定する際の前後行数（ウィンドウ半径）。
+// 増幅リスク（真の PII が近傍のボーダー FP を道連れに昇格させる）を抑えるため、
+// 意図的に狭く取る。
+const cooccurrenceWindowLines = 5
+
+// cooccurrenceBoostRuleIDs は共起昇格の対象となるルール。Base:Low 固定で
+// コンテキスト昇格経路を持たない氏名系ルールに限定する（P23 のスコープ）。
+// person-name-structured はクロスライン検出専用で常に Medium 固定のため対象外。
+var cooccurrenceBoostRuleIDs = map[string]bool{
+	"person-name":             true,
+	"person-name-high-recall": true,
+}
+
+// cooccurrenceAnchorRuleIDs は昇格の根拠として使う、他カテゴリの PII ルール。
+// 昇格対象（氏名系）とは必ず別カテゴリになるよう cooccurrenceBoostRuleIDs とは
+// 重複させない。住所（jp-address / jp-address-high-recall）・銀行口座番号・
+// 健康保険番号・生年月日は、根拠に足るチェックサム検証も RequireContext による
+// ラベル必須化も無い（住所）か Base が Medium 止まり（口座・保険・生年月日）で、
+// 試合スコアや日付を住所と誤検出するような境界事例を道連れに昇格させるリスクが
+// 相対的に高いため、現時点では対象に含めない（住所誤検出対策が先行してから
+// 再検討する）。
+var cooccurrenceAnchorRuleIDs = map[string]bool{
+	"jp-my-number":       true,
+	"jp-phone-number":    true,
+	"jp-postal-code":     true,
+	"email-address":      true,
+	"credit-card":        true,
+	"jp-drivers-license": true,
+	"jp-passport":        true,
+	"jp-pension-number":  true,
+	"jp-residence-card":  true,
+}
+
+// applyCooccurrenceBoost は、cooccurrenceBoostRuleIDs の候補（Validated または
+// ContextKeywords 有り）を、同一ファイル内の ±cooccurrenceWindowLines 行以内に
+// cooccurrenceAnchorRuleIDs の高信頼（High かつ Validated または RequireContext）
+// 候補があるときだけ 1 段昇格（Low→Medium、Medium→High）させる。
+func (d *Detector) applyCooccurrenceBoost(candidates []Finding) []Finding {
+	var anchorLines []int
+	for _, f := range candidates {
+		if isCooccurrenceAnchor(f) {
+			anchorLines = append(anchorLines, f.Line)
+		}
+	}
+	if len(anchorLines) == 0 {
+		return candidates
+	}
+	sort.Ints(anchorLines)
+
+	for i := range candidates {
+		f := &candidates[i]
+		if !cooccurrenceBoostRuleIDs[f.RuleID] || f.Confidence >= rule.High {
+			continue
+		}
+		if !(f.Reason.Validated || len(f.Reason.ContextKeywords) > 0) {
+			continue
+		}
+		if !hasNearbyAnchorLine(anchorLines, f.Line, cooccurrenceWindowLines) {
+			continue
+		}
+		f.Confidence++
+		f.Reason.CooccurrenceBoosted = true
+		f.Reason.FinalConfidence = f.Confidence.String()
+	}
+	return candidates
+}
+
+func isCooccurrenceAnchor(f Finding) bool {
+	return cooccurrenceAnchorRuleIDs[f.RuleID] && f.Confidence >= rule.High &&
+		(f.Reason.Validated || f.Reason.RequireContext)
+}
+
+// hasNearbyAnchorLine は sorted な anchorLines に、line から window 行以内の
+// 要素があるかを二分探索で判定する（O(log n)。全候補×全アンカーの O(n^2) を避ける）。
+func hasNearbyAnchorLine(anchorLines []int, line, window int) bool {
+	lo, hi := line-window, line+window
+	idx := sort.SearchInts(anchorLines, lo)
+	return idx < len(anchorLines) && anchorLines[idx] <= hi
 }
 
 // ComputeOffsets は ScanContent に渡したのと同一の content を使い、各 finding に
@@ -246,9 +366,11 @@ func (d *Detector) ScanDiffHunk(file string, lines []DiffLine) []Finding {
 
 	var candidates []Finding
 	// 追加行は単独走査（同一行コンテキスト・同一行抑制が正しく適用される）。
+	// cooccurrence_boost は ScanContent（フルスキャン）専用のため retainBudget は
+	// 常に nil を渡す（diff hunk は文脈行を昇格の根拠にしない設計を維持する）。
 	for i, line := range texts {
 		if added[i] {
-			candidates = append(candidates, d.scanLineWithContext(file, i+1, line, lineContexts[i])...)
+			candidates = append(candidates, d.scanLineWithContext(file, i+1, line, lineContexts[i], nil)...)
 		}
 	}
 	// 隣接 2 行は RequireContext を文脈行ラベルで昇格させる。抑制は値の行（追加行）基準。
@@ -476,21 +598,32 @@ func (d *Detector) ScanLine(file string, lineNo int, line string) []Finding {
 	return d.scanLineNoIgnore(file, lineNo, line)
 }
 
-func (d *Detector) scanLineWithContext(file string, lineNo int, line string, lineCtx lineContext) []Finding {
+// scanLineWithContext は ScanContent の行単位走査の本体。retainBudget が非 nil
+// なら cooccurrence_boost 用に、minConf 未満でも昇格候補（Validated または
+// コンテキスト有りの cooccurrenceBoostRuleIDs）を一時的に保持する
+// （ScanContent 専用の保持モード。ScanLine/ScanDiffHunk の経路は常に nil を渡し
+// 既存挙動を変えない）。
+func (d *Detector) scanLineWithContext(file string, lineNo int, line string, lineCtx lineContext, retainBudget *int) []Finding {
 	if line == "" || ignoredLine(line) {
 		return nil
 	}
-	return d.scanLineNoIgnoreWithContext(file, lineNo, line, lineCtx)
+	return d.scanLineNoIgnoreWithContext(file, lineNo, line, lineCtx, retainBudget)
 }
 
 // scanLineNoIgnore は ScanLine の本体（ignore マーカー判定を除く）。差分の
 // 隣接行走査では、文脈行に残った ignore マーカーで追加行の値を抑制しないよう、
-// この経路を使って結合文字列を走査する。
+// この経路を使って結合文字列を走査する。cooccurrence_boost の保持は行わない
+// （retainBudget は常に nil）。
 func (d *Detector) scanLineNoIgnore(file string, lineNo int, line string) []Finding {
-	return d.scanLineNoIgnoreWithContext(file, lineNo, line, lineContext{})
+	return d.scanLineNoIgnoreWithContext(file, lineNo, line, lineContext{}, nil)
 }
 
-func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line string, lineCtx lineContext) []Finding {
+// scanLineNoIgnoreWithContext が本体。retainBudget が非 nil かつ残数 > 0 の場合のみ、
+// minConf 未満の cooccurrenceBoostRuleIDs 候補（Validated またはコンテキスト有り）を
+// 保持する（呼び出し元でその後 applyCooccurrenceBoost → 最終 minConf フィルタを適用する
+// 前提。ScanLine/ScanDiffHunk からの呼び出しは retainBudget=nil のため従来どおり
+// minConf 未満は即座に破棄する）。
+func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line string, lineCtx lineContext, retainBudget *int) []Finding {
 	if line == "" {
 		return nil
 	}
@@ -618,7 +751,7 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 						conf = rule.High
 					}
 				}
-				if conf < d.minConf {
+				if conf < d.minConf && !retainForCooccurrenceBoost(retainBudget, r.ID, reason) {
 					continue
 				}
 				reason.FinalConfidence = conf.String()
@@ -644,6 +777,27 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 		}
 	}
 	return resolveOverlaps(found)
+}
+
+// retainForCooccurrenceBoost は minConf 未満の候補を、cooccurrence_boost の
+// 昇格判定用に一時保持してよいかを返す。対象は cooccurrenceBoostRuleIDs に
+// 限定し、かつ Validated またはコンテキスト有りの候補のみ（プレースホルダ等を
+// 除いた notPlaceholderName 通過済みの氏名候補が主だが、無条件の Low 氏名候補を
+// すべて保持するとメモリ・性能に影響するため、シグナルのない候補は従来どおり
+// 破棄する）。保持するたびに retainBudget を消費し、上限（maxCooccurrenceRetainedCandidates）
+// に達したら以降は従来どおり破棄する。
+func retainForCooccurrenceBoost(retainBudget *int, ruleID string, reason DetectReason) bool {
+	if retainBudget == nil || *retainBudget <= 0 {
+		return false
+	}
+	if !cooccurrenceBoostRuleIDs[ruleID] {
+		return false
+	}
+	if !reason.Validated && len(reason.ContextKeywords) == 0 {
+		return false
+	}
+	*retainBudget--
+	return true
 }
 
 func ignoredLine(line string) bool {

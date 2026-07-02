@@ -27,6 +27,12 @@ type Config struct {
 		// HighRecall は高再現率ルールを明示的に有効化する。
 		// 偽陽性リスクが高いため既定では無効。
 		HighRecall bool `toml:"high_recall"`
+		// CooccurrenceBoost は、単独では Base:Low のまま報告されない氏名系
+		// ルール（person-name 等）を、同一ファイル内の近傍に検証済み/ラベル
+		// 付きの高信頼 PII（電話番号・郵便番号・マイナンバー等）があるときだけ
+		// 1 段昇格（Low→Medium 等）させる。README.md:44 の「氏名は既定非表示」
+		// という方針と衝突しうるため既定では無効（opt-in）。
+		CooccurrenceBoost bool `toml:"cooccurrence_boost"`
 	} `toml:"rules"`
 	Allowlist struct {
 		// Paths は走査から除外するパスの正規表現または glob。検出結果に

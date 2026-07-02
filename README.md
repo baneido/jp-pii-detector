@@ -45,6 +45,9 @@
 > 各検出は周辺キーワードの有無で `low` / `medium` / `high` に分かれます。キーワードが
 > 検出の前提になっているルールでは昇格は起きず、ルール固有の信頼度
 > （表の △ は `medium`、○ は `high`）で報告されます。
+> `[rules] cooccurrence_boost = true` を opt-in すると、単独では `low` のまま
+> 非表示の氏名が、同一ファイル内の近傍（±5 行）に電話番号・マイナンバー等の
+> 検証済み高信頼 PII があるときだけ 1 段昇格して報告されます（詳細は後述）。
 
 検出できる PII の種類、手法の詳細、設計判断は
 [docs/detection-methods.md](docs/detection-methods.md) を参照してください。
@@ -160,6 +163,11 @@ disabled = ["person-name"]
 # 都道府県なし住所・担当者/敬称アンカー付き氏名・ラベルと値が別行の氏名（フォーム形式）など、
 # 偽陽性リスクの高い追加ルールを有効化
 high_recall = false
+# 単独では low のまま報告されない氏名系ルール（person-name / person-name-high-recall）を、
+# 同一ファイル内の近傍（±5行）に電話番号・郵便番号・マイナンバー等の検証済み高信頼 PII が
+# あるときだけ 1 段昇格（low→medium、まれに medium→high）させる。CSV/DB ダンプ監査など、
+# 強めの検出をしたい場合のみ opt-in する（既定では既存の出力に影響しない）
+cooccurrence_boost = false
 
 [allowlist]
 # スキャン対象から除外するパス（glob または正規表現）。glob の * は 1 階層、
