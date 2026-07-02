@@ -1,6 +1,7 @@
 package rule
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/baneido/jp-pii-detector/internal/piifixtures"
@@ -75,11 +76,214 @@ func TestValidEmail(t *testing.T) {
 		// ---- 無効: 構造不正（防御的ガード）----
 		{"@ が先頭", "@gmail.com", false},
 		{"@ が末尾", "user@", false},
+		// ---- 無効: ローカル部/ドメイン第 1 ラベルのダミー値語（部分一致）----
+		{"ローカル部が hoge", "hoge@fuga.co.jp", false},
+		{"ドメイン第1ラベルが sample", "test1@sample.com", false},
+		{"ローカル部が dummy を含む", "dummyuser@company.co.jp", false},
+		{"ドメイン第1ラベルが foo", "user@foo.co.jp", false},
+		{"ローカル部が hogehoge", "hogehoge@company.co.jp", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := validEmail(tt.in); got != tt.want {
 				t.Errorf("validEmail(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// validPhone の「加入者番号部（末尾 4 桁）が全桁同一はダミー値」棄却を検証する。
+// 昇順連番（090-1234-5678 等）の棄却は見送っているため許容されたままであることも確認する。
+// フィクスチャ不要のためピュアなインラインリテラルのみで完結させる。
+func TestValidPhoneSubscriberAllSame(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"携帯 加入者番号部が全桁同一は棄却", "090-0000-0000", false},
+		{"携帯 加入者番号部が連番は許容（棄却は見送り）", "090-1234-5678", true},
+		{"固定 加入者番号部が全桁同一は棄却", "03-1234-0000", false},
+		{"国際表記 携帯 加入者番号部が全桁同一は棄却", "+81-90-0000-0000", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := validPhone(tt.in); got != tt.want {
+				t.Errorf("validPhone(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// genMyNumber は先頭 11 桁から検査用数字を計算して 12 桁を生成する
+// （internal/checksum/checksum_test.go の同名ヘルパーと同じロジックを
+// このパッケージのテスト用に書き下したもの）。
+func genMyNumber(first11 string) string {
+	sum := 0
+	for n := 1; n <= 11; n++ {
+		p := int(first11[11-n] - '0')
+		q := n + 1
+		if n >= 7 {
+			q = n - 5
+		}
+		sum += p * q
+	}
+	r := sum % 11
+	check := 0
+	if r > 1 {
+		check = 11 - r
+	}
+	return first11 + fmt.Sprint(check)
+}
+
+// validMyNumber は検査用数字に加え、先頭ゼロ埋め連番と、先頭 8 桁が実在する
+// 暦日（YYYYMMDD）に一致するダミー値を棄却する。後者は「job_id=202506300004
+// のような 日付+連番 の値が検査用数字に偶然一致する」誤検出（FP プローブで
+// 実測）を狙い撃ちする。
+func TestValidMyNumber(t *testing.T) {
+	tests := []struct {
+		name    string
+		first11 string
+		want    bool
+	}{
+		{"検査用数字一致・連番でも日付でもない", "12345678901", true}, // = 123456789018
+		{"先頭ゼロ埋め＋末尾昇順連番は棄却", "00000023456", false},  // = 000000234567
+		{"先頭8桁が実在する暦日（2025-06-30）は棄却", "20250630123", false},
+		{"先頭8桁が暦日として不正（月56日78）は許容", "12345678901", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v := genMyNumber(tt.first11)
+			if got := validMyNumber(v); got != tt.want {
+				t.Errorf("validMyNumber(%q) = %v, want %v", v, got, tt.want)
+			}
+		})
+	}
+	if validMyNumber("123456789012") {
+		t.Error("validMyNumber(検査用数字不一致) = true, want false")
+	}
+}
+
+// myNumberHasDateLikePrefix 単体の境界値も確認する。
+func TestMyNumberHasDateLikePrefix(t *testing.T) {
+	tests := []struct {
+		in   string
+		want bool
+	}{
+		{"202506300004", true},  // 2025-06-30（FP プローブの job_id 例そのもの）
+		{"123456789018", false}, // 月が 56 で不正
+		{"000000000191", false}, // 月日が 0 で不正
+		{"1234567", false},      // 8 桁未満
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			if got := myNumberHasDateLikePrefix(tt.in); got != tt.want {
+				t.Errorf("myNumberHasDateLikePrefix(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// validDriversLicense は全桁同一・先頭 0（公安委員会コード未満）のダミー値を
+// 棄却する。検査用数字アルゴリズムは非公開のため使わない。
+func TestValidDriversLicense(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"実在しうる値（公安委員会コード想定の先頭2桁）", "305012345678", true},
+		{"全桁同一は棄却", "111111111111", false},
+		{"先頭が0は棄却（公安委員会コード未満）", "012345678901", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := validDriversLicense(tt.in); got != tt.want {
+				t.Errorf("validDriversLicense(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// validBankAccount / validHealthInsurance は全桁同一・先頭ゼロ埋め連番の
+// ダミー値（0000001 等）を棄却する。口座番号・保険者番号は検査用数字を
+// 持たないため、これ以上の検証はできない。
+func TestValidBankAccount(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"実在しうる値", "1234569", true},
+		{"全桁同一は棄却", "0000000", false},
+		{"先頭ゼロ埋め＋末尾昇順連番は棄却", "0000001", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := validBankAccount(tt.in); got != tt.want {
+				t.Errorf("validBankAccount(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidHealthInsurance(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"実在しうる値", "12345689", true},
+		{"全桁同一は棄却", "00000000", false},
+		{"先頭ゼロ埋め＋末尾昇順連番は棄却", "00000123", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := validHealthInsurance(tt.in); got != tt.want {
+				t.Errorf("validHealthInsurance(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// validPassport は末尾 7 桁が全桁同一の明らかなダミー値（0000000 等）のみを
+// 棄却する。旅券冊子記号の先頭文字制限（[T,M] 等）は一次情報の裏取りが
+// できるまで導入しない（NH1234567 のような値は現状も検出対象のまま）。
+func TestValidPassport(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"実在しうる値", "TK1234567", true},
+		{"数字7桁が全桁同一は棄却", "TK0000000", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := validPassport(tt.in); got != tt.want {
+				t.Errorf("validPassport(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// validResidenceCard は出入国在留管理庁の文字集合仕様で使われない英字 I・O
+// を含む値と、数字 8 桁が全桁同一のダミー値を棄却する。
+func TestValidResidenceCard(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"実在しうる値", "AB12345678CD", true},
+		{"先頭の英字に I を含むと棄却", "IB12345678CD", false},
+		{"末尾の英字に O を含むと棄却", "AB12345678CO", false},
+		{"数字8桁が全桁同一は棄却", "AB00000000CD", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := validResidenceCard(tt.in); got != tt.want {
+				t.Errorf("validResidenceCard(%q) = %v, want %v", tt.in, got, tt.want)
 			}
 		})
 	}

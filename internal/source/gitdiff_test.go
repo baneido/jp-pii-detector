@@ -150,7 +150,7 @@ func TestScanStagedJapaneseFilename(t *testing.T) {
 func TestScanStagedSplitLabelAndValue(t *testing.T) {
 	repo := initTestRepo(t)
 	name := "pii.txt"
-	if err := os.WriteFile(filepath.Join(repo, name), []byte("口座番号:\n1234567\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, name), []byte("口座番号:\n1234569\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	git(t, "add", name)
@@ -185,7 +185,7 @@ func TestScanDiffContextLabelOnUnchangedLine(t *testing.T) {
 	git(t, "add", ".")
 	git(t, "commit", "-q", "-m", "base")
 	// 値だけをラベルの直後（既存ラベル行は未変更）に追加する。
-	if err := os.WriteFile(filepath.Join(repo, name), []byte("口座番号:\n1234567\nメモ\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, name), []byte("口座番号:\n1234569\nメモ\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	git(t, "add", ".")
@@ -213,13 +213,13 @@ func TestScanDiffDoesNotReportContextLinePII(t *testing.T) {
 	repo := initTestRepo(t)
 	name := "pii.txt"
 	// base: ラベルと値（既存 PII）をコミット。
-	if err := os.WriteFile(filepath.Join(repo, name), []byte("口座番号: 1234567\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, name), []byte("口座番号: 1234569\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	git(t, "add", ".")
 	git(t, "commit", "-q", "-m", "base")
 	// 既存 PII 行の直後に PII でない行を追加する。
-	if err := os.WriteFile(filepath.Join(repo, name), []byte("口座番号: 1234567\n備考なし\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, name), []byte("口座番号: 1234569\n備考なし\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	git(t, "add", ".")
@@ -244,7 +244,7 @@ func TestScanStagedPlusPlusAddedLine(t *testing.T) {
 	repo := initTestRepo(t)
 	name := "pii.txt"
 	// 1 行目の内容が "++ ..." なので diff では "+++ ..." と出力される。
-	content := []byte("++ サンプル差分マーカー\n口座番号: 1234567\n")
+	content := []byte("++ サンプル差分マーカー\n口座番号: 1234569\n")
 	if err := os.WriteFile(filepath.Join(repo, name), content, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +278,7 @@ func TestScanStagedContextNegativeDoesNotSuppress(t *testing.T) {
 	git(t, "add", ".")
 	git(t, "commit", "-q", "-m", "base")
 	// ラベル（文脈）と 円（文脈）の間に値を追加する。
-	if err := os.WriteFile(filepath.Join(repo, name), []byte("口座番号:\n1234567\n円\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, name), []byte("口座番号:\n1234569\n円\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	git(t, "add", ".")
@@ -317,7 +317,7 @@ func TestScanStagedContextIgnoreMarkerScope(t *testing.T) {
 		}
 		git(t, "add", ".")
 		git(t, "commit", "-q", "-m", "base")
-		if err := os.WriteFile(filepath.Join(repo, name), []byte("口座番号: jp-pii-detector:ignore\n7654321\nメモ\n"), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(repo, name), []byte("口座番号: jp-pii-detector:ignore\n7654329\nメモ\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		git(t, "add", ".")
@@ -338,7 +338,7 @@ func TestScanStagedContextIgnoreMarkerScope(t *testing.T) {
 		}
 		git(t, "add", ".")
 		git(t, "commit", "-q", "-m", "base")
-		if err := os.WriteFile(filepath.Join(repo, name), []byte("口座番号:\n7654321 jp-pii-detector:ignore\nメモ\n"), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(repo, name), []byte("口座番号:\n7654329 jp-pii-detector:ignore\nメモ\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		git(t, "add", ".")

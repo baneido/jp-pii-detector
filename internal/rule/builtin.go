@@ -210,9 +210,7 @@ func Builtin() []Rule {
 			Description: "マイナンバー（個人番号）",
 			Prefilter:   PrefilterDigit,
 			Context:     []string{"マイナンバー", "個人番号", "mynumber", "my number", "my_number"},
-			Validate: func(m string) bool {
-				return checksum.MyNumber(stripSeparators(m))
-			},
+			Validate:    validMyNumber,
 			Patterns: []Pattern{
 				{Re: dgNoAlnumHyphen(`\d{12}`), Base: Medium},
 				// 前後にハイフンが続く場合はクレジットカード等の
@@ -321,11 +319,7 @@ func Builtin() []Rule {
 				"drivers license", "driver license", "license no", "license number", "licence"},
 			NegativeContext:      digitRuleNegativeContext,
 			RequireContextWindow: digitRuleRequireContextWindow,
-			Validate: func(m string) bool {
-				// 先頭 2 桁は公安委員会コードで 10 以上
-				// （= 先頭桁が 0 でないことと等価）
-				return !checksum.AllSame(m) && m[0] != '0'
-			},
+			Validate:             validDriversLicense,
 			Patterns: []Pattern{
 				{Re: dg(`\d{12}`), Base: High, RequireContext: true},
 			},
@@ -335,6 +329,7 @@ func Builtin() []Rule {
 			Description: "旅券（パスポート）番号",
 			Prefilter:   PrefilterDigit,
 			Context:     []string{"パスポート", "旅券", "passport"},
+			Validate:    validPassport,
 			Patterns: []Pattern{
 				{Re: ag(`[A-Z]{2}\d{7}`), Base: High, RequireContext: true},
 			},
@@ -355,6 +350,7 @@ func Builtin() []Rule {
 			Description: "在留カード番号",
 			Prefilter:   PrefilterDigit,
 			Context:     []string{"在留", "residence card", "zairyu"},
+			Validate:    validResidenceCard,
 			Patterns: []Pattern{
 				{Re: ag(`[A-Z]{2}\d{8}[A-Z]{2}`), Base: High, RequireContext: true},
 			},
@@ -366,6 +362,7 @@ func Builtin() []Rule {
 			Context:              []string{"口座", "普通預金", "当座預金", "支店番号", "account number", "account_no", "bank account", "kouza"},
 			NegativeContext:      digitRuleNegativeContext,
 			RequireContextWindow: digitRuleRequireContextWindow,
+			Validate:             validBankAccount,
 			Patterns: []Pattern{
 				{Re: dg(`\d{7}`), Base: Medium, RequireContext: true},
 			},
@@ -377,6 +374,7 @@ func Builtin() []Rule {
 			Context:              []string{"保険者番号", "被保険者", "保険証", "health insurance", "hokensha"},
 			NegativeContext:      digitRuleNegativeContext,
 			RequireContextWindow: digitRuleRequireContextWindow,
+			Validate:             validHealthInsurance,
 			Patterns: []Pattern{
 				{Re: dg(`\d{8}`), Base: Medium, RequireContext: true},
 			},
@@ -492,9 +490,95 @@ func Builtin() []Rule {
 	}
 }
 
+// validMyNumber はマイナンバー（個人番号）の検査用数字に加え、ダミー値で
+// よく使われる「先頭ゼロ埋め連番」（0000001 等）と、先頭 8 桁が実在する
+// 暦日（YYYYMMDD）に一致するパターンを棄却する。後者は「ジョブ ID・伝票
+// 番号のような 日付+連番 の値がマイナンバーの検査用数字に偶然一致する」
+// 誤検出（約 1/11 の確率）に対応するための追加棄却で、マイナンバー特有の
+// 12 桁構造を前提にしているため運転免許証番号・銀行口座番号等には適用しない
+// （実在するマイナンバーが偶然この形になる確率は低いが皆無ではなく、
+// 見逃しのトレードオフは docs/detection-methods.md を参照）。
+func validMyNumber(m string) bool {
+	d := stripSeparators(m)
+	if !checksum.MyNumber(d) {
+		return false
+	}
+	if checksum.IsZeroPaddedSequential(d) {
+		return false
+	}
+	return !myNumberHasDateLikePrefix(d)
+}
+
+// myNumberHasDateLikePrefix はマイナンバー（12 桁）の先頭 8 桁が実在する
+// 暦日（YYYYMMDD）として解釈できるかを返す。
+func myNumberHasDateLikePrefix(digits string) bool {
+	if len(digits) < 8 {
+		return false
+	}
+	year, errYear := strconv.Atoi(digits[0:4])
+	month, errMonth := strconv.Atoi(digits[4:6])
+	day, errDay := strconv.Atoi(digits[6:8])
+	if errYear != nil || errMonth != nil || errDay != nil {
+		return false
+	}
+	return validCalendarDate(year, month, day)
+}
+
+// validDriversLicense は運転免許証番号（12 桁）のダミー値を棄却する。
+// 検査用数字アルゴリズムは公式に非公開のためリバースエンジニアリング由来の
+// 実装は採用せず、先頭桁（公安委員会コードは 10 以上 = 先頭桁が 0 でない）と、
+// 全桁同一・ゼロ埋め連番のみを見る。
+func validDriversLicense(m string) bool {
+	return m != "" && m[0] != '0' && !checksum.AllSame(m) && !checksum.IsZeroPaddedSequential(m)
+}
+
+// validBankAccount は銀行口座番号（7 桁）の全桁同一・ゼロ埋め連番
+// （0000001 等）のダミー値を棄却する。口座番号自体は検査用数字を
+// 持たないため、これ以上の検証はできない。
+func validBankAccount(m string) bool {
+	return !checksum.AllSame(m) && !checksum.IsZeroPaddedSequential(m)
+}
+
+// validHealthInsurance は健康保険 保険者番号・被保険者番号（8 桁）の
+// 全桁同一・ゼロ埋め連番のダミー値を棄却する。
+func validHealthInsurance(m string) bool {
+	return !checksum.AllSame(m) && !checksum.IsZeroPaddedSequential(m)
+}
+
+// validPassport は旅券（パスポート）番号（英字 2 + 数字 7）の末尾 7 桁が
+// 全桁同一の明らかなダミー値（0000000 等）を棄却する。旅券冊子記号の先頭
+// 文字制限（[T,M] 等）は外務省/ICAO の一次情報で裏取りができるまで導入しない
+// （docs/detection-methods.md 参照）。
+func validPassport(m string) bool {
+	if len(m) < 7 {
+		return false
+	}
+	return !checksum.AllSame(m[len(m)-7:])
+}
+
+// validResidenceCard は在留カード番号（英 2 + 数 8 + 英 2）のうち、
+// 出入国在留管理庁の文字集合仕様で使われない英字 I・O を含む値と、
+// 数字 8 桁が全桁同一のダミー値を棄却する。
+func validResidenceCard(m string) bool {
+	if len(m) != 12 {
+		return false
+	}
+	letters := m[:2] + m[10:]
+	if strings.ContainsAny(letters, "IO") {
+		return false
+	}
+	return !checksum.AllSame(m[2:10])
+}
+
 func validPhone(m string) bool {
 	d := stripSeparators(strings.TrimPrefix(m, "+"))
 	if checksum.AllSame(d) {
+		return false
+	}
+	// 加入者番号部（末尾 4 桁）が全桁同一はダミー値として棄却する
+	// （携帯番号の末尾が 0000 で終わるケース等）。加入者番号部が昇順連番の
+	// 値の棄却は、公的な採番禁止規則の一次情報が確認できるまで見送る。
+	if len(d) >= 4 && checksum.AllSame(d[len(d)-4:]) {
 		return false
 	}
 	if strings.HasPrefix(d, "81") {
@@ -582,7 +666,27 @@ func validCalendarDate(year, month, day int) bool {
 	return t.Year() == year && int(t.Month()) == month && t.Day() == day
 }
 
-// validEmail は予約済みドメイン（RFC 2606/6761）等のダミー値を除外する。
+// emailDummyWords はメールのダミー値でよく使われるローカル部・ドメイン第 1
+// ラベルの語（personNamePlaceholders と同じ「部分一致 denylist」方式で棄却）。
+// 既知の限界: 部分一致のため、これらの語を偶然含む実在のローカル部・ドメイン
+// （barclays.co.jp の "bar" 等）を巻き添えで棄却しうる。hoge@fuga.co.jp や
+// test1@sample.com のような明らかなダミー値の抑制を優先するトレードオフ。
+var emailDummyWords = []string{"hoge", "fuga", "dummy", "hogehoge", "sample", "foo", "bar"}
+
+// containsEmailDummyWord は s（ローカル部またはドメイン第 1 ラベル）が
+// emailDummyWords のいずれかを部分一致で含むかを返す。
+func containsEmailDummyWord(s string) bool {
+	s = strings.ToLower(s)
+	for _, w := range emailDummyWords {
+		if strings.Contains(s, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// validEmail は予約済みドメイン（RFC 2606/6761）・ダミー値でよく使われる
+// ローカル部/ドメイン語等を除外する。
 func validEmail(m string) bool {
 	at := strings.LastIndexByte(m, '@')
 	if at <= 0 || at == len(m)-1 {
@@ -601,6 +705,9 @@ func validEmail(m string) bool {
 		if label == "" || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
 			return false
 		}
+	}
+	if containsEmailDummyWord(local) || containsEmailDummyWord(labels[0]) {
+		return false
 	}
 	tld := labels[len(labels)-1]
 	switch tld {

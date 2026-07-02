@@ -170,7 +170,7 @@ func TestEvaluateCaseFileOverrideEnablesSourceContext(t *testing.T) {
 	results, err := EvaluateCases([]Case{
 		{
 			File:    "sample.ts",
-			Content: "bankAccountNo:\n  \"1234567\"",
+			Content: "bankAccountNo:\n  \"1234569\"",
 			Want:    []string{"jp-bank-account"},
 		},
 	})
