@@ -411,10 +411,61 @@ func TestLabeledRules(t *testing.T) {
 	}
 }
 
-func TestPersonNameHiddenByDefault(t *testing.T) {
+// TestPersonNameDefaultVisibility は既定 min_confidence=medium での可視化を
+// 検証する（issue #44）。姓名辞書に一致する値はラベルだけで Medium に昇格し
+// 既定で報告されるが、辞書に一致しない値（辞書外の実在人名・非人名の値・
+// 単独姓のみの曖昧フィールド一致）は引き続き Low のまま既定では報告されない。
+func TestPersonNameDefaultVisibility(t *testing.T) {
 	piifixtures.Require(t)
 	d := newDetector(t, "") // 既定 min_confidence = medium
-	assertRules(t, d.ScanLine("f.txt", 1, "氏名: "+piifixtures.MustGet(t, "detect.name_full_spaced")))
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"辞書一致の氏名は既定で可視化", "氏名: 山田太郎", []string{"person-name"}},
+		{"辞書一致の氏名（name + 姓+名分割）", "name: 田中太郎", []string{"person-name"}},
+		{"辞書外の実在人名は既定では非表示", "氏名: " + piifixtures.MustGet(t, "detect.name_dict_external_full"), nil},
+		{"非人名の値は既定では非表示", "氏名: 株式会社", nil},
+		{"単独姓のみの曖昧 name ラベルは既定では非表示", "name: 大和", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestPersonNameConfidencePromotion は辞書検証済みマッチが Medium に、
+// 辞書に一致しないマッチが Low に留まることを信頼度レベルで検証する
+// （issue #44: person-name Medium twin）。
+func TestPersonNameConfidencePromotion(t *testing.T) {
+	piifixtures.Require(t)
+	d := newDetector(t, `min_confidence = "low"`)
+	tests := []struct {
+		name, line string
+		conf       rule.Confidence
+	}{
+		// 強いラベル + 姓名辞書に分割できる値 → Medium。
+		{"氏名 + 辞書一致（分割可）", "氏名: 山田太郎", rule.Medium},
+		// 強いラベル + 辞書外の実在人名 → 収録外なので Low のまま。
+		{"氏名 + 辞書外の実在人名", "氏名: " + piifixtures.MustGet(t, "detect.name_dict_external_full"), rule.Low},
+		// 強いラベル + 非人名の値（組織名等）→ Low のまま。
+		{"氏名 + 非人名の値", "氏名: 株式会社", rule.Low},
+		// 曖昧な name ラベル + 単独姓のみ（分割不可）→ Low のまま
+		// （地名・一般名詞と同形の単独姓による FP を Medium に上げない）。
+		{"name + 単独姓のみ", "name: 大和", rule.Low},
+		// 曖昧な name ラベル + 姓+名に分割できる値 → Medium。
+		{"name + 姓+名に分割できる値", "name: 田中太郎", rule.Medium},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, "person-name")
+			if fs[0].Confidence != tt.conf {
+				t.Errorf("confidence = %v, want %v", fs[0].Confidence, tt.conf)
+			}
+		})
+	}
 }
 
 func TestHighRecallRulesDisabledByDefault(t *testing.T) {
