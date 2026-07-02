@@ -61,6 +61,7 @@ func TestMyNumberRule(t *testing.T) {
 		{"コンテキストあり区切りあり", "マイナンバー: " + mynumSep, []string{"jp-my-number"}, rule.High},
 		{"コンテキストなし", "value = " + mynum, []string{"jp-my-number"}, rule.Medium},
 		{"全角数字", "個人番号：" + mynumWide, []string{"jp-my-number"}, rule.High},
+		{"日付風prefixの検査用数字一致値", "個人番号: 199001230000", []string{"jp-my-number"}, rule.High},
 		{"検査用数字不一致", "value = 123456789012", nil, 0},
 		{"より長い数字列の一部は対象外", "id = 9" + mynum, nil, 0},
 	}
