@@ -134,6 +134,7 @@ func TestPhoneRule(t *testing.T) {
 		{"携帯区切りあり", "TEL: " + piifixtures.MustGet(t, "detect.phone_mobile_sep"), []string{"jp-phone-number"}},
 		{"携帯区切りなしコンテキストあり", "携帯 " + piifixtures.MustGet(t, "detect.phone_mobile_nosep"), []string{"jp-phone-number"}},
 		{"固定電話区切りあり", "本社: " + piifixtures.MustGet(t, "detect.phone_fixed_tokyo"), []string{"jp-phone-number"}},
+		{"固定電話区切りあり seed 辞書未収録", "電話: 04992-2-1234", []string{"jp-phone-number"}},
 		// P10（#56）: 固定電話・区切りなし 10 桁。市外局番辞書（dict.ValidAreaCode）による
 		// validPhone 拡張と新パターンで新たに検出可能になった。RequireContext のため
 		// コンテキストキーワードが必須。
@@ -171,12 +172,11 @@ func TestPhoneLandlineNoSepRequiresContext(t *testing.T) {
 	assertRules(t, d.ScanLine("f.txt", 1, "電話番号：0212345678"))
 }
 
-// P10（#56）: 区切りあり固定電話も、市外局番として辞書に存在しないプレフィックスは
-// validPhone（dict.ValidAreaCode）で棄却される。値は構造的に不実在なプレフィックス
-// なのでインラインで安全。
-func TestPhoneSepRejectsUnknownAreaCode(t *testing.T) {
+// P10（#56）: 区切りあり固定電話は area_codes.txt の seed 辞書が未完成でも
+// 取りこぼさない。
+func TestPhoneSepAllowsAreaCodeMissingFromSeedDictionary(t *testing.T) {
 	d := newDetector(t, "")
-	assertRules(t, d.ScanLine("f.txt", 1, "電話番号：021-234-5678"))
+	assertRules(t, d.ScanLine("f.txt", 1, "電話番号：04992-2-1234"), "jp-phone-number")
 }
 
 func TestPostalAndAddress(t *testing.T) {

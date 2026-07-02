@@ -458,8 +458,7 @@ func Builtin() []Rule {
 				// 区切りなし固定電話（10 桁）。裸の \d{10} は型番・伝票番号等との
 				// 衝突が非常に多く単独では出せないため、コンテキストキーワード必須
 				// （RequireContext）にした上で validPhone が市外局番辞書
-				// （dict.ValidAreaCode）で先頭一致の実在性を検証する。市外局番として
-				// 実在しないプレフィックスの数字列は棄却される。
+				// （dict.ValidAreaCode）で先頭一致の実在性を検証する。
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{9}`), Base: Medium, RequireContext: true},
 				// 国際表記 +81
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`\+81[- ]?\d{1,4}[- ]?\d{1,4}[- ]?\d{3,4}`), Base: High},
@@ -1021,9 +1020,12 @@ func validPhone(m string) bool {
 	}
 	switch len(d) {
 	case 10:
-		// 固定電話は市外局番辞書（dict.ValidAreaCode）で先頭一致の実在性を
-		// 検証する。市外局番として実在しないプレフィックス（第 2 桁 0 の
-		// IDD アクセス番号帯や、桁数体系に一致しない数字列）は棄却される。
+		if strings.ContainsAny(m, "- ") {
+			return d[1] != '0'
+		}
+		// 区切りなし固定電話は市外局番辞書（dict.ValidAreaCode）で先頭一致の
+		// 実在性を検証する。area_codes.txt は seed のため、区切りあり表記では
+		// この辞書を必須にしない。
 		_, ok := dict.ValidAreaCode(d)
 		return ok
 	case 11:
