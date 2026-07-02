@@ -36,6 +36,18 @@ type Result struct {
 	Precision, Recall, F1 float64
 	SpanExact             Score
 	SpanRelaxed           Score
+	// Negatives はデータセット全体で Want・Spans が両方とも空の「陰性ケース」の
+	// 総数（全ルール共通の母数で、FP を正規化した偽陽性率などに使う）。
+	Negatives int
+	// FindingFP は行レベルの FP（ケースにつき最大 1 件、既存の FP と同じ集計）
+	// とは別に、検出単位で数えた誤検出数。1 ケース内で同一ルールが複数回
+	// 誤検出しても FP は 1 のままだが、FindingFP はその実数を反映する
+	// （そのルールが期待されていないケースでの finding 数の合計）。
+	FindingFP int
+	// ConfidenceMiss は、期待スパンに WantConfidence が設定されているケースで、
+	// 検出はできた（span exact 一致）ものの実際の最終信頼度が期待未満だった件数。
+	// 既定設定（min_confidence=medium 等）で黙って埋もれる「実質検出漏れ」を表す。
+	ConfidenceMiss int
 }
 
 // Options は評価時の検出器設定。ゼロ値では従来どおり min_confidence=low、
@@ -90,9 +102,11 @@ func EvaluateCasesWithOptions(cases []Case, opts Options) ([]Result, error) {
 	}
 
 	type counts struct {
-		row         Score
-		spanExact   Score
-		spanRelaxed Score
+		row            Score
+		spanExact      Score
+		spanRelaxed    Score
+		findingFP      int
+		confidenceMiss int
 	}
 	stat := map[string]*counts{}
 	at := func(id string) *counts {
@@ -102,7 +116,15 @@ func EvaluateCasesWithOptions(cases []Case, opts Options) ([]Result, error) {
 		return stat[id]
 	}
 
+	negatives := 0
 	for _, c := range cases {
+		// Want・Spans がともに空のケースは陰性（何も検出されないべき）として
+		// 母数に数える。全ルール共通の母数のため、ケースループの外で
+		// Result に一律付与する（ルールごとに数え直さない）。
+		if len(c.Want) == 0 && len(c.Spans) == 0 {
+			negatives++
+		}
+
 		want := map[string]bool{}
 		for _, id := range c.Want {
 			want[id] = true
@@ -120,14 +142,17 @@ func EvaluateCasesWithOptions(cases []Case, opts Options) ([]Result, error) {
 			at(s.RuleID)
 		}
 		got := map[string]bool{}
+		findingCounts := map[string]int{}
 		findings, err := scanCase(d, c)
 		if err != nil {
 			return nil, err
 		}
 		for _, f := range findings {
 			got[f.RuleID] = true
+			findingCounts[f.RuleID]++
 		}
-		// 期待・検出の和集合でルールごとに TP/FP/FN を加算する。
+		// 期待・検出の和集合でルールごとに TP/FP/FN を加算する（行レベル、
+		// wantF1 の算出に使う既存の集計。互換のため変更しない）。
 		for id := range want {
 			if got[id] {
 				at(id).row.TP++
@@ -140,6 +165,14 @@ func EvaluateCasesWithOptions(cases []Case, opts Options) ([]Result, error) {
 				at(id).row.FP++
 			}
 		}
+		// 検出単位 FP: 期待されていないルールについては、そのケース内で実際に
+		// 検出された件数をそのまま加算する（行レベル FP は 1 ケース最大 1 だが、
+		// こちらは同一ケース内の多重誤検出を過小評価しない）。
+		for id, n := range findingCounts {
+			if !want[id] {
+				at(id).findingFP += n
+			}
+		}
 
 		if len(c.Spans) > 0 {
 			wantSpans := map[string][]Span{}
@@ -147,18 +180,36 @@ func EvaluateCasesWithOptions(cases []Case, opts Options) ([]Result, error) {
 				wantSpans[s.RuleID] = append(wantSpans[s.RuleID], s)
 			}
 			gotSpans := map[string][]Span{}
+			gotConf := map[string][]string{}
 			for _, f := range findings {
 				s := spanFromFinding(f)
 				gotSpans[s.RuleID] = append(gotSpans[s.RuleID], s)
+				gotConf[s.RuleID] = append(gotConf[s.RuleID], f.Reason.FinalConfidence)
 			}
 
 			for id, spans := range wantSpans {
 				gotForRule := gotSpans[id]
-				exact := matchSpans(spans, gotForRule, spansEqual)
-				relaxed := matchSpans(spans, gotForRule, spansOverlap)
+				confForRule := gotConf[id]
+				exact, exactPairs := matchSpans(spans, gotForRule, spansEqual)
+				relaxed, _ := matchSpans(spans, gotForRule, spansOverlap)
 				addScore(&at(id).spanExact, exact)
 				addScore(&at(id).spanRelaxed, relaxed)
+				// want_confidence: exact 一致（位置の対応が一意）した検出だけを対象に、
+				// 実際の最終信頼度が期待未満なら ConfidenceMiss に数える。
+				for wi, gi := range exactPairs {
+					if gi < 0 {
+						continue // 未検出（FN）は対象外
+					}
+					wantConf := spans[wi].WantConfidence
+					if wantConf == "" {
+						continue // 信頼度チェック対象外のスパン
+					}
+					if confidenceRank(confForRule[gi]) < confidenceRank(wantConf) {
+						at(id).confidenceMiss++
+					}
+				}
 				delete(gotSpans, id)
+				delete(gotConf, id)
 			}
 			for id, spans := range gotSpans {
 				missed := Score{FP: len(spans)}
@@ -174,20 +225,34 @@ func EvaluateCasesWithOptions(cases []Case, opts Options) ([]Result, error) {
 		fillScore(&c.spanExact)
 		fillScore(&c.spanRelaxed)
 		r := Result{
-			RuleID:      id,
-			TP:          c.row.TP,
-			FP:          c.row.FP,
-			FN:          c.row.FN,
-			Precision:   c.row.Precision,
-			Recall:      c.row.Recall,
-			F1:          c.row.F1,
-			SpanExact:   c.spanExact,
-			SpanRelaxed: c.spanRelaxed,
+			RuleID:         id,
+			TP:             c.row.TP,
+			FP:             c.row.FP,
+			FN:             c.row.FN,
+			Precision:      c.row.Precision,
+			Recall:         c.row.Recall,
+			F1:             c.row.F1,
+			SpanExact:      c.spanExact,
+			SpanRelaxed:    c.spanRelaxed,
+			Negatives:      negatives,
+			FindingFP:      c.findingFP,
+			ConfidenceMiss: c.confidenceMiss,
 		}
 		results = append(results, r)
 	}
 	sort.Slice(results, func(i, j int) bool { return results[i].RuleID < results[j].RuleID })
 	return results, nil
+}
+
+// confidenceRankOrder は rule.Confidence の順序を文字列表現のまま比較するための
+// 対応表（detect.DetectReason.FinalConfidence / piifixtures.Span.WantConfidence は
+// いずれも "low"|"medium"|"high" の文字列のため、ここでは internal/rule に依存しない）。
+var confidenceRankOrder = map[string]int{"low": 1, "medium": 2, "high": 3}
+
+// confidenceRank は信頼度文字列の順序値を返す。未知の文字列（空文字含む）は
+// 0 を返し、どの既知信頼度よりも低く扱う。
+func confidenceRank(s string) int {
+	return confidenceRankOrder[s]
 }
 
 func scanCase(d *detect.Detector, c Case) ([]detect.Finding, error) {
@@ -246,7 +311,11 @@ func spanFromFinding(f detect.Finding) Span {
 	}
 }
 
-func matchSpans(want, got []Span, match func(Span, Span) bool) Score {
+// matchSpans は want の各要素を got の要素と最大二部マッチングで対応付ける。
+// 戻り値の pairs は want と同じ長さで、pairs[wi] は一致した got のインデックス
+// （未一致なら -1）。want_confidence の照合など、一致した検出そのもの
+// （どの Span/Finding に対応したか）を参照したい呼び出し側のために返す。
+func matchSpans(want, got []Span, match func(Span, Span) bool) (Score, []int) {
 	matchTo := make([]int, len(want))
 	for i := range matchTo {
 		matchTo[i] = -1
@@ -284,7 +353,7 @@ func matchSpans(want, got []Span, match func(Span, Span) bool) Score {
 		TP: matched,
 		FN: len(want) - matched,
 		FP: len(got) - matched,
-	}
+	}, matchTo
 }
 
 func spansEqual(a, b Span) bool {
@@ -325,12 +394,20 @@ func fillScore(s *Score) {
 // 適合率・再現率・F1 の算出は fillScore に一元化する（式の二重実装を避ける）。
 func Micro(results []Result) Result {
 	var s Score
+	var findingFP int
 	for _, r := range results {
 		s.TP += r.TP
 		s.FP += r.FP
 		s.FN += r.FN
+		findingFP += r.FindingFP
 	}
 	fillScore(&s)
+	var negatives int
+	if len(results) > 0 {
+		// Negatives は全ルール共通の母数（陰性ケース総数）なのでルール数倍に
+		// 合算せず、いずれかの結果から 1 回だけ取り出す。
+		negatives = results[0].Negatives
+	}
 	return Result{
 		RuleID:    "micro",
 		TP:        s.TP,
@@ -339,6 +416,8 @@ func Micro(results []Result) Result {
 		Precision: s.Precision,
 		Recall:    s.Recall,
 		F1:        s.F1,
+		Negatives: negatives,
+		FindingFP: findingFP,
 	}
 }
 
