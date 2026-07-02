@@ -198,6 +198,10 @@ var bankNameCandidateRe = regexp.MustCompile(
 	`([` + kanji + hiragana + katakana + `A-Za-z]{1,12}(?:銀行|信用金庫|信用組合|信金|信組|労働金庫|ろうきん|農協))`,
 )
 
+func isYuchoBankName(s string) bool {
+	return s == "ゆうちょ銀行"
+}
+
 // digitRuleNegativeContext は桁ベースのルールを棄却する近傍語
 // （金額・数量・連番 ID など PII でない数字列の文脈）。
 //
@@ -399,10 +403,11 @@ func Builtin() []Rule {
 			ID:          "jp-yucho-account",
 			Description: "ゆうちょ銀行 記号番号",
 			Prefilter:   PrefilterDigit,
-			Context:     []string{"ゆうちょ", "郵便貯金", "記号", "yucho", "japan post bank"},
-			// 銀行名辞書と同じ専用経路で「ゆうちょ銀行」表記そのものも文脈として使う。
+			Context:     []string{"ゆうちょ", "郵便貯金", "記号", "日本郵政", "郵便局", "yucho", "japan post", "japan post bank"},
+			// 銀行名候補の専用経路は「ゆうちょ銀行」表記だけを文脈として使う。
+			// 任意の銀行名は通常の銀行口座ルール（jp-bank-account）側の文脈で扱う。
 			ContextPatterns: []ContextPattern{
-				{Re: bankNameCandidateRe, Validate: dict.IsBankName, Literals: bankNameSuffixes},
+				{Re: bankNameCandidateRe, Validate: isYuchoBankName, Literals: bankNameSuffixes},
 			},
 			NegativeContext:      digitRuleNegativeContext,
 			RequireContextWindow: digitRuleRequireContextWindow,
