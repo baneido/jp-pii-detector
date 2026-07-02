@@ -1180,6 +1180,71 @@ func TestBirthdateRejectsInvalidDates(t *testing.T) {
 	assertRules(t, d.ScanLine("f.txt", 1, "生年月日: 2000-01-01"), "jp-birthdate")
 }
 
+// jp-birthdate の表記ゆれ（元号アルファベット略記・元年・区切りなし8桁・
+// 英語ラベル・ラベル直後の注記）が検出されることを確認する（issue #45）。
+func TestBirthdateNotationVariants(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+	}{
+		{"元号の単字略記（ドット区切り）", "生年月日: S60.1.2"},
+		{"元号の単字略記（スラッシュ区切り）", "誕生日: H5/4/1"},
+		{"元年（漢字元号）", "生年月日: 令和元年5月1日"},
+		{"元年（単字略記）", "生年月日: R元.5.1"},
+		{"区切りなし8桁（YYYYMMDD）", "生年月日: 19850102"},
+		{"区切りなし8桁（コロンなし直結）", "生年月日19850102"},
+		{"英語ラベル birthday", "birthday: 1985-01-02"},
+		{"英語ラベル birth date（スペース区切り）", "birth date: 1985-01-02"},
+		{"英語ラベル date_of_birth", "date_of_birth: 1985-01-02"},
+		{"英語ラベル DOB（大文字）", "DOB: 1985-01-02"},
+		{"ラベル直後に注記が挟まる（西暦）", "生年月日(西暦): 1985-01-02"},
+		{"ラベル直後に注記が挟まる（8桁形式）", "生年月日（西暦）: 19850102"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), "jp-birthdate")
+		})
+	}
+}
+
+// jp-birthdate は表記ゆれを拡充しても、以下は誤って拾わないことを確認する:
+//   - ラベルの前方境界チェックで除外されるべき、英語ラベルが別の単語の一部
+//     になっているケース（adobe: など）
+//   - ラベルなしの裸 8 桁（処理日・有効期限などと同形のため、ラベル直結を
+//     必須とする設計を維持）
+//   - 月日のレンジ外の区切りなし8桁（生年月日: 20259999 等）
+func TestBirthdateVariantsNegative(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+	}{
+		{"dob が adobe の一部", "adobe: 1985-01-02"},
+		{"dob が wardrobe_id の一部", "wardrobe_id: 19850102"},
+		{"ラベルなしの裸8桁", "19850102"},
+		{"無関係なラベルの8桁（有効期限）", "有効期限: 20250101"},
+		{"区切りなし8桁で月がレンジ外", "生年月日: 20259999"},
+		{"区切りなし8桁で日がレンジ外", "生年月日: 19850132"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line))
+		})
+	}
+}
+
+// jp-birthdate ラベル直結の8桁と jp-health-insurance の文脈依存8桁
+// （保険者番号などのラベルが 40 ルーン以内にある）が同一行・同一箇所で
+// 重なった場合の帰属を固定する。両ルールとも Base: Medium かつ検出値が
+// 同じ長さのため resolveOverlaps は「先勝ち」で決着する。ラベル直結という
+// より強いシグナルを持つ jp-birthdate 側を優先させるため、internal/rule
+// の Builtin() では jp-birthdate を jp-health-insurance より前に登録している。
+// 少なくとも検出漏れにならないことも合わせて確認する。
+func TestBirthdateWinsOverHealthInsuranceOverlap(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanLine("f.txt", 1, "保険者番号 生年月日: 19850102")
+	assertRules(t, fs, "jp-birthdate")
+}
+
 // --- ComputeOffsets（scan --stdin 用の文字オフセット付与）---
 
 // TestComputeOffsets は行・列ベースの検出位置を、テキスト全体先頭からの
