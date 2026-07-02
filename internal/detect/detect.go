@@ -4,6 +4,7 @@ package detect
 import (
 	"sort"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/baneido/jp-pii-detector/internal/config"
@@ -235,6 +236,10 @@ type DiffLine struct {
 // 追加した値の隣の既存行に「円」等の負コンテキストや古い jp-pii-detector:ignore が
 // あっても、追加行の新規 PII を取りこぼさない（セキュリティ検出器として偽陰性を避ける）。
 // 同一行の抑制（値そのものの行）は通常どおり適用される。
+//
+// この「抑制は検出値が乗る行に対してのみ適用し、隣接行のマーカーを巻き添えに
+// しない」という原則は diff 経路専用ではなく、ScanContent 側の隣接行走査
+// （scanAdjacentLines）にも同様に適用される。
 func (d *Detector) ScanDiffHunk(file string, lines []DiffLine) []Finding {
 	texts := make([]string, len(lines))
 	added := make([]bool, len(lines))
@@ -278,6 +283,13 @@ func itoa(n int) string {
 	return string(buf[i:])
 }
 
+// scanAdjacentLines は RequireContext なルールについて、隣接 2 行を結合して
+// 走査することでラベルと値が別行に分かれるケースを補足する。抑制（ignore
+// マーカー）は検出値が乗る行に対してのみ適用し、結合文字列全体を
+// scanLineNoIgnore で走査したうえで各 finding の行ごとに ignoredLine を明示
+// チェックする。こうしないと、値が乗っていない側の行（ラベル行等）に残った
+// ignore マーカーが隣の値行の検出まで巻き添えで抑制してしまう
+// （scanAdjacentLinesDiff と同じ設計）。
 func (d *Detector) scanAdjacentLines(file string, firstLineNo int, first, second string, firstCtx, secondCtx lineContext) []Finding {
 	combined := first + "\n" + second
 	firstRunes := []rune(first)
@@ -285,19 +297,25 @@ func (d *Detector) scanAdjacentLines(file string, firstLineNo int, first, second
 	sep := len(firstRunes)
 
 	var out []Finding
-	for _, f := range d.ScanLine(file, firstLineNo, combined) {
+	for _, f := range d.scanLineNoIgnore(file, firstLineNo, combined) {
 		if !f.Reason.RequireContext {
 			continue
 		}
 		switch {
-		case f.end <= sep:
+		case f.end <= sep: // 値は 1 行目
+			if ignoredLine(first) {
+				continue
+			}
 			f.Line = firstLineNo
 			f.Column = f.start + 1
 			f.Match = string(firstRunes[f.start:f.end])
 			if d.hasSourceNegativeForFinding(f, first, firstCtx) {
 				continue
 			}
-		case f.start > sep:
+		case f.start > sep: // 値は 2 行目
+			if ignoredLine(second) {
+				continue
+			}
 			start := f.start - sep - 1
 			end := f.end - sep - 1
 			if start < 0 || end > len(secondRunes) {
@@ -647,7 +665,46 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 }
 
 func ignoredLine(line string) bool {
-	return strings.Contains(line, IgnoreMarker) || strings.Contains(line, AllowMarker)
+	return containsMarkerToken(line, IgnoreMarker) || containsMarkerToken(line, AllowMarker)
+}
+
+// containsMarkerToken は line 内に marker がトークン境界付き（`\b`相当）で
+// 出現するかを返す。単純な strings.Contains による部分文字列一致だと、旧
+// マーカー pii-allow が pii-allowlist のような無関係な識別子・ファイル名にも
+// 一致し、行全体が意図せず不可視化されてしまう。マーカーの直前・直後の文字が
+// マーカートークンの継続文字（英数字・ハイフン・アンダースコア）でない場合の
+// みマッチとみなすことで、独立した「単語」としてのみ照合する。
+func containsMarkerToken(line, marker string) bool {
+	for idx := 0; ; {
+		pos := strings.Index(line[idx:], marker)
+		if pos < 0 {
+			return false
+		}
+		start := idx + pos
+		end := start + len(marker)
+		before := true
+		if start > 0 {
+			r, _ := utf8.DecodeLastRuneInString(line[:start])
+			before = !isMarkerTokenChar(r)
+		}
+		after := true
+		if end < len(line) {
+			r, _ := utf8.DecodeRuneInString(line[end:])
+			after = !isMarkerTokenChar(r)
+		}
+		if before && after {
+			return true
+		}
+		// 境界に失敗した候補の次の文字から再探索する（marker 自体を
+		// スキップしすぎて後続の正しい出現を見逃さないよう 1 文字だけ進める）。
+		idx = start + 1
+	}
+}
+
+// isMarkerTokenChar はマーカートークンの継続文字（英数字・ハイフン・
+// アンダースコア）かどうかを返す。
+func isMarkerTokenChar(r rune) bool {
+	return r == '-' || r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r)
 }
 
 // containsAnyLiteral は haystack に literals のいずれかが含まれるかを返す

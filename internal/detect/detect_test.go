@@ -681,6 +681,32 @@ regexes = ["@baneido\\.com$"]
 	}
 }
 
+// ignore マーカーはトークン境界一致で判定する（#50）。単純な部分文字列一致
+// だと、旧マーカー pii-allow が pii-allowlist のような無関係な識別子・
+// ファイル名にも一致し、行ごと誤って不可視化されてしまう。フィクスチャ不要の
+// 電話番号リテラル（090-1234-5678、区切りありなので Base High で単体検出）を
+// 使い、外部データなしで実行できるようにしている。
+func TestMarkerTokenBoundary(t *testing.T) {
+	d := newDetector(t, "")
+	phone := "090-1234-5678"
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"pii-allow 単独では従来通り抑制される", "TEL: " + phone + " // pii-allow", nil},
+		{"pii-allowlist は無関係な文字列として抑制しない", "TEL: " + phone + " // pii-allowlist.md 参照", []string{"jp-phone-number"}},
+		{"文字列リテラル内の pii-allow を含む識別子は抑制しない", `errCode := "pii-allowlist-violation"; TEL: ` + phone, []string{"jp-phone-number"}},
+		{"prefix-pii-allow のようにハイフンで連結された継続文字は抑制しない", "TEL: " + phone + " // prefix-pii-allow", []string{"jp-phone-number"}},
+		{"jp-pii-detector:ignore 単独では従来通り抑制される", "TEL: " + phone + " // jp-pii-detector:ignore", nil},
+		{"jp-pii-detector:ignored のような接尾辞つき識別子は抑制しない", "TEL: " + phone + " // jp-pii-detector:ignored-reason", []string{"jp-phone-number"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
 func TestDisabledRule(t *testing.T) {
 	piifixtures.Require(t)
 	d := newDetector(t, `
@@ -987,6 +1013,29 @@ func TestScanContentAdjacentKeepsSourceNegativeContextOnValueLine(t *testing.T) 
 	d := newDetector(t, "")
 	content := "bankAccountId:\n" + `bankAccountId: "1234567"`
 	assertRules(t, d.ScanContent("user.yaml", content))
+}
+
+// 回帰テスト（#50）: scanAdjacentLines は隣接 2 行を結合した文字列に対して
+// 旧実装では ScanLine（＝ignoredLine を結合文字列全体に適用）を呼んでいたため、
+// ラベル行に残った ignore マーカーが、マーカーを持たない値行の検出まで
+// 巻き添えで抑制してしまっていた。scanAdjacentLinesDiff と同じく
+// scanLineNoIgnore ＋ 値が乗る行だけの ignoredLine チェックに揃えたことで、
+// 値行（マーカーなし）の検出は巻き添えにされない。
+func TestScanContentAdjacentIgnoreDoesNotSuppressOtherLine(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanContent("f.txt", "口座番号 // jp-pii-detector:ignore\n1234567")
+	assertRules(t, fs, "jp-bank-account")
+	if fs[0].Line != 2 || fs[0].Column != 1 {
+		t.Fatalf("location = %d:%d, want 2:1", fs[0].Line, fs[0].Column)
+	}
+}
+
+// 逆方向: 値そのものが乗る行に ignore マーカーがあれば、従来どおり抑制される
+// （巻き添え防止の修正が、値行自身の抑制まで壊していないことの確認）。
+func TestScanContentAdjacentIgnoreSuppressesOwnLine(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanContent("f.txt", "口座番号\n1234567 // jp-pii-detector:ignore")
+	assertRules(t, fs)
 }
 
 func TestScanDiffHunkSourceContextFromContextLine(t *testing.T) {
