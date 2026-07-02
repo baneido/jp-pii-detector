@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"runtime/debug"
+	"strings"
 
 	"github.com/baneido/jp-pii-detector/internal/config"
 	"github.com/baneido/jp-pii-detector/internal/detect"
@@ -82,10 +83,18 @@ Scan flags:
   --format <fmt>           出力形式: text|json|sarif|github (既定: text)
   --config <path>          設定ファイル (既定: .jp-pii.toml をリポジトリルートまで上方探索)
   --min-confidence <lvl>   報告する最小信頼度: low|medium|high (既定: 設定ファイル値 or medium)
+  --fail-on <lvl>          終了コード 1 にする最小信頼度: low|medium|high
+                           (既定: 未指定時は従来どおり報告された検出が1件でもあれば exit 1。
+                           指定時は --min-confidence で報告しつつ、この閾値未満の検出だけの
+                           場合は exit 0 にできる。可視化したい閾値と CI を落としたい閾値を
+                           分離するためのフラグ)
   --unmask                 検出値をマスクせず出力
-  --explain                JSON 出力に検出理由を含める
+  --explain                text/json 出力に検出理由（コンテキスト昇格・検証有無等）を含める
   --high-recall            偽陽性リスクの高い再現率重視ルールを有効化
   --exit-zero              検出があっても終了コード 0 を返す
+
+パスとフラグの順序は問いません（例: "scan . --high-recall" も
+"scan --high-recall ." と同じ意味になります）。"--" 以降は常にパスとして扱います。
 
 Exit codes: 0=検出なし 1=検出あり 2=エラー
 `
@@ -99,7 +108,7 @@ func main() {
 	case "scan":
 		os.Exit(runScan(os.Args[2:]))
 	case "rules":
-		runRules()
+		os.Exit(runRules(os.Args[2:]))
 	case "version":
 		fmt.Println(resolveVersion())
 	case "help", "-h", "--help":
@@ -118,13 +127,27 @@ func runScan(args []string) int {
 	format := fs.String("format", "text", "")
 	configPath := fs.String("config", "", "")
 	minConf := fs.String("min-confidence", "", "")
+	failOn := fs.String("fail-on", "", "")
 	unmask := fs.Bool("unmask", false, "")
 	explain := fs.Bool("explain", false, "")
 	highRecall := fs.Bool("high-recall", false, "")
 	exitZero := fs.Bool("exit-zero", false, "")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
-	if err := fs.Parse(args); err != nil {
+	// Go の flag パッケージは最初の非フラグ引数（パス等）でパースを止めるため、
+	// "scan . --high-recall" のようにパスの後ろに置かれたフラグは無視され、パス
+	// として扱われた "--high-recall" が存在チェックに回って分かりにくい
+	// "no such file" エラーになる。フラグと値をパス等より前に並べ替えてから渡す。
+	if err := fs.Parse(reorderArgs(fs, args)); err != nil {
 		return 2
+	}
+
+	var failThreshold rule.Confidence
+	if *failOn != "" {
+		t, err := rule.ParseConfidence(*failOn)
+		if err != nil {
+			return fail(fmt.Errorf("--fail-on: %w", err))
+		}
+		failThreshold = t
 	}
 
 	cfg, err := config.Load(*configPath)
@@ -168,7 +191,7 @@ func runScan(args []string) int {
 
 	switch *format {
 	case "text":
-		report.Text(os.Stdout, findings, *unmask)
+		report.Text(os.Stdout, findings, *unmask, *explain)
 	case "json":
 		if err := report.JSON(os.Stdout, findings, *unmask, *explain); err != nil {
 			return fail(err)
@@ -183,14 +206,72 @@ func runScan(args []string) int {
 		return fail(fmt.Errorf("unknown format %q (text|json|sarif|github)", *format))
 	}
 
-	if len(findings) > 0 && !*exitZero {
+	if *exitZero {
+		return 0
+	}
+	if shouldFail(findings, failThreshold) {
 		return 1
 	}
 	return 0
 }
 
-func runRules() {
+// shouldFail は終了コードを 1 にすべきかを判定する。--fail-on が未指定
+// （threshold のゼロ値）の場合は既存の契約どおり「報告された検出が1件でも
+// あれば失敗」。--fail-on 指定時は、report で可視化する min_confidence とは
+// 独立に、その閾値以上の検出が1件でもあるかどうかだけで判定する（min_confidence
+// を下げて medium/low を可視化しつつ、CI は high のときだけ落とす、といった
+// 使い分けができる）。
+func shouldFail(findings []detect.Finding, threshold rule.Confidence) bool {
+	if threshold == 0 {
+		return len(findings) > 0
+	}
+	for _, f := range findings {
+		if f.Confidence >= threshold {
+			return true
+		}
+	}
+	return false
+}
+
+// runRules は検出ルール一覧を表示する。config.Load を通して .jp-pii.toml を
+// 反映するため、disabled 指定や high_recall（および --high-recall）の効果で
+// 実際に有効なルールがどれかをそのまま確認できる（以前は rule.Builtin() を
+// 素通ししていたため、設定ファイルの効果がここでは見えなかった）。
+func runRules(args []string) int {
+	fs := flag.NewFlagSet("rules", flag.ExitOnError)
+	configPath := fs.String("config", "", "")
+	highRecall := fs.Bool("high-recall", false, "")
+	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
+	if err := fs.Parse(reorderArgs(fs, args)); err != nil {
+		return 2
+	}
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		return fail(err)
+	}
+	if *highRecall {
+		cfg.SetHighRecall(true)
+	}
+
+	disabled := map[string]bool{}
+	for _, id := range cfg.Rules.Disabled {
+		disabled[id] = true
+	}
+	highRecallIDs := map[string]bool{}
+	for _, id := range rule.HighRecallRuleIDs() {
+		highRecallIDs[id] = true
+	}
+
 	for _, r := range rule.Builtin() {
+		status := "有効"
+		if disabled[r.ID] {
+			status = "無効"
+		}
+		tags := []string{status}
+		if highRecallIDs[r.ID] {
+			tags = append(tags, "高再現率")
+		}
 		ctx := ""
 		for _, p := range r.Patterns {
 			if p.RequireContext {
@@ -198,11 +279,78 @@ func runRules() {
 				break
 			}
 		}
-		fmt.Printf("%-22s %s%s\n", r.ID, r.Description, ctx)
+		fmt.Printf("%-28s [%s] %s%s\n", r.ID, strings.Join(tags, "・"), r.Description, ctx)
 	}
+	return 0
 }
 
 func fail(err error) int {
 	fmt.Fprintln(os.Stderr, "jp-pii-detect:", err)
 	return 2
+}
+
+// reorderArgs は Go の flag パッケージが最初の非フラグ引数でパースを止める
+// 制約を回避するため、args 内のフラグ（とその値）をすべて前方に、パス等の
+// 非フラグ引数を後方に安定的に並べ替える。これにより
+// "scan . --high-recall" のようにパスの後ろに置かれたフラグも
+// "scan --high-recall ." と同じように解釈される。相対順序はそれぞれの
+// グループ内で保持するため、フラグを複数回指定した場合の「最後の指定が勝つ」
+// 挙動や、パスを複数指定した場合の順序は変わらない。"--" 以降は常に
+// 非フラグ引数として扱う（Go の flag パッケージ自体の挙動と同じ）。
+func reorderArgs(fs *flag.FlagSet, args []string) []string {
+	var flags, positional []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			positional = append(positional, args[i+1:]...)
+			break
+		}
+		name, hasValue := flagName(a)
+		if name == "" {
+			positional = append(positional, a)
+			continue
+		}
+		flags = append(flags, a)
+		if hasValue {
+			continue
+		}
+		// bool フラグは値を取らない。それ以外（string 等）は次のトークンを値として
+		// 一緒に前方へ運ぶ。未知のフラグは判別できないため運ばず、Parse 側で
+		// 「未定義のフラグ」として通常どおりエラーにする。
+		if f := fs.Lookup(name); f != nil {
+			if bf, ok := f.Value.(interface{ IsBoolFlag() bool }); !ok || !bf.IsBoolFlag() {
+				if i+1 < len(args) {
+					i++
+					flags = append(flags, args[i])
+				}
+			}
+		}
+	}
+	if len(positional) == 0 {
+		return flags
+	}
+	return append(append(flags, "--"), positional...)
+}
+
+// flagName は "-x" / "--x" / "-x=v" / "--x=v" からフラグ名を取り出す。
+// フラグの形をしていなければ空文字を返す（呼び出し側で非フラグ引数として扱う）。
+func flagName(a string) (name string, hasValue bool) {
+	if len(a) < 2 || a[0] != '-' {
+		return "", false
+	}
+	minuses := 1
+	if a[1] == '-' {
+		minuses = 2
+		if len(a) == 2 { // "--" は呼び出し側で別処理
+			return "", false
+		}
+	}
+	s := a[minuses:]
+	if s == "" || s[0] == '-' || s[0] == '=' {
+		return "", false
+	}
+	if eq := strings.IndexByte(s, '='); eq >= 0 {
+		return s[:eq], true
+	}
+	return s, false
 }

@@ -185,6 +185,140 @@ func TestScanJSONExplain(t *testing.T) {
 	}
 }
 
+// TestScanTextExplain は text 出力でも --explain で検出理由が確認できることを
+// 確認する（従来は json 限定だった）。
+func TestScanTextExplain(t *testing.T) {
+	dir := piiDir(t)
+	without, code := run(t, dir, "scan", ".")
+	if code != 1 {
+		t.Errorf("exit = %d, want 1", code)
+	}
+	if strings.Contains(without, "理由:") {
+		t.Errorf("--explain 未指定では理由を出すべきではない: %s", without)
+	}
+	out, code := run(t, dir, "scan", "--explain", ".")
+	if code != 1 {
+		t.Errorf("exit = %d, want 1", code)
+	}
+	if !strings.Contains(out, "理由:") {
+		t.Fatalf("--explain should annotate text output with a reason: %s", out)
+	}
+	if strings.Contains(out, piifixtures.MustGet(t, "cmd.phone_mobile_sep")) {
+		t.Fatalf("--explain should not unmask match: %s", out)
+	}
+}
+
+// TestScanFailOnSeparateFromMinConfidence は --fail-on が --min-confidence
+// （報告閾値）と独立した終了コード用の閾値であることを確認する。medium 検出は
+// 常に報告されるが、--fail-on high を指定すると high 未満のみの場合は exit 0
+// になる（--format github が信頼度に関わらず一律 CI を落としていた問題への対処）。
+func TestScanFailOnSeparateFromMinConfidence(t *testing.T) {
+	piifixtures.Require(t)
+	dir := t.TempDir()
+	// 区切りなし携帯（コンテキストなし）は medium 信頼度で検出される。
+	content := piifixtures.MustGet(t, "cmd.phone_mobile_nosep") + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// --fail-on 未指定: 既存契約どおり報告があれば exit 1。
+	if _, code := run(t, dir, "scan", "."); code != 1 {
+		t.Error("--fail-on 未指定なら medium 検出でも exit 1 のはず（既存の exit code 契約）")
+	}
+	// --fail-on high: medium 検出は報告されるが、high 未満のため exit 0。
+	out, code := run(t, dir, "scan", "--fail-on", "high", ".")
+	if code != 0 {
+		t.Errorf("--fail-on high で medium 検出のみなら exit 0 のはず, got %d", code)
+	}
+	if !strings.Contains(out, "jp-phone-number") {
+		t.Errorf("--fail-on を指定しても報告自体は行われるはず: %s", out)
+	}
+}
+
+// TestScanFailOnTriggersAtOrAboveThreshold は --fail-on 閾値以上の検出があれば
+// exit 1 になることを確認する（TestScanFailOnSeparateFromMinConfidence の対比）。
+func TestScanFailOnTriggersAtOrAboveThreshold(t *testing.T) {
+	dir := piiDir(t) // TEL: ラベル付き区切りあり携帯 → high 信頼度
+	if _, code := run(t, dir, "scan", "--fail-on", "high", "."); code != 1 {
+		t.Error("--fail-on high は high 信頼度の検出があれば exit 1 のはず")
+	}
+	if _, code := run(t, dir, "scan", "--fail-on", "low", "."); code != 1 {
+		t.Error("--fail-on low は high 信頼度の検出があれば exit 1 のはず")
+	}
+}
+
+// TestScanFailOnExitZeroStillWins は --exit-zero が --fail-on より優先される
+// （既存の --exit-zero の意味を変えない）ことを確認する。
+func TestScanFailOnExitZeroStillWins(t *testing.T) {
+	dir := piiDir(t)
+	if _, code := run(t, dir, "scan", "--fail-on", "low", "--exit-zero", "."); code != 0 {
+		t.Error("--exit-zero は --fail-on より優先されるはず")
+	}
+}
+
+// フィクスチャ不要（--fail-on の値検証は走査対象の内容に依存しないため）。
+func TestScanFailOnInvalidValueExitsTwo(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("no pii\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, code := run(t, dir, "scan", "--fail-on", "bogus", "."); code != 2 {
+		t.Error("--fail-on bogus は exit 2 のはず")
+	}
+}
+
+// TestScanFlagAfterPositionalPath は "scan . --high-recall" のようにパス指定の
+// 後ろに置かれたフラグも解釈されることを確認する回帰テスト。以前は Go の flag
+// パッケージの制約により "--high-recall" 自体が存在しないパスとして扱われ、
+// 分かりにくい「no such file」エラー（exit 2）になっていた。
+func TestScanFlagAfterPositionalPath(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("勤務地: 渋谷区道玄坂2-10-7\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	outBefore, codeBefore := run(t, dir, "scan", "--high-recall", ".")
+	outAfter, codeAfter := run(t, dir, "scan", ".", "--high-recall")
+	if codeBefore != 1 || codeAfter != 1 {
+		t.Fatalf("exit codes = %d/%d, want 1/1（フラグの前後どちらでも同じ結果のはず）", codeBefore, codeAfter)
+	}
+	if outBefore != outAfter {
+		t.Errorf("output differs by flag position:\nbefore=%q\nafter=%q", outBefore, outAfter)
+	}
+	if !strings.Contains(outAfter, "jp-address-high-recall") {
+		t.Fatalf("missing high-recall rule when flag follows path: %s", outAfter)
+	}
+}
+
+// TestScanFlagWithValueAfterPositionalPath は値ありフラグ（--format）もパスの
+// 後ろで機能することを確認する。
+func TestScanFlagWithValueAfterPositionalPath(t *testing.T) {
+	dir := piiDir(t)
+	out, code := run(t, dir, "scan", ".", "--format", "json")
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1", code)
+	}
+	var doc struct {
+		Count int `json:"count"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("invalid JSON（パス後ろの --format 値が正しく解釈されていない可能性）: %v\n%s", err, out)
+	}
+	if doc.Count != 1 {
+		t.Errorf("count = %d, want 1", doc.Count)
+	}
+}
+
+// TestScanDoubleDashStopsFlagParsing は "--" 以降を非フラグ引数として扱う
+// Go flag パッケージ標準の挙動を、フラグ並べ替え後も壊していないことを確認する。
+func TestScanDoubleDashStopsFlagParsing(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("no pii\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, code := run(t, dir, "scan", "--", "."); code != 0 {
+		t.Errorf("exit = %d, want 0", code)
+	}
+}
+
 // TestScanStdinOffsets は scan --stdin が標準入力を 1 本のテキストとして走査し、
 // json 出力に offset/end_offset（テキスト先頭からのルーン単位の半開区間）を付与
 // すること、そのオフセットで元テキストを切り出すと検出値に一致することを確認する。
@@ -275,6 +409,64 @@ func TestRulesCommand(t *testing.T) {
 		if !strings.Contains(out, id) {
 			t.Errorf("rules output missing %s:\n%s", id, out)
 		}
+	}
+}
+
+// ruleLine は rules コマンドの出力から ID 列（左詰め）が id に一致する行を探す。
+func ruleLine(t *testing.T, out, id string) string {
+	t.Helper()
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) > 0 && fields[0] == id {
+			return line
+		}
+	}
+	t.Fatalf("rules output missing %s:\n%s", id, out)
+	return ""
+}
+
+// TestRulesCommandRespectsConfig は rules コマンドが config.Load 経由で
+// .jp-pii.toml の disabled 指定を反映することを確認する（以前は rule.Builtin() を
+// 素通ししていたため、設定ファイルで無効化したルールも常に「使える」ように
+// 見えていた）。
+func TestRulesCommandRespectsConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, ".jp-pii.toml")
+	if err := os.WriteFile(cfgPath, []byte("[rules]\ndisabled = [\"jp-my-number\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, code := run(t, dir, "rules", "--config", cfgPath)
+	if code != 0 {
+		t.Errorf("exit = %d, want 0", code)
+	}
+	if line := ruleLine(t, out, "jp-my-number"); !strings.Contains(line, "無効") {
+		t.Errorf("disabled ルールが「無効」と表示されていない: %s", line)
+	}
+	if line := ruleLine(t, out, "jp-phone-number"); !strings.Contains(line, "有効") {
+		t.Errorf("disabled していないルールが「有効」と表示されていない: %s", line)
+	}
+}
+
+// TestRulesCommandHighRecallFlag は rules コマンドが --high-recall の効果
+// （高再現率ルールの有効化）を反映することを確認する。
+func TestRulesCommandHighRecallFlag(t *testing.T) {
+	dir := t.TempDir()
+	outDefault, code := run(t, dir, "rules")
+	if code != 0 {
+		t.Errorf("exit = %d, want 0", code)
+	}
+	line := ruleLine(t, outDefault, "jp-address-high-recall")
+	if !strings.Contains(line, "無効") || !strings.Contains(line, "高再現率") {
+		t.Errorf("既定では高再現率ルールは無効と表示されるはず: %s", line)
+	}
+
+	outHR, code := run(t, dir, "rules", "--high-recall")
+	if code != 0 {
+		t.Errorf("exit = %d, want 0", code)
+	}
+	lineHR := ruleLine(t, outHR, "jp-address-high-recall")
+	if !strings.Contains(lineHR, "有効") || !strings.Contains(lineHR, "高再現率") {
+		t.Errorf("--high-recall 指定時は高再現率ルールが有効と表示されるはず: %s", lineHR)
 	}
 }
 
