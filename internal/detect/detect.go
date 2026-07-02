@@ -54,6 +54,10 @@ type DetectReason struct {
 	RequireContext  bool     `json:"require_context,omitempty"`
 	ContextWindow   int      `json:"context_window,omitempty"`
 	Validated       bool     `json:"validated,omitempty"`
+	// PathDemoted はテスト経路（testdata/ 等）の信頼度降格が適用されたかを表す
+	// （internal/detect/path_profile.go）。true の場合、Confidence は既に
+	// 降格後の値（Low）になっている。
+	PathDemoted bool `json:"path_demoted,omitempty"`
 }
 
 // Detector は設定を適用済みの検出エンジン。
@@ -148,7 +152,10 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 		}
 		filtered = append(filtered, f)
 	}
-	return dedupAndSortFindings(filtered)
+	// テスト経路（testdata/ 等）の Medium 系検出は Finding 確定後・重複解決前に
+	// 降格する（path_profile.go）。降格であって除外ではないため、allowlist /
+	// jp-pii-detector:ignore とは独立に働く。
+	return dedupAndSortFindings(d.applyPathDemotion(filtered))
 }
 
 // ComputeOffsets は ScanContent に渡したのと同一の content を使い、各 finding に
@@ -257,7 +264,8 @@ func (d *Detector) ScanDiffHunk(file string, lines []DiffLine) []Finding {
 			d.scanAdjacentLinesDiff(file, i+1, texts[i], texts[i+1], added[i], added[i+1], lineContexts[i], lineContexts[i+1])...)
 	}
 	// 文脈行起因の cross-line 負コンテキストは適用しない（上記の設計意図）。
-	return dedupAndSortFindings(candidates)
+	// テスト経路の Medium 系検出降格は ScanContent と同様に適用する。
+	return dedupAndSortFindings(d.applyPathDemotion(candidates))
 }
 
 func findingKey(f Finding) string {

@@ -145,6 +145,14 @@ Qn = n + 1   (1 <= n <= 6)
   偽陽性を抑える（辞書未収録の氏名は取りこぼす）。`姓:`/`名:` の隣接フィールド結合は対象外（将来課題）。
   評価データセットでは `content` ケースを使うことで、この `ScanContent` 経路も評価できる
   （README バッジの既存プロファイルでは高再現率ルールは無効）。
+- **テスト経路の信頼度降格**: `testdata/`・`fixtures/`・`__tests__/`・`spec/`・`mocks/`・
+  `seed(s)/` 配下や `*_test.go`/`*.spec.*`/`*.test.*` は、`RequireContext` かつ Base が
+  medium のルール（口座番号・保険者番号・郵便番号の桁のみパターン）に限り Low へ 1 段階降格する
+  （`Detector.ScanContent`/`ScanDiffHunk` の post-processing、`internal/detect/path_profile.go`）。
+  除外ではなく降格のため `--min-confidence low` で常に確認でき、`[rules] path_demotion = false`
+  で無効化できる。Base が high 固定のルール（免許証番号・クレジットカード番号・マイナンバー等）は
+  対象外で、実データがテスト経路に混入した場合の検出力を落とさない。詳細は
+  [`docs/development.md`](development.md) を参照。
 
 ### 4.4 構造ガードによる偽陽性対策
 

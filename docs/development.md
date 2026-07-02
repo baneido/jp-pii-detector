@@ -152,6 +152,30 @@ internal/
 3. **report** が `min_confidence` で絞った結果を指定フォーマットで出力する。
    検出値は既定でマスクされる。JSON 出力では `--explain` 指定時のみ `reason` を含める。
 
+### テスト経路の信頼度降格（path demotion）
+
+`internal/detect/path_profile.go` の `isTestPath` は、`testdata/`・`fixtures/`・
+`__tests__/`・`spec/`・`mocks/`・`seed(s)/` のいずれかのディレクトリ成分、または
+`_test.go` / `.spec.` / `.test.` を含むファイル名を「ダミーデータが集中しやすいテスト
+経路」と判定する。`Detector.ScanContent` / `ScanDiffHunk` は Finding 確定後・重複解決前に、
+このパスシグナルを使って **`RequireContext: true` かつ `Base` が Medium のパターン**
+（`jp-postal-code` の桁のみパターン・`jp-bank-account`・`jp-health-insurance` が該当）に
+限り信頼度を Medium→Low に 1 段階だけ落とす（`DetectReason.PathDemoted` が true になる）。
+
+- **降格であって除外ではない**。既定の `min_confidence = "medium"` 運用だと Low は
+  表示されなくなるが、`--min-confidence low` を指定すれば降格後も見える。テストデータに
+  本物の PII が誤って貼られても完全に不可視にはならない。
+- **対象は Base Medium の RequireContext ルールのみ**。`credit-card` や `jp-my-number`、
+  `jp-drivers-license`（Base High）のように、Base が High 固定、または `RequireContext`
+  を使わないルールは対象外。実データがテスト経路に混入した場合の検出力を落とさないための
+  意図的な線引き。
+- `[rules] path_demotion = false` で機能全体を無効化できる（既定は有効）。
+- allowlist（`.jp-pii.toml` の `paths` / 行末 `jp-pii-detector:ignore`）とは独立した
+  補助的な信頼度シグナルであり、置き換えるものではない。High 固定ルールが
+  `*_test.go` 等で大量に誤検出する場合は、引き続き allowlist での除外や行単位の
+  ignore マーカーが必要になる（本リポジトリの `.jp-pii.toml` の `_test\.go$` は
+  この理由で残している）。
+
 ## 検出ルールの追加
 
 ルールは [`internal/rule/builtin.go`](../internal/rule/builtin.go) の `Builtin()` に
