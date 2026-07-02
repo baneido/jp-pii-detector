@@ -279,6 +279,7 @@ func updateBaselineFile(path string, findings []detect.Finding) int {
 // runRules は --config を反映した実効ルール一覧（builtin + custom の合成後、
 // 無効化ルールを除いたもの）を表示する。detect.New と同じ合成ロジックを
 // 経由するため、scan コマンドが実際に使うルール集合と一致する。
+// 同一 ID の Rule が複数エントリ持つ場合は一覧表示で 1 行にまとめる。
 func runRules(args []string) int {
 	fs := flag.NewFlagSet("rules", flag.ExitOnError)
 	configPath := fs.String("config", "", "")
@@ -294,7 +295,12 @@ func runRules(args []string) int {
 	if err != nil {
 		return fail(err)
 	}
+	seen := map[string]bool{}
 	for _, r := range det.Rules() {
+		if seen[r.ID] {
+			continue
+		}
+		seen[r.ID] = true
 		ctx := ""
 		for _, p := range r.Patterns {
 			if p.RequireContext {

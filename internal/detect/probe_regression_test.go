@@ -74,9 +74,6 @@ func TestProbeRegressionKnownFalseNegatives(t *testing.T) {
 		// パターンを持たない（設計上の意図的な非検出）。
 		{"probe-fn:postal-bare-7digit-no-hyphen known-limitation", "郵便番号 1000001"},
 
-		// jp-address: 番地が漢数字（丁目・番・号）の場合、banchi は半角数字
-		// \d{1,4} のみを対象とするため一致しない。
-		{"probe-fn:address-kanji-numeral-banchi", "住所: 東京都渋谷区神南二丁目十番七号"},
 		// 都道府県名を伴わない市区町村＋番地は、既定プロファイルでは
 		// jp-address-high-recall（高再現率限定）でしか拾えない（既定は非検出）。
 		{"probe-fn:address-missing-prefecture known-limitation", "住所: 渋谷区神南1-2-3"},
@@ -105,6 +102,11 @@ func TestProbeRegressionKnownFalseNegatives(t *testing.T) {
 			assertRules(t, d.ScanLine("f.txt", 1, tt.line))
 		})
 	}
+}
+
+func TestProbeResolvedAddressKanjiNumeralFalseNegative(t *testing.T) {
+	d := newDetector(t, "")
+	assertRules(t, d.ScanLine("f.txt", 1, "住所: 東京都渋谷区神南二丁目十番七号"), "jp-address")
 }
 
 // TestProbeRegressionCSVAdjacentRowContextLimitation は issue 記載の
@@ -167,13 +169,6 @@ func TestProbeRegressionKnownFalsePositives(t *testing.T) {
 		{"probe-fp:creditcard-wellknown-test-diners", "Diners test card: 30569309025904", "credit-card", rule.High},
 		{"probe-fp:creditcard-wellknown-test-jcb", "JCB test card: 3530111333300000", "credit-card", rule.High},
 
-		// credit-card: 日本の JAN(EAN-13) バーコード（国コード接頭辞 45/49）は
-		// 桁数がクレジットカードの許容範囲と重なり、Visa のブランド判定
-		// （先頭が '4'）にも該当するため、Luhn を偶然満たす実在の商品コードが
-		// 誤ってクレジットカードとして検出されうる。issue 記載の「JAN」系統。
-		{"probe-fp:creditcard-jan13-prefix45", "JANコード: 4901234000003", "credit-card", rule.High},
-		{"probe-fp:creditcard-jan13-prefix49", "商品バーコード 4512345000004", "credit-card", rule.High},
-
 		// jp-passport: 「パスポート」等の文脈語がたまたま同じ行にあると、
 		// それと無関係な英字2桁+数字7桁の型番も旅券番号として検出される。
 		// issue 記載の「型番 TK1234567」系統（元の issue コメントが指摘した
@@ -190,14 +185,6 @@ func TestProbeRegressionKnownFalsePositives(t *testing.T) {
 		{"probe-fp:bankaccount-lookalike-inquiry-ticket-id", "口座番号に関するお問い合わせ受付番号: 1234567", "jp-bank-account", rule.Medium},
 		{"probe-fp:pension-lookalike-inquiry-ticket-id", "年金相談受付番号: 1234-567890", "jp-pension-number", rule.High},
 		{"probe-fp:healthinsurance-lookalike-reception-id", "健康保険証の資格確認受付ID 12345678", "jp-health-insurance", rule.Medium},
-
-		// jp-address: 都道府県＋市区町村の直後に、カタカナ・ひらがな・漢字
-		// だけで書かれた無関係な文（試合結果等）を挟んでスコア表記
-		// （例: 3-2）が続くと、banchi 終端パターンがスコアを番地として
-		// 吸収し、住所ではない長い一文全体を高信頼度で検出してしまう。
-		// issue 記載の「スコア 3-2 の住所化」系統。
-		{"probe-fp:address-score-absorbed-as-banchi-1", "東京都渋谷区の試合結果はスコア3-2でした", "jp-address", rule.High},
-		{"probe-fp:address-score-absorbed-as-banchi-2", "大阪府大阪市の得点はスコア5-3でした", "jp-address", rule.High},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -217,4 +204,16 @@ func TestProbeRegressionKnownFalsePositives(t *testing.T) {
 	t.Run("probe-fp:passport-lookalike-model-number-without-context-is-not-detected", func(t *testing.T) {
 		assertRules(t, d.ScanLine("f.txt", 1, "型番 TK1234567"))
 	})
+}
+
+func TestProbeResolvedKnownFalsePositives(t *testing.T) {
+	d := newDetector(t, "")
+	for _, line := range []string{
+		"JANコード: 4901234000003",
+		"商品バーコード 4512345000004",
+		"東京都渋谷区の試合結果はスコア3-2でした",
+		"大阪府大阪市の得点はスコア5-3でした",
+	} {
+		assertRules(t, d.ScanLine("f.txt", 1, line))
+	}
 }

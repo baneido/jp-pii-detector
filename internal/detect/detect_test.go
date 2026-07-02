@@ -1399,13 +1399,16 @@ func TestPromotionRequiresNearbyContext(t *testing.T) {
 	}
 }
 
+// マーカー付き番地（丁目/番/号）パターンには Validate が無い。マーカーなし
+// ダッシュ連結パターンには日付誤検出対策の Validate（notCalendarDateBanchi）が
+// あるため、区別できるよう固定のマーカー付き住所を使う（#55 でパターンが
+// 2 つに分かれたため、実在するフィクスチャの表記に依存しないようにした）。
 func TestReasonNotValidatedWhenNoValidator(t *testing.T) {
-	piifixtures.Require(t)
 	d := newDetector(t, "")
-	fs := d.ScanLine("f.txt", 1, "住所: "+piifixtures.MustGet(t, "detect.address_shibuya"))
+	fs := d.ScanLine("f.txt", 1, "住所: 東京都渋谷区道玄坂2丁目10番7号")
 	assertRules(t, fs, "jp-address")
 	if fs[0].Reason.Validated {
-		t.Fatalf("validated = true, want false (jp-address has no validator)")
+		t.Fatalf("validated = true, want false (jp-address marker pattern has no validator)")
 	}
 }
 
@@ -1429,7 +1432,7 @@ func TestReasonRecordsRequiredNearbyContext(t *testing.T) {
 // High 昇格判定（RequireContext ではない Base<High パターン）は #54 以前は
 // 行全体を無制限に探索していたため、minified JSON や長い 1 行ではラベルが
 // 1 つあるだけで行内の全マッチが昇格してしまっていた（P12 #54 (a)）。
-// 昇格は promotionContextWindowRunes（既定 40 ルーン）の窓に限定される。
+// 昇格は defaultPromotionContextWindow（既定 40 ルーン）の窓に限定される。
 // 昇格対象は Base<High かつ RequireContext ではないパターンを持ち、かつ
 // Context を設定している 3 ルール（jp-my-number・jp-phone-number・
 // jp-address-high-recall）に限られる（他のルールは RequireContext か、
@@ -1460,7 +1463,7 @@ func TestPromotionContextWindowBoundary(t *testing.T) {
 			labelRunes := utf8.RuneCountInString(tt.label)
 			// inN: ラベル終端がちょうど窓の起点に来る境界（内側）。
 			// outN: そのすぐ外側（1 ルーンだけ超える）。
-			inN := promotionContextWindowRunes - labelRunes
+			inN := defaultPromotionContextWindow - labelRunes
 			outN := inN + 1
 			mk := func(n int) string {
 				return tt.label + strings.Repeat(" ", n) + tt.value
@@ -2091,6 +2094,11 @@ func TestAddressBanchiChain(t *testing.T) {
 		{"丁目番号の連鎖", "住所: 東京都渋谷区道玄坂2丁目10番7号", "東京都渋谷区道玄坂2丁目10番7号"},
 		{"丁目とダッシュ", "住所: 大阪府大阪市北区梅田1丁目2-3", "大阪府大阪市北区梅田1丁目2-3"},
 		{"ダッシュ連結3組", "住所: 東京都千代田区丸の内2-1-5", "東京都千代田区丸の内2-1-5"},
+		// マーカーなしダッシュ連結は市区町村との間に助詞（で・に・は・を）以外の
+		// ひらがな・漢字を挟んでもよい（「霞が関」の「が」・「小島町」は町名自体が
+		// マーカー、いずれも助詞を含まない）。#55: banchiDash + notCalendarDateBanchi。
+		{"ダッシュ連結（助詞以外のひらがなを挟む）", "住所: 東京都千代田区霞が関3-2-1", "東京都千代田区霞が関3-2-1"},
+		{"ダッシュ連結（町名がそのままマーカー）", "住所: 神奈川県川崎市川崎区小島町2-10-7", "神奈川県川崎市川崎区小島町2-10-7"},
 		{"番地の号", "住所: 神奈川県横浜市西区みなとみらい10番地の7", "神奈川県横浜市西区みなとみらい10番地の7"},
 		{"番直後の号", "住所: 大阪府大阪市北区梅田10番7号", "大阪府大阪市北区梅田10番7号"},
 		{"丁目のみ", "住所: 東京都渋谷区道玄坂2丁目", "東京都渋谷区道玄坂2丁目"},
@@ -2099,6 +2107,88 @@ func TestAddressBanchiChain(t *testing.T) {
 		{"号の後の部屋番号は含めない", "住所: 東京都渋谷区道玄坂2丁目10番7号101", "東京都渋谷区道玄坂2丁目10番7号"},
 		{"号の後の電話番号は含めない", "住所: 大阪府大阪市北区梅田1丁目2番3号09012345678", "大阪府大阪市北区梅田1丁目2番3号"},
 		{"丁目の後の階数は含めない", "住所: 東京都渋谷区道玄坂2丁目10階", "東京都渋谷区道玄坂2丁目"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			var got string
+			for _, f := range fs {
+				if f.RuleID == "jp-address" {
+					got = f.Match
+				}
+			}
+			if got != tt.want {
+				t.Errorf("ScanLine(%q) jp-address = %q, want %q", tt.line, got, tt.want)
+			}
+		})
+	}
+}
+
+// マーカー（丁目/番/号）のないダッシュ連結番地は、市区町村直後の助詞
+// 「で・に・は・を」を挟んだスコア表記・ISO 日付を番地と誤認しない（#55）。
+// 助詞が市区町村に直結していない（間に別の語がある）場合は本スライスの対象外。
+func TestAddressDashOnlyExcludesParticleGap(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct{ name, line string }{
+		{"スコア表記（で）", "東京都調布市で行われた試合に3-2で勝利"},
+		{"ISO日付（で）", "東京都渋谷区で2025-07-02に開催"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line))
+		})
+	}
+}
+
+// 市区町村に助詞なしで直結する末尾ダッシュ番地は、3 成分かつ先頭が妥当な西暦
+// （1900〜2100）で実在する暦日のときだけ棄却する（notCalendarDateBanchi）。
+// 2 成分（大字直番地型）、存在しない日付、年として妥当でない先頭成分（実住所の
+// 番地）は棄却しない（#55）。
+func TestAddressDashOnlyValidateRejectsOnlyRealCalendarDates(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line, want string
+	}{
+		{"実在するISO日付（助詞なし直結）は棄却", "住所: 東京都渋谷区2025-07-02に開催", ""},
+		{"2成分は棄却しない（大字直番地）", "住所: 東京都渋谷区大字直番地1993-1", "東京都渋谷区大字直番地1993-1"},
+		{"存在しない日付（13月）は番地として許可", "住所: 東京都渋谷区2025-13-40に開催", "東京都渋谷区2025-13-40"},
+		{"存在しない日付（2月30日）は番地として許可", "住所: 東京都渋谷区2025-02-30に開催", "東京都渋谷区2025-02-30"},
+		{"年の範囲外（1900未満）は番地として許可", "住所: 東京都渋谷区1899-01-01に開催", "東京都渋谷区1899-01-01"},
+		{"年として妥当でない先頭成分は許可（実住所）", "住所: 東京都千代田区霞が関3-2-1", "東京都千代田区霞が関3-2-1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			var got string
+			for _, f := range fs {
+				if f.RuleID == "jp-address" {
+					got = f.Match
+				}
+			}
+			if got != tt.want {
+				t.Errorf("ScanLine(%q) jp-address = %q, want %q", tt.line, got, tt.want)
+			}
+		})
+	}
+}
+
+// 高再現率住所ルールは、学区のように市区町村ではない語（通学区）を municipality
+// と誤認した検出を辞書照合（dict.MunicipalitySuffixMatch）で棄却する。実在する
+// 市区町村を含む住所は従来どおり検出する（#55）。
+func TestHighRecallAddressRejectsUnknownMunicipality(t *testing.T) {
+	d := newDetector(t, highRecallTOML)
+	assertRules(t, d.ScanLine("f.txt", 1, "通学区域は3丁目まで"))
+	assertRules(t, d.ScanLine("f.txt", 1, "住所: 通学区域は3丁目まで"))
+	assertRules(t, d.ScanLine("f.txt", 1, "勤務地: 渋谷区渋谷2-1-1"), "jp-address-high-recall")
+}
+
+// 漢数字番地（神南一丁目十九番十一号 等）。ASCII 数字を含まない行でも
+// PrefilterCJK + 都道府県リテラルで検出する。ダッシュ形は持たない（#55）。
+func TestAddressKanjiNumeralBanchi(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct{ name, line, want string }{
+		{"丁目番号の連鎖（漢数字）", "住所: 東京都渋谷区神南一丁目十九番十一号", "東京都渋谷区神南一丁目十九番十一号"},
+		{"丁目のみ（漢数字）", "住所: 東京都渋谷区神南三丁目", "東京都渋谷区神南三丁目"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

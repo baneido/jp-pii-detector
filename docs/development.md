@@ -539,6 +539,13 @@ PR タイトルに `[要レビュー]` を付与し、本文に削除された T
 未割当の番号は棄却されます）。インデックスのエンコーディングとサイズ定数は `internal/dict` 側で
 公開し、ジェネレータと共有します（両者が無言で乖離しないため）。
 
+同じ KEN_ALL データの都道府県名・市区町村名から、実在する市区町村名の一覧
+[`internal/dict/municipalities.txt`](../internal/dict/municipalities.txt)（1 行 1 エントリ、
+ソート・重複排除済み）も生成し `//go:embed` で取り込みます。
+`dict.MunicipalitySuffixMatch` は `jp-address-high-recall` の `Validate` に使い、
+「通学区域」のような非市区町村語の誤検出を棄却します。郡付きエントリは郡省略形、
+政令指定都市の区は市単独形も併録し、`ヶ` / `ケ` は生成・照合の両側で `ケ` に正規化します。
+
 更新は通常 [`.github/workflows/postal-update.yml`](../.github/workflows/postal-update.yml) が
 毎月 1 日に自動で行います。手動で更新する場合は次の 2 つのデータを取得し、コマンドでビットセットを
 再生成してから `go test ./internal/dict ./internal/dict/gen ./internal/detect ./internal/eval` で検証します。
@@ -552,12 +559,14 @@ PR タイトルに `[要レビュー]` を付与し、本文に削除された T
 $ go run ./internal/dict/gen \
     -ken-all-input /path/to/utf_ken_all.zip \
     -jigyosyo-input /path/to/jigyosyo.zip \
-    -output internal/dict/postal_codes.bitset
+    -output internal/dict/postal_codes.bitset \
+    -municipalities-output internal/dict/municipalities.txt
 ```
 
 `-ken-all-input` / `-jigyosyo-input` はどちらか片方だけでも、両方指定してもよいです
 （両方指定時はマージされ、重複コードは自動的に排除されます）。それぞれ展開済みの CSV
-（前者は UTF-8、後者は Shift_JIS）も直接指定できます。列インデックス（ken_all は郵便番号が
+（前者は UTF-8、後者は Shift_JIS）も直接指定できます。`-municipalities-output` を指定する
+場合は、市区町村列を持つ `-ken-all-input` も必須です。列インデックス（ken_all は郵便番号が
 3 列目、jigyosyo は 8 列目）はフォーマットごとに固定なので、`-ken-all-input` と
 `-jigyosyo-input` を取り違えないでください（取り違えると実質ゼロ件取り込みになります）。
 郵便番号の増減で `jp-postal-code` の精度数値が動くことがあるため、新しいビットセットを
