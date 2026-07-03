@@ -17,6 +17,35 @@ import (
 // DefaultFileName は探索する設定ファイル名。
 const DefaultFileName = ".jp-pii.toml"
 
+// CustomRule は利用者が定義する追加の検出ルール（[[rules.custom]]）。
+// 学籍番号・社員番号など組織固有の ID 形式を、コード変更なしで追加するために使う。
+type CustomRule struct {
+	// ID はルール識別子。組み込みルールおよび他のカスタムルールと重複できない。
+	ID string `toml:"id"`
+	// Description は rules コマンド・検出結果に表示される説明。
+	Description string `toml:"description"`
+	// Pattern は Go の RE2 正規表現。DigitBoundary が false の場合、
+	// パターン自身にキャプチャグループがあればグループ 1 を検出値として扱う
+	// （builtin ルールの dg()/ag() と同じ規約）。グループがなければマッチ全体を使う。
+	Pattern string `toml:"pattern"`
+	// Context は信頼度昇格・RequireContext 判定に使う周辺キーワード（小文字）。
+	Context []string `toml:"context"`
+	// NegativeContext は近傍にあれば検出を棄却する語（金額・件数等）。
+	NegativeContext []string `toml:"negative_context"`
+	// RequireContext が true の場合、Context のキーワードが無ければ検出を破棄する。
+	RequireContext bool `toml:"require_context"`
+	// RequireContextWindow は RequireContext の肯定語探索をマッチ前後の
+	// ルーン数に限定する。0 の場合は行全体を見る。
+	RequireContextWindow int `toml:"require_context_window"`
+	// BaseConfidence はパターン単体でマッチした場合の信頼度（low|medium|high）。
+	// 省略時は medium。
+	BaseConfidence string `toml:"base_confidence"`
+	// DigitBoundary が true の場合、パターンを組み込みルールの dg() と同じ
+	// 境界ガード `(?:^|[^0-9])(pattern)(?:[^0-9]|$)` で包む。数字エンティティが
+	// より長い数字列の一部として誤って切り出されるのを防ぐ。
+	DigitBoundary bool `toml:"digit_boundary"`
+}
+
 // Config はツール全体の設定。
 type Config struct {
 	// MinConfidence 未満の検出は報告しない（low|medium|high）。
@@ -27,6 +56,8 @@ type Config struct {
 		// HighRecall は高再現率ルールを明示的に有効化する。
 		// 偽陽性リスクが高いため既定では無効。
 		HighRecall bool `toml:"high_recall"`
+		// Custom は利用者定義の追加ルール。
+		Custom []CustomRule `toml:"custom"`
 	} `toml:"rules"`
 	Allowlist struct {
 		// Paths は走査から除外するパスの正規表現または glob。検出結果に
@@ -46,6 +77,10 @@ type Config struct {
 	// explicitDisabled は設定ファイル等で明示的に無効化されたルール ID。
 	// high_recall の切り替え時に、自動付与した無効化だけを戻すために保持する。
 	explicitDisabled []string
+	// customRules は Rules.Custom をコンパイルした結果。
+	customRules []rule.Rule
+	// warnings は Parse 時に検出した非致命的な問題（未知の設定キー等）。
+	warnings []string
 }
 
 // Default は既定値の設定を返す。
@@ -105,13 +140,26 @@ func findUpward() (string, error) {
 }
 
 // Parse は TOML 文字列から設定を構築する。
+// 未知の設定キー（typo 等）を検出した場合は、既存の緩い互換性を壊さないよう
+// エラーにはせず、標準エラーへ警告を出力する（Warnings でも取得できる）。
 func Parse(data string) (*Config, error) {
 	cfg := defaultConfig()
-	if _, err := toml.Decode(data, cfg); err != nil {
+	md, err := toml.Decode(data, cfg)
+	if err != nil {
 		return nil, fmt.Errorf("config: %w", err)
+	}
+	if undecoded := md.Undecoded(); len(undecoded) > 0 {
+		keys := make([]string, len(undecoded))
+		for i, k := range undecoded {
+			keys[i] = k.String()
+		}
+		cfg.warnings = append(cfg.warnings, fmt.Sprintf("未知の設定キーを無視しました: %s", strings.Join(keys, ", ")))
 	}
 	if err := cfg.compile(); err != nil {
 		return nil, err
+	}
+	for _, w := range cfg.warnings {
+		fmt.Fprintf(os.Stderr, "jp-pii-detect: warning: %s\n", w)
 	}
 	return cfg, nil
 }
@@ -132,6 +180,61 @@ func (c *Config) compile() error {
 			return fmt.Errorf("config: allowlist.regexes %q: %w", p, err)
 		}
 		c.allowRes = append(c.allowRes, re)
+	}
+	if err := c.compileCustomRules(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// compileCustomRules は Rules.Custom をコンパイルし customRules に保持する。
+// id の重複（組み込みルールとの衝突を含む）や正規表現のコンパイル失敗は
+// 設定エラーとして返し、既存の fail(err) → exit 2 経路に乗せる（パニックさせない）。
+func (c *Config) compileCustomRules() error {
+	if len(c.Rules.Custom) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	for _, r := range rule.Builtin() {
+		seen[r.ID] = true
+	}
+	for _, cr := range c.Rules.Custom {
+		if cr.ID == "" {
+			return fmt.Errorf("config: rules.custom: id is required")
+		}
+		if seen[cr.ID] {
+			return fmt.Errorf("config: rules.custom %q: id は組み込みルールまたは他のカスタムルールと重複しています", cr.ID)
+		}
+		seen[cr.ID] = true
+		if cr.Pattern == "" {
+			return fmt.Errorf("config: rules.custom %q: pattern is required", cr.ID)
+		}
+		base := rule.Medium
+		if cr.BaseConfidence != "" {
+			b, err := rule.ParseConfidence(cr.BaseConfidence)
+			if err != nil {
+				return fmt.Errorf("config: rules.custom %q: base_confidence: %w", cr.ID, err)
+			}
+			base = b
+		}
+		pattern := cr.Pattern
+		if cr.DigitBoundary {
+			pattern = `(?:^|[^0-9])(` + pattern + `)(?:[^0-9]|$)`
+		}
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			return fmt.Errorf("config: rules.custom %q: %w", cr.ID, err)
+		}
+		c.customRules = append(c.customRules, rule.Rule{
+			ID:                   cr.ID,
+			Description:          cr.Description,
+			Context:              cr.Context,
+			NegativeContext:      cr.NegativeContext,
+			RequireContextWindow: cr.RequireContextWindow,
+			Patterns: []rule.Pattern{
+				{Re: re, Base: base, RequireContext: cr.RequireContext},
+			},
+		})
 	}
 	return nil
 }
@@ -212,3 +315,9 @@ func (c *Config) PathAllowed(relPath string) bool {
 
 // AllowRegexes はコンパイル済みのマッチ除外正規表現を返す。
 func (c *Config) AllowRegexes() []*regexp.Regexp { return c.allowRes }
+
+// CustomRules は rules.custom をコンパイルしたルール一覧を返す。
+func (c *Config) CustomRules() []rule.Rule { return c.customRules }
+
+// Warnings は Parse 時に検出した非致命的な警告（未知の設定キー等）を返す。
+func (c *Config) Warnings() []string { return c.warnings }

@@ -1,0 +1,194 @@
+name: fp-corpus-report
+
+# 大規模公開 OSS コーパスに対する jp-pii-detect の偽陽性率（findings/MLoC）を計測する。
+#
+# 背景（#71）: 実運用の偽陽性率を測る仕組みが自リポジトリの dogfooding（ci.yml、既定で
+# 0 件期待）しか存在しない。小さな自リポジトリ 1 つでは陰性母数が不足し、
+# NegativeContext・allowlist などの偽陽性削減施策の効果を測る場がない。そこで、第三者に
+# 長期間・大規模に精査されている著名 OSS（標準ライブラリ・ビルドツール等）をコーパスとして
+# 定期スキャンし、findings/MLoC をトレンド指標として記録する（現時点では CI ゲートにはしない）。
+#
+# ci.yml の test job（wantF1・README バッジ・ドッグフードのゲート）とは完全に独立しており、
+# このワークフローの成否は PR CI に一切影響しない（postal-update.yml と同様の分離方針）。
+#
+# 初期運用は workflow_dispatch のみ。数回分の手動実行でノイズ（コーパスの dead link・
+# 想定外の実 PII 混入）がないことを確認できたら、下の schedule のコメントアウトを外して
+# 週次 cron に昇格する（docs/development.md「OSS コーパスでの偽陽性率計測」参照）。
+on:
+  workflow_dispatch: {}
+  # schedule:
+  #   - cron: '0 3 * * 1' # 毎週月曜 03:00 UTC（= 12:00 JST）
+
+# 多重実行を避ける（クローン帯域・GCS 書き込みの競合防止）。進行中のランは中断しない。
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+# 既定では権限を与えず、必要な job にのみ最小権限を付与する。
+permissions: {}
+
+jobs:
+  fp-corpus-report:
+    name: fp corpus report
+    runs-on: ubuntu-latest
+    # コーパスのクローン + スキャンは自リポジトリの CI より時間がかかるため長めに確保する。
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write # GCP Workload Identity Federation（OIDC）に必要（結果保存用。任意）
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build jp-pii-detect
+        run: go build -o "$RUNNER_TEMP/jp-pii-detect" ./cmd/jp-pii-detect
+
+      # コーパス一覧を取得・スキャンし、コーパスごとの集計（rule_id と件数のみ。生値・
+      # マスク値ともに含めない）を $RUNNER_TEMP/reports/ に書き出す。
+      #
+      # 選定基準（#71 対応方針 (2)）: 大規模かつ長期間・広く第三者に精査されている著名 OSS
+      # （標準ライブラリ・ビルドツール等）のみを対象にする。自治体オープンデータ処理系のような
+      # 実 PII を扱う蓋然性が高いカテゴリは対象外。日本語コメントを含む対象を追加する場合は、
+      # 個人ブログ的なサンプルデータを含まない企業メンテの本体コードに限定すること。
+      #
+      # 新規コーパスを追加・更新する際は、対応するコミット（タグ相当）を固定した上で、
+      # 追加前に一度ローカルで `jp-pii-detect scan --format text --unmask` を実行し、
+      # 報告された findings（多くは JAN コード・型番・テスト用カード番号等の偽陽性のはず）
+      # を目視で確認し、実在しうる PII が含まれていないことを確認してから登録する
+      # （運用手順は docs/development.md 参照）。
+      #
+      # 行はコミットを固定するために `git fetch --depth 1 origin <commit-sha>` で 1
+      # コミットだけ取得する（浅いクローンで帯域を抑えつつ upstream の変更でトレンドが
+      # ノイズ化しないようにする）。
+      - name: Scan OSS corpora
+        run: |
+          set -eu
+          reports_dir="$RUNNER_TEMP/reports"
+          mkdir -p "$reports_dir"
+
+          # name|git-url|commit-sha  # タグ（参考コメント）
+          corpora='
+          go|https://github.com/golang/go.git|28622c19591d95c9a83f706f2ed1b303d58da85f
+          curl|https://github.com/curl/curl.git|3f00a2f6fa97f7721b65606954aac979dcb6caac
+          typescript|https://github.com/microsoft/TypeScript.git|050880ce59e30b356b686bd3144efe24f875ebc8
+          '
+
+          echo "$corpora" | while IFS='|' read -r name url sha; do
+            [ -z "$name" ] && continue
+            echo "::group::${name}"
+
+            dir="$RUNNER_TEMP/corpus-${name}"
+            rm -rf "$dir"
+            git init -q "$dir"
+            git -C "$dir" remote add origin "$url"
+            git -C "$dir" fetch --quiet --depth 1 origin "$sha"
+            git -C "$dir" checkout -q FETCH_HEAD
+
+            findings_json="$RUNNER_TEMP/${name}.findings.json"
+            # --exit-zero: findings があっても以降の集計処理まで到達させる。
+            # 既定でマスクされた match 値のみを含む（--unmask は付けない）。
+            "$RUNNER_TEMP/jp-pii-detect" scan --format json --exit-zero "$dir" > "$findings_json"
+
+            scripts/fp-corpus-report.sh "$name" "$dir" "$findings_json" > "$reports_dir/${name}.json"
+
+            # 生値・マスク値を含みうる中間物は残さない（集計結果のみ次段へ渡す）。
+            rm -rf "$dir" "$findings_json"
+            echo "::endgroup::"
+          done
+
+          find "$reports_dir" -name '*.json' | sort
+
+      # 複数コーパスの集計を 1 つにまとめる。
+      # detail.json: コーパス名付きの内訳（GCS 非公開バケットにのみ保存）。
+      # summary.json / summary.md: コーパス名を伏せたルール別合計のみ（ログ・GCS 双方に出す）。
+      # 実リポジトリ名と findings 内訳の組を公開の場に出さないための分離
+      # （#71 リスク・副作用「responsible disclosure 対策」参照）。
+      - name: Merge corpus reports
+        run: |
+          set -eu
+          reports_dir="$RUNNER_TEMP/reports"
+
+          jq -s '.' "$reports_dir"/*.json > "$RUNNER_TEMP/detail.json"
+
+          jq -s '
+            (map(.physical_lines) | add) as $lines
+            | (map(.mloc) | add) as $mloc
+            | (map(.findings_total) | add) as $total
+            | {
+                generated_at: (now | todate),
+                corpora_count: length,
+                total_physical_lines: $lines,
+                total_mloc: $mloc,
+                total_findings: $total,
+                findings_per_mloc: (if $mloc > 0 then ($total / $mloc) else null end),
+                by_rule: (
+                  map(.by_rule[])
+                  | group_by(.rule_id)
+                  | map({
+                      rule_id: .[0].rule_id,
+                      count: (map(.count) | add),
+                      per_mloc: (if $mloc > 0 then ((map(.count) | add) / $mloc) else null end)
+                    })
+                  | sort_by(-.count)
+                )
+              }
+          ' "$reports_dir"/*.json > "$RUNNER_TEMP/summary.json"
+
+          {
+            echo '# fp-corpus-report'
+            echo
+            jq -r '
+              "- generated_at: " + .generated_at,
+              "- corpora_count: " + (.corpora_count | tostring),
+              "- total_physical_lines: " + (.total_physical_lines | tostring),
+              "- total_mloc: " + (.total_mloc | tostring),
+              "- total_findings: " + (.total_findings | tostring),
+              "- findings_per_mloc: " + (.findings_per_mloc | tostring),
+              "",
+              "| rule_id | count | per_mloc |",
+              "|---|---|---|",
+              (.by_rule[] | "| " + .rule_id + " | " + (.count | tostring) + " | " + (.per_mloc | tostring) + " |")
+            ' "$RUNNER_TEMP/summary.json"
+          } > "$RUNNER_TEMP/summary.md"
+
+          cat "$RUNNER_TEMP/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          echo "--- summary (anonymized) ---"
+          cat "$RUNNER_TEMP/summary.json"
+
+      # 実在しうる PII を含む評価フィクスチャと同じ非公開 GCS バケット・OIDC 経路を再利用する
+      # （新たな長期認証情報は追加しない）。リポジトリ変数が未設定なら保存をスキップする
+      # （初回の workflow_dispatch 試験運用ではログ確認のみでよい）。
+      - name: Authenticate to Google Cloud (OIDC / Workload Identity)
+        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
+        with:
+          workload_identity_provider: ${{ vars.JP_PII_FIXTURES_PROVIDER }}
+          service_account: ${{ vars.JP_PII_FIXTURES_SA }}
+      - name: Set up gcloud
+        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
+      - name: Upload report snapshot to GCS
+        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
+        env:
+          FIXTURES_BUCKET: ${{ vars.JP_PII_FIXTURES_BUCKET }}
+        run: |
+          set -eu
+          prefix="gs://$FIXTURES_BUCKET/fp-corpus-report"
+          run_id="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+          # detail.json（コーパス名付き）は非公開バケットにのみ保存する。
+          gcloud storage cp "$RUNNER_TEMP/detail.json" "$prefix/${run_id}-detail.json"
+          gcloud storage cp "$RUNNER_TEMP/detail.json" "$prefix/latest-detail.json"
+          # summary は匿名化済みなので公開しても問題ない値だが、置き場は同じ非公開バケット。
+          gcloud storage cp "$RUNNER_TEMP/summary.json" "$prefix/${run_id}-summary.json"
+          gcloud storage cp "$RUNNER_TEMP/summary.json" "$prefix/latest-summary.json"
+          gcloud storage cp "$RUNNER_TEMP/summary.md" "$prefix/${run_id}-summary.md"
+          gcloud storage cp "$RUNNER_TEMP/summary.md" "$prefix/latest-summary.md"
+      - name: Remove Google Cloud credentials file
+        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
+        run: rm -f "${GOOGLE_GHA_CREDS_PATH:-}"
