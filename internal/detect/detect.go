@@ -4,6 +4,7 @@ package detect
 import (
 	"sort"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/baneido/jp-pii-detector/internal/config"
@@ -16,6 +17,14 @@ const IgnoreMarker = "jp-pii-detector:ignore"
 
 // AllowMarker は後方互換のために残している旧除外マーカー。
 const AllowMarker = "pii-allow"
+
+// defaultPromotionContextWindow は RequireContextWindow 未設定のルールで
+// Base 信頼度を High へ昇格させる際に使う既定のコンテキスト探索半径（ルーン数）。
+// 昇格判定はこの半径に制限し、長い行の遠方にある無関係な 1 語だけで行全体の
+// マッチが昇格するのを防ぐ（issue #68 段階1(b)）。RequireContext 判定
+// （検出可否そのもの）はここでは変えず、ウィンドウ未設定なら従来通り行全体を
+// 見る（後方互換）。
+const defaultPromotionContextWindow = 40
 
 // Finding は 1 件の検出結果。
 //
@@ -93,6 +102,11 @@ func New(cfg *config.Config) (*Detector, error) {
 			}
 		}
 	}
+	for _, r := range cfg.CustomRules() {
+		if !disabled[r.ID] {
+			rules = append(rules, r)
+		}
+	}
 	normStopwords := make([]string, len(cfg.Allowlist.Stopwords))
 	for i, sw := range cfg.Allowlist.Stopwords {
 		normStopwords[i] = normalize.Line(sw)
@@ -143,7 +157,7 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 	// 隣接行の負コンテキスト（金額・数量・連番 ID 等）で抑制してから重複解決する。
 	filtered := candidates[:0]
 	for _, f := range candidates {
-		if d.hasCrossLineNegativeContext(f, lines, f.Line-1) {
+		if d.hasCrossLineNegativeContext(f, lines, lineContexts, f.Line-1) {
 			continue
 		}
 		filtered = append(filtered, f)
@@ -238,6 +252,10 @@ type DiffLine struct {
 // 場合（両方 Added）は、フルスキャン（ScanContent）と同じく隣接行の負コンテキストを
 // 適用する。そうしないと、同じ 2 行の追加が CI のフルスキャンでは抑制され
 // pre-commit --staged では報告されるという非対称が生まれるため。
+//
+// この「抑制は検出値が乗る行に対してのみ適用し、隣接行のマーカーを巻き添えに
+// しない」という原則は diff 経路専用ではなく、ScanContent 側の隣接行走査
+// （scanAdjacentLines）にも同様に適用される。
 func (d *Detector) ScanDiffHunk(file string, lines []DiffLine) []Finding {
 	texts := make([]string, len(lines))
 	added := make([]bool, len(lines))
@@ -272,7 +290,7 @@ func (d *Detector) ScanDiffHunk(file string, lines []DiffLine) []Finding {
 	}
 	filtered := candidates[:0]
 	for _, f := range candidates {
-		if d.hasCrossLineNegativeContext(f, maskedTexts, f.Line-1) {
+		if d.hasCrossLineNegativeContext(f, maskedTexts, lineContexts, f.Line-1) {
 			continue
 		}
 		filtered = append(filtered, f)
@@ -298,6 +316,13 @@ func itoa(n int) string {
 	return string(buf[i:])
 }
 
+// scanAdjacentLines は RequireContext なルールについて、隣接 2 行を結合して
+// 走査することでラベルと値が別行に分かれるケースを補足する。抑制（ignore
+// マーカー）は検出値が乗る行に対してのみ適用し、結合文字列全体を
+// scanLineNoIgnore で走査したうえで各 finding の行ごとに ignoredLine を明示
+// チェックする。こうしないと、値が乗っていない側の行（ラベル行等）に残った
+// ignore マーカーが隣の値行の検出まで巻き添えで抑制してしまう
+// （scanAdjacentLinesDiff と同じ設計）。
 func (d *Detector) scanAdjacentLines(file string, firstLineNo int, first, second string, firstCtx, secondCtx lineContext) []Finding {
 	combined := first + "\n" + second
 	firstRunes := []rune(first)
@@ -305,19 +330,25 @@ func (d *Detector) scanAdjacentLines(file string, firstLineNo int, first, second
 	sep := len(firstRunes)
 
 	var out []Finding
-	for _, f := range d.ScanLine(file, firstLineNo, combined) {
+	for _, f := range d.scanLineNoIgnore(file, firstLineNo, combined) {
 		if !f.Reason.RequireContext {
 			continue
 		}
 		switch {
-		case f.end <= sep:
+		case f.end <= sep: // 値は 1 行目
+			if ignoredLine(first) {
+				continue
+			}
 			f.Line = firstLineNo
 			f.Column = f.start + 1
 			f.Match = string(firstRunes[f.start:f.end])
 			if d.hasSourceNegativeForFinding(f, first, firstCtx) {
 				continue
 			}
-		case f.start > sep:
+		case f.start > sep: // 値は 2 行目
+			if ignoredLine(second) {
+				continue
+			}
 			start := f.start - sep - 1
 			end := f.end - sep - 1
 			if start < 0 || end > len(secondRunes) {
@@ -547,12 +578,18 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 		}
 		ctxForMatch := func(start, end int, useWindow bool) []string {
 			var kws []string
-			if r.RequireContextWindow <= 0 {
-				kws = d.matchingContexts(norm, r.Context)
-			} else if useWindow {
+			switch {
+			case r.RequireContextWindow > 0:
 				kws = d.matchingContexts(contextWindow(norm, start, end, r.RequireContextWindow, &normRunes), r.Context)
-			} else {
+			case useWindow:
+				// RequireContext 判定（検出可否そのもの）は後方互換のため、
+				// ウィンドウ未設定なら従来通り行全体を見る。
 				kws = d.matchingContexts(norm, r.Context)
+			default:
+				// Base 信頼度の昇格（useWindow=false）はウィンドウ未設定でも
+				// 既定半径（defaultPromotionContextWindow）に制限する
+				// （issue #68 段階1(b)。無制限昇格による FP 増幅を防ぐ）。
+				kws = d.matchingContexts(contextWindow(norm, start, end, defaultPromotionContextWindow, &normRunes), r.Context)
 			}
 			if st := lineCtx.statementFor(start, end); st != nil && st.PositiveText != "" {
 				kws = append(kws, d.matchingContexts(st.PositiveText, r.Context)...)
@@ -563,13 +600,17 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 			if len(r.NegativeContext) == 0 {
 				return false
 			}
-			if d.hasNegativeContextNear(norm, start, end, negativeContextWindowRunes, &normRunes, r.NegativeContext) {
+			st := lineCtx.statementFor(start, end)
+			if st != nil && st.NegativeText != "" {
 				return true
 			}
-			if st := lineCtx.statementFor(start, end); st != nil && st.NegativeText != "" {
-				return true
+			if d.statementHasCleanPositiveLabel(st, r.Context) {
+				// 同一文に（負文脈語を伴わない）このルール自身の正ラベルが
+				// 明示されている場合は、離れた場所の一般的な負文脈語（金額単位・
+				// 件数等）で誤って棄却しない（正ラベル優先。issue #68 段階1(a)）。
+				return false
 			}
-			return false
+			return d.hasNegativeContextNear(norm, start, end, negativeContextWindowRunes, &normRunes, r.NegativeContext)
 		}
 		for _, p := range r.Patterns {
 			// FindAll はマッチ全体（末尾の境界ガード文字を含む）の直後から
@@ -667,7 +708,46 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 }
 
 func ignoredLine(line string) bool {
-	return strings.Contains(line, IgnoreMarker) || strings.Contains(line, AllowMarker)
+	return containsMarkerToken(line, IgnoreMarker) || containsMarkerToken(line, AllowMarker)
+}
+
+// containsMarkerToken は line 内に marker がトークン境界付き（`\b`相当）で
+// 出現するかを返す。単純な strings.Contains による部分文字列一致だと、旧
+// マーカー pii-allow が pii-allowlist のような無関係な識別子・ファイル名にも
+// 一致し、行全体が意図せず不可視化されてしまう。マーカーの直前・直後の文字が
+// マーカートークンの継続文字（英数字・ハイフン・アンダースコア）でない場合の
+// みマッチとみなすことで、独立した「単語」としてのみ照合する。
+func containsMarkerToken(line, marker string) bool {
+	for idx := 0; ; {
+		pos := strings.Index(line[idx:], marker)
+		if pos < 0 {
+			return false
+		}
+		start := idx + pos
+		end := start + len(marker)
+		before := true
+		if start > 0 {
+			r, _ := utf8.DecodeLastRuneInString(line[:start])
+			before = !isMarkerTokenChar(r)
+		}
+		after := true
+		if end < len(line) {
+			r, _ := utf8.DecodeRuneInString(line[end:])
+			after = !isMarkerTokenChar(r)
+		}
+		if before && after {
+			return true
+		}
+		// 境界に失敗した候補の次の文字から再探索する（marker 自体を
+		// スキップしすぎて後続の正しい出現を見逃さないよう 1 文字だけ進める）。
+		idx = start + 1
+	}
+}
+
+// isMarkerTokenChar はマーカートークンの継続文字（英数字・ハイフン・
+// アンダースコア）かどうかを返す。
+func isMarkerTokenChar(r rune) bool {
+	return r == '-' || r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r)
 }
 
 // containsAnyLiteral は haystack に literals のいずれかが含まれるかを返す
