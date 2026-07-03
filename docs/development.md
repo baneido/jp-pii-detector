@@ -207,7 +207,14 @@ internal/
 
 IANA TLD 一覧は公式の `https://data.iana.org/TLD/tlds-alpha-by-domain.txt` を
 [`internal/dict/tlds-alpha-by-domain.txt`](../internal/dict/tlds-alpha-by-domain.txt) に保存している。
-更新時は同 URL から取得し、`go test ./internal/dict ./internal/detect ./internal/eval` で検証する。
+
+更新は通常 [`.github/workflows/tld-update.yml`](../.github/workflows/tld-update.yml) が
+毎月 1 日に自動で行う（新規委任 TLD の見落としによる偽陰性、廃止 TLD が辞書に残り続けることによる
+偽陽性の温床化を防ぐため）。gTLD/ccTLD の削除は極めて稀なため、削除が 1 件でも検出された場合は
+PR タイトルに `[要レビュー]` を付与し、本文に削除された TLD 一覧を明記するので、マージ前に必ず
+目視でレビューすること。手動で更新する場合は同 URL から取得して
+`internal/dict/tlds-alpha-by-domain.txt` を置き換え、
+`go test ./internal/dict ./internal/detect ./internal/eval` で検証する。
 
 郵便番号は日本郵便の UTF-8 版「住所の郵便番号」全データから 7 桁の実在集合を
 ビットセット化し、[`internal/dict/postal_codes.bitset`](../internal/dict/postal_codes.bitset)
