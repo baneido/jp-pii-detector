@@ -33,6 +33,26 @@ jobs:
           advanced-security: false
           annotations: true
 
+  docker:
+    name: docker
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      # release ワークフローが公開するコンテナイメージのビルドが壊れていないことを検証する。
+      # CI ではホストアーキテクチャのみビルドする（マルチアーキテクチャは release 側）。
+      - name: Build image
+        run: docker build -t jp-pii-detect:ci .
+      - name: Smoke test
+        run: |
+          set -eu
+          docker run --rm jp-pii-detect:ci version
+          # dogfooding: コンテナ経由でも自リポジトリのスキャンが偽陽性ゼロで通ること
+          docker run --rm -v "$GITHUB_WORKSPACE:/scan" jp-pii-detect:ci scan --format github /scan
+
   test:
     name: test
     runs-on: ubuntu-latest

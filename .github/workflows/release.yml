@@ -73,6 +73,42 @@ jobs:
               --generate-notes
           fi
 
+  docker:
+    name: docker
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # Dockerfile とソースの取得のみ
+      packages: write # GHCR へのイメージ push に必要
+    env:
+      IMAGE: ghcr.io/baneido/jp-pii-detector
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # push には github.token を docker login で使うため checkout の認証情報は残さない
+          persist-credentials: false
+      - name: Log in to GitHub Container Registry
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
+        run: printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+      # 実行イメージ側の RUN 命令（apk add）を arm64 でも実行できるよう QEMU を登録する。
+      # サプライチェーン対策としてイメージは digest でピン留めする。
+      - name: Register QEMU for arm64
+        run: docker run --privileged --rm tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0 --install arm64
+      - name: Build and push multi-arch image
+        run: |
+          set -eu
+          docker buildx create --use
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --build-arg "VERSION=${TAG}" \
+            --tag "${IMAGE}:${TAG}" \
+            --tag "${IMAGE}:latest" \
+            --push \
+            .
+
   homebrew:
     name: homebrew
     needs: release
