@@ -1,0 +1,181 @@
+name: tld-update
+
+on:
+  schedule:
+    # 毎月 1 日 00:30 UTC（= 09:30 JST）に実行する。postal-update.yml（00:00 UTC）と
+    # 時間帯をずらし、同時実行を避ける。IANA は随時 TLD を新設/廃止するため月次で取り込む。
+    - cron: '30 0 1 * *'
+  # 手動実行も許可する（初回投入や臨時更新用）。
+  workflow_dispatch: {}
+
+# 多重実行を避ける（コミット/PR 作成の競合防止）。進行中のランは中断しない。
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+# 既定では権限を与えず、必要なジョブにのみ最小権限を付与する。
+permissions: {}
+
+env:
+  # IANA の root zone TLD 一覧（1 行 1 TLD、先頭に "# Version ..." コメント行）。
+  TLD_URL: https://data.iana.org/TLD/tlds-alpha-by-domain.txt
+  TLD_FILE: internal/dict/tlds-alpha-by-domain.txt
+  # PR を載せる作業ブランチ（毎回 force-push して 1 本に集約する）。
+  TLD_BRANCH: automated/tld-list
+
+jobs:
+  update:
+    name: update TLD list
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # 作業ブランチの push に必要
+      pull-requests: write # PR の作成・更新に必要
+      id-token: write # GCP Workload Identity Federation（OIDC）に必要（フィクスチャ取得）
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # 認証情報を作業ツリーに残さない。push は GITHUB_TOKEN を URL に埋めて行う。
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          # 生成物の再現性のためキャッシュは使わない
+          cache: false
+
+      # 実在しうる PII を含む評価フィクスチャを GCS から取得する（精度ゲート用）。
+      # リポジトリ変数が未設定なら取得せず、eval は t.Skip される（後方互換）。
+      # schedule / workflow_dispatch は信頼できる実行なので TRUSTED 判定は不要。
+      - name: Authenticate to Google Cloud (OIDC / Workload Identity)
+        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
+        with:
+          workload_identity_provider: ${{ vars.JP_PII_FIXTURES_PROVIDER }}
+          service_account: ${{ vars.JP_PII_FIXTURES_SA }}
+      - name: Set up gcloud
+        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
+      - name: Download PII fixtures from GCS
+        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
+        # バケット名は env 経由で渡す（run 内に ${{ }} を直接埋めると注入リスク警告になるため）。
+        env:
+          FIXTURES_BUCKET: ${{ vars.JP_PII_FIXTURES_BUCKET }}
+        run: |
+          set -eu
+          # 後続ステップへ JP_PII_FIXTURES を渡す（runner コンテキストは env: で使えないため
+          # $RUNNER_TEMP を使い、GITHUB_ENV 経由で伝播する）。未取得時は未設定のままで eval は Skip。
+          dest="$RUNNER_TEMP/pii-fixtures.json"
+          gcloud storage cp "gs://$FIXTURES_BUCKET/pii-fixtures.json" "$dest"
+          echo "JP_PII_FIXTURES=$dest" >> "$GITHUB_ENV"
+
+      - name: Download IANA TLD list
+        run: |
+          set -eu
+          # -f: HTTP エラー（404 等）で失敗させる。--retry: 一時的な失敗を再試行。
+          curl -fsSL --retry 3 --retry-delay 5 -o /tmp/tlds-new.txt "$TLD_URL"
+
+          # サニティチェック 1: 取得物が空でないこと。
+          if [ ! -s /tmp/tlds-new.txt ]; then
+            echo "::error::TLD リストが空。ダウンロード失敗の可能性"
+            exit 1
+          fi
+          # サニティチェック 2: 先頭行が IANA の既定フォーマット "# Version ..." で始まること。
+          if ! head -n1 /tmp/tlds-new.txt | grep -q '^# Version'; then
+            echo "::error::TLD リストの先頭行が想定外の形式（'# Version' で始まらない）。ダウンロード破損の可能性"
+            exit 1
+          fi
+          # サニティチェック 3: 件数が閾値未満なら異常（現行データは 1,400 件超）。
+          count=$(grep -vc '^#' /tmp/tlds-new.txt)
+          if [ "$count" -lt 1000 ]; then
+            echo "::error::TLD 件数が少なすぎる: ${count} 件（ダウンロード破損の可能性）"
+            exit 1
+          fi
+
+      - name: Compute diff against the embedded list
+        run: |
+          set -eu
+          grep -v '^#' "$TLD_FILE" | grep -v '^$' | sort -u > /tmp/tlds-old-sorted.txt
+          grep -v '^#' /tmp/tlds-new.txt | grep -v '^$' | sort -u > /tmp/tlds-new-sorted.txt
+          comm -13 /tmp/tlds-old-sorted.txt /tmp/tlds-new-sorted.txt > /tmp/tlds-added.txt
+          comm -23 /tmp/tlds-old-sorted.txt /tmp/tlds-new-sorted.txt > /tmp/tlds-removed.txt
+
+          added=$(wc -l < /tmp/tlds-added.txt | tr -d ' ')
+          removed=$(wc -l < /tmp/tlds-removed.txt | tr -d ' ')
+          echo "追加: ${added} 件 / 削除: ${removed} 件"
+          echo "TLD_ADDED=$added" >> "$GITHUB_ENV"
+          echo "TLD_REMOVED=$removed" >> "$GITHUB_ENV"
+
+      - name: Replace embedded TLD list
+        run: cp /tmp/tlds-new.txt "$TLD_FILE"
+
+      - name: Verify build, embed, and dogfooding
+        run: |
+          set -eu
+          go vet ./...
+          # フィクスチャがあれば精度ゲート（TestAccuracy）も走る。なければ Skip。
+          go test ./...
+          go build ./cmd/jp-pii-detect
+          ./jp-pii-detect scan --format github .
+
+      # フィクスチャが取れていれば、バッジ・docs/accuracy.md を実測で再生成して PR に含める。
+      # F1 が wantF1 から外れた場合は上の go test が失敗しており、ここには到達しない。
+      - name: Regenerate accuracy docs and badges
+        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
+        run: go test ./internal/eval -update
+
+      - name: Open PR if the data changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          if git diff --quiet "$TLD_FILE"; then
+            echo "TLD データに変更なし。PR は作成しない。"
+            exit 0
+          fi
+
+          today=$(date -u +%Y-%m-%d)
+          title="chore(dict): TLD リストを更新（${today}）"
+          # gTLD/ccTLD の削除は極めて稀。削除が 1 件でもあれば要レビューの目印を付ける。
+          if [ "${TLD_REMOVED:-0}" -gt 0 ]; then
+            title="[要レビュー] ${title}"
+          fi
+
+          git config user.name "jp-pii-detect-bot"
+          git config user.email "contact@baneido.com" # jp-pii-detector:ignore bot の連絡先
+          git checkout -b "$TLD_BRANCH"
+          # TLD リストと、再生成された精度ドキュメント・バッジ（あれば）を含める。
+          git add "$TLD_FILE" docs/accuracy.md README.md
+          git commit -m "chore(dict): TLD リストを更新（${today}）"
+          # 同一リポジトリへの push。認証情報は URL に都度埋め、作業ツリーには残さない。
+          git push -f \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "HEAD:${TLD_BRANCH}"
+
+          # PR 本文は静的テンプレート（コミット済み）に件数を sed で埋め込み、
+          # 削除 TLD 一覧を追記して作る。TLD 名は IANA が発行する ASCII ラベル
+          # （英数字とハイフンのみ）なので、そのまま箇条書きに展開してもインジェクションの懸念はない。
+          body_file=$(mktemp)
+          sed \
+            -e "s/__ADDED_COUNT__/${TLD_ADDED:-0}/g" \
+            -e "s/__REMOVED_COUNT__/${TLD_REMOVED:-0}/g" \
+            .github/tld-pr-body.md > "$body_file"
+          {
+            cat "$body_file"
+            echo ""
+            echo "### 削除された TLD"
+            echo ""
+            if [ -s /tmp/tlds-removed.txt ]; then
+              sed 's/^/- /' /tmp/tlds-removed.txt
+            else
+              echo "(なし)"
+            fi
+          } > "${body_file}.final"
+
+          if gh pr view "$TLD_BRANCH" >/dev/null 2>&1; then
+            gh pr edit "$TLD_BRANCH" --title "$title" --body-file "${body_file}.final"
+            echo "既存 PR を更新した（${TLD_BRANCH}）。"
+          else
+            gh pr create --base main --head "$TLD_BRANCH" \
+              --title "$title" \
+              --body-file "${body_file}.final"
+          fi
