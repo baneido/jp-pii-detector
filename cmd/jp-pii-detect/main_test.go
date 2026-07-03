@@ -138,6 +138,51 @@ func TestErrorsExitTwo(t *testing.T) {
 	}
 }
 
+// 走査対象の一部ファイルが読み取れない場合でも、収集できた findings は
+// 通常どおり出力しつつ、警告を stderr に出し、終了コードは 2（部分走査）に
+// なること。黙って exit 0/1 にすると走査が不完全なまま結果を装うことになり
+// セキュリティツールとして危険なため。
+func TestScanPartialErrorExitsTwoWithReport(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root では読み取り権限のチェックが効かないためスキップ")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "ok.txt"), []byte("口座番号: 1234567\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	denied := filepath.Join(dir, "denied.txt")
+	if err := os.WriteFile(denied, []byte("no pii\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(denied, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(denied, 0o644) })
+
+	cmd := exec.Command(binPath, "scan", ".")
+	cmd.Dir = dir
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	code := 0
+	if err != nil {
+		ee, ok := err.(*exec.ExitError)
+		if !ok {
+			t.Fatalf("run: %v", err)
+		}
+		code = ee.ExitCode()
+	}
+	if code != 2 {
+		t.Errorf("exit = %d, want 2（部分走査）", code)
+	}
+	if !strings.Contains(string(out), "jp-bank-account") {
+		t.Errorf("収集済みの findings が出力されていない: %s", out)
+	}
+	if !strings.Contains(stderr.String(), "denied.txt") {
+		t.Errorf("stderr に警告が出力されていない: %s", stderr.String())
+	}
+}
+
 func TestMinConfidenceFlagOverride(t *testing.T) {
 	piifixtures.Require(t)
 	dir := t.TempDir()

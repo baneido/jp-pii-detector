@@ -87,6 +87,8 @@ Scan flags:
   --exit-zero              検出があっても終了コード 0 を返す
 
 Exit codes: 0=検出なし 1=検出あり 2=エラー
+  （フルスキャン時、一部ファイルが読み取れなかった場合も 2 を返す。
+    収集済みの検出は通常どおり出力し、警告を stderr に出す）
 `
 
 func main() {
@@ -142,6 +144,7 @@ func runScan(args []string) int {
 	}
 
 	var findings []detect.Finding
+	var warnings []error
 	switch {
 	case *stdin:
 		var data []byte
@@ -159,10 +162,17 @@ func runScan(args []string) int {
 		if len(paths) == 0 {
 			paths = []string{"."}
 		}
-		findings, err = source.ScanPaths(det, cfg, paths)
+		findings, warnings, err = source.ScanPaths(det, cfg, paths)
 	}
 	if err != nil {
 		return fail(err)
+	}
+	// 個々のファイルの読み取りエラーは致命的にせず、収集済みの findings は
+	// 通常どおり出力する。ただし黙って exit 0 にすると走査が不完全なまま
+	// 「検出なし」を装うことになり危険なため、警告を出力した上で常に exit 2
+	// にする（findings があっても --exit-zero 指定でも上書きしない）。
+	for _, w := range warnings {
+		fmt.Fprintln(os.Stderr, "jp-pii-detect: warning:", w)
 	}
 
 	switch *format {
@@ -182,6 +192,9 @@ func runScan(args []string) int {
 		return fail(fmt.Errorf("unknown format %q (text|json|sarif|github)", *format))
 	}
 
+	if len(warnings) > 0 {
+		return 2
+	}
 	if len(findings) > 0 && !*exitZero {
 		return 1
 	}
