@@ -1,25 +1,36 @@
-// Command gen は日本郵便の郵便番号データ（UTF-8 KEN_ALL CSV / zip）から、
-// 7 桁郵便番号の実在集合をビットセットとして、また市区町村名の実在集合を
-// テキスト辞書として生成する。
+// Command gen は日本郵便の郵便番号データから、7 桁郵便番号の実在集合をビットセット
+// として、また市区町村名の実在集合をテキスト辞書として生成する。ビットセットの入力は
+// 2 種類あり、いずれか一方または両方を指定できる（両方指定時はマージされ、重複は
+// 自動的に排除される）。
 //
-// 入力は日本郵便の「住所の郵便番号（1 レコード 1 行、UTF-8）」CSV、または
-// それを含む zip。配布元:
-//
-//	https://www.post.japanpost.jp/zipcode/dl/utf-zip.html
-//	（utf_ken_all.zip / KEN_ALL.CSV）
+//   - -ken-all-input: 「住所の郵便番号」CSV（1 レコード 1 行、UTF-8）、または
+//     それを含む zip。配布元:
+//     https://www.post.japanpost.jp/zipcode/dl/utf-zip.html
+//     （utf_ken_all.zip / KEN_ALL.CSV）。郵便番号は 3 列目（0 始まりで列 2）、
+//     市区町村名は 8 列目（0 始まりで列 7）。
+//   - -jigyosyo-input: 「事業所の個別郵便番号」CSV、または それを含む zip。配布元:
+//     https://www.post.japanpost.jp/zipcode/dl/jigyosyo/
+//     （jigyosyo.zip / JIGYOSYO.CSV）。郵便番号は 8 列目（0 始まりで列 7）。
+//     配布データは Shift_JIS のため、CSV としてパースする前に UTF-8 へデコードする
+//     （クォート内の非 ASCII バイトを ASCII 前提でパースして誤って壊すのを避ける）。
+//     市区町村名の辞書には使わない（列レイアウトが異なり、市区町村名の列を持たないため）。
 //
 // -output（省略可）は dict.PostalBitsetSize バイト（10,000,000 ビット）の生の
 // ビットセット。インデックス n（0〜9999999）のビットが立っていれば、7 桁郵便番号 n が
 // 実在する。internal/dict が //go:embed で取り込み、7 桁完全一致の照合に使う。
 // インデックスのエンコーディングとサイズ定数は dict 側と共有する（無言の乖離を防ぐ）。
 //
-// -municipalities-output（省略可）は record[6]（都道府県名）・record[7]（市区町村名）
+// -municipalities-output（省略可、-ken-all-input が必須）は record[7]（市区町村名）
 // から生成する市区町村名の一覧（1 行 1 エントリ、ソート・重複排除済み）。
 // dict.MunicipalitySuffixMatch が //go:embed で取り込み、jp-address-high-recall の
 // Validate に使う。ヶ→ケ正規化、郡付きエントリの郡省略形、政令指定都市の
 // 市単独形を併録する（詳細は addMunicipalityVariants を参照）。
 //
-//	go run ./internal/dict/gen -input utf_ken_all.zip -output internal/dict/postal_codes.bitset -municipalities-output internal/dict/municipalities.txt
+//	go run ./internal/dict/gen \
+//	    -ken-all-input utf_ken_all.zip \
+//	    -jigyosyo-input jigyosyo.zip \
+//	    -output internal/dict/postal_codes.bitset \
+//	    -municipalities-output internal/dict/municipalities.txt
 package main
 
 import (
@@ -33,86 +44,106 @@ import (
 	"sort"
 	"strings"
 
+	"golang.org/x/text/encoding/japanese"
+	"golang.org/x/text/transform"
+
 	"github.com/baneido/jp-pii-detector/internal/dict"
 )
 
+// kenAllPostalColumn / jigyosyoPostalColumn は各 CSV フォーマットで郵便番号が
+// 入っている列インデックス（0 始まり）。取り違えると実質ゼロ件取り込みになる
+// （事業所名などの非数字列を「7 桁郵便番号でない」として黙ってスキップし続けるため）
+// ので、readCSV には呼び出し側が明示的に渡す。
+const (
+	kenAllPostalColumn       = 2 // KEN_ALL.CSV: 3 列目 = 郵便番号（7 桁）
+	kenAllMunicipalityColumn = 7 // KEN_ALL.CSV: 8 列目 = 市区町村名
+	jigyosyoPostalColumn     = 7 // JIGYOSYO.CSV: 8 列目 = 個別番号（7 桁）
+)
+
 func main() {
-	input := flag.String("input", "", "Japan Post UTF-8 KEN_ALL CSV or zip path")
+	kenAllInput := flag.String("ken-all-input", "", "Japan Post UTF-8 KEN_ALL (住所の郵便番号) CSV or zip path")
+	jigyosyoInput := flag.String("jigyosyo-input", "", "Japan Post Shift_JIS jigyosyo (事業所の個別郵便番号) CSV or zip path")
 	output := flag.String("output", "", "output path for postal_codes.bitset (7-digit exact bitset); omit to skip")
-	municipalitiesOutput := flag.String("municipalities-output", "", "output path for municipalities.txt (実在市区町村名の一覧); omit to skip")
+	municipalitiesOutput := flag.String("municipalities-output", "", "output path for municipalities.txt (実在市区町村名の一覧、-ken-all-input が必須); omit to skip")
 	flag.Parse()
 
-	if *input == "" || (*output == "" && *municipalitiesOutput == "") || flag.NArg() != 0 {
+	if (*kenAllInput == "" && *jigyosyoInput == "") || (*output == "" && *municipalitiesOutput == "") || flag.NArg() != 0 {
 		flag.Usage()
 		os.Exit(2)
 	}
+	if *municipalitiesOutput != "" && *kenAllInput == "" {
+		fmt.Fprintln(os.Stderr, "error: -municipalities-output requires -ken-all-input")
+		os.Exit(2)
+	}
 
-	if err := generate(*input, *output, *municipalitiesOutput); err != nil {
+	if err := generate(*kenAllInput, *jigyosyoInput, *output, *municipalitiesOutput); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-// generatePostal は郵便番号ビットセットだけを生成する（既存呼び出し元・テスト互換用の薄いラッパー）。
-func generatePostal(inputPath, bitsetPath string) error {
-	return generate(inputPath, bitsetPath, "")
-}
-
-// generateMunicipalities は市区町村名辞書だけを生成する。
-func generateMunicipalities(inputPath, municipalitiesPath string) error {
-	return generate(inputPath, "", municipalitiesPath)
-}
-
-// generate は入力 CSV/zip を 1 パスで読み、要求された成果物（ビットセット・
-// 市区町村名辞書）を生成する。同じ入力を 2 回読まずに済ませるため 1 関数にまとめている。
-func generate(inputPath, bitsetPath, municipalitiesPath string) error {
-	codes := map[uint32]struct{}{}
-	munis := map[string]struct{}{}
-
-	handle := func(record []string) error {
-		if len(record) < 8 {
-			return nil
-		}
-		if bitsetPath != "" {
-			if postalCode := strings.TrimSpace(record[2]); isSevenDigitPostalCode(postalCode) {
-				codes[dict.PostalCodeIndex(postalCode)] = struct{}{}
-			}
-		}
-		if municipalitiesPath != "" {
-			addMunicipalityVariants(munis, record[7])
-		}
-		return nil
-	}
-
-	if strings.EqualFold(filepath.Ext(inputPath), ".zip") {
-		if err := readZip(inputPath, handle); err != nil {
-			return err
-		}
-	} else {
-		if err := readCSVFile(inputPath, handle); err != nil {
-			return err
-		}
-	}
-
+// generate は要求された成果物（郵便番号ビットセット・市区町村名辞書）を生成する。
+// ビットセットは ken-all / jigyosyo 双方から、市区町村名辞書は ken-all のみから作る。
+func generate(kenAllPath, jigyosyoPath, bitsetPath, municipalitiesPath string) error {
 	if bitsetPath != "" {
-		if len(codes) == 0 {
-			return fmt.Errorf("no postal codes found in %s", inputPath)
-		}
-		if err := writeBitset(bitsetPath, codes); err != nil {
+		if err := generatePostal(kenAllPath, jigyosyoPath, bitsetPath); err != nil {
 			return err
 		}
-		// 件数を出力する（ワークフローのサニティチェックと運用ログ用）。
-		fmt.Printf("postal codes: %d\n", len(codes))
 	}
 	if municipalitiesPath != "" {
-		if len(munis) == 0 {
-			return fmt.Errorf("no municipalities found in %s", inputPath)
-		}
-		if err := writeMunicipalities(municipalitiesPath, munis); err != nil {
+		if err := generateMunicipalities(kenAllPath, municipalitiesPath); err != nil {
 			return err
 		}
-		fmt.Printf("municipalities: %d\n", len(munis))
 	}
+	return nil
+}
+
+func generatePostal(kenAllPath, jigyosyoPath, bitsetPath string) error {
+	codes := map[uint32]struct{}{}
+	if kenAllPath != "" {
+		if err := readInput(kenAllPath, kenAllPostalColumn, nil, codes); err != nil {
+			return fmt.Errorf("ken-all input: %w", err)
+		}
+	}
+	if jigyosyoPath != "" {
+		if err := readInput(jigyosyoPath, jigyosyoPostalColumn, shiftJISReader, codes); err != nil {
+			return fmt.Errorf("jigyosyo input: %w", err)
+		}
+	}
+	if len(codes) == 0 {
+		return fmt.Errorf("no postal codes found in %s / %s", kenAllPath, jigyosyoPath)
+	}
+
+	if err := writeBitset(bitsetPath, codes); err != nil {
+		return err
+	}
+	// 件数を出力する（ワークフローのサニティチェックと運用ログ用）。
+	fmt.Printf("postal codes: %d\n", len(codes))
+	return nil
+}
+
+// generateMunicipalities は KEN_ALL 入力だけから市区町村名辞書を生成する
+// （jigyosyo データは市区町村名の列を持たないため対象外）。
+func generateMunicipalities(kenAllPath, municipalitiesPath string) error {
+	munis := map[string]struct{}{}
+	handle := func(record []string) error {
+		if len(record) <= kenAllMunicipalityColumn {
+			return nil
+		}
+		addMunicipalityVariants(munis, record[kenAllMunicipalityColumn])
+		return nil
+	}
+	if err := forEachRecord(kenAllPath, handle); err != nil {
+		return fmt.Errorf("ken-all input: %w", err)
+	}
+	if len(munis) == 0 {
+		return fmt.Errorf("no municipalities found in %s", kenAllPath)
+	}
+
+	if err := writeMunicipalities(municipalitiesPath, munis); err != nil {
+		return err
+	}
+	fmt.Printf("municipalities: %d\n", len(munis))
 	return nil
 }
 
@@ -169,7 +200,7 @@ func writeMunicipalities(path string, munis map[string]struct{}) error {
 	var b strings.Builder
 	b.WriteString("# 日本郵便 KEN_ALL（住所の郵便番号 UTF-8 版）由来の市区町村名一覧。\n")
 	b.WriteString("# dict.MunicipalitySuffixMatch（jp-address-high-recall の Validate）が使う。\n")
-	b.WriteString("# 生成: go run ./internal/dict/gen -input utf_ken_all.zip -output internal/dict/postal_codes.bitset -municipalities-output internal/dict/municipalities.txt\n")
+	b.WriteString("# 生成: go run ./internal/dict/gen -ken-all-input utf_ken_all.zip -output internal/dict/postal_codes.bitset -municipalities-output internal/dict/municipalities.txt\n")
 	b.WriteString("# 配布元: https://www.post.japanpost.jp/zipcode/dl/utf-zip.html\n")
 	for _, m := range names {
 		b.WriteString(m)
@@ -182,9 +213,26 @@ func writeMunicipalities(path string, munis map[string]struct{}) error {
 	return os.WriteFile(path, []byte(b.String()), 0o644)
 }
 
-type recordHandler func(record []string) error
+// decoderFunc は CSV としてパースする前に入力ストリームを変換する（例: Shift_JIS →
+// UTF-8）。nil の場合は無変換（入力は既に UTF-8 / ASCII）。
+type decoderFunc func(io.Reader) io.Reader
 
-func readZip(path string, handle recordHandler) error {
+// shiftJISReader は r を Shift_JIS とみなして UTF-8 にデコードするラッパー。
+// 事業所個別郵便番号データの配布フォーマット（Shift_JIS）向け。数字の郵便番号列
+// しか使わない場合でも、クォート内の非 ASCII バイトを ASCII 前提の csv.Reader に
+// そのまま渡すと誤ってフィールド区切りを壊しうるため、先にデコードする。
+func shiftJISReader(r io.Reader) io.Reader {
+	return transform.NewReader(r, japanese.ShiftJIS.NewDecoder())
+}
+
+func readInput(path string, postalColumn int, decode decoderFunc, codes map[uint32]struct{}) error {
+	if strings.EqualFold(filepath.Ext(path), ".zip") {
+		return readZip(path, postalColumn, decode, codes)
+	}
+	return readCSVFile(path, postalColumn, decode, codes)
+}
+
+func readZip(path string, postalColumn int, decode decoderFunc, codes map[uint32]struct{}) error {
 	zr, err := zip.OpenReader(path)
 	if err != nil {
 		return err
@@ -201,7 +249,11 @@ func readZip(path string, handle recordHandler) error {
 		if err != nil {
 			return err
 		}
-		err = readCSV(file.Name, rc, handle)
+		var r io.Reader = rc
+		if decode != nil {
+			r = decode(r)
+		}
+		err = readCSV(file.Name, r, postalColumn, codes)
 		closeErr := rc.Close()
 		if err != nil {
 			return err
@@ -216,16 +268,101 @@ func readZip(path string, handle recordHandler) error {
 	return nil
 }
 
-func readCSVFile(path string, handle recordHandler) error {
+func readCSVFile(path string, postalColumn int, decode decoderFunc, codes map[uint32]struct{}) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	return readCSV(path, f, handle)
+	var r io.Reader = f
+	if decode != nil {
+		r = decode(r)
+	}
+	return readCSV(path, r, postalColumn, codes)
 }
 
-func readCSV(name string, r io.Reader, handle recordHandler) error {
+func readCSV(name string, r io.Reader, postalColumn int, codes map[uint32]struct{}) error {
+	cr := csv.NewReader(r)
+	cr.FieldsPerRecord = -1
+	cr.ReuseRecord = true
+
+	for {
+		record, err := cr.Read()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+		// 郵便番号列を持たない行（想定外フォーマットや列インデックスの取り違え）は
+		// スキップする。全体が空になれば呼び出し側の「no postal codes」で検出される。
+		if len(record) <= postalColumn {
+			continue
+		}
+		postalCode := strings.TrimSpace(record[postalColumn])
+		if !isSevenDigitPostalCode(postalCode) {
+			continue
+		}
+		codes[dict.PostalCodeIndex(postalCode)] = struct{}{}
+	}
+}
+
+// recordHandler は市区町村名辞書生成用の、CSV レコード単位のコールバック。郵便番号
+// ビットセット生成（列インデックス固定・複数入力マージ）とは別の読み取りパスとして
+// 独立させている。市区町村名は ken-all-input からしか作らないため、こちらは単一入力
+// のみを対象とする。
+type recordHandler func(record []string) error
+
+// forEachRecord は path（CSV または zip）の各レコードを handle に渡す。
+func forEachRecord(path string, handle recordHandler) error {
+	if strings.EqualFold(filepath.Ext(path), ".zip") {
+		return forEachRecordInZip(path, handle)
+	}
+	return forEachRecordInCSVFile(path, handle)
+}
+
+func forEachRecordInZip(path string, handle recordHandler) error {
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		return err
+	}
+	defer zr.Close()
+
+	foundCSV := false
+	for _, file := range zr.File {
+		if file.FileInfo().IsDir() || !strings.EqualFold(filepath.Ext(file.Name), ".csv") {
+			continue
+		}
+		foundCSV = true
+		rc, err := file.Open()
+		if err != nil {
+			return err
+		}
+		err = forEachRecordInReader(file.Name, rc, handle)
+		closeErr := rc.Close()
+		if err != nil {
+			return err
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	}
+	if !foundCSV {
+		return fmt.Errorf("zip has no csv entries: %s", path)
+	}
+	return nil
+}
+
+func forEachRecordInCSVFile(path string, handle recordHandler) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return forEachRecordInReader(path, f, handle)
+}
+
+func forEachRecordInReader(name string, r io.Reader, handle recordHandler) error {
 	cr := csv.NewReader(r)
 	cr.FieldsPerRecord = -1
 	cr.ReuseRecord = true

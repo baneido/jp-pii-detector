@@ -144,7 +144,7 @@ var (
 	personNameSep = `["']?\s*[:=]\s*["'「『（(]?\s*`
 	// personNameValue は氏名の値（漢字・かな・カナ列。任意で半角スペース
 	// 区切りの 2 語）。強いラベル用に 2 文字以上を要求する。
-	// 既知の軽微な限界: `氏名: 山田 様` のように値の後に敬称が続くと、敬称まで
+	// 既知の軽微な限界: ラベル値の後に「様」等の敬称が続くと（例: 山田 様）、敬称まで
 	// マスク対象に含まれうる（検出の成否・評価には影響しない表示上の過剰取り込み）。
 	personNameValue = `[` + kanji + hiragana + katakana + `]{2,12}` +
 		`(?:[ ][` + kanji + hiragana + katakana + `]{1,12})?`
@@ -152,6 +152,36 @@ var (
 	// 捕捉し、長さ・人名らしさの最終判断は validSurnameField 等の検証器に委ねる。
 	personNameValueShort = `[` + kanji + hiragana + katakana + `]{1,12}` +
 		`(?:[ ][` + kanji + hiragana + katakana + `]{1,12})?`
+)
+
+// person-name ルールの一部パターンは、辞書検証ありの Medium 判定と辞書照合
+// なしの Low 判定を同一正規表現の 2 枚組（twin）で持つ。twin 間で正規表現
+// オブジェクトを共有し、二重コンパイルを避けるためパッケージ変数として
+// 定義する。
+var (
+	// personNameStrongLabelRe は強いラベル（氏名系日本語ラベル / full_name 等）
+	// 用パターン。
+	personNameStrongLabelRe = regexp.MustCompile(
+		personNameBoundary +
+			`(?:` + personNameLabelJP + `|` + personNameLabelASCIIStrong + `)` +
+			personNameSep +
+			`(` + personNameValue + `)`,
+	)
+	// personNameUserNameRe は姓名どちらが入るか不定の ASCII キー
+	// （user_name / account_name / contact_name）用パターン。
+	personNameUserNameRe = regexp.MustCompile(
+		personNameBoundary +
+			`(?:user_?name|account_?name|contact_?name)` +
+			personNameSep +
+			`(` + personNameValueShort + `)`,
+	)
+	// personNameBareRe は裸の name ラベル用パターン。
+	personNameBareRe = regexp.MustCompile(
+		personNameBareNameBoundary +
+			`name` +
+			personNameSep +
+			`(` + personNameValueShort + `)`,
+	)
 )
 
 // personNamePlaceholders は氏名の値として現れるダミー語（人名ではない）。
@@ -195,6 +225,45 @@ func notOrgName(v string) bool {
 		}
 	}
 	return true
+}
+
+// personNameRoleSuffixes は職業・役割・部署を表す語尾。敬称パターンの実測 FP
+// である 本屋さん・運転手さん（職業）、取引先様・関係者様・保護者様・御中様
+// （役割語）、経理部殿・総務課殿（部署）を棄却するために使う。単漢字の語尾
+// （屋・部・課 等）は姓（阿部・服部・土屋・北条 等）と衝突するため、
+// honorificPersonNameValid は辞書照合（dict.IsPersonName）を先に評価する順序で
+// この denylist を適用し、辞書収録済みの衝突姓を巻き添えにしない。
+var personNameRoleSuffixes = []string{
+	"者", "員", "手", "屋", "師", "士", "長", "生", "部", "課", "係", "室", "先", "中",
+}
+
+// notRoleWord は氏名候補 v が職業・役割・部署の語尾（personNameRoleSuffixes）で
+// 終わらないことを返す。
+func notRoleWord(v string) bool {
+	v = strings.TrimSpace(v)
+	for _, s := range personNameRoleSuffixes {
+		if strings.HasSuffix(v, s) {
+			return false
+		}
+	}
+	return true
+}
+
+// honorificPersonNameValid は敬称（様/さん/氏/殿）付き漢字氏名候補 v の検証器。
+// 組織名の語尾（notOrgName）は常に棄却する。姓名辞書（dict.IsPersonName）に
+// 一致すれば単漢字語尾の姓（阿部・土屋 等）でも許可し、辞書に無い値だけを
+// 職業・役割・部署語尾（notRoleWord）で追加検証する。この評価順序により、
+// 辞書未収録の実在人名（denylist 非該当）は引き続き Medium で検出される
+// （detect_test.go の「敬称 + 辞書外の姓」ケースを参照）。
+func honorificPersonNameValid(v string) bool {
+	v = strings.TrimSpace(v)
+	if !notOrgName(v) {
+		return false
+	}
+	if dict.IsPersonName(v) {
+		return true
+	}
+	return notRoleWord(v)
 }
 
 // 弱いラベル（姓・名・last_name 等）の値検証。1 文字の単独要素は日常語と
@@ -473,51 +542,49 @@ func Builtin() []Rule {
 			Validate: notPlaceholderName,
 			Patterns: []Pattern{
 				// 強いラベル: 氏名系の日本語ラベルと、語そのものが「人」を表す
-				// 複合 ASCII キー（full_name / customer_name 等）。値が人名らしいかは
-				// 問わず（収録外の人名も拾うため）辞書照合はしない。前方境界
+				// 複合 ASCII キー（full_name / customer_name 等）。前方境界
 				// personNameBoundary で漢字・かな直後（登録名前: 等）を除外する。
 				// JSON/YAML のキー引用符（"氏名":）と値の引用符・括弧にも対応。
-				{Re: regexp.MustCompile(
-					personNameBoundary +
-						`(?:` + personNameLabelJP + `|` + personNameLabelASCIIStrong + `)` +
-						personNameSep +
-						`(` + personNameValue + `)`,
-				), Base: Low},
-				// 弱いラベル: 姓側（姓・名字・苗字・last_name）。単独要素は 2 文字以上の
-				// 姓、または姓+名に分割できる氏名のみ許可する（validSurnameField）。
+				// 同一正規表現の 2 枚組（twin）: 値が姓名辞書に一致すれば Medium
+				// （既定 min_confidence=medium で報告）、一致しない収録外の実在
+				// 人名は Low のまま拾う。resolveOverlaps が同一スパンで信頼度の
+				// 高い Medium を残す。
+				{Re: personNameStrongLabelRe, Base: Medium, Validate: dict.IsPersonName},
+				{Re: personNameStrongLabelRe, Base: Low},
+				// 弱いラベル: 姓側（姓・名字・苗字・last_name）。validSurnameField が
+				// 姓名辞書で検証済み（単独要素は 2 文字以上の姓、または姓+名に
+				// 分割できる氏名のみ許可）のため、Base は Medium。
 				{Re: regexp.MustCompile(
 					personNameBoundary +
 						`(?:姓|名字|苗字|last_?name)` +
 						personNameSep +
 						`(` + personNameValueShort + `)`,
-				), Base: Low, Validate: validSurnameField},
-				// 弱いラベル: 名側（名・first_name）。単独要素は 2 文字以上の名、
-				// または姓+名に分割できる氏名のみ許可する（validGivenField）。
-				// 1 文字名（学・実 等）と姓（名: 田中）は棄却される。
+				), Base: Medium, Validate: validSurnameField},
+				// 弱いラベル: 名側（名・first_name）。validGivenField が姓名辞書で
+				// 検証済み（単独要素は 2 文字以上の名、または姓+名に分割できる
+				// 氏名のみ許可。1 文字名（学・実 等）と姓（名: 田中）は棄却）
+				// のため、Base は Medium。
 				{Re: regexp.MustCompile(
 					personNameBoundary +
 						`(?:名|first_?name)` +
 						personNameSep +
 						`(` + personNameValueShort + `)`,
-				), Base: Low, Validate: validGivenField},
+				), Base: Medium, Validate: validGivenField},
 				// 弱いラベル: 姓名どちらが入るか不定の ASCII キー
 				// （user_name / account_name / contact_name）。ハンドル名・システム名
-				// （管理者・共有アカウント 等）を姓名辞書で棄却する。
-				{Re: regexp.MustCompile(
-					personNameBoundary +
-						`(?:user_?name|account_?name|contact_?name)` +
-						personNameSep +
-						`(` + personNameValueShort + `)`,
-				), Base: Low, Validate: validFullNameField},
+				// （管理者・共有アカウント 等）は姓名辞書で棄却する。同一正規表現の
+				// 2 枚組: 姓+名に分割できる値のみ Medium（dict.SplitsAsFullName）。
+				// name フィールドの値が単独の姓（大和 等、地名・一般名詞と同形になり
+				// やすい）のみの場合は Low のまま昇格させない。
+				{Re: personNameUserNameRe, Base: Medium, Validate: dict.SplitsAsFullName},
+				{Re: personNameUserNameRe, Base: Low, Validate: validFullNameField},
 				// 裸の name ラベル。kebab-case / dotted key（project-name /
 				// project.name 等）の末尾 name を誤検出しないよう前方境界で `-` `.`
 				// も禁止し、値は姓名辞書で検証する（name: 株式会社 等を棄却）。
-				{Re: regexp.MustCompile(
-					personNameBareNameBoundary +
-						`name` +
-						personNameSep +
-						`(` + personNameValueShort + `)`,
-				), Base: Low, Validate: validFullNameField},
+				// user_name 系と同様、姓+名に分割できる値のみ Medium とし、
+				// 値が単独の姓（大和 等）のみの場合は Low のまま昇格させない。
+				{Re: personNameBareRe, Base: Medium, Validate: dict.SplitsAsFullName},
+				{Re: personNameBareRe, Base: Low, Validate: validFullNameField},
 			},
 		},
 		{
@@ -534,13 +601,29 @@ func Builtin() []Rule {
 					`(?:担当|担当者|宛名|連絡先)` + personNameSep +
 						`([` + kanji + `]{2,8}(?:[ ][` + kanji + `]{1,8})?)`,
 				), Base: Medium, Validate: dict.IsPersonName},
-				// 敬称アンカー（様/さん/氏/殿）。敬称は人物を強く示すため、辞書 allowlist
-				// ではなく組織語尾の denylist（notOrgName）で「田中商事様」等を棄却する。
-				// これにより辞書未収録の実在人名（桐谷太郎様 等）を巻き添えで落とさない。
+				// 敬称アンカー（氏名の漢字表記 + 様/さん/氏/殿）。組織語尾
+				// （notOrgName）は常に棄却し、辞書一致（dict.IsPersonName）を
+				// 優先しつつ、辞書に無い値は職業・役割・部署の語尾 denylist
+				// （notRoleWord）でも検証する（honorificPersonNameValid）。
+				// これにより辞書未収録の実在人名（denylist 非該当）は Medium の
+				// まま検出しつつ、職業語・役割語・部署語を伴う実測 FP を追加で
+				// 棄却する。
 				{Re: regexp.MustCompile(
 					`(?:^|[^` + kanji + hiragana + katakana + `])` +
 						`([` + kanji + `]{2,8})(?:様|さん|氏|殿)`,
-				), Base: Medium, Validate: notOrgName},
+				), Base: Medium, Validate: honorificPersonNameValid},
+				// 敬称アンカー（ひらがな・カタカナの氏名 + 様/さん/氏/殿）。この
+				// 文字種には notRoleWord のような語尾 denylist が効かないほど
+				// 日常語との衝突が多いため、辞書一致必須の allowlist 方式
+				// （dict.IsPersonName）で検証する。辞書収録済みのひらがな名
+				// （例: さくら）は敬称付きでも検出され、日常語（例: たくさん・
+				// みなさん）は辞書不在で棄却される。カタカナ人名は辞書未収録の
+				// ため、外来語名の敬称付き表記はこのパターンでは解消しない
+				// （辞書拡充は別課題として切り離す）。
+				{Re: regexp.MustCompile(
+					`(?:^|[^` + kanji + hiragana + katakana + `])` +
+						`([` + hiragana + katakana + `]{2,8})(?:様|さん|氏|殿)`,
+				), Base: Medium, Validate: dict.IsPersonName},
 			},
 		},
 		{
