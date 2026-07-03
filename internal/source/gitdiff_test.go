@@ -398,3 +398,77 @@ func TestScanDiffInvalidRange(t *testing.T) {
 		t.Error("expected error for invalid range")
 	}
 }
+
+// diff.mnemonicPrefix=true（ユーザー/CI の gitconfig でよく使われる設定）が
+// 立っていると、旧実装は "+++ i/path" と出力され TrimPrefix(file, "b/") が
+// 効かず、報告パスに "i/" が残って allowlist.paths（^testdata/ 等）が
+// マッチしなくなっていた。--src-prefix=a/ --dst-prefix=b/ を明示することで
+// gitconfig に関わらず接頭辞を固定する。
+func TestScanStagedMnemonicPrefixIgnored(t *testing.T) {
+	repo := initTestRepo(t)
+	git(t, "config", "diff.mnemonicPrefix", "true")
+
+	if err := os.MkdirAll(filepath.Join(repo, "testdata"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "testdata", "fixture.txt"), []byte("口座番号: 1234567\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "main.txt"), []byte("口座番号: 7654321\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, "add", ".")
+
+	cfg, err := config.Parse("[allowlist]\npaths = [\"^testdata/\"]\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, err := ScanStaged(d, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 || findings[0].File != "main.txt" {
+		t.Fatalf("findings = %+v, want main.txt の 1 件のみ（diff.mnemonicPrefix=true でも "+
+			"allowlist(^testdata/) が効き、報告パスに i/ 接頭辞が残らない）", findings)
+	}
+}
+
+// git リポジトリでないディレクトリで --staged / --diff を実行した場合、
+// パニックせずエラーを返すこと。
+func TestScanDiffNonGitDirectory(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	t.Chdir(t.TempDir())
+
+	cfg := config.Default()
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ScanStaged(d, cfg); err == nil {
+		t.Error("expected error for --staged in a non-git directory")
+	}
+	if _, err := ScanDiff(d, cfg, "HEAD~1...HEAD"); err == nil {
+		t.Error("expected error for --diff in a non-git directory")
+	}
+}
+
+// git バイナリが見つからない環境でもパニックせずエラーを返すこと。
+func TestScanStagedMissingGitBinary(t *testing.T) {
+	initTestRepo(t) // git が使える環境であることを確認してから PATH を壊す。
+	t.Setenv("PATH", "")
+
+	cfg := config.Default()
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ScanStaged(d, cfg); err == nil {
+		t.Error("expected error when git binary is unavailable")
+	}
+}

@@ -7,10 +7,11 @@ import (
 )
 
 // このファイルは internal/rule のヘルパー関数（validPhone / validEmail /
-// stripSeparators / containsASCIIAlnum）の「現状の振る舞い」を固定する
-// 安全網テスト。値は internal/detect/detect_test.go と
-// internal/eval/dataset.go の既存ケースから採っており、新しい仕様は
-// 発明していない。ルール本体をいじる前のリグレッション検知を目的とする。
+// stripSeparators / containsASCIIAlnum / notOrgName / notRoleWord /
+// honorificPersonNameValid）の「現状の振る舞い」を固定する安全網テスト。
+// 値は internal/detect/detect_test.go と internal/eval/dataset.go の既存
+// ケースから採っており、新しい仕様は発明していない。ルール本体をいじる前の
+// リグレッション検知を目的とする。
 
 // validPhone はマッチ文字列を受け取り、区切り文字（- / 半角スペース）や先頭の "+" を除去した上で、
 // 桁数・先頭桁・国番号（+81）規則を満たす電話番号だけを有効とする。
@@ -160,6 +161,93 @@ func TestStripSeparators(t *testing.T) {
 		t.Run(tt.in, func(t *testing.T) {
 			if got := stripSeparators(tt.in); got != tt.want {
 				t.Errorf("stripSeparators(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// notOrgName は氏名候補が組織・団体名の語尾（personNameOrgSuffixes）で
+// 終わらないことを検証する。値は特定個人を識別しない一般的な組織名・
+// 頻出姓のためリテラルで安全。
+func TestNotOrgName(t *testing.T) {
+	tests := []struct {
+		in   string
+		want bool
+	}{
+		{"田中商事", false},
+		{"山田工業株式会社", false},
+		{"田中", true},
+		{"土屋", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			if got := notOrgName(tt.in); got != tt.want {
+				t.Errorf("notOrgName(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// notRoleWord は氏名候補が職業・役割・部署の語尾（personNameRoleSuffixes）で
+// 終わらないことを検証する。実測 FP（本屋・運転手・取引先・関係者・保護者・
+// 経理部・総務課・御中）と、衝突しない一般的な姓の双方を確認する。
+func TestNotRoleWord(t *testing.T) {
+	tests := []struct {
+		name, in string
+		want     bool
+	}{
+		{"本屋", "本屋", false},
+		{"運転手", "運転手", false},
+		{"取引先", "取引先", false},
+		{"関係者", "関係者", false},
+		{"保護者", "保護者", false},
+		{"経理部", "経理部", false},
+		{"総務課", "総務課", false},
+		{"御中", "御中", false},
+		{"係長", "係長", false},
+		{"研修室", "研修室", false},
+		{"桐谷太郎", "桐谷太郎", true},
+		// 注: 田中・土屋 等の単漢字語尾姓は notRoleWord 単体では denylist に
+		// 該当し false になる（田中は "中"、土屋は "屋" と衝突する）。この衝突は
+		// honorificPersonNameValid が dict.IsPersonName を先に評価することで
+		// 救済する（TestHonorificPersonNameValid 参照）。notRoleWord 単体の
+		// 責務は denylist 照合のみであり、辞書一致による救済は行わない。
+		{"単漢字語尾姓は denylist 単体では該当（辞書救済は上位で行う）", "田中", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := notRoleWord(tt.in); got != tt.want {
+				t.Errorf("notRoleWord(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// honorificPersonNameValid は敬称付き氏名候補の検証器。組織語尾は常に棄却し、
+// 姓名辞書一致（dict.IsPersonName）を職業・役割・部署 denylist（notRoleWord）
+// より優先して評価するため、単漢字語尾と衝突する実在姓（阿部・服部・土屋・
+// 北条 等）は denylist の巻き添えにならない。値はいずれも実在頻出姓・一般的な
+// 組織/役割語で、単独では特定個人を識別しないためリテラルで安全。
+func TestHonorificPersonNameValid(t *testing.T) {
+	tests := []struct {
+		name, in string
+		want     bool
+	}{
+		{"辞書収録の衝突姓（屋）", "土屋", true},
+		{"辞書収録の衝突姓（部）", "阿部", true},
+		{"辞書収録の衝突姓（部）その2", "服部", true},
+		{"辞書収録の衝突姓（条+氏族語尾ではない）", "北条", true},
+		{"辞書外の実在人名は denylist 非該当なら許可", "桐谷太郎", true},
+		{"組織名は常に棄却", "田中商事", false},
+		{"株式会社は常に棄却", "山田工業株式会社", false},
+		{"辞書外かつ職業語尾は棄却", "本屋", false},
+		{"辞書外かつ役割語尾は棄却", "取引先", false},
+		{"辞書外かつ部署語尾は棄却", "経理部", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := honorificPersonNameValid(tt.in); got != tt.want {
+				t.Errorf("honorificPersonNameValid(%q) = %v, want %v", tt.in, got, tt.want)
 			}
 		})
 	}
