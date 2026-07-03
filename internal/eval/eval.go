@@ -184,7 +184,7 @@ func EvaluateCasesStratifiedWithOptions(cases []Case, opts Options) (Stratified,
 					s.RuleID, caseLabel(c), s.Line, s.Start, s.End)
 			}
 			if s.WantConfidence != "" && !validConfidence(s.WantConfidence) {
-				return nil, fmt.Errorf("invalid want_confidence %q for %s in case %q: want low, medium, or high",
+				return Stratified{}, fmt.Errorf("invalid want_confidence %q for %s in case %q: want low, medium, or high",
 					s.WantConfidence, s.RuleID, caseLabel(c))
 			}
 			want[s.RuleID] = true
