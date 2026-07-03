@@ -39,13 +39,12 @@ var wantF1 = map[string]float64{
 // 評価データセットに対する実測値）。低評価データセットに対する既定プロファイル
 // （--high-recall 無効）の体感精度をバッジ計測と別に可視化するためのゴールデン値。
 //
-// person-name（internal/rule/builtin.go）は全パターンが Base: Low で、かつ
-// ルールレベルの Context が未設定のため、internal/detect/detect.go の昇格処理
-// （!p.RequireContext && conf < High の場合のみ Context 一致で High へ直接昇格。
-// 中間の Medium 昇格経路は無い）が働かず、常に Low のまま min_confidence=medium
-// のフィルタ（conf < d.minConf を除外）で全滅する。既定設定（cli の
-// min_confidence=medium）では person-name が事実上 1 件も報告されないことを、
-// このゴールデン値でそのまま可視化する。
+// person-name（internal/rule/builtin.go）は、辞書検証済みマッチ（強ラベル+
+// 姓名辞書一致等の twin パターン）が Base: Medium で報告されるため、既定設定
+// （cli の min_confidence=medium）でも辞書検証済みの検出は残る（issue #44）。
+// 辞書検証を伴わないフォールバックパターンは Base: Low のままフィルタで
+// 除外されるため、low プロファイル（1.00）より F1 が下がる。この差分を
+// ゴールデン値でそのまま可視化する。
 //
 // 他の 13 ルールは、低プロファイル（wantF1）で TP になっている検出のパターン
 // Base がいずれも Medium 以上（RequireContext のパターンは昇格せず Base の
@@ -64,7 +63,7 @@ var wantF1Medium = map[string]float64{
 	"jp-residence-card":   1.00,
 	"jp-bank-account":     0.86,
 	"jp-health-insurance": 1.00,
-	"person-name":         0.00,
+	"person-name":         0.92,
 	"jp-birthdate":        1.00,
 }
 
