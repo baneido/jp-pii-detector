@@ -46,31 +46,96 @@ var wantF1 = map[string]float64{
 	"jp-birthdate":        1.00,
 }
 
+// wantF1Medium は CLI 既定の min_confidence=medium での期待 F1（wantF1 と同じ
+// 評価データセットに対する実測値）。低評価データセットに対する既定プロファイル
+// （--high-recall 無効）の体感精度をバッジ計測と別に可視化するためのゴールデン値。
+//
+// person-name（internal/rule/builtin.go）は、辞書検証済みマッチ（強ラベル+
+// 姓名辞書一致等の twin パターン）が Base: Medium で報告されるため、既定設定
+// （cli の min_confidence=medium）でも辞書検証済みの検出は残る（issue #44）。
+// 辞書検証を伴わないフォールバックパターンは Base: Low のままフィルタで
+// 除外されるため、low プロファイル（1.00）より F1 が下がる。この差分を
+// ゴールデン値でそのまま可視化する。
+//
+// 他の 13 ルールは、低プロファイル（wantF1）で TP になっている検出のパターン
+// Base がいずれも Medium 以上（RequireContext のパターンは昇格せず Base の
+// まま、それ以外は Context 一致で High へ昇格）であるため、medium 閾値でも
+// 除外されず low と同じ検出集合になる（wantF1 と同値）。
+var wantF1Medium = map[string]float64{
+	"jp-my-number":        1.00,
+	"jp-phone-number":     1.00,
+	"jp-postal-code":      1.00,
+	"jp-address":          0.89,
+	"email-address":       1.00,
+	"credit-card":         1.00,
+	"jp-drivers-license":  1.00,
+	"jp-passport":         1.00,
+	"jp-pension-number":   1.00,
+	"jp-residence-card":   1.00,
+	"jp-bank-account":     0.86,
+	"jp-health-insurance": 1.00,
+	"person-name":         0.92,
+	"jp-birthdate":        1.00,
+}
+
 // TestAccuracy は実測 F1 が期待値と一致することを検証する（CI の回帰ガード）。
-// バッジに掲げた精度をコードと評価データセットで裏付ける。
+// バッジに掲げた精度をコードと評価データセットで裏付ける。プロファイル別
+// （既定 CLI 相当の low バッジ用 / 既定 CLI の min_confidence=medium /
+// --high-recall）に並行評価し、既定設定で沈黙する検出（person-name 等）を
+// 公式数値として可視化する（issue #43）。
+//
+// low プロファイルは README バッジ・docs/accuracy.md の根拠でありゲート対象。
+// medium プロファイルは wantF1Medium でゲートする。high-recall プロファイルは
+// 対応する評価データセットのケース（jp-address-high-recall /
+// person-name-high-recall / person-name-structured）がまだ無いため、当面は
+// 計測・ログ出力のみでゲートしない（データセットにケースが揃ってから
+// wantF1HighRecall を追加してゲート化する）。
 func TestAccuracy(t *testing.T) {
 	piifixtures.Require(t)
-	results, err := Evaluate()
-	if err != nil {
-		t.Fatal(err)
+
+	profiles := []struct {
+		name string
+		opts Options
+		want map[string]float64 // nil/空なら計測・ログのみ（ゲートしない）
+	}{
+		{name: "low", opts: Options{MinConfidence: "low"}, want: wantF1},
+		{name: "medium", opts: Options{MinConfidence: "medium"}, want: wantF1Medium},
+		{name: "high-recall", opts: Options{MinConfidence: "low", HighRecall: true}, want: nil},
 	}
-	seen := map[string]bool{}
-	for _, r := range results {
-		seen[r.RuleID] = true
-		want, ok := wantF1[r.RuleID]
-		if !ok {
-			t.Errorf("ルール %q の期待 F1 が未登録（wantF1 に追加してください）", r.RuleID)
-			continue
-		}
-		if math.Abs(r.F1-want) > 0.005 {
-			t.Errorf("%s: F1 = %.3f, want %.2f（README バッジ・wantF1・docs/accuracy.md を更新してください）",
-				r.RuleID, r.F1, want)
-		}
-	}
-	for id := range wantF1 {
-		if !seen[id] {
-			t.Errorf("ルール %q が評価結果に存在しない", id)
-		}
+
+	for _, p := range profiles {
+		t.Run(p.name, func(t *testing.T) {
+			results, err := EvaluateWithOptions(p.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(p.want) == 0 {
+				for _, r := range results {
+					t.Logf("%-24s F1=%.3f P=%.3f R=%.3f TP=%d FP=%d FN=%d",
+						r.RuleID, r.F1, r.Precision, r.Recall, r.TP, r.FP, r.FN)
+				}
+				return
+			}
+			seen := map[string]bool{}
+			for _, r := range results {
+				seen[r.RuleID] = true
+				want, ok := p.want[r.RuleID]
+				if !ok {
+					t.Errorf("ルール %q の期待 F1 が未登録（プロファイル %s の want map に追加してください）",
+						r.RuleID, p.name)
+					continue
+				}
+				if math.Abs(r.F1-want) > 0.005 {
+					t.Errorf("%s [%s]: F1 = %.3f, want %.2f（README バッジ・wantF1・docs/accuracy.md を更新してください）",
+						r.RuleID, p.name, r.F1, want)
+				}
+			}
+			for id := range p.want {
+				if !seen[id] {
+					t.Errorf("ルール %q がプロファイル %s の評価結果に存在しない", id, p.name)
+				}
+			}
+		})
 	}
 }
 
@@ -306,6 +371,9 @@ func TestEvaluateCasesErrorsDoNotEchoInput(t *testing.T) {
 }
 
 func TestEvaluateCasesWithOptionsUsesMinConfidence(t *testing.T) {
+	// 「氏名: 山田太郎」は姓名辞書に一致する（山田=姓/太郎=名）ため、強いラベル
+	// パターンの Medium twin（personNameStrongLabelRe + dict.IsPersonName）が
+	// 発火し、既定 min_confidence=medium で報告される（issue #44）。
 	results, err := EvaluateCasesWithOptions([]Case{
 		{Line: "氏名: 山田太郎", Want: []string{"person-name"}},
 	}, Options{MinConfidence: "medium"})
@@ -314,8 +382,8 @@ func TestEvaluateCasesWithOptionsUsesMinConfidence(t *testing.T) {
 	}
 
 	r := findResult(t, results, "person-name")
-	if r.TP != 0 || r.FP != 0 || r.FN != 1 {
-		t.Fatalf("row counts = TP:%d FP:%d FN:%d, want low-confidence name to be below medium threshold",
+	if r.TP != 1 || r.FP != 0 || r.FN != 0 {
+		t.Fatalf("row counts = TP:%d FP:%d FN:%d, want dictionary-validated name to meet medium threshold",
 			r.TP, r.FP, r.FN)
 	}
 }
@@ -335,6 +403,164 @@ func TestEvaluateCasesWithOptionsEnablesHighRecallRules(t *testing.T) {
 	if r.TP != 1 || r.FP != 0 || r.FN != 0 {
 		t.Fatalf("row counts = TP:%d FP:%d FN:%d, want high-recall structured name to be evaluated",
 			r.TP, r.FP, r.FN)
+	}
+}
+
+func TestEvaluateCasesCountsNegativeCases(t *testing.T) {
+	results, err := EvaluateCases([]Case{
+		{Content: "memo: nothing sensitive on this line"},              // 陰性ケース（Want/Spans なし）
+		{Content: "another clean memo", File: "clean.txt"},             // 陰性ケース
+		{Line: "連絡先: taro@gmail.com", Want: []string{"email-address"}}, // 陽性ケース
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := findResult(t, results, "email-address")
+	if r.Negatives != 2 {
+		t.Fatalf("Negatives = %d, want 2（Want/Spans が両方とも空のケース数）", r.Negatives)
+	}
+
+	// Negatives は全ルール共通の母数のため、Micro でも同じ値になる
+	// （ルール数倍に合算されないことを確認する）。
+	if m := Micro(results); m.Negatives != 2 {
+		t.Fatalf("Micro().Negatives = %d, want 2", m.Negatives)
+	}
+}
+
+func TestEvaluateCasesCountsFindingLevelFalsePositives(t *testing.T) {
+	results, err := EvaluateCases([]Case{
+		{
+			// 陰性ケース（Want なし）だが、email-address が 2 件誤検出される。
+			Content: "memo: taro@gmail.com and hanako@gmail.com are both examples",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := findResult(t, results, "email-address")
+	if r.FP != 1 {
+		t.Fatalf("row FP = %d, want 1（行レベルはケースにつき最大 1 件のまま）", r.FP)
+	}
+	if r.FindingFP != 2 {
+		t.Fatalf("FindingFP = %d, want 2（検出単位では同一ケース内の 2 件を反映する）", r.FindingFP)
+	}
+}
+
+func TestEvaluateCasesFindingLevelFalsePositivesExcludeWantedRules(t *testing.T) {
+	results, err := EvaluateCases([]Case{
+		{
+			Line: "連絡先: taro@gmail.com",
+			Want: []string{"email-address"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := findResult(t, results, "email-address")
+	if r.TP != 1 || r.FP != 0 {
+		t.Fatalf("row counts = TP:%d FP:%d, want TP:1 FP:0", r.TP, r.FP)
+	}
+	if r.FindingFP != 0 {
+		t.Fatalf("FindingFP = %d, want 0（期待どおりの検出は FindingFP に数えない）", r.FindingFP)
+	}
+}
+
+func TestEvaluateCasesFlagsConfidenceMissAgainstWantSpan(t *testing.T) {
+	// person-name は Base:Low のみで構成され、ルールレベルの Context も無いため
+	// Low から昇格できない（internal/rule/builtin.go）。WantConfidence: "high" を
+	// 満たさないことを ConfidenceMiss で検出できることを確認する。
+	results, err := EvaluateCases([]Case{
+		{
+			Line: "氏名: 山田太郎",
+			Spans: []Span{{
+				RuleID:         "person-name",
+				Start:          4,
+				End:            8,
+				WantConfidence: "high",
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := findResult(t, results, "person-name")
+	if r.TP != 1 {
+		t.Fatalf("row TP = %d, want 1（person-name は既定の min_confidence=low で検出される）", r.TP)
+	}
+	if r.SpanExact.TP != 1 {
+		t.Fatalf("SpanExact.TP = %d, want 1", r.SpanExact.TP)
+	}
+	if r.ConfidenceMiss != 1 {
+		t.Fatalf("ConfidenceMiss = %d, want 1（Base:Low のまま high へは昇格しない）", r.ConfidenceMiss)
+	}
+}
+
+func TestEvaluateCasesWantConfidenceSatisfiedDoesNotCountAsMiss(t *testing.T) {
+	results, err := EvaluateCases([]Case{
+		{
+			Line: "連絡先: taro@gmail.com",
+			Spans: []Span{{
+				RuleID:         "email-address",
+				Start:          5,
+				End:            19,
+				WantConfidence: "high",
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := findResult(t, results, "email-address")
+	if r.ConfidenceMiss != 0 {
+		t.Fatalf("ConfidenceMiss = %d, want 0（email-address は常に Base:High で検出される）", r.ConfidenceMiss)
+	}
+}
+
+func TestEvaluateCasesWantConfidenceOptionalWhenUnset(t *testing.T) {
+	// WantConfidence を指定しないスパン（既存データセット JSON との後方互換）は
+	// 信頼度チェックの対象外になる。
+	results, err := EvaluateCases([]Case{
+		{
+			Line: "氏名: 山田太郎",
+			Spans: []Span{{
+				RuleID: "person-name",
+				Start:  4,
+				End:    8,
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := findResult(t, results, "person-name")
+	if r.ConfidenceMiss != 0 {
+		t.Fatalf("ConfidenceMiss = %d, want 0（WantConfidence 未設定はチェック対象外）", r.ConfidenceMiss)
+	}
+}
+
+func TestEvaluateCasesRejectsUnknownWantConfidence(t *testing.T) {
+	_, err := EvaluateCases([]Case{
+		{
+			Line: "連絡先: taro@gmail.com",
+			Spans: []Span{{
+				RuleID:         "email-address",
+				Start:          5,
+				End:            19,
+				WantConfidence: "hgh",
+			}},
+		},
+	})
+	if err == nil {
+		t.Fatal("EvaluateCases accepted unknown want_confidence")
+	}
+	if !strings.Contains(err.Error(), "want_confidence") || !strings.Contains(err.Error(), "hgh") {
+		t.Fatalf("error = %q, want it to mention want_confidence and the invalid value", err)
 	}
 }
 

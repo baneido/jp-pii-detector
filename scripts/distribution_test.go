@@ -486,6 +486,23 @@ func isCommitSHA(ref string) bool {
 	return true
 }
 
+func TestReadmeDocumentsMiseInstall(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"### Option 2. mise",
+		"mise use -g github:baneido/jp-pii-detector@v0.1.8",
+		`"github:baneido/jp-pii-detector" = "v0.1.8"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("README should document mise installation; missing %q", want)
+		}
+	}
+}
+
 func TestReadmeDocumentsTagPinnedInstaller(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(repoRoot(t), "README.md"))
 	if err != nil {
