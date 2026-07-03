@@ -278,6 +278,50 @@ func TestRulesCommand(t *testing.T) {
 	}
 }
 
+// rules コマンドは --config を反映した実効ルール一覧（builtin + custom の合成後、
+// 無効化ルールを除いたもの）を表示する。
+func TestRulesCommandWithConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, ".jp-pii.toml")
+	cfgBody := `
+[rules]
+disabled = ["credit-card"]
+
+[[rules.custom]]
+id = "student-id"
+description = "学籍番号"
+pattern = 'S\d{8}'
+digit_boundary = true
+`
+	if err := os.WriteFile(cfgPath, []byte(cfgBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, code := run(t, dir, "rules", "--config", cfgPath)
+	if code != 0 {
+		t.Errorf("exit = %d, want 0:\n%s", code, out)
+	}
+	if strings.Contains(out, "credit-card") {
+		t.Errorf("rules output should not include disabled rule credit-card:\n%s", out)
+	}
+	if !strings.Contains(out, "student-id") {
+		t.Errorf("rules output missing custom rule student-id:\n%s", out)
+	}
+}
+
+// カスタムルールの正規表現コンパイル失敗は、rules コマンドでも
+// panic ではなく exit 2（設定エラー）として扱う。
+func TestRulesCommandInvalidCustomRule(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, ".jp-pii.toml")
+	cfgBody := "[[rules.custom]]\nid = \"bad\"\npattern = \"(\"\n"
+	if err := os.WriteFile(cfgPath, []byte(cfgBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, code := run(t, dir, "rules", "--config", cfgPath); code != 2 {
+		t.Errorf("exit = %d, want 2 for invalid custom rule regex", code)
+	}
+}
+
 func TestVersionCommand(t *testing.T) {
 	out, code := run(t, t.TempDir(), "version")
 	if code != 0 || strings.TrimSpace(out) == "" {

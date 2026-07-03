@@ -250,6 +250,50 @@ internal/
 - **テスト**: 検出と非検出の両方を [`internal/detect/detect_test.go`](../internal/detect/detect_test.go) に追加する。
   特に「隣接する複数件」「コンテキスト有無での信頼度」「長い数字列の一部は対象外」を確認すること。
 
+### コード変更なしでルールを追加する（`.jp-pii.toml` のカスタムルール）
+
+学籍番号・社員番号・診察券番号など、組織ごとに形式が異なる ID は builtin ルールでは
+原理的にカバーできません。`.jp-pii.toml` の `[[rules.custom]]` で、コードを変更せずに
+利用者定義の検出ルールを追加できます。
+
+例: 学籍番号（`S` + 8 桁数字、例 `S12345678`）を組織固有 ID として追加する。
+
+```toml
+[[rules.custom]]
+id = "student-id"                    # 必須。builtin ルールおよび他の custom ルールと重複不可
+description = "学籍番号"              # rules コマンド・検出結果に表示される説明
+pattern = 'S\d{8}'                   # Go の RE2 正規表現。TOML はリテラル文字列（'...'）が
+                                      # バックスラッシュをそのまま渡せて書きやすい
+context = ["学籍番号", "student_id"]  # 信頼度昇格・require_context 判定に使うキーワード
+negative_context = ["サンプル"]       # 近傍にあれば棄却する語（任意）
+require_context = true               # true ならキーワードが無い検出を破棄する
+require_context_window = 20          # require_context のキーワード探索をマッチ前後
+                                      # 20 ルーンに限定（0 または省略なら行全体）
+base_confidence = "high"             # low|medium|high。省略時は medium
+digit_boundary = true                # true なら builtin の dg() と同じ境界ガード
+                                      # `(?:^|[^0-9])(pattern)(?:[^0-9]|$)` で包み、
+                                      # より長い数字列の一部を誤検出しないようにする
+```
+
+ポイントと制約:
+
+- **境界ガード**: 数字エンティティは `digit_boundary = true` を使うと、builtin の `dg()` と
+  同じ規約でグループ 1 が検出対象になる。`false`（既定）の場合、パターン自身に
+  キャプチャグループがあればグループ 1、無ければマッチ全体を検出値として使う。
+- **id の重複はエラー**: builtin ルール ID や他の custom ルール ID と衝突する場合、
+  正規表現のコンパイルに失敗する場合はいずれも `.jp-pii.toml` のロード時にエラー
+  （exit code 2）になる。パニックはしない。
+- **Prefilter が効かない**: builtin ルールと異なり custom ルールには `Prefilter` の
+  最適化が無いため、行ごとに必ず正規表現を評価する。パターンが広すぎたり `.` を
+  多用するとスキャン性能が落ちうるので、可能な限り具体的なパターンにすること。
+- **精度は自動計測されない**: `internal/eval` は builtin ルールのみを対象にした
+  固定プロファイルで測っており、`.jp-pii.toml` の custom ルールは評価対象外
+  （README バッジ・`docs/accuracy.md` には影響しない）。誤検出の調整は
+  `negative_context` / `require_context` / `require_context_window` で行い、
+  実際の検出結果で確認すること。
+- `jp-pii-detect rules [--config <path>]` で、有効化されている builtin + custom の
+  実効ルール一覧（`rules.disabled` を反映済み）を確認できる。
+
 ### 埋め込み辞書の更新
 
 IANA TLD 一覧は公式の `https://data.iana.org/TLD/tlds-alpha-by-domain.txt` を

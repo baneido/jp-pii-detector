@@ -1259,3 +1259,119 @@ func TestComputeOffsetsOutOfRange(t *testing.T) {
 		})
 	}
 }
+
+// --- [[rules.custom]]（.jp-pii.toml の利用者定義ルール）---
+
+// TestCustomRuleDetectsMatch は digit_boundary 付きカスタムルールが
+// builtin ルールと同様に検出し、より長い数字列の一部は対象外になることを確認する。
+func TestCustomRuleDetectsMatch(t *testing.T) {
+	d := newDetector(t, `
+[[rules.custom]]
+id = "student-id"
+description = "学籍番号"
+pattern = 'S\d{8}'
+digit_boundary = true
+base_confidence = "high"
+`)
+	findings := d.ScanLine("f.go", 1, "学籍番号: S12345678")
+	assertRules(t, findings, "student-id")
+	if findings[0].Confidence != rule.High {
+		t.Errorf("Confidence = %v, want High", findings[0].Confidence)
+	}
+	if findings[0].Match != "S12345678" {
+		t.Errorf("Match = %q, want S12345678", findings[0].Match)
+	}
+	if findings[0].Description != "学籍番号" {
+		t.Errorf("Description = %q, want 学籍番号", findings[0].Description)
+	}
+
+	// 8 桁ちょうどではなく、より長い数字列の一部は対象外（digit_boundary の境界ガード）。
+	assertRules(t, d.ScanLine("f.go", 1, "S123456789"))
+}
+
+// TestCustomRuleWithoutDigitBoundaryUsesWholeMatch は digit_boundary を
+// 指定しない場合、パターンにキャプチャグループが無ければマッチ全体を検出値とすることを確認する。
+func TestCustomRuleWithoutDigitBoundaryUsesWholeMatch(t *testing.T) {
+	d := newDetector(t, `
+[[rules.custom]]
+id = "custom-token"
+description = "カスタムトークン"
+pattern = 'TOKEN-[A-Z0-9]{8}'
+base_confidence = "high"
+`)
+	findings := d.ScanLine("f.go", 1, "key=TOKEN-AB12CD34;")
+	assertRules(t, findings, "custom-token")
+	if findings[0].Match != "TOKEN-AB12CD34" {
+		t.Errorf("Match = %q, want TOKEN-AB12CD34", findings[0].Match)
+	}
+}
+
+// TestCustomRuleRequireContext は RequireContext がキーワード無しで検出を破棄し、
+// キーワードがあっても（builtin と同じ規約で）Base の信頼度のまま昇格しないことを確認する。
+func TestCustomRuleRequireContext(t *testing.T) {
+	d := newDetector(t, `
+[[rules.custom]]
+id = "staff-id"
+description = "社員番号"
+pattern = 'E\d{6}'
+digit_boundary = true
+context = ["社員番号"]
+require_context = true
+base_confidence = "medium"
+`)
+	assertRules(t, d.ScanLine("f.go", 1, "E123456")) // キーワード無し: 破棄
+
+	withCtx := d.ScanLine("f.go", 1, "社員番号: E123456")
+	assertRules(t, withCtx, "staff-id")
+	if withCtx[0].Confidence != rule.Medium {
+		t.Errorf("Confidence = %v, want Medium（RequireContext は昇格しない）", withCtx[0].Confidence)
+	}
+}
+
+// TestCustomRuleNegativeContext は近傍の否定文脈語が検出を棄却することを確認する。
+func TestCustomRuleNegativeContext(t *testing.T) {
+	d := newDetector(t, `
+[[rules.custom]]
+id = "ticket-id"
+description = "チケット番号"
+pattern = 'T\d{6}'
+digit_boundary = true
+negative_context = ["サンプル"]
+base_confidence = "medium"
+`)
+	assertRules(t, d.ScanLine("f.go", 1, "サンプル: T123456")) // 否定文脈: 棄却
+	assertRules(t, d.ScanLine("f.go", 1, "チケット番号: T123456"), "ticket-id")
+}
+
+// TestCustomRuleDisabledViaConfig は rules.disabled がカスタムルールにも
+// builtin ルールと同様に効くことを確認する。
+func TestCustomRuleDisabledViaConfig(t *testing.T) {
+	d := newDetector(t, `
+[rules]
+disabled = ["staff-id"]
+
+[[rules.custom]]
+id = "staff-id"
+description = "社員番号"
+pattern = 'E\d{6}'
+digit_boundary = true
+base_confidence = "high"
+`)
+	assertRules(t, d.ScanLine("f.go", 1, "E123456"))
+}
+
+// TestCustomRuleInvalidRegexIsConfigError はコンパイル不能な正規表現が
+// panic ではなく New() のエラーとして返ることを確認する（セキュリティ境界の回帰防止）。
+func TestCustomRuleInvalidRegexIsConfigError(t *testing.T) {
+	cfg, err := config.Parse(`
+[[rules.custom]]
+id = "bad"
+pattern = "("
+`)
+	if err == nil {
+		t.Fatal("config.Parse should reject an uncompilable custom rule pattern")
+	}
+	if cfg != nil {
+		t.Errorf("cfg = %v, want nil on error", cfg)
+	}
+}

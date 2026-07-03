@@ -12,7 +12,6 @@ import (
 	"github.com/baneido/jp-pii-detector/internal/config"
 	"github.com/baneido/jp-pii-detector/internal/detect"
 	"github.com/baneido/jp-pii-detector/internal/report"
-	"github.com/baneido/jp-pii-detector/internal/rule"
 	"github.com/baneido/jp-pii-detector/internal/source"
 )
 
@@ -70,7 +69,7 @@ Usage:
   jp-pii-detect scan --staged            git のステージ済み追加行を走査（pre-commit 用）
   jp-pii-detect scan --diff <range>      git diff の追加行を走査（例: origin/main...HEAD）
   jp-pii-detect scan --stdin             標準入力のテキスト 1 本を走査（外部連携用）
-  jp-pii-detect rules                    検出ルール一覧を表示
+  jp-pii-detect rules [--config <path>]  検出ルール一覧を表示（config 適用後の実効ルール。カスタムルールを含む）
   jp-pii-detect version                  バージョンを表示
 
 Scan flags:
@@ -99,7 +98,7 @@ func main() {
 	case "scan":
 		os.Exit(runScan(os.Args[2:]))
 	case "rules":
-		runRules()
+		os.Exit(runRules(os.Args[2:]))
 	case "version":
 		fmt.Println(resolveVersion())
 	case "help", "-h", "--help":
@@ -189,8 +188,25 @@ func runScan(args []string) int {
 	return 0
 }
 
-func runRules() {
-	for _, r := range rule.Builtin() {
+// runRules は --config を反映した実効ルール一覧（builtin + custom の合成後、
+// 無効化ルールを除いたもの）を表示する。detect.New と同じ合成ロジックを
+// 経由するため、scan コマンドが実際に使うルール集合と一致する。
+func runRules(args []string) int {
+	fs := flag.NewFlagSet("rules", flag.ExitOnError)
+	configPath := fs.String("config", "", "")
+	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		return fail(err)
+	}
+	det, err := detect.New(cfg)
+	if err != nil {
+		return fail(err)
+	}
+	for _, r := range det.Rules() {
 		ctx := ""
 		for _, p := range r.Patterns {
 			if p.RequireContext {
@@ -200,6 +216,7 @@ func runRules() {
 		}
 		fmt.Printf("%-22s %s%s\n", r.ID, r.Description, ctx)
 	}
+	return 0
 }
 
 func fail(err error) int {

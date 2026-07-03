@@ -93,6 +93,11 @@ func New(cfg *config.Config) (*Detector, error) {
 			}
 		}
 	}
+	for _, r := range cfg.CustomRules() {
+		if !disabled[r.ID] {
+			rules = append(rules, r)
+		}
+	}
 	normStopwords := make([]string, len(cfg.Allowlist.Stopwords))
 	for i, sw := range cfg.Allowlist.Stopwords {
 		normStopwords[i] = normalize.Line(sw)
