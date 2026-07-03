@@ -14,14 +14,15 @@ const negativeContextWindowRunes = 20
 // 空行を挟んだラベルまで届くようになったのに合わせ、ここも同じ規則で空行を
 // スキップしないと、口座番号の直後に空行を挟んだ先に金額の単位（円）が
 // 続くようなケースで、負コンテキストによる抑制を取りこぼす。
-func (d *Detector) hasCrossLineNegativeContext(f Finding, lines []string, lineIdx int) bool {
+func (d *Detector) hasCrossLineNegativeContext(f Finding, lines []string, lineContexts []lineContext, lineIdx int) bool {
 	if lineIdx < 0 || lineIdx >= len(lines) {
 		return false
 	}
-	var negCtx []string
+	var negCtx, posCtx []string
 	for _, r := range d.rules {
 		if r.ID == f.RuleID {
 			negCtx = r.NegativeContext
+			posCtx = r.Context
 			break
 		}
 	}
@@ -43,6 +44,19 @@ func (d *Detector) hasCrossLineNegativeContext(f Finding, lines []string, lineId
 	}
 	byteStart := len(string(currRunes[:f.start]))
 	byteEnd := len(string(currRunes[:f.end]))
+
+	// 同一文に（負文脈語を伴わない）このルール自身の正ラベルが明示されている
+	// 場合は、隣接行にある一般的な負文脈語（金額単位・件数等）で誤って棄却
+	// しない（正ラベル優先。issue #68 段階1(a)）。値自身のラベルが id/count 等の
+	// 負文脈語を伴う場合は対象外で、この経路に到達する前に呼び出し側
+	// （scanLineNoIgnoreWithContext の hasNegativeNear）で既に棄却されている。
+	if lineIdx < len(lineContexts) {
+		st := lineContexts[lineIdx].statementFor(byteStart, byteEnd)
+		if d.statementHasCleanPositiveLabel(st, posCtx) {
+			return false
+		}
+	}
+
 	parts = append(parts, curr)
 	if n := nextNonBlankIndex(lines, lineIdx, maxAdjacentLineGap); n >= 0 {
 		parts = append(parts, normalize.Line(lines[n]))
@@ -54,6 +68,21 @@ func (d *Detector) hasCrossLineNegativeContext(f Finding, lines []string, lineId
 	combined = strings.ReplaceAll(combined, "\n", " ")
 	var runes []rune
 	return d.hasNegativeContextNear(combined, offset+byteStart, offset+byteEnd, negativeContextWindowRunes, &runes, negCtx)
+}
+
+// statementHasCleanPositiveLabel は st がこのルール自身の Context キーワードに
+// 一致する正ラベルを持ち、かつ負文脈語（NegativeText、例: id・count 等）を
+// 伴わないかを返す。true の場合、呼び出し側は近傍の一般的な負文脈語（金額単位・
+// 件数等）で値を誤って棄却しないでよい（正ラベル優先）。
+//
+// bankAccountId のように正ラベルの語（account 等）を含みつつも id 等の負文脈語を
+// 伴うラベルは対象外とし、その場合は従来通り NegativeText による棄却を優先する
+// （呼び出し側で個別にチェックする）。
+func (d *Detector) statementHasCleanPositiveLabel(st *statementContext, ctx []string) bool {
+	if st == nil || st.PositiveText == "" || st.NegativeText != "" {
+		return false
+	}
+	return len(d.matchingContexts(st.PositiveText, ctx)) > 0
 }
 
 func (d *Detector) hasNegativeContextNear(s string, start, end, radius int, runes *[]rune, kws []string) bool {
