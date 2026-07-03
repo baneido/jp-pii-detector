@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/baneido/jp-pii-detector/internal/rule"
@@ -302,4 +303,233 @@ func containsString(xs []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// --- [[rules.custom]] ---
+
+func TestParseCustomRule(t *testing.T) {
+	cfg, err := Parse(`
+[[rules.custom]]
+id = "student-id"
+description = "学籍番号"
+pattern = 'S\d{8}'
+context = ["学籍番号", "student_id"]
+negative_context = ["サンプル"]
+require_context = true
+require_context_window = 20
+base_confidence = "high"
+digit_boundary = true
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules := cfg.CustomRules()
+	if len(rules) != 1 {
+		t.Fatalf("CustomRules() = %v, want 1 rule", rules)
+	}
+	r := rules[0]
+	if r.ID != "student-id" || r.Description != "学籍番号" {
+		t.Errorf("rule = %+v", r)
+	}
+	if r.RequireContextWindow != 20 {
+		t.Errorf("RequireContextWindow = %d, want 20", r.RequireContextWindow)
+	}
+	if len(r.Patterns) != 1 {
+		t.Fatalf("Patterns = %v, want 1", r.Patterns)
+	}
+	p := r.Patterns[0]
+	if p.Base != rule.High {
+		t.Errorf("Base = %v, want High", p.Base)
+	}
+	if !p.RequireContext {
+		t.Error("RequireContext = false, want true")
+	}
+	m := p.Re.FindStringSubmatch("学籍番号: S12345678 です")
+	if m == nil || m[1] != "S12345678" {
+		t.Fatalf("match = %v, want group 1 = S12345678", m)
+	}
+	// digit_boundary により、より長い数字列の一部としては一致しない。
+	if p.Re.MatchString("S123456789") {
+		t.Error("digit_boundary should reject a longer digit run as a partial match")
+	}
+}
+
+func TestParseCustomRuleDefaultsToMediumConfidence(t *testing.T) {
+	cfg, err := Parse(`
+[[rules.custom]]
+id = "student-id"
+pattern = 'S\d{8}'
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules := cfg.CustomRules()
+	if len(rules) != 1 || rules[0].Patterns[0].Base != rule.Medium {
+		t.Fatalf("CustomRules() = %v, want 1 rule with Base=Medium", rules)
+	}
+}
+
+func TestParseCustomRuleWithoutDigitBoundaryUsesRawPattern(t *testing.T) {
+	cfg, err := Parse(`
+[[rules.custom]]
+id = "custom-token"
+pattern = 'TOKEN-[A-Z0-9]{8}'
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := cfg.CustomRules()[0].Patterns[0].Re
+	m := re.FindStringSubmatch("key=TOKEN-AB12CD34;")
+	if m == nil || m[0] != "TOKEN-AB12CD34" {
+		t.Fatalf("match = %v, want whole match TOKEN-AB12CD34", m)
+	}
+}
+
+func TestParseCustomRuleInvalidRegexIsConfigError(t *testing.T) {
+	_, err := Parse(`
+[[rules.custom]]
+id = "bad"
+pattern = "("
+`)
+	if err == nil {
+		t.Fatal("expected error for uncompilable custom rule pattern")
+	}
+	if !strings.Contains(err.Error(), "bad") {
+		t.Errorf("error = %v, want it to mention the rule id", err)
+	}
+}
+
+func TestParseCustomRuleInvalidBaseConfidence(t *testing.T) {
+	_, err := Parse(`
+[[rules.custom]]
+id = "bad"
+pattern = "x"
+base_confidence = "urgent"
+`)
+	if err == nil {
+		t.Fatal("expected error for invalid base_confidence")
+	}
+}
+
+func TestParseCustomRuleMissingID(t *testing.T) {
+	_, err := Parse(`
+[[rules.custom]]
+pattern = "x"
+`)
+	if err == nil {
+		t.Fatal("expected error for missing id")
+	}
+}
+
+func TestParseCustomRuleMissingPattern(t *testing.T) {
+	_, err := Parse(`
+[[rules.custom]]
+id = "bad"
+`)
+	if err == nil {
+		t.Fatal("expected error for missing pattern")
+	}
+}
+
+func TestParseCustomRuleDuplicateIDRejected(t *testing.T) {
+	_, err := Parse(`
+[[rules.custom]]
+id = "dup"
+pattern = "x"
+
+[[rules.custom]]
+id = "dup"
+pattern = "y"
+`)
+	if err == nil {
+		t.Fatal("expected error for duplicate custom rule id")
+	}
+}
+
+func TestParseCustomRuleCollidesWithBuiltinIDRejected(t *testing.T) {
+	_, err := Parse(`
+[[rules.custom]]
+id = "credit-card"
+pattern = "x"
+`)
+	if err == nil {
+		t.Fatal("expected error when custom rule id collides with a built-in rule id")
+	}
+}
+
+// --- 未知の設定キー ---
+
+func TestParseUnknownKeyWarns(t *testing.T) {
+	cfg, err := Parse(`
+min_confidence = "high"
+unknown_top_level = true
+
+[rules]
+disabled = ["person-name"]
+typo_key = "x"
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	warnings := cfg.Warnings()
+	if len(warnings) == 0 {
+		t.Fatal("Warnings() is empty, want a warning for unknown keys")
+	}
+	joined := strings.Join(warnings, " ")
+	for _, want := range []string{"unknown_top_level", "typo_key"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("Warnings() = %v, want it to mention %q", warnings, want)
+		}
+	}
+}
+
+func TestParseKnownConfigProducesNoWarnings(t *testing.T) {
+	cfg, err := Parse(`
+min_confidence = "high"
+
+[rules]
+disabled = ["person-name"]
+high_recall = true
+
+[[rules.custom]]
+id = "student-id"
+description = "学籍番号"
+pattern = 'S\d{8}'
+context = ["student"]
+negative_context = ["sample"]
+require_context = true
+require_context_window = 20
+base_confidence = "high"
+digit_boundary = true
+
+[allowlist]
+paths = ["^testdata/"]
+regexes = ["@example\\.com$"]
+stopwords = ["090-0000-0000"]
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if warnings := cfg.Warnings(); len(warnings) != 0 {
+		t.Errorf("Warnings() = %v, want none for a fully-known config", warnings)
+	}
+}
+
+// リポジトリ自身の .jp-pii.toml が、新規キーを使っていなくても
+// 警告なしでパースできることを確認する（既存設定の後方互換性）。
+func TestRepoOwnConfigParsesWithoutWarnings(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", DefaultFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Parse(string(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if warnings := cfg.Warnings(); len(warnings) != 0 {
+		t.Errorf("Warnings() = %v, want none for the repo's own %s", warnings, DefaultFileName)
+	}
+	if len(cfg.CustomRules()) != 0 {
+		t.Errorf("CustomRules() = %v, want none (repo config defines no custom rules)", cfg.CustomRules())
+	}
 }
