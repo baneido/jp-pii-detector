@@ -194,6 +194,45 @@ func notOrgName(v string) bool {
 	return true
 }
 
+// personNameRoleSuffixes は職業・役割・部署を表す語尾。敬称パターンの実測 FP
+// である 本屋さん・運転手さん（職業）、取引先様・関係者様・保護者様・御中様
+// （役割語）、経理部殿・総務課殿（部署）を棄却するために使う。単漢字の語尾
+// （屋・部・課 等）は姓（阿部・服部・土屋・北条 等）と衝突するため、
+// honorificPersonNameValid は辞書照合（dict.IsPersonName）を先に評価する順序で
+// この denylist を適用し、辞書収録済みの衝突姓を巻き添えにしない。
+var personNameRoleSuffixes = []string{
+	"者", "員", "手", "屋", "師", "士", "長", "生", "部", "課", "係", "室", "先", "中",
+}
+
+// notRoleWord は氏名候補 v が職業・役割・部署の語尾（personNameRoleSuffixes）で
+// 終わらないことを返す。
+func notRoleWord(v string) bool {
+	v = strings.TrimSpace(v)
+	for _, s := range personNameRoleSuffixes {
+		if strings.HasSuffix(v, s) {
+			return false
+		}
+	}
+	return true
+}
+
+// honorificPersonNameValid は敬称（様/さん/氏/殿）付き漢字氏名候補 v の検証器。
+// 組織名の語尾（notOrgName）は常に棄却する。姓名辞書（dict.IsPersonName）に
+// 一致すれば単漢字語尾の姓（阿部・土屋 等）でも許可し、辞書に無い値だけを
+// 職業・役割・部署語尾（notRoleWord）で追加検証する。この評価順序により、
+// 辞書未収録の実在人名（denylist 非該当）は引き続き Medium で検出される
+// （detect_test.go の「敬称 + 辞書外の姓」ケースを参照）。
+func honorificPersonNameValid(v string) bool {
+	v = strings.TrimSpace(v)
+	if !notOrgName(v) {
+		return false
+	}
+	if dict.IsPersonName(v) {
+		return true
+	}
+	return notRoleWord(v)
+}
+
 // 弱いラベル（姓・名・last_name 等）の値検証。1 文字の単独要素は日常語と
 // 衝突しやすいため、単独要素は 2 文字以上かつラベル種別（姓/名）に一致する
 // 場合のみ許可する。「姓 + 名」に分割できる完全な氏名はラベル種別を問わず許可する。
@@ -484,13 +523,29 @@ func Builtin() []Rule {
 					`(?:担当|担当者|宛名|連絡先)` + personNameSep +
 						`([` + kanji + `]{2,8}(?:[ ][` + kanji + `]{1,8})?)`,
 				), Base: Medium, Validate: dict.IsPersonName},
-				// 敬称アンカー（様/さん/氏/殿）。敬称は人物を強く示すため、辞書 allowlist
-				// ではなく組織語尾の denylist（notOrgName）で「田中商事様」等を棄却する。
-				// これにより辞書未収録の実在人名（桐谷太郎様 等）を巻き添えで落とさない。
+				// 敬称アンカー（氏名の漢字表記 + 様/さん/氏/殿）。組織語尾
+				// （notOrgName）は常に棄却し、辞書一致（dict.IsPersonName）を
+				// 優先しつつ、辞書に無い値は職業・役割・部署の語尾 denylist
+				// （notRoleWord）でも検証する（honorificPersonNameValid）。
+				// これにより辞書未収録の実在人名（denylist 非該当）は Medium の
+				// まま検出しつつ、職業語・役割語・部署語を伴う実測 FP を追加で
+				// 棄却する。
 				{Re: regexp.MustCompile(
 					`(?:^|[^` + kanji + hiragana + katakana + `])` +
 						`([` + kanji + `]{2,8})(?:様|さん|氏|殿)`,
-				), Base: Medium, Validate: notOrgName},
+				), Base: Medium, Validate: honorificPersonNameValid},
+				// 敬称アンカー（ひらがな・カタカナの氏名 + 様/さん/氏/殿）。この
+				// 文字種には notRoleWord のような語尾 denylist が効かないほど
+				// 日常語との衝突が多いため、辞書一致必須の allowlist 方式
+				// （dict.IsPersonName）で検証する。辞書収録済みのひらがな名
+				// （例: さくら）は敬称付きでも検出され、日常語（例: たくさん・
+				// みなさん）は辞書不在で棄却される。カタカナ人名は辞書未収録の
+				// ため、外来語名の敬称付き表記はこのパターンでは解消しない
+				// （辞書拡充は別課題として切り離す）。
+				{Re: regexp.MustCompile(
+					`(?:^|[^` + kanji + hiragana + katakana + `])` +
+						`([` + hiragana + katakana + `]{2,8})(?:様|さん|氏|殿)`,
+				), Base: Medium, Validate: dict.IsPersonName},
 			},
 		},
 		{
