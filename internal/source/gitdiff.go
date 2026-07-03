@@ -28,8 +28,15 @@ func scanGitDiff(d *detect.Detector, cfg *config.Config, extra []string) ([]dete
 	// 追加したケース（例: 直前の行に「口座番号:」があり、追加行は値だけ）でも、
 	// コンテキスト必須ルールを発火させるため。検出値が追加行に乗っているものだけを
 	// 報告し、文脈行上の既存 PII は報告しない（scanHunk）。
+	//
+	// --src-prefix=a/ --dst-prefix=b/: ユーザー/CI の gitconfig
+	// （diff.mnemonicPrefix=true 等）に関わらず "+++ " ヘッダの接頭辞を
+	// 常に b/ 固定にする。これが揺れると下流の TrimPrefix(file, "b/") が
+	// 効かず（例: "+++ i/path"）、報告パスに接頭辞が残って allowlist.paths
+	// が一致しなくなる。
 	args := append([]string{"-c", "core.quotePath=false",
-		"diff", "-U3", "--no-color", "--no-ext-diff", "--diff-filter=ACMRT"}, extra...)
+		"diff", "-U3", "--no-color", "--no-ext-diff", "--diff-filter=ACMRT",
+		"--src-prefix=a/", "--dst-prefix=b/"}, extra...)
 	out, err := exec.Command("git", args...).Output()
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
