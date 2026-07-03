@@ -111,7 +111,7 @@ var (
 	personNameSep = `["']?\s*[:=]\s*["'「『（(]?\s*`
 	// personNameValue は氏名の値（漢字・かな・カナ列。任意で半角スペース
 	// 区切りの 2 語）。強いラベル用に 2 文字以上を要求する。
-	// 既知の軽微な限界: `氏名: 山田 様` のように値の後に敬称が続くと、敬称まで
+	// 既知の軽微な限界: ラベル値の後に「様」等の敬称が続くと（例: 山田 様）、敬称まで
 	// マスク対象に含まれうる（検出の成否・評価には影響しない表示上の過剰取り込み）。
 	personNameValue = `[` + kanji + hiragana + katakana + `]{2,12}` +
 		`(?:[ ][` + kanji + hiragana + katakana + `]{1,12})?`
@@ -119,6 +119,36 @@ var (
 	// 捕捉し、長さ・人名らしさの最終判断は validSurnameField 等の検証器に委ねる。
 	personNameValueShort = `[` + kanji + hiragana + katakana + `]{1,12}` +
 		`(?:[ ][` + kanji + hiragana + katakana + `]{1,12})?`
+)
+
+// person-name ルールの一部パターンは、辞書検証ありの Medium 判定と辞書照合
+// なしの Low 判定を同一正規表現の 2 枚組（twin）で持つ。twin 間で正規表現
+// オブジェクトを共有し、二重コンパイルを避けるためパッケージ変数として
+// 定義する。
+var (
+	// personNameStrongLabelRe は強いラベル（氏名系日本語ラベル / full_name 等）
+	// 用パターン。
+	personNameStrongLabelRe = regexp.MustCompile(
+		personNameBoundary +
+			`(?:` + personNameLabelJP + `|` + personNameLabelASCIIStrong + `)` +
+			personNameSep +
+			`(` + personNameValue + `)`,
+	)
+	// personNameUserNameRe は姓名どちらが入るか不定の ASCII キー
+	// （user_name / account_name / contact_name）用パターン。
+	personNameUserNameRe = regexp.MustCompile(
+		personNameBoundary +
+			`(?:user_?name|account_?name|contact_?name)` +
+			personNameSep +
+			`(` + personNameValueShort + `)`,
+	)
+	// personNameBareRe は裸の name ラベル用パターン。
+	personNameBareRe = regexp.MustCompile(
+		personNameBareNameBoundary +
+			`name` +
+			personNameSep +
+			`(` + personNameValueShort + `)`,
+	)
 )
 
 // personNamePlaceholders は氏名の値として現れるダミー語（人名ではない）。
@@ -395,51 +425,49 @@ func Builtin() []Rule {
 			Validate: notPlaceholderName,
 			Patterns: []Pattern{
 				// 強いラベル: 氏名系の日本語ラベルと、語そのものが「人」を表す
-				// 複合 ASCII キー（full_name / customer_name 等）。値が人名らしいかは
-				// 問わず（収録外の人名も拾うため）辞書照合はしない。前方境界
+				// 複合 ASCII キー（full_name / customer_name 等）。前方境界
 				// personNameBoundary で漢字・かな直後（登録名前: 等）を除外する。
 				// JSON/YAML のキー引用符（"氏名":）と値の引用符・括弧にも対応。
-				{Re: regexp.MustCompile(
-					personNameBoundary +
-						`(?:` + personNameLabelJP + `|` + personNameLabelASCIIStrong + `)` +
-						personNameSep +
-						`(` + personNameValue + `)`,
-				), Base: Low},
-				// 弱いラベル: 姓側（姓・名字・苗字・last_name）。単独要素は 2 文字以上の
-				// 姓、または姓+名に分割できる氏名のみ許可する（validSurnameField）。
+				// 同一正規表現の 2 枚組（twin）: 値が姓名辞書に一致すれば Medium
+				// （既定 min_confidence=medium で報告）、一致しない収録外の実在
+				// 人名は Low のまま拾う。resolveOverlaps が同一スパンで信頼度の
+				// 高い Medium を残す。
+				{Re: personNameStrongLabelRe, Base: Medium, Validate: dict.IsPersonName},
+				{Re: personNameStrongLabelRe, Base: Low},
+				// 弱いラベル: 姓側（姓・名字・苗字・last_name）。validSurnameField が
+				// 姓名辞書で検証済み（単独要素は 2 文字以上の姓、または姓+名に
+				// 分割できる氏名のみ許可）のため、Base は Medium。
 				{Re: regexp.MustCompile(
 					personNameBoundary +
 						`(?:姓|名字|苗字|last_?name)` +
 						personNameSep +
 						`(` + personNameValueShort + `)`,
-				), Base: Low, Validate: validSurnameField},
-				// 弱いラベル: 名側（名・first_name）。単独要素は 2 文字以上の名、
-				// または姓+名に分割できる氏名のみ許可する（validGivenField）。
-				// 1 文字名（学・実 等）と姓（名: 田中）は棄却される。
+				), Base: Medium, Validate: validSurnameField},
+				// 弱いラベル: 名側（名・first_name）。validGivenField が姓名辞書で
+				// 検証済み（単独要素は 2 文字以上の名、または姓+名に分割できる
+				// 氏名のみ許可。1 文字名（学・実 等）と姓（名: 田中）は棄却）
+				// のため、Base は Medium。
 				{Re: regexp.MustCompile(
 					personNameBoundary +
 						`(?:名|first_?name)` +
 						personNameSep +
 						`(` + personNameValueShort + `)`,
-				), Base: Low, Validate: validGivenField},
+				), Base: Medium, Validate: validGivenField},
 				// 弱いラベル: 姓名どちらが入るか不定の ASCII キー
 				// （user_name / account_name / contact_name）。ハンドル名・システム名
-				// （管理者・共有アカウント 等）を姓名辞書で棄却する。
-				{Re: regexp.MustCompile(
-					personNameBoundary +
-						`(?:user_?name|account_?name|contact_?name)` +
-						personNameSep +
-						`(` + personNameValueShort + `)`,
-				), Base: Low, Validate: validFullNameField},
+				// （管理者・共有アカウント 等）は姓名辞書で棄却する。同一正規表現の
+				// 2 枚組: 姓+名に分割できる値のみ Medium（dict.SplitsAsFullName）。
+				// name フィールドの値が単独の姓（大和 等、地名・一般名詞と同形になり
+				// やすい）のみの場合は Low のまま昇格させない。
+				{Re: personNameUserNameRe, Base: Medium, Validate: dict.SplitsAsFullName},
+				{Re: personNameUserNameRe, Base: Low, Validate: validFullNameField},
 				// 裸の name ラベル。kebab-case / dotted key（project-name /
 				// project.name 等）の末尾 name を誤検出しないよう前方境界で `-` `.`
 				// も禁止し、値は姓名辞書で検証する（name: 株式会社 等を棄却）。
-				{Re: regexp.MustCompile(
-					personNameBareNameBoundary +
-						`name` +
-						personNameSep +
-						`(` + personNameValueShort + `)`,
-				), Base: Low, Validate: validFullNameField},
+				// user_name 系と同様、姓+名に分割できる値のみ Medium とし、
+				// 値が単独の姓（大和 等）のみの場合は Low のまま昇格させない。
+				{Re: personNameBareRe, Base: Medium, Validate: dict.SplitsAsFullName},
+				{Re: personNameBareRe, Base: Low, Validate: validFullNameField},
 			},
 		},
 		{

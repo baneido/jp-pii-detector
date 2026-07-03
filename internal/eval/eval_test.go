@@ -361,6 +361,9 @@ func TestEvaluateCasesErrorsDoNotEchoInput(t *testing.T) {
 }
 
 func TestEvaluateCasesWithOptionsUsesMinConfidence(t *testing.T) {
+	// 「氏名: 山田太郎」は姓名辞書に一致する（山田=姓/太郎=名）ため、強いラベル
+	// パターンの Medium twin（personNameStrongLabelRe + dict.IsPersonName）が
+	// 発火し、既定 min_confidence=medium で報告される（issue #44）。
 	results, err := EvaluateCasesWithOptions([]Case{
 		{Line: "氏名: 山田太郎", Want: []string{"person-name"}},
 	}, Options{MinConfidence: "medium"})
@@ -369,8 +372,8 @@ func TestEvaluateCasesWithOptionsUsesMinConfidence(t *testing.T) {
 	}
 
 	r := findResult(t, results, "person-name")
-	if r.TP != 0 || r.FP != 0 || r.FN != 1 {
-		t.Fatalf("row counts = TP:%d FP:%d FN:%d, want low-confidence name to be below medium threshold",
+	if r.TP != 1 || r.FP != 0 || r.FN != 0 {
+		t.Fatalf("row counts = TP:%d FP:%d FN:%d, want dictionary-validated name to meet medium threshold",
 			r.TP, r.FP, r.FN)
 	}
 }
