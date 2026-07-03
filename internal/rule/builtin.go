@@ -549,8 +549,9 @@ func Builtin() []Rule {
 						`(` + personNameValueShort + `)`,
 				), Base: Medium, Validate: validSurnameField},
 				// 姓側の見逃し修正フォールバック: 値の直後に助詞・敬称が続き辞書照合に
-				// 失敗するケース（姓: 山田さんへ連絡）で、先頭セグメントだけを切り出して
-				// 再照合する（personNameValueShortFallback を参照）。plain パターンと
+				// 失敗するケース（姓: 山田さんへ連絡 jp-pii-detector:ignore）で、
+				// 先頭セグメントだけを切り出して再照合する
+				// （personNameValueShortFallback を参照）。plain パターンと
 				// 同じ validSurnameField で検証されるため Base も同じ Medium。
 				{Re: regexp.MustCompile(
 					personNameBoundary +
