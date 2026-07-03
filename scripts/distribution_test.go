@@ -500,6 +500,143 @@ func TestReadmeDocumentsTagPinnedInstaller(t *testing.T) {
 	}
 }
 
+func TestDockerfileBuildsCrossCompiledScannerImage(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		// ビルダーはホスト側で動かし Go でクロスコンパイルする（ビルドに QEMU 不要）
+		"FROM --platform=$BUILDPLATFORM golang:",
+		"CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build",
+		"-X main.version=${VERSION}",
+		// CI ジョブコンテナとして使えるよう git / ssh / CA 証明書を同梱する
+		"apk add --no-cache ca-certificates git openssh-client",
+		`ENTRYPOINT ["jp-pii-detect"]`,
+		`CMD ["scan", "."]`,
+		// GHCR のパッケージをリポジトリに紐付ける
+		"org.opencontainers.image.source",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("Dockerfile missing %q:\n%s", want, text)
+		}
+	}
+	// 実行イメージにソースや Go ツールチェーンを残さない（マルチステージ必須）。
+	if !strings.Contains(text, "COPY --from=build") {
+		t.Fatalf("Dockerfile should copy the binary from a build stage:\n%s", text)
+	}
+}
+
+func TestDockerignoreExcludesSecretsAndLocalArtifacts(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), ".dockerignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		".git",
+		// 実在しうる PII を含むローカルフィクスチャをイメージに持ち込まない
+		"pii-fixtures.json",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf(".dockerignore missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestReleaseWorkflowPublishesMultiArchDockerImage(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"packages: write",
+		"ghcr.io/baneido/jp-pii-detector",
+		"--platform linux/amd64,linux/arm64",
+		`--build-arg "VERSION=${TAG}"`,
+		"docker buildx build",
+		"--push",
+		// QEMU 登録イメージは digest でピン留めする（サプライチェーン対策）
+		"tonistiigi/binfmt:qemu-",
+		"@sha256:",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("release workflow docker job missing %q:\n%s", want, text)
+		}
+	}
+	// リリースアセット公開後にのみ push する。
+	dockerJob := strings.Index(text, "  docker:")
+	if dockerJob == -1 || !strings.Contains(text[dockerJob:], "needs: release") {
+		t.Fatalf("docker job should depend on the release job:\n%s", text)
+	}
+}
+
+func TestCIWorkflowSmokeTestsDockerImage(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"docker build -t jp-pii-detect:ci .",
+		"docker run --rm jp-pii-detect:ci version",
+		// dogfooding をコンテナ経由でも通す
+		"jp-pii-detect:ci scan --format github /scan",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("ci workflow should smoke-test the Docker image; missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestReadmeDocumentsContainerImageAndIntegrations(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"ghcr.io/baneido/jp-pii-detector",
+		"docs/integrations.md",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("README missing %q", want)
+		}
+	}
+}
+
+func TestIntegrationsDocCoversCommonCIAndHookManagers(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "integrations.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"ghcr.io/baneido/jp-pii-detector",
+		"GitLab CI",
+		"CircleCI",
+		"Bitbucket Pipelines",
+		"Jenkins",
+		"lefthook",
+		"husky",
+		"mise",
+		"Dev Containers",
+		// GitLab はイメージの ENTRYPOINT を無効化しないと script が動かない
+		`entrypoint: [""]`,
+		// SARIF の Code Scanning 取り込み例
+		"upload-sarif",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("docs/integrations.md missing %q", want)
+		}
+	}
+	if strings.Contains(text, "main/scripts/install.sh | sh") {
+		t.Fatalf("docs/integrations.md should not recommend executing the mutable main installer URL")
+	}
+}
+
 // homebrewTemplatePlaceholders はテンプレートとリリースワークフローの両方が
 // 参照するプレースホルダ。片方だけ変更すると formula が壊れるため一覧で固定する。
 var homebrewTemplatePlaceholders = []string{
