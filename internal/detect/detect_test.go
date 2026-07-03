@@ -915,6 +915,61 @@ func TestReasonRecordsPromotionAndContext(t *testing.T) {
 	}
 }
 
+// issue #68 段階1(b): RequireContext のないパターンを Base から High へ昇格
+// させる判定は、RequireContextWindow 未設定でも既定半径
+// （defaultPromotionContextWindow = 40 ルーン）に制限される。昇格前は行全体を
+// 無制限に探索していたため、長い行の遠方にある無関係な 1 語だけで行全体の
+// マッチが昇格していた（FP 増幅要因）。マイナンバーの検査用数字
+// "123456789018" は internal/checksum.TestMyNumber の genMyNumber("12345678901")
+// と同じ値でフィクスチャなしに使える。
+func TestPromotionRequiresNearbyContext(t *testing.T) {
+	d := newDetector(t, "")
+	const mynum = "123456789018"
+	tests := []struct {
+		name      string
+		line      string
+		wantConf  rule.Confidence
+		wantPromo bool
+	}{
+		{
+			name:      "直後40ルーン以内のキーワードは昇格する",
+			line:      mynum + strings.Repeat("あ", 10) + "マイナンバー",
+			wantConf:  rule.High,
+			wantPromo: true,
+		},
+		{
+			name:      "直後40ルーンを超えるキーワードは昇格しない",
+			line:      mynum + strings.Repeat("あ", 50) + "マイナンバー",
+			wantConf:  rule.Medium,
+			wantPromo: false,
+		},
+		{
+			name:      "直前40ルーン以内のキーワードは昇格する",
+			line:      "マイナンバー" + strings.Repeat("あ", 10) + mynum,
+			wantConf:  rule.High,
+			wantPromo: true,
+		},
+		{
+			name:      "直前40ルーンを超えるキーワードは昇格しない",
+			line:      "マイナンバー" + strings.Repeat("あ", 50) + mynum,
+			wantConf:  rule.Medium,
+			wantPromo: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, "jp-my-number")
+			if fs[0].Confidence != tt.wantConf {
+				t.Errorf("confidence = %v, want %v", fs[0].Confidence, tt.wantConf)
+			}
+			if fs[0].Reason.ContextPromoted != tt.wantPromo {
+				t.Errorf("context promoted = %v, want %v", fs[0].Reason.ContextPromoted, tt.wantPromo)
+			}
+		})
+	}
+}
+
 func TestReasonNotValidatedWhenNoValidator(t *testing.T) {
 	piifixtures.Require(t)
 	d := newDetector(t, "")
@@ -1128,6 +1183,38 @@ func TestScanDiffHunkKeepsSourceNegativeContextOnAddedLine(t *testing.T) {
 		{Text: `bankAccountId: "1234567"`, Added: true},
 	})
 	assertRules(t, fs)
+}
+
+// issue #68 段階1(a): 同一文にこのルール自身の正ラベルが（負文脈語を伴わずに）
+// 明示されている場合、hasNegativeNear は離れた場所の一般的な負文脈語（連番等）
+// で誤って値を棄却しない（正ラベル優先）。一方、ラベル自体が id 等の負文脈語を
+// 伴う場合（bankAccountId）は対象外で、旧来どおり（無条件ハードドロップ）棄却
+// され続ける。この2ケースを直接対比する。
+func TestSourceContextPositiveLabelOverridesDistantNegativeContext(t *testing.T) {
+	d := newDetector(t, "")
+
+	// 正ラベル（bankAccountNo）+ 同一文内の離れた一般負文脈語（連番）。
+	// 新方式では棄却されない（旧方式は無条件ドロップしていた＝FN）。
+	positive := `bankAccountNo := "1234567 連番ではない"`
+	assertRules(t, d.ScanContent("account.go", positive), "jp-bank-account")
+
+	// ラベル自体が負文脈語を伴う（bankAccountId）→ 正ラベル優先の例外対象外。
+	// 旧方式・新方式のいずれでも棄却される（回帰確認）。
+	negativeLabel := `bankAccountId := "1234567 連番ではない"`
+	assertRules(t, d.ScanContent("account.go", negativeLabel))
+}
+
+// issue #68 段階1(a) の続き: ScanContent の隣接行負コンテキストフィルタ
+// （hasCrossLineNegativeContext, negative_context.go）にも同じ正ラベル優先の
+// 例外が効くことを確認する。クロスライン統語（ラベル行＋値行）で作られた
+// 正ラベルは、値の行と同一文ではない「さらに次の行」にある一般負文脈語
+// （連番）では棄却されない。detect.go 側の hasNegativeNear だけを直しても、
+// ここが直っていないと ScanContent 経路では結局棄却されてしまう
+// （フルツリー走査 internal/source が使う経路のため実運用上重要）。
+func TestScanContentSourceContextPositiveLabelOverridesAdjacentLineNegativeContext(t *testing.T) {
+	d := newDetector(t, "")
+	content := "bankAccountNo:\n1234567\n連番"
+	assertRules(t, d.ScanContent("account.yaml", content), "jp-bank-account")
 }
 
 // 構造化・複数行の氏名検出（person-name-structured）。値は埋め込み姓名辞書に

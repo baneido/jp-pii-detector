@@ -18,6 +18,14 @@ const IgnoreMarker = "jp-pii-detector:ignore"
 // AllowMarker は後方互換のために残している旧除外マーカー。
 const AllowMarker = "pii-allow"
 
+// defaultPromotionContextWindow は RequireContextWindow 未設定のルールで
+// Base 信頼度を High へ昇格させる際に使う既定のコンテキスト探索半径（ルーン数）。
+// 昇格判定はこの半径に制限し、長い行の遠方にある無関係な 1 語だけで行全体の
+// マッチが昇格するのを防ぐ（issue #68 段階1(b)）。RequireContext 判定
+// （検出可否そのもの）はここでは変えず、ウィンドウ未設定なら従来通り行全体を
+// 見る（後方互換）。
+const defaultPromotionContextWindow = 40
+
 // Finding は 1 件の検出結果。
 //
 // 注意: この型は出力スキーマではない。機械可読な出力（json/sarif 等）は
@@ -149,7 +157,7 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 	// 隣接行の負コンテキスト（金額・数量・連番 ID 等）で抑制してから重複解決する。
 	filtered := candidates[:0]
 	for _, f := range candidates {
-		if d.hasCrossLineNegativeContext(f, lines, f.Line-1) {
+		if d.hasCrossLineNegativeContext(f, lines, lineContexts, f.Line-1) {
 			continue
 		}
 		filtered = append(filtered, f)
@@ -550,12 +558,18 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 		}
 		ctxForMatch := func(start, end int, useWindow bool) []string {
 			var kws []string
-			if r.RequireContextWindow <= 0 {
-				kws = d.matchingContexts(norm, r.Context)
-			} else if useWindow {
+			switch {
+			case r.RequireContextWindow > 0:
 				kws = d.matchingContexts(contextWindow(norm, start, end, r.RequireContextWindow, &normRunes), r.Context)
-			} else {
+			case useWindow:
+				// RequireContext 判定（検出可否そのもの）は後方互換のため、
+				// ウィンドウ未設定なら従来通り行全体を見る。
 				kws = d.matchingContexts(norm, r.Context)
+			default:
+				// Base 信頼度の昇格（useWindow=false）はウィンドウ未設定でも
+				// 既定半径（defaultPromotionContextWindow）に制限する
+				// （issue #68 段階1(b)。無制限昇格による FP 増幅を防ぐ）。
+				kws = d.matchingContexts(contextWindow(norm, start, end, defaultPromotionContextWindow, &normRunes), r.Context)
 			}
 			if st := lineCtx.statementFor(start, end); st != nil && st.PositiveText != "" {
 				kws = append(kws, d.matchingContexts(st.PositiveText, r.Context)...)
@@ -566,13 +580,17 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 			if len(r.NegativeContext) == 0 {
 				return false
 			}
-			if d.hasNegativeContextNear(norm, start, end, negativeContextWindowRunes, &normRunes, r.NegativeContext) {
+			st := lineCtx.statementFor(start, end)
+			if st != nil && st.NegativeText != "" {
 				return true
 			}
-			if st := lineCtx.statementFor(start, end); st != nil && st.NegativeText != "" {
-				return true
+			if d.statementHasCleanPositiveLabel(st, r.Context) {
+				// 同一文に（負文脈語を伴わない）このルール自身の正ラベルが
+				// 明示されている場合は、離れた場所の一般的な負文脈語（金額単位・
+				// 件数等）で誤って棄却しない（正ラベル優先。issue #68 段階1(a)）。
+				return false
 			}
-			return false
+			return d.hasNegativeContextNear(norm, start, end, negativeContextWindowRunes, &normRunes, r.NegativeContext)
 		}
 		for _, p := range r.Patterns {
 			// FindAll はマッチ全体（末尾の境界ガード文字を含む）の直後から
