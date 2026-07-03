@@ -138,6 +138,51 @@ func TestErrorsExitTwo(t *testing.T) {
 	}
 }
 
+// 走査対象の一部ファイルが読み取れない場合でも、収集できた findings は
+// 通常どおり出力しつつ、警告を stderr に出し、終了コードは 2（部分走査）に
+// なること。黙って exit 0/1 にすると走査が不完全なまま結果を装うことになり
+// セキュリティツールとして危険なため。
+func TestScanPartialErrorExitsTwoWithReport(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root では読み取り権限のチェックが効かないためスキップ")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "ok.txt"), []byte("口座番号: 1234567\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	denied := filepath.Join(dir, "denied.txt")
+	if err := os.WriteFile(denied, []byte("no pii\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(denied, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(denied, 0o644) })
+
+	cmd := exec.Command(binPath, "scan", ".")
+	cmd.Dir = dir
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	code := 0
+	if err != nil {
+		ee, ok := err.(*exec.ExitError)
+		if !ok {
+			t.Fatalf("run: %v", err)
+		}
+		code = ee.ExitCode()
+	}
+	if code != 2 {
+		t.Errorf("exit = %d, want 2（部分走査）", code)
+	}
+	if !strings.Contains(string(out), "jp-bank-account") {
+		t.Errorf("収集済みの findings が出力されていない: %s", out)
+	}
+	if !strings.Contains(stderr.String(), "denied.txt") {
+		t.Errorf("stderr に警告が出力されていない: %s", stderr.String())
+	}
+}
+
 func TestMinConfidenceFlagOverride(t *testing.T) {
 	piifixtures.Require(t)
 	dir := t.TempDir()
@@ -447,6 +492,36 @@ func TestRulesCommandRespectsConfig(t *testing.T) {
 	}
 }
 
+// rules コマンドは --config を反映した実効ルール一覧（builtin + custom の合成、
+// disabled 指定は除外ではなく「無効」タグで表示）を出力する。
+func TestRulesCommandWithConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, ".jp-pii.toml")
+	cfgBody := `
+[rules]
+disabled = ["credit-card"]
+
+[[rules.custom]]
+id = "student-id"
+description = "学籍番号"
+pattern = 'S\d{8}'
+digit_boundary = true
+`
+	if err := os.WriteFile(cfgPath, []byte(cfgBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, code := run(t, dir, "rules", "--config", cfgPath)
+	if code != 0 {
+		t.Errorf("exit = %d, want 0:\n%s", code, out)
+	}
+	if line := ruleLine(t, out, "credit-card"); !strings.Contains(line, "無効") {
+		t.Errorf("disabled ルールが「無効」と表示されていない: %s", line)
+	}
+	if !strings.Contains(out, "student-id") {
+		t.Errorf("rules output missing custom rule student-id:\n%s", out)
+	}
+}
+
 // TestRulesCommandHighRecallFlag は rules コマンドが --high-recall の効果
 // （高再現率ルールの有効化）を反映することを確認する。
 func TestRulesCommandHighRecallFlag(t *testing.T) {
@@ -467,6 +542,20 @@ func TestRulesCommandHighRecallFlag(t *testing.T) {
 	lineHR := ruleLine(t, outHR, "jp-address-high-recall")
 	if !strings.Contains(lineHR, "有効") || !strings.Contains(lineHR, "高再現率") {
 		t.Errorf("--high-recall 指定時は高再現率ルールが有効と表示されるはず: %s", lineHR)
+	}
+}
+
+// カスタムルールの正規表現コンパイル失敗は、rules コマンドでも
+// panic ではなく exit 2（設定エラー）として扱う。
+func TestRulesCommandInvalidCustomRule(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, ".jp-pii.toml")
+	cfgBody := "[[rules.custom]]\nid = \"bad\"\npattern = \"(\"\n"
+	if err := os.WriteFile(cfgPath, []byte(cfgBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, code := run(t, dir, "rules", "--config", cfgPath); code != 2 {
+		t.Errorf("exit = %d, want 2 for invalid custom rule regex", code)
 	}
 }
 

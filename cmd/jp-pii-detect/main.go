@@ -71,7 +71,7 @@ Usage:
   jp-pii-detect scan --staged            git のステージ済み追加行を走査（pre-commit 用）
   jp-pii-detect scan --diff <range>      git diff の追加行を走査（例: origin/main...HEAD）
   jp-pii-detect scan --stdin             標準入力のテキスト 1 本を走査（外部連携用）
-  jp-pii-detect rules                    検出ルール一覧を表示
+  jp-pii-detect rules [--config <path>]  検出ルール一覧を表示（config 適用後の実効ルール。カスタムルールを含む）
   jp-pii-detect version                  バージョンを表示
 
 Scan flags:
@@ -97,6 +97,8 @@ Scan flags:
 "scan --high-recall ." と同じ意味になります）。"--" 以降は常にパスとして扱います。
 
 Exit codes: 0=検出なし 1=検出あり 2=エラー
+  （フルスキャン時、一部ファイルが読み取れなかった場合も 2 を返す。
+    収集済みの検出は通常どおり出力し、警告を stderr に出す）
 `
 
 func main() {
@@ -166,6 +168,7 @@ func runScan(args []string) int {
 	}
 
 	var findings []detect.Finding
+	var warnings []error
 	switch {
 	case *stdin:
 		var data []byte
@@ -183,10 +186,17 @@ func runScan(args []string) int {
 		if len(paths) == 0 {
 			paths = []string{"."}
 		}
-		findings, err = source.ScanPaths(det, cfg, paths)
+		findings, warnings, err = source.ScanPaths(det, cfg, paths)
 	}
 	if err != nil {
 		return fail(err)
+	}
+	// 個々のファイルの読み取りエラーは致命的にせず、収集済みの findings は
+	// 通常どおり出力する。ただし黙って exit 0 にすると走査が不完全なまま
+	// 「検出なし」を装うことになり危険なため、警告を出力した上で常に exit 2
+	// にする（findings があっても --exit-zero 指定でも上書きしない）。
+	for _, w := range warnings {
+		fmt.Fprintln(os.Stderr, "jp-pii-detect: warning:", w)
 	}
 
 	switch *format {
@@ -206,6 +216,9 @@ func runScan(args []string) int {
 		return fail(fmt.Errorf("unknown format %q (text|json|sarif|github)", *format))
 	}
 
+	if len(warnings) > 0 {
+		return 2
+	}
 	if *exitZero {
 		return 0
 	}
@@ -233,10 +246,11 @@ func shouldFail(findings []detect.Finding, threshold rule.Confidence) bool {
 	return false
 }
 
-// runRules は検出ルール一覧を表示する。config.Load を通して .jp-pii.toml を
-// 反映するため、disabled 指定や high_recall（および --high-recall）の効果で
-// 実際に有効なルールがどれかをそのまま確認できる（以前は rule.Builtin() を
-// 素通ししていたため、設定ファイルの効果がここでは見えなかった）。
+// runRules は builtin + custom ルールの一覧を表示する。config.Load を通して
+// .jp-pii.toml を反映するため、disabled 指定や high_recall（および
+// --high-recall）の効果で実際に有効なルールがどれかを状態タグ（有効/無効・
+// 高再現率）付きでそのまま確認できる。無効化されたルールも一覧に含め、
+// どのルールが無効化されているか分かるようにする。
 func runRules(args []string) int {
 	fs := flag.NewFlagSet("rules", flag.ExitOnError)
 	configPath := fs.String("config", "", "")
@@ -263,7 +277,9 @@ func runRules(args []string) int {
 		highRecallIDs[id] = true
 	}
 
-	for _, r := range rule.Builtin() {
+	all := append([]rule.Rule{}, rule.Builtin()...)
+	all = append(all, cfg.CustomRules()...)
+	for _, r := range all {
 		status := "有効"
 		if disabled[r.ID] {
 			status = "無効"
