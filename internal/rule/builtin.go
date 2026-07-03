@@ -114,7 +114,7 @@ var (
 	// 値側の開き引用符・括弧（: "山田" / ：「山田」）の両方を許容する。
 	personNameSep = `["']?\s*[:=]\s*["'「『（(]?\s*`
 	// personNameSepOrBracket は personNameSep に加え、コロン・イコールなしで
-	// 鉤括弧・丸括弧が値に直結するケース（ご氏名「田中美咲」等）も区切りとして
+	// 鉤括弧・丸括弧が値に直結するケース（ご氏名「田中美咲」等。jp-pii-detector:ignore）も区切りとして
 	// 許容する。強いラベル（personNameLabelJP / personNameLabelASCIIStrong）専用。
 	// 弱いラベル（姓・名 等）は日常語との衝突を避けるため personNameSep のまま
 	// コロン必須とする（#48）。
@@ -138,8 +138,8 @@ var (
 // 定義する。
 var (
 	// personNameStrongLabelRe は強いラベル（氏名系日本語ラベル / full_name 等）
-	// 用パターン。personNameSepOrBracket により、コロンなしで鉤括弧が直結する
-	// 「ご氏名「田中美咲」」のようなケースも区切りとして許容する（#48）。
+	// 用パターン。personNameSepOrBracket により、コロンなしで鉤括弧が値に直結する
+	// ケースにも対応する（#48、詳細は personNameSepOrBracket のコメント参照）。
 	personNameStrongLabelRe = regexp.MustCompile(
 		personNameBoundary +
 			`(?:` + personNameLabelJP + `|` + personNameLabelASCIIStrong + `)` +
@@ -485,8 +485,8 @@ func Builtin() []Rule {
 				// 複合 ASCII キー（full_name / customer_name 等）。前方境界
 				// personNameBoundary で漢字・かな直後（登録名前: 等）を除外する。
 				// JSON/YAML のキー引用符（"氏名":）と値の引用符・括弧にも対応。
-				// personNameSepOrBracket により、コロンなしで鉤括弧が直結する
-				// 「ご氏名「田中美咲」」のようなケースも区切りとして許容する（#48）。
+				// personNameSepOrBracket により、コロンなしで鉤括弧が値に直結する
+				// ケースにも対応する（#48、詳細は personNameSepOrBracket のコメント参照）。
 				// 同一正規表現の 2 枚組（twin）: 値が姓名辞書に一致すれば Medium
 				// （既定 min_confidence=medium で報告）、一致しない収録外の実在
 				// 人名は Low のまま拾う。resolveOverlaps が同一スパンで信頼度の
