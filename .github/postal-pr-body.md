@@ -1,8 +1,10 @@
-日本郵便の UTF-8 版 KEN_ALL（住所の郵便番号）から、7 桁完全一致ビットセット
-`internal/dict/postal_codes.bitset` を自動再生成しました（`.github/workflows/postal-update.yml`）。
+日本郵便の UTF-8 版 KEN_ALL（住所の郵便番号）と事業所の個別郵便番号（jigyosyo）から、
+7 桁完全一致ビットセット `internal/dict/postal_codes.bitset` を自動再生成しました
+（`.github/workflows/postal-update.yml`）。
 
-- 取得元: <https://www.post.japanpost.jp/zipcode/dl/utf-zip.html>
-- 生成: `go run ./internal/dict/gen`
+- 取得元: <https://www.post.japanpost.jp/zipcode/dl/utf-zip.html>、
+  <https://www.post.japanpost.jp/zipcode/dl/jigyosyo/index-zip.html>
+- 生成: `go run ./internal/dict/gen -ken-all-input ... -jigyosyo-input ...`
 - 検証: ビットセットのサイズ・取り込み件数・`go vet`・`go test ./...`・dogfooding 済み
 - 精度: フィクスチャが設定されていれば `TestAccuracy`（F1 ゲート）も実行され、`docs/accuracy.md` と
   README バッジを実測で再生成して本 PR に含めています。
