@@ -37,10 +37,10 @@ Detection pipeline (`source → normalize → detect → report`):
 
 Supporting packages: `internal/checksum` (My Number check digit, Luhn, card brand), `internal/dict` (`//go:embed`-ed IANA TLD list and Japan-Post postal codes; regenerate via `go run ./internal/dict/gen`), `internal/config` (`.jp-pii.toml`, searched upward to the repo root), `internal/rule` (rule type + `Builtin()`).
 
-Postal codes use **7-digit exact matching** against a committed bitset (`postal_codes.bitset`, a 10,000,000-bit / 1.25 MB `//go:embed` holding every real Japan-Post 7-digit code). `dict.ValidPostalCode` indexes that bitset directly, so `150-9999` (prefix `150` is real, but the full code is unassigned) is rejected. `internal/dict/gen` builds the bitset from the official Japan-Post UTF-8 KEN_ALL CSV/zip; the index encoding and size constant are shared with `internal/dict` so the two can't drift. Refresh it (monthly automation: `.github/workflows/postal-update.yml`, or by hand) with:
+Postal codes use **7-digit exact matching** against a committed bitset (`postal_codes.bitset`, a 10,000,000-bit / 1.25 MB `//go:embed` holding every real Japan-Post 7-digit code, merged from the address CSV (KEN_ALL) and the individual-business postal code data (jigyosyo)). `dict.ValidPostalCode` indexes that bitset directly, so `150-9999` (prefix `150` is real, but the full code is unassigned) is rejected. `internal/dict/gen` builds the bitset from the official Japan-Post UTF-8 KEN_ALL CSV/zip (`-ken-all-input`) and/or the Shift_JIS jigyosyo CSV/zip (`-jigyosyo-input`, decoded via `golang.org/x/text/encoding/japanese`) — either or both may be given, and codes are merged with duplicates deduped; the index encoding and size constant are shared with `internal/dict` so the two can't drift. Refresh it (monthly automation: `.github/workflows/postal-update.yml`, or by hand) with:
 
 ```console
-go run ./internal/dict/gen -input utf_ken_all.zip -output internal/dict/postal_codes.bitset
+go run ./internal/dict/gen -ken-all-input utf_ken_all.zip -jigyosyo-input jigyosyo.zip -output internal/dict/postal_codes.bitset
 ```
 
 A bitset refresh that adds/removes codes can move the `jp-postal-code` accuracy numbers, so re-run the eval/badge regeneration (see CI gates below) after committing a new bitset.

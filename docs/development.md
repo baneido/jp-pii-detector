@@ -263,8 +263,9 @@ PR タイトルに `[要レビュー]` を付与し、本文に削除された T
 `internal/dict/tlds-alpha-by-domain.txt` を置き換え、
 `go test ./internal/dict ./internal/detect ./internal/eval` で検証する。
 
-郵便番号は日本郵便の UTF-8 版「住所の郵便番号」全データから 7 桁の実在集合を
-ビットセット化し、[`internal/dict/postal_codes.bitset`](../internal/dict/postal_codes.bitset)
+郵便番号は日本郵便の UTF-8 版「住所の郵便番号」全データと、事業所の個別郵便番号
+（大口事業所向け、jigyosyo）データを合わせて 7 桁の実在集合をビットセット化し、
+[`internal/dict/postal_codes.bitset`](../internal/dict/postal_codes.bitset)
 （10,000,000 ビット = 1,250,000 バイト）に保存して `//go:embed` で取り込む。
 `dict.ValidPostalCode` はこのビットセットで **7 桁完全一致**を判定する（上位 3 桁ではなく
 7 桁すべてで実在を確認するため、`150-9999` のように上位 3 桁は実在しても 7 桁としては
@@ -272,19 +273,28 @@ PR タイトルに `[要レビュー]` を付与し、本文に削除された T
 公開し、ジェネレータと共有する（両者が無言で乖離しないため）。
 
 更新は通常 [`.github/workflows/postal-update.yml`](../.github/workflows/postal-update.yml) が
-毎月 1 日に自動で行う。手動で更新する場合は `https://www.post.japanpost.jp/zipcode/dl/utf-zip.html`
-の最新全データ（`utf_ken_all.zip`）を取得し、次のコマンドでビットセットを再生成してから
-`go test ./internal/dict ./internal/detect ./internal/eval` で検証する。
+毎月 1 日に自動で行う。手動で更新する場合は次の 2 つのデータを取得し、コマンドでビットセットを
+再生成してから `go test ./internal/dict ./internal/dict/gen ./internal/detect ./internal/eval` で検証する。
+
+- 住所の郵便番号（UTF-8）: `https://www.post.japanpost.jp/zipcode/dl/utf-zip.html`
+  （`utf_ken_all.zip` / `KEN_ALL.CSV`）
+- 事業所の個別郵便番号（Shift_JIS）: `https://www.post.japanpost.jp/zipcode/dl/jigyosyo/index-zip.html`
+  （`jigyosyo.zip` / `JIGYOSYO.CSV`）
 
 ```console
 $ go run ./internal/dict/gen \
-    -input /path/to/utf_ken_all.zip \
+    -ken-all-input /path/to/utf_ken_all.zip \
+    -jigyosyo-input /path/to/jigyosyo.zip \
     -output internal/dict/postal_codes.bitset
 ```
 
-`-input` には展開済みの UTF-8 版 KEN_ALL CSV も指定できる。郵便番号の増減で
-`jp-postal-code` の精度数値が動くことがあるため、新しいビットセットをコミットしたら
-eval / バッジの再生成も行うこと。
+`-ken-all-input` / `-jigyosyo-input` はどちらか片方だけでも、両方指定してもよい
+（両方指定時はマージされ、重複コードは自動的に排除される）。それぞれ展開済みの CSV
+（前者は UTF-8、後者は Shift_JIS）も直接指定できる。列インデックス（ken_all は郵便番号が
+3 列目、jigyosyo は 8 列目）はフォーマットごとに固定なので、`-ken-all-input` と
+`-jigyosyo-input` を取り違えないこと（取り違えると実質ゼロ件取り込みになる）。
+郵便番号の増減で `jp-postal-code` の精度数値が動くことがあるため、新しいビットセットを
+コミットしたら eval / バッジの再生成も行うこと。
 
 新ルールは `jp-pii-detect rules` に自動で表示されます。
 

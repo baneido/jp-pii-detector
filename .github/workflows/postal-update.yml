@@ -20,6 +20,9 @@ env:
   # 日本郵便「住所の郵便番号（1 レコード 1 行、UTF-8）」全国一括 zip。
   # 配布ページ: https://www.post.japanpost.jp/zipcode/dl/utf-zip.html
   POSTAL_URL: https://www.post.japanpost.jp/zipcode/dl/utf/zip/utf_ken_all.zip
+  # 日本郵便「事業所の個別郵便番号」zip（Shift_JIS 配布）。
+  # 配布ページ: https://www.post.japanpost.jp/zipcode/dl/jigyosyo/index-zip.html
+  POSTAL_JIGYOSYO_URL: https://www.post.japanpost.jp/zipcode/dl/jigyosyo/zip/jigyosyo.zip
   # PR を載せる作業ブランチ（毎回 force-push して 1 本に集約する）。
   POSTAL_BRANCH: automated/postal-codes
 
@@ -76,11 +79,21 @@ jobs:
           # 取得物が壊れていない zip であることを検証する。
           unzip -tq utf_ken_all.zip
 
+      - name: Download Japan Post jigyosyo (事業所の個別郵便番号)
+        run: |
+          set -eu
+          curl -fsSL --retry 3 --retry-delay 5 -o jigyosyo.zip "$POSTAL_JIGYOSYO_URL"
+          unzip -tq jigyosyo.zip
+
       - name: Regenerate postal bitset
         run: |
           set -eu
-          # gen は生成件数を "postal codes: N" として標準出力に出す。
-          out=$(go run ./internal/dict/gen -input utf_ken_all.zip -output internal/dict/postal_codes.bitset)
+          # gen は生成件数（ken_all + jigyosyo の合算・重複排除後）を
+          # "postal codes: N" として標準出力に出す。
+          out=$(go run ./internal/dict/gen \
+            -ken-all-input utf_ken_all.zip \
+            -jigyosyo-input jigyosyo.zip \
+            -output internal/dict/postal_codes.bitset)
           echo "$out"
           count=$(printf '%s\n' "$out" | sed -n 's/^postal codes: //p')
 
@@ -91,8 +104,9 @@ jobs:
             exit 1
           fi
           # サニティチェック 2: 取り込んだ郵便番号件数。切り詰められた CSV を弾く
-          # （全国で 12 万件規模あるため、10 万件未満は異常とみなす）。
-          if [ -z "${count:-}" ] || [ "$count" -lt 100000 ]; then
+          # （ken_all だけで 12 万件規模、jigyosyo が概算 2 万件規模あるため、
+          # 合算 14 万件未満は異常とみなす）。
+          if [ -z "${count:-}" ] || [ "$count" -lt 140000 ]; then
             echo "::error::郵便番号の件数が少なすぎる: '${count:-unknown}'（ダウンロード破損の可能性）"
             exit 1
           fi
@@ -105,7 +119,7 @@ jobs:
           go test ./...
           go build ./cmd/jp-pii-detect
           # 生の zip は走査対象に含めないよう削除する（.gitignore 済みだが念のため）。
-          rm -f utf_ken_all.zip
+          rm -f utf_ken_all.zip jigyosyo.zip
           ./jp-pii-detect scan --format github .
 
       # フィクスチャが取れていれば、バッジ・docs/accuracy.md を実測で再生成して PR に含める。
