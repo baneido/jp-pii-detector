@@ -38,6 +38,14 @@ type Span struct {
 	Start  int      `json:"start"`
 	End    int      `json:"end"`
 	Tags   []string `json:"tags,omitempty"`
+	// WantConfidence は任意項目（"low" | "medium" | "high"）。設定すると、この
+	// スパンの検出が期待信頼度以上で報告されることを要求する（内部で Base のまま
+	// 昇格しない等、低い信頼度に埋もれて既定設定では黙って見えなくなる「実質的な
+	// 検出漏れ」を可視化するため）。省略時はこのスパンを信頼度チェックの対象外とする。
+	// 後方互換: 既存データセット JSON はこのフィールドを持たないが、
+	// encoding/json は未知フィールドを無視して Unmarshal するため、コード側を
+	// 先にデプロイしてもデータセット未更新のまま全テストが green のまま動く。
+	WantConfidence string `json:"want_confidence,omitempty"`
 }
 
 // DiffLine は diff hunk 内の 1 行。Added が true なら追加行、false なら文脈行。
