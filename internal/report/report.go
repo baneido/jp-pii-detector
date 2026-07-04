@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/baneido/jp-pii-detector/internal/baseline"
 	"github.com/baneido/jp-pii-detector/internal/detect"
 	"github.com/baneido/jp-pii-detector/internal/rule"
 )
@@ -49,7 +50,8 @@ func Text(w io.Writer, findings []detect.Finding, unmask, explain bool) {
 		}
 	}
 	if len(findings) > 0 {
-		fmt.Fprintf(w, "\n%d 件の個人情報らしき記述を検出しました。誤検出の場合は行末コメントに %q を付けるか、設定ファイルの allowlist に追加してください。\n",
+		fmt.Fprintf(w, "\n%d 件の個人情報らしき記述を検出しました。誤検出の場合は行末コメントに %q を付けるか、設定ファイルの allowlist に追加してください。\n"+
+			"意図的に許容する既存の検出は --update-baseline でベースラインファイルに記録すると、以降のスキャンでは新規追加分のみが検出されます。\n",
 			len(findings), detect.IgnoreMarker)
 	}
 }
@@ -96,10 +98,21 @@ type jsonFinding struct {
 	Match      string               `json:"match"`
 	Confidence string               `json:"confidence"`
 	Reason     *detect.DetectReason `json:"reason,omitempty"`
+	// Fingerprint は internal/baseline の値ハッシュ fingerprint（salt 付き
+	// HMAC-SHA256）。scan --baseline <path> 指定時のみ、その baseline ファイルの
+	// salt で算出して出力する（省略時は空文字列で omitempty により出力されない）。
+	// baseline ファイルへの手動追記など、参照用途を想定する。
+	Fingerprint string `json:"fingerprint,omitempty"`
 }
 
-// JSON は機械可読な JSON を出力する。
-func JSON(w io.Writer, findings []detect.Finding, unmask, explain bool) error {
+// JSON は機械可読な JSON を出力する。salt を渡すと（後方互換のため可変長引数、
+// 1 つ目のみ使用）各 finding に baseline fingerprint を付与する。省略時
+// （既存呼び出し）は今までどおり fingerprint フィールドを出力しない。
+func JSON(w io.Writer, findings []detect.Finding, unmask, explain bool, salt ...string) error {
+	var fpSalt string
+	if len(salt) > 0 {
+		fpSalt = salt[0]
+	}
 	out := struct {
 		Findings []jsonFinding `json:"findings"`
 		Count    int           `json:"count"`
@@ -120,6 +133,9 @@ func JSON(w io.Writer, findings []detect.Finding, unmask, explain bool) error {
 		}
 		if explain {
 			jf.Reason = &f.Reason
+		}
+		if fpSalt != "" {
+			jf.Fingerprint = baseline.FindingFingerprint(fpSalt, f)
 		}
 		out.Findings = append(out.Findings, jf)
 	}

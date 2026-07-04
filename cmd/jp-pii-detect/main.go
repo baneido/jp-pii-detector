@@ -10,6 +10,7 @@ import (
 	"runtime/debug"
 	"strings"
 
+	"github.com/baneido/jp-pii-detector/internal/baseline"
 	"github.com/baneido/jp-pii-detector/internal/config"
 	"github.com/baneido/jp-pii-detector/internal/detect"
 	"github.com/baneido/jp-pii-detector/internal/report"
@@ -92,6 +93,14 @@ Scan flags:
   --explain                text/json 出力に検出理由（コンテキスト昇格・検証有無等）を含める
   --high-recall            偽陽性リスクの高い再現率重視ルールを有効化
   --exit-zero              検出があっても終了コード 0 を返す
+  --baseline <path>        ベースラインファイルを読み込み、記録済み（fingerprint が
+                           一致）の検出を結果と終了コードから除外する。--staged /
+                           --diff / フルスキャンいずれとも併用可能
+  --update-baseline        現在の検出内容でベースラインファイルを新規作成、または
+                           既存ファイルに追記して終了コード 0 で終了する
+                           （--baseline <path> の指定が必須）
+  --show-baseline          ベースラインで除外された検出も参考表示する（終了コードには
+                           影響しない。--baseline <path> の指定が必須）
 
 パスとフラグの順序は問いません（例: "scan . --high-recall" も
 "scan --high-recall ." と同じ意味になります）。"--" 以降は常にパスとして扱います。
@@ -134,6 +143,9 @@ func runScan(args []string) int {
 	explain := fs.Bool("explain", false, "")
 	highRecall := fs.Bool("high-recall", false, "")
 	exitZero := fs.Bool("exit-zero", false, "")
+	baselinePath := fs.String("baseline", "", "")
+	updateBaseline := fs.Bool("update-baseline", false, "")
+	showBaseline := fs.Bool("show-baseline", false, "")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	// Go の flag パッケージは最初の非フラグ引数（パス等）でパースを止めるため、
 	// "scan . --high-recall" のようにパスの後ろに置かれたフラグは無視され、パス
@@ -141,6 +153,12 @@ func runScan(args []string) int {
 	// "no such file" エラーになる。フラグと値をパス等より前に並べ替えてから渡す。
 	if err := fs.Parse(reorderArgs(fs, args)); err != nil {
 		return 2
+	}
+	if *updateBaseline && *baselinePath == "" {
+		return fail(fmt.Errorf("--update-baseline には --baseline <path> の指定が必要です"))
+	}
+	if *showBaseline && *baselinePath == "" {
+		return fail(fmt.Errorf("--show-baseline には --baseline <path> の指定が必要です"))
 	}
 
 	var failThreshold rule.Confidence
@@ -199,19 +217,52 @@ func runScan(args []string) int {
 		fmt.Fprintln(os.Stderr, "jp-pii-detect: warning:", w)
 	}
 
+	// --update-baseline: 現在の findings（--staged / --diff / フルスキャンいずれの
+	// モードでも同じ findings 変数に集約されている）でベースラインファイルを
+	// 新規作成、または既存ファイルへ追記して終了コード 0 で終了する。他の
+	// フラグ（--baseline での既存フィルタ・出力形式）とは独立した早期リターン。
+	if *updateBaseline {
+		return updateBaselineFile(*baselinePath, findings)
+	}
+
+	// --baseline: 記録済み（fingerprint 一致）の検出を結果・終了コードから除外する。
+	// detect パッケージ側の走査（並列）はここまでで完了しており、Filter は
+	// 単一 goroutine の後処理なので追加のデータレース懸念はない。
+	reportFindings := findings
+	exitFindings := findings
+	var fpSalt string
+	if *baselinePath != "" {
+		bf, err := baseline.Load(*baselinePath)
+		if err != nil {
+			return fail(err)
+		}
+		fpSalt = bf.Salt
+		kept, baselined := baseline.Filter(findings, bf)
+		exitFindings = kept
+		reportFindings = kept
+		if *showBaseline {
+			// 参考表示用: フィルタ済み分も併せて出力するが、終了コードの判定には使わない。
+			reportFindings = append(append([]detect.Finding{}, kept...), baselined...)
+		}
+	}
+	var fpArgs []string
+	if fpSalt != "" {
+		fpArgs = []string{fpSalt}
+	}
+
 	switch *format {
 	case "text":
-		report.Text(os.Stdout, findings, *unmask, *explain)
+		report.Text(os.Stdout, reportFindings, *unmask, *explain)
 	case "json":
-		if err := report.JSON(os.Stdout, findings, *unmask, *explain); err != nil {
+		if err := report.JSON(os.Stdout, reportFindings, *unmask, *explain, fpArgs...); err != nil {
 			return fail(err)
 		}
 	case "sarif":
-		if err := report.SARIF(os.Stdout, findings, det.Rules(), *unmask); err != nil {
+		if err := report.SARIF(os.Stdout, reportFindings, det.Rules(), *unmask); err != nil {
 			return fail(err)
 		}
 	case "github":
-		report.GitHub(os.Stdout, findings, *unmask)
+		report.GitHub(os.Stdout, reportFindings, *unmask)
 	default:
 		return fail(fmt.Errorf("unknown format %q (text|json|sarif|github)", *format))
 	}
@@ -222,18 +273,19 @@ func runScan(args []string) int {
 	if *exitZero {
 		return 0
 	}
-	if shouldFail(findings, failThreshold) {
+	if shouldFail(exitFindings, failThreshold) {
 		return 1
 	}
 	return 0
 }
 
-// shouldFail は終了コードを 1 にすべきかを判定する。--fail-on が未指定
-// （threshold のゼロ値）の場合は既存の契約どおり「報告された検出が1件でも
-// あれば失敗」。--fail-on 指定時は、report で可視化する min_confidence とは
-// 独立に、その閾値以上の検出が1件でもあるかどうかだけで判定する（min_confidence
-// を下げて medium/low を可視化しつつ、CI は high のときだけ落とす、といった
-// 使い分けができる）。
+// shouldFail は終了コードを 1 にすべきかを判定する。呼び出し側は --baseline
+// でフィルタ済みの findings（未指定時は生の findings と同じ）を渡す。--fail-on
+// が未指定（threshold のゼロ値）の場合は既存の契約どおり「報告された検出が
+// 1件でもあれば失敗」。--fail-on 指定時は、report で可視化する min_confidence
+// とは独立に、その閾値以上の検出が1件でもあるかどうかだけで判定する
+// （min_confidence を下げて medium/low を可視化しつつ、CI は high のときだけ
+// 落とす、といった使い分けができる）。
 func shouldFail(findings []detect.Finding, threshold rule.Confidence) bool {
 	if threshold == 0 {
 		return len(findings) > 0
@@ -246,11 +298,35 @@ func shouldFail(findings []detect.Finding, threshold rule.Confidence) bool {
 	return false
 }
 
-// runRules は builtin + custom ルールの一覧を表示する。config.Load を通して
-// .jp-pii.toml を反映するため、disabled 指定や high_recall（および
-// --high-recall）の効果で実際に有効なルールがどれかを状態タグ（有効/無効・
-// 高再現率）付きでそのまま確認できる。無効化されたルールも一覧に含め、
-// どのルールが無効化されているか分かるようにする。
+// updateBaselineFile は現在の findings でベースラインファイルを新規作成、
+// または既存ファイルに追記して保存する。gitleaks --baseline-path / detect-secrets
+// の baseline 更新運用と同様、常に終了コード 0 で返す（走査・書き込み自体の
+// エラーのみ 2 を返す）。
+func updateBaselineFile(path string, findings []detect.Finding) int {
+	bf, err := baseline.Load(path)
+	switch {
+	case err == nil:
+		baseline.Merge(bf, findings)
+	case baseline.IsNotExist(err):
+		bf, err = baseline.FromFindings(findings, "")
+		if err != nil {
+			return fail(err)
+		}
+	default:
+		return fail(err)
+	}
+	if err := baseline.Save(path, bf); err != nil {
+		return fail(err)
+	}
+	fmt.Printf("baseline を更新しました: %s（%d 件）\n", path, len(bf.Entries))
+	return 0
+}
+
+// runRules は --config を反映した実効ルール一覧（builtin + custom の合成後）を
+// 状態タグ（有効/無効・高再現率）付きで表示する。detect.New と同じ合成ロジック
+// を経由するため、scan コマンドが実際に使うルール集合と一致する。disabled 指定や
+// high_recall（および --high-recall）の効果で実際に有効なルールがどれかを、
+// 無効化されたルールも一覧から外さずそのまま確認できる。
 func runRules(args []string) int {
 	fs := flag.NewFlagSet("rules", flag.ExitOnError)
 	configPath := fs.String("config", "", "")

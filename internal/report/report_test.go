@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/baneido/jp-pii-detector/internal/baseline"
 	"github.com/baneido/jp-pii-detector/internal/detect"
 	"github.com/baneido/jp-pii-detector/internal/piifixtures"
 	"github.com/baneido/jp-pii-detector/internal/rule"
@@ -115,6 +116,18 @@ func TestTextExplainIncludesReason(t *testing.T) {
 	}
 }
 
+// TestTextIncludesBaselineHint はサマリ行に --update-baseline の案内が
+// 含まれることを確認する（IgnoreMarker の案内と同様の形式）。フィクスチャ不要。
+func TestTextIncludesBaselineHint(t *testing.T) {
+	findings := []detect.Finding{{RuleID: "jp-phone-number", File: "users.csv", Line: 4, Column: 6, Match: "dummy-value-1"}}
+	var buf bytes.Buffer
+	Text(&buf, findings, false, false)
+	out := buf.String()
+	if !strings.Contains(out, "--update-baseline") {
+		t.Errorf("missing baseline remediation hint: %s", out)
+	}
+}
+
 // confidence → SARIF level の対応（high=error, medium=warning, low=note）。
 func TestSARIFLevels(t *testing.T) {
 	piifixtures.Require(t)
@@ -208,6 +221,38 @@ func TestJSONOffsets(t *testing.T) {
 	}
 	if f1 := got.Findings[1]; f1.Offset != nil || f1.EndOffset != nil {
 		t.Errorf("HasOffset でない finding に offset が出ている: %s", out)
+	}
+}
+
+// TestJSONFingerprint は salt を渡したときだけ internal/baseline と同じ
+// アルゴリズムの fingerprint フィールドが JSON に出ること、salt を渡さない
+// 既存呼び出し（後方互換）では fingerprint が出ないことを確認する。フィクスチャ不要。
+func TestJSONFingerprint(t *testing.T) {
+	findings := []detect.Finding{{RuleID: "jp-phone-number", File: "app/users.csv", Line: 1, Column: 1, Match: "dummy-value-1"}}
+
+	var withoutSalt bytes.Buffer
+	if err := JSON(&withoutSalt, findings, true, false); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(withoutSalt.String(), "fingerprint") {
+		t.Errorf("salt 未指定時は fingerprint を出力しないはず: %s", withoutSalt.String())
+	}
+
+	var withSalt bytes.Buffer
+	if err := JSON(&withSalt, findings, true, false, "test-salt"); err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Findings []struct {
+			Fingerprint string `json:"fingerprint"`
+		} `json:"findings"`
+	}
+	if err := json.Unmarshal(withSalt.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	want := baseline.FindingFingerprint("test-salt", findings[0])
+	if len(got.Findings) != 1 || got.Findings[0].Fingerprint != want {
+		t.Errorf("fingerprint = %+v, want %q", got.Findings, want)
 	}
 }
 
