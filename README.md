@@ -37,7 +37,7 @@
 | 在留カード番号 | `在留カード AB12345678CD` | ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 英2+数8+英2 + 周辺の語が必要 |
 | 銀行口座番号 | `口座番号: 1234567` | △ | ![F1 0.86](https://img.shields.io/badge/F1-0.86-green) | 7 桁 + 周辺の語が必要 |
 | 健康保険 保険者番号等 | `保険者番号: 12345678` | △ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 8 桁 + 周辺の語が必要 |
-| 生年月日 | `生年月日: 1990年1月23日` | △ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | ラベル付き。西暦・和暦に対応 |
+| 生年月日 | `生年月日: 1990年1月23日` | △ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | ラベル付き（日本語・英語ラベル対応）。西暦・和暦（元号略記・元年含む）・区切りなし8桁に対応 |
 | 氏名 | `氏名: 山田 太郎` | △ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | ラベル付き（`氏名:`/`お名前:`/`customer_name:` 等）+ プレースホルダ・非人物キー除外。値が姓名辞書に一致すれば `medium` で**既定でも報告**。`姓:`/`名:` 等の弱いラベルは姓名辞書で検証済みのため常に `medium`。辞書に一致しない収録外の実在人名は `low` のまま既定では非表示（後述） |
 
 > **既定の報告範囲**: 信頼度 `medium` 以上を報告します（`min_confidence` で変更可）。

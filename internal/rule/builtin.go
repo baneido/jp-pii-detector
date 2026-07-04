@@ -289,6 +289,22 @@ var digitRuleNegativeContext = []string{
 	"注文", "伝票", "管理番号", "通し番号", "連番",
 }
 
+// jp-birthdate ルールで共用する部分パターン。
+var (
+	// birthdateLabel はラベル部（日本語 2 語 + 英語表記ゆれ）。英語ラベルは
+	// "dob" のような短い略記が adobe / wardrobe 等の単語内部に現れうるため、
+	// personNameBoundary と同じ前方境界（非英数字・非漢字かな）を英語側にのみ
+	// 付与してスコープを絞る（`adobe:` 等は前方が英字のため境界で除外される）。
+	// 日本語ラベルには前方境界を課さない。「対象者の生年月日:」のような、
+	// ラベル直前に助詞・漢字が続く既存の使い方をそのまま許容するため。
+	// 大小文字は英語ラベルのみ区別しない（日本語ラベルに大小文字はないため無関係）。
+	birthdateLabel = `(?:生年月日|誕生日|` + personNameBoundary +
+		`(?i:birth\s?date|birthday|date[_ ]of[_ ]birth|dob))`
+	// birthdateLabelSep はラベルと値の区切り。ラベル直後に「(西暦)」等の注記が
+	// 挟まる表記を許容してから、既存の区切り（コロン/イコール）を許容する。
+	birthdateLabelSep = `(?:[(（][^)）]{1,10}[)）])?\s*[:=]?\s*`
+)
+
 // Builtin は組み込みルール一覧を返す。
 func Builtin() []Rule {
 	return []Rule{
@@ -458,6 +474,35 @@ func Builtin() []Rule {
 			},
 		},
 		{
+			// jp-health-insurance より前に登録する。両ルールの 8 桁パターンが
+			// 同一行・同一箇所で重なった場合、resolveOverlaps は「同信頼度・
+			// 同じ長さなら先勝ち」で決着するため、ラベル直結という強いシグナルを
+			// 持つ jp-birthdate 側を優先させる（TestBirthdateWinsOverHealthInsuranceOverlap）。
+			ID:          "jp-birthdate",
+			Description: "生年月日（ラベル付き）",
+			Prefilter:   PrefilterDigit,
+			// 形式（西暦・和暦・区切りなし8桁）だけでなく、実在する暦日かを検証する。
+			// 2023-99-99 や 2023-02-29（閏年でない）などを棄却する。
+			Validate: validBirthdate,
+			Patterns: []Pattern{
+				// 区切りあり形式。西暦 4 桁、または和暦（元号の漢字表記 or
+				// 明治/大正/昭和/平成/令和を表す単字アルファベット略記 M/T/S/H/R）＋
+				// 年（1-2 桁の数字、または改元年を表す「元」）。
+				{Re: regexp.MustCompile(
+					birthdateLabel + birthdateLabelSep +
+						`((?:(?:19|20)\d{2}|(?:明治|大正|昭和|平成|令和|[MTSHR])(?:元|\d{1,2}))[年/.-]\d{1,2}[月/.-]\d{1,2}日?)`,
+				), Base: Medium},
+				// ラベル直結・区切りなしの 8 桁連結（YYYYMMDD）。DB エクスポート等で
+				// 最頻出の表記。月日のレンジをパターン側で絞り込み、ラベルへの
+				// 直結を必須とすることで、処理日・有効期限など無関係な 8 桁列や、
+				// ラベルなしの裸 8 桁を拾わない。
+				{Re: regexp.MustCompile(
+					birthdateLabel + birthdateLabelSep +
+						`((?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01]))(?:[^0-9]|$)`,
+				), Base: Medium},
+			},
+		},
+		{
 			ID:                   "jp-health-insurance",
 			Description:          "健康保険 保険者番号・被保険者番号",
 			Prefilter:            PrefilterDigit,
@@ -579,20 +624,6 @@ func Builtin() []Rule {
 			// CrossLineNameValueRe / ValidCrossLineName を使って検出する。
 			// 高再現率モードでのみ有効（HighRecallRuleIDs）。
 		},
-		{
-			ID:          "jp-birthdate",
-			Description: "生年月日（ラベル付き）",
-			Prefilter:   PrefilterDigit,
-			// 形式（西暦・和暦）だけでなく、実在する暦日かを検証する。
-			// 2023-99-99 や 2023-02-29（閏年でない）などを棄却する。
-			Validate: validBirthdate,
-			Patterns: []Pattern{
-				{Re: regexp.MustCompile(
-					`(?:生年月日|誕生日)\s*[:=]?\s*` +
-						`((?:(?:19|20)\d{2}|(?:明治|大正|昭和|平成|令和)\d{1,2})[年/.-]\d{1,2}[月/.-]\d{1,2}日?)`,
-				), Base: Medium},
-			},
-		},
 	}
 }
 
@@ -627,11 +658,27 @@ func validPhone(m string) bool {
 	return false
 }
 
-// birthdateRe は jp-birthdate の捕捉値（西暦 4 桁 or 和暦元号＋年・月・日）を
-// 分解する。グループ: 1=西暦年 / 2=元号 / 3=和暦年 / 4=月 / 5=日。
-// 区切りはルールの正規表現と同じ（年→月は [年/.-]、月→日は [月/.-]、末尾 日?）。
+// birthdateRe は jp-birthdate の区切りあり捕捉値（西暦 4 桁 or 和暦元号＋年・月・日）
+// を分解する。グループ: 1=西暦年 / 2=元号（漢字 or 単字アルファベット略記）/
+// 3=和暦年（数字、または改元年を表す「元」）/ 4=月 / 5=日。区切りはルールの
+// 正規表現と同じ（年→月は [年/.-]、月→日は [月/.-]、末尾 日?）。
 var birthdateRe = regexp.MustCompile(
-	`^(?:((?:19|20)\d{2})|(明治|大正|昭和|平成|令和)(\d{1,2}))[年/.-](\d{1,2})[月/.-](\d{1,2})日?$`)
+	`^(?:((?:19|20)\d{2})|(明治|大正|昭和|平成|令和|[MTSHR])(元|\d{1,2}))[年/.-](\d{1,2})[月/.-](\d{1,2})日?$`)
+
+// birthdateDigitsRe は jp-birthdate の「ラベル直結・区切りなし8桁」捕捉値
+// （YYYYMMDD）を分解する。月日のレンジは検出側の正規表現で既に絞り込み済み
+// なので、ここでは西暦年/月/日への分解のみを行う。グループ: 1=西暦年 / 2=月 / 3=日。
+var birthdateDigitsRe = regexp.MustCompile(`^((?:19|20)\d{2})(\d{2})(\d{2})$`)
+
+// birthdateEraAbbrev は運転免許証・保険証等の転記で一般的な元号の単字
+// アルファベット略記を正式名称へ変換する。
+var birthdateEraAbbrev = map[string]string{
+	"M": "明治",
+	"T": "大正",
+	"S": "昭和",
+	"H": "平成",
+	"R": "令和",
+}
 
 // warekiEra は元号の改元年（西暦）と、その元号で取りうる最大の和暦年を返す。
 // 改元年を元年（1 年）とし、西暦 = start + 和暦年 - 1 で換算する。令和は
@@ -655,7 +702,15 @@ func warekiEra(era string) (start, maxYear int, ok bool) {
 // validBirthdate は捕捉した生年月日が実在する暦日かを検証する。形式上は
 // 成立しても暦として無効な値（2023-99-99 / 2023-02-29 / 昭和65年… 等）を棄却する。
 // 未来日や年齢の妥当性までは判定しない（信頼度ではなく検出可否のみを扱うため）。
+// まず区切りなし8桁（YYYYMMDD）として解釈を試み、ダメなら区切りあり形式
+// （西暦 or 和暦、単字アルファベット略記・元年を含む）として解釈する。
 func validBirthdate(m string) bool {
+	if sub := birthdateDigitsRe.FindStringSubmatch(m); sub != nil {
+		year, _ := strconv.Atoi(sub[1])
+		month, _ := strconv.Atoi(sub[2])
+		day, _ := strconv.Atoi(sub[3])
+		return validCalendarDate(year, month, day)
+	}
 	sub := birthdateRe.FindStringSubmatch(m)
 	if sub == nil {
 		return false
@@ -664,8 +719,17 @@ func validBirthdate(m string) bool {
 	if sub[1] != "" {
 		year, _ = strconv.Atoi(sub[1])
 	} else {
-		eraYear, _ := strconv.Atoi(sub[3])
-		start, maxYear, ok := warekiEra(sub[2])
+		era := sub[2]
+		if full, ok := birthdateEraAbbrev[era]; ok {
+			era = full
+		}
+		var eraYear int
+		if sub[3] == "元" {
+			eraYear = 1
+		} else {
+			eraYear, _ = strconv.Atoi(sub[3])
+		}
+		start, maxYear, ok := warekiEra(era)
 		if !ok || eraYear < 1 || eraYear > maxYear {
 			return false
 		}
