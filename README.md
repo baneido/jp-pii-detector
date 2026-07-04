@@ -198,6 +198,35 @@ TEST_PHONE = "090-XXXX-XXXX"  # jp-pii-detector:ignore テスト用ダミー
 
 旧マーカー `pii-allow` も互換性のため引き続き利用できます。
 
+## ベースライン（既存の検出を凍結して新規のみ fail させる）
+
+既存リポジトリに導入すると、過去に混入済みの PII やダミー値が一斉に検出されて CI が
+通らなくなることがあります。gitleaks の `--baseline-path` や detect-secrets の
+`.secrets.baseline` と同様に、ベースラインファイルへ既知の検出を記録しておくと、
+以降のスキャンでは新規追加分だけを fail させられます。
+
+```sh
+# 導入時: 現在の検出内容でベースラインファイルを作成（以後は --baseline とセットで使う）
+$ jp-pii-detect scan --baseline .jp-pii-baseline.json --update-baseline .
+
+# 通常運用: ベースライン記録済みの検出は結果・終了コードから除外される
+$ jp-pii-detect scan --baseline .jp-pii-baseline.json .
+
+# 除外された検出も参考表示したい場合（終了コードには影響しない）
+$ jp-pii-detect scan --baseline .jp-pii-baseline.json --show-baseline .
+```
+
+`--baseline` / `--update-baseline` / `--show-baseline` は `--staged` / `--diff` / フルスキャンの
+いずれのモードでも同じロジックで動作します。記録は salt 付き HMAC-SHA256 の
+**値ハッシュ（fingerprint）** で行うため、ファイル内で行が前後に移動しても再検出されませんが、
+ルール ID・ファイルパス・検出値のいずれかが変わると別の fingerprint として再度検出されます。
+
+**セキュリティ上の注意**: salt 付きハッシュは複数リポジトリ間でのレインボーテーブル使い回しを
+防ぐものであり、ベースラインファイル自体を入手した第三者による低エントロピーな値
+（7 桁の口座番号など）への総当たり照合を防ぐものではありません。ベースラインファイルは
+元のソース履歴と同程度の機密度で扱ってください（公開リポジトリにコミットしない、
+アクセス制御された場所で管理する、など）。
+
 ## ドキュメント
 
 - [検出手法の調査と整理](docs/detection-methods.md)：検出できる PII の種類、精度の根拠、
