@@ -162,7 +162,13 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 		}
 		filtered = append(filtered, f)
 	}
-	return dedupAndSortFindings(filtered)
+	// 単行・隣接行ペア・クロスライン氏名の各パスは独立に候補を出すため、
+	// パスをまたいで同一箇所に重なる finding（例: 12 桁の数字が
+	// jp-my-number と jp-drivers-license の両方の候補になるケース）が
+	// 残ることがある。File+Line でグループ化した上で resolveOverlaps を
+	// 再適用し、パスをまたいだ重複を統合する。
+	resolved := resolveOverlapsPerLine(filtered)
+	return dedupAndSortFindings(resolved)
 }
 
 // ComputeOffsets は ScanContent に渡したのと同一の content を使い、各 finding に
@@ -275,7 +281,10 @@ func (d *Detector) ScanDiffHunk(file string, lines []DiffLine) []Finding {
 			d.scanAdjacentLinesDiff(file, i+1, texts[i], texts[i+1], added[i], added[i+1], lineContexts[i], lineContexts[i+1])...)
 	}
 	// 文脈行起因の cross-line 負コンテキストは適用しない（上記の設計意図）。
-	return dedupAndSortFindings(candidates)
+	// ScanContent と同様、単行パスと隣接行ペアパスをまたいだ重複を統合する
+	// （cross-line names は diff 走査では実行されないため対象は 2 系統のみ）。
+	resolved := resolveOverlapsPerLine(candidates)
+	return dedupAndSortFindings(resolved)
 }
 
 func findingKey(f Finding) string {
@@ -731,10 +740,34 @@ func isMarkerTokenChar(r rune) bool {
 }
 
 // containsAnyLiteral は haystack に literals のいずれかが含まれるかを返す
-// （リテラルプレフィルタ用。OR 条件）。
+// （リテラルプレフィルタ用。OR 条件）。ASCII 大文字小文字は無視する。氏名ルールの
+// ASCII 強ラベル・裸の name ラベルが `(?i:...)` 化された（#48）ため、プレフィルタ側
+// も大文字小文字を無視しないと FULL_NAME: 等の行が正規表現に到達する前にスキップ
+// されてしまう。大半の行（正規化済みでも ASCII 大文字を含まない行）では最初の
+// ループで決着し、小文字化コピーを確保しない。
 func containsAnyLiteral(haystack string, literals []string) bool {
 	for _, lit := range literals {
 		if strings.Contains(haystack, lit) {
+			return true
+		}
+	}
+	if !hasASCIIUpper(haystack) {
+		return false
+	}
+	lower := strings.ToLower(haystack)
+	for _, lit := range literals {
+		if strings.Contains(lower, lit) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasASCIIUpper は s に ASCII 大文字が 1 つでも含まれるかを返す。マルチバイト
+// UTF-8 の継続バイトは常に 0x80 以上のため、バイト単位の走査でも安全に判定できる。
+func hasASCIIUpper(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c >= 'A' && c <= 'Z' {
 			return true
 		}
 	}
