@@ -729,6 +729,121 @@ high_recall = true
 	}
 }
 
+// TestPersonNameASCIILabelCaseInsensitive は ASCII 強ラベル（full_name 等）と
+// 裸の name ラベルが大文字・キャメルケース表記でも検出されることを確認する
+// （#48）。normalize は ASCII の大小文字を変換しないため、ラベルの
+// `(?i:...)` 化と PrefilterLiterals 側の大小文字無視比較の両方が必要になる。
+// 弱いラベル（last_name/first_name 等）は今回のスコープ外で、大文字表記のままでは
+// 引き続き検出されないことも合わせて確認する。
+func TestPersonNameASCIILabelCaseInsensitive(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"大文字 FULL_NAME", "FULL_NAME: 田中太郎", []string{"person-name"}},
+		{"混在 Customer_Name", "Customer_Name: 山田花子", []string{"person-name"}},
+		{"大文字 PATIENT_NAME", "PATIENT_NAME: 田中太郎", []string{"person-name"}},
+		{"キャメルケース customerName", "customerName: 山田花子", []string{"person-name"}},
+		{"大文字 裸 NAME", "NAME: 田中太郎", []string{"person-name"}},
+		{"混在 裸 Name", "Name: 山田花子", []string{"person-name"}},
+		{"JSON 風大文字キー", `{"FULL_NAME": "田中太郎"}`, []string{"person-name"}},
+		// スコープ外: 弱いラベル（last_name/first_name）は大文字表記では
+		// 引き続き検出しない（#48 の対応方針どおり強ラベル・裸 name のみ対応）。
+		{"弱いラベル大文字は対象外", "LAST_NAME: 田中太郎", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestPersonNameKatakanaMiddleDotValue はカタカナ中黒区切りの氏名
+// （「ジョン・スミス」等）が強いラベルで全体（中黒を含む）を捕捉することを
+// 確認する（#48）。personNameValue のみを拡張し、弱いラベル用の
+// personNameValueShort は対象外のため、その境界も確認する。
+func TestPersonNameKatakanaMiddleDotValue(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	t.Run("full_name 中黒区切り", func(t *testing.T) {
+		fs := d.ScanLine("f.txt", 1, "full_name: ジョン・スミス")
+		assertRules(t, fs, "person-name")
+		if fs[0].Match != "ジョン・スミス" {
+			t.Fatalf("match = %q, want %q", fs[0].Match, "ジョン・スミス")
+		}
+	})
+	t.Run("氏名 中黒区切り", func(t *testing.T) {
+		fs := d.ScanLine("f.txt", 1, "氏名：メアリー・ジョーンズ")
+		assertRules(t, fs, "person-name")
+		if fs[0].Match != "メアリー・ジョーンズ" {
+			t.Fatalf("match = %q, want %q", fs[0].Match, "メアリー・ジョーンズ")
+		}
+	})
+	// スコープ外: 弱いラベル（姓）は personNameValueShort を使うため中黒を
+	// またいで値を捕捉せず、辞書照合にも通らないため検出しない。
+	t.Run("姓ラベルは対象外", func(t *testing.T) {
+		assertRules(t, d.ScanLine("f.txt", 1, "姓: ジョン・スミス"))
+	})
+}
+
+// TestPersonNameBracketAdjacentLabel は強いラベルに鉤括弧・丸括弧が
+// コロンなしで直結するケース（ご氏名「田中美咲」等）を検出することを確認する
+// （#48）。personNameSepOrBracket は強いラベル専用で、弱いラベル（姓 等）には
+// 適用しないことも確認する。
+func TestPersonNameBracketAdjacentLabel(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	tests := []struct {
+		name, line, wantMatch string
+	}{
+		{"日本語ラベル 鉤括弧直結", "ご氏名「田中太郎」", "田中太郎"},
+		{"日本語ラベル 二重鉤括弧直結", "お名前『山田花子』", "山田花子"},
+		{"ASCII強ラベル 丸括弧直結", "full_name(田中太郎)", "田中太郎"},
+		{"ASCII強ラベル 全角丸括弧直結", "customer_name（山田花子）", "山田花子"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, "person-name")
+			if fs[0].Match != tt.wantMatch {
+				t.Fatalf("match = %q, want %q", fs[0].Match, tt.wantMatch)
+			}
+		})
+	}
+	// スコープ外: 弱いラベル（姓）はコロン必須の personNameSep のままで、
+	// 鉤括弧直結では検出しない。
+	t.Run("弱いラベルは対象外", func(t *testing.T) {
+		assertRules(t, d.ScanLine("f.txt", 1, "姓「田中」"))
+	})
+}
+
+// TestPersonNameSingleCharSurnameAllowed は姓ラベル（姓/last_name）専用で、
+// 辞書収録済みの実在 1 文字姓（林・東 等）を許可することを確認する（#48）。
+// 名ラベル・姓名不定の name ラベルは「名: 東」のような方角語等との衝突を
+// 避けるため、引き続き 1 文字を許可しない（validGivenField/validFullNameField
+// は allow1CharSurname=false のまま）。
+func TestPersonNameSingleCharSurnameAllowed(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"姓ラベル + 実在1字姓(林)", "姓: 林", []string{"person-name"}},
+		{"姓ラベル + 実在1字姓(東)", "姓: 東", []string{"person-name"}},
+		{"last_name + 実在1字姓", "last_name: 林", []string{"person-name"}},
+		// 辞書未収録の1文字は従来どおり棄却する。
+		{"姓ラベル + 辞書外1文字", "姓: 私", nil},
+		// スコープ外: 名・姓名不定ラベルは1文字姓を許可しない。
+		{"名ラベルは対象外", "名: 林", nil},
+		{"nameラベルは対象外", "name: 林", nil},
+		{"first_nameは対象外", "first_name: 東", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
 func TestAllowlist(t *testing.T) {
 	piifixtures.Require(t)
 	stopword := piifixtures.MustGet(t, "detect.phone_mobile_stopword")

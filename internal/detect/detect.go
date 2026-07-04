@@ -731,10 +731,34 @@ func isMarkerTokenChar(r rune) bool {
 }
 
 // containsAnyLiteral は haystack に literals のいずれかが含まれるかを返す
-// （リテラルプレフィルタ用。OR 条件）。
+// （リテラルプレフィルタ用。OR 条件）。ASCII 大文字小文字は無視する。氏名ルールの
+// ASCII 強ラベル・裸の name ラベルが `(?i:...)` 化された（#48）ため、プレフィルタ側
+// も大文字小文字を無視しないと FULL_NAME: 等の行が正規表現に到達する前にスキップ
+// されてしまう。大半の行（正規化済みでも ASCII 大文字を含まない行）では最初の
+// ループで決着し、小文字化コピーを確保しない。
 func containsAnyLiteral(haystack string, literals []string) bool {
 	for _, lit := range literals {
 		if strings.Contains(haystack, lit) {
+			return true
+		}
+	}
+	if !hasASCIIUpper(haystack) {
+		return false
+	}
+	lower := strings.ToLower(haystack)
+	for _, lit := range literals {
+		if strings.Contains(lower, lit) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasASCIIUpper は s に ASCII 大文字が 1 つでも含まれるかを返す。マルチバイト
+// UTF-8 の継続バイトは常に 0x80 以上のため、バイト単位の走査でも安全に判定できる。
+func hasASCIIUpper(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c >= 'A' && c <= 'Z' {
 			return true
 		}
 	}
