@@ -37,7 +37,7 @@
 | 在留カード番号 | `在留カード AB12345678CD` | ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 英2+数8+英2 + 周辺の語が必要 |
 | 銀行口座番号 | `口座番号: 1234567` | △ | ![F1 0.86](https://img.shields.io/badge/F1-0.86-green) | 7 桁 + 周辺の語が必要 |
 | 健康保険 保険者番号等 | `保険者番号: 12345678` | △ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 8 桁 + 周辺の語が必要 |
-| 生年月日 | `生年月日: 1990年1月23日` | △ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | ラベル付き。西暦・和暦に対応 |
+| 生年月日 | `生年月日: 1990年1月23日` | △ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | ラベル付き（日本語・英語ラベル対応）。西暦・和暦（元号略記・元年含む）・区切りなし8桁に対応 |
 | 氏名 | `氏名: 山田 太郎` | △ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | ラベル付き（`氏名:`/`お名前:`/`customer_name:` 等）+ プレースホルダ・非人物キー除外。値が姓名辞書に一致すれば `medium` で**既定でも報告**。`姓:`/`名:` 等の弱いラベルは姓名辞書で検証済みのため常に `medium`。辞書に一致しない収録外の実在人名は `low` のまま既定では非表示（後述） |
 
 > **既定の報告範囲**: 信頼度 `medium` 以上を報告します（`min_confidence` で変更可）。
@@ -205,6 +205,35 @@ TEST_PHONE = "090-XXXX-XXXX"  # jp-pii-detector:ignore テスト用ダミー
 ```
 
 旧マーカー `pii-allow` も互換性のため引き続き利用できます。
+
+## ベースライン（既存の検出を凍結して新規のみ fail させる）
+
+既存リポジトリに導入すると、過去に混入済みの PII やダミー値が一斉に検出されて CI が
+通らなくなることがあります。gitleaks の `--baseline-path` や detect-secrets の
+`.secrets.baseline` と同様に、ベースラインファイルへ既知の検出を記録しておくと、
+以降のスキャンでは新規追加分だけを fail させられます。
+
+```sh
+# 導入時: 現在の検出内容でベースラインファイルを作成（以後は --baseline とセットで使う）
+$ jp-pii-detect scan --baseline .jp-pii-baseline.json --update-baseline .
+
+# 通常運用: ベースライン記録済みの検出は結果・終了コードから除外される
+$ jp-pii-detect scan --baseline .jp-pii-baseline.json .
+
+# 除外された検出も参考表示したい場合（終了コードには影響しない）
+$ jp-pii-detect scan --baseline .jp-pii-baseline.json --show-baseline .
+```
+
+`--baseline` / `--update-baseline` / `--show-baseline` は `--staged` / `--diff` / フルスキャンの
+いずれのモードでも同じロジックで動作します。記録は salt 付き HMAC-SHA256 の
+**値ハッシュ（fingerprint）** で行うため、ファイル内で行が前後に移動しても再検出されませんが、
+ルール ID・ファイルパス・検出値のいずれかが変わると別の fingerprint として再度検出されます。
+
+**セキュリティ上の注意**: salt 付きハッシュは複数リポジトリ間でのレインボーテーブル使い回しを
+防ぐものであり、ベースラインファイル自体を入手した第三者による低エントロピーな値
+（7 桁の口座番号など）への総当たり照合を防ぐものではありません。ベースラインファイルは
+元のソース履歴と同程度の機密度で扱ってください（公開リポジトリにコミットしない、
+アクセス制御された場所で管理する、など）。
 
 ## ドキュメント
 
