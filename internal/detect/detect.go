@@ -162,7 +162,13 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 		}
 		filtered = append(filtered, f)
 	}
-	return dedupAndSortFindings(filtered)
+	// 単行・隣接行ペア・クロスライン氏名の各パスは独立に候補を出すため、
+	// パスをまたいで同一箇所に重なる finding（例: 12 桁の数字が
+	// jp-my-number と jp-drivers-license の両方の候補になるケース）が
+	// 残ることがある。File+Line でグループ化した上で resolveOverlaps を
+	// 再適用し、パスをまたいだ重複を統合する。
+	resolved := resolveOverlapsPerLine(filtered)
+	return dedupAndSortFindings(resolved)
 }
 
 // ComputeOffsets は ScanContent に渡したのと同一の content を使い、各 finding に
@@ -275,7 +281,10 @@ func (d *Detector) ScanDiffHunk(file string, lines []DiffLine) []Finding {
 			d.scanAdjacentLinesDiff(file, i+1, texts[i], texts[i+1], added[i], added[i+1], lineContexts[i], lineContexts[i+1])...)
 	}
 	// 文脈行起因の cross-line 負コンテキストは適用しない（上記の設計意図）。
-	return dedupAndSortFindings(candidates)
+	// ScanContent と同様、単行パスと隣接行ペアパスをまたいだ重複を統合する
+	// （cross-line names は diff 走査では実行されないため対象は 2 系統のみ）。
+	resolved := resolveOverlapsPerLine(candidates)
+	return dedupAndSortFindings(resolved)
 }
 
 func findingKey(f Finding) string {
