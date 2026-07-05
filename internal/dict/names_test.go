@@ -2,6 +2,7 @@ package dict
 
 import (
 	"iter"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -102,6 +103,49 @@ func TestIsPersonName(t *testing.T) {
 				t.Errorf("IsPersonName(%q) = %v, want %v", tt.in, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestSurnameSampleAndGivenNameSample は SurnameSample/GivenNameSample が
+// 辞書に実在する値だけを、決定的な順序・重複なしで返すことを検証する
+// （internal/fixturegen が計算合成の材料として使う列挙用エクスポート関数）。
+func TestSurnameSampleAndGivenNameSample(t *testing.T) {
+	s1 := SurnameSample(10)
+	s2 := SurnameSample(10)
+	if len(s1) != 10 {
+		t.Fatalf("len(SurnameSample(10)) = %d, want 10", len(s1))
+	}
+	if !reflect.DeepEqual(s1, s2) {
+		t.Fatalf("SurnameSample(10) is not deterministic: %v != %v", s1, s2)
+	}
+	seen := map[string]bool{}
+	for _, s := range s1 {
+		if !IsSurname(s) {
+			t.Errorf("SurnameSample returned %q, which is not in the surname dictionary", s)
+		}
+		if seen[s] {
+			t.Errorf("SurnameSample returned duplicate %q", s)
+		}
+		seen[s] = true
+	}
+
+	g1 := GivenNameSample(10)
+	for _, g := range g1 {
+		if !IsGivenName(g) {
+			t.Errorf("GivenNameSample returned %q, which is not in the given-name dictionary", g)
+		}
+	}
+
+	// n が辞書サイズを超えたら全件（パニックしない）。
+	all := SurnameSample(1 << 30)
+	if len(all) == 0 || len(all) != len(surnameList) {
+		t.Fatalf("SurnameSample(oversized) len = %d, want %d (full dictionary)", len(all), len(surnameList))
+	}
+	if got := SurnameSample(0); got != nil {
+		t.Fatalf("SurnameSample(0) = %v, want nil", got)
+	}
+	if got := SurnameSample(-1); got != nil {
+		t.Fatalf("SurnameSample(-1) = %v, want nil", got)
 	}
 }
 
