@@ -63,6 +63,10 @@ type DetectReason struct {
 	RequireContext  bool     `json:"require_context,omitempty"`
 	ContextWindow   int      `json:"context_window,omitempty"`
 	Validated       bool     `json:"validated,omitempty"`
+	// PathDemoted はテスト経路（testdata/ 等）の信頼度降格が適用されたかを表す
+	// （internal/detect/path_profile.go）。true の場合、Confidence は既に
+	// 降格後の値（Low）になっている。
+	PathDemoted bool `json:"path_demoted,omitempty"`
 }
 
 // Detector は設定を適用済みの検出エンジン。
@@ -162,12 +166,19 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 		}
 		filtered = append(filtered, f)
 	}
+	// テスト経路（testdata/ 等）の Medium 系検出は Finding 確定後・重複解決前に
+	// 降格する（path_profile.go）。降格であって除外ではないため、allowlist /
+	// jp-pii-detector:ignore とは独立に働く。重複解決 (resolveOverlapsPerLine)
+	// より先に適用し、降格後の信頼度で重複解決の勝敗判定が行われるようにする
+	// （降格された finding が誤って他の重複候補より優先されないようにするため）。
+	demoted := d.applyPathDemotion(filtered)
+
 	// 単行・隣接行ペア・クロスライン氏名の各パスは独立に候補を出すため、
 	// パスをまたいで同一箇所に重なる finding（例: 12 桁の数字が
 	// jp-my-number と jp-drivers-license の両方の候補になるケース）が
 	// 残ることがある。File+Line でグループ化した上で resolveOverlaps を
 	// 再適用し、パスをまたいだ重複を統合する。
-	resolved := resolveOverlapsPerLine(filtered)
+	resolved := resolveOverlapsPerLine(demoted)
 	return dedupAndSortFindings(resolved)
 }
 
@@ -281,9 +292,13 @@ func (d *Detector) ScanDiffHunk(file string, lines []DiffLine) []Finding {
 			d.scanAdjacentLinesDiff(file, i+1, texts[i], texts[i+1], added[i], added[i+1], lineContexts[i], lineContexts[i+1])...)
 	}
 	// 文脈行起因の cross-line 負コンテキストは適用しない（上記の設計意図）。
+	// テスト経路の Medium 系検出降格は ScanContent と同様、重複解決より先に
+	// 適用する（降格後の信頼度で重複解決の勝敗判定が行われるようにするため）。
+	demoted := d.applyPathDemotion(candidates)
+
 	// ScanContent と同様、単行パスと隣接行ペアパスをまたいだ重複を統合する
 	// （cross-line names は diff 走査では実行されないため対象は 2 系統のみ）。
-	resolved := resolveOverlapsPerLine(candidates)
+	resolved := resolveOverlapsPerLine(demoted)
 	return dedupAndSortFindings(resolved)
 }
 
