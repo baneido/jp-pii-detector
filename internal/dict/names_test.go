@@ -125,3 +125,76 @@ func TestExpandedNameDictionaryExamples(t *testing.T) {
 		})
 	}
 }
+
+// TestMatchPersonNameMinimalComponentConstraint は issue #59 段階1: 区切りなし
+// （空白なし）の姓+名分割で、姓・名の両方が 1 ルーンになる分割を不成立とすることを
+// 確認する。関心=関+心、東大=東+大、森永=森+永 はいずれも姓・名の各要素が単独で
+// 辞書に載るため、この制約がないと人名分割が成立してしまう（実測の誤検出）。
+// 関心・東大は分割以外の根拠も持たないため MatchPersonName も NoMatch になる。
+// 森永は分割とは独立に姓の辞書へ直接収録されている実在の姓（例: 森永製菓）でも
+// あるため、分割不成立の確認は SplitsAsFullName で行う（MatchPersonName は
+// 単独の姓一致として SurnameOnly のまま）。
+func TestMatchPersonNameMinimalComponentConstraint(t *testing.T) {
+	for _, in := range []string{"関心", "東大"} {
+		t.Run(in, func(t *testing.T) {
+			if got := MatchPersonName(in); got != NoMatch {
+				t.Errorf("MatchPersonName(%q) = %v, want NoMatch", in, got)
+			}
+			if SplitsAsFullName(in) {
+				t.Errorf("SplitsAsFullName(%q) = true, want false", in)
+			}
+		})
+	}
+	if SplitsAsFullName("森永") {
+		t.Errorf(`SplitsAsFullName("森永") = true, want false（分割（森+永）は不成立。単独の姓一致とは別）`)
+	}
+	// 空白区切りは 1 ルーン同士でも従来どおり分割を許可する（明示的な区切りがあり、
+	// 単独の 1 文字姓+1 文字名の実在人名を取りこぼさないため）。
+	if !SplitsAsFullName("林 学") {
+		t.Errorf(`SplitsAsFullName("林 学") = false, want true`)
+	}
+}
+
+// TestNonPersonHomographDenylist は山田錦（酒米の品種名）のように、姓+名の
+// 分割自体は辞書上成立してしまう非人名の固有名詞が denylist で除外されることを
+// 確認する（issue #59 段階1）。山田（姓・2 ルーン）+ 錦（名・1 ルーン）は
+// 「両方 1 ルーン」制約の対象外のため、分割ループ単体では弾けない。
+func TestNonPersonHomographDenylist(t *testing.T) {
+	if got := MatchPersonName("山田錦"); got != NoMatch {
+		t.Errorf("MatchPersonName(山田錦) = %v, want NoMatch", got)
+	}
+	if IsPersonName("山田錦") {
+		t.Errorf("IsPersonName(山田錦) = true, want false")
+	}
+}
+
+// TestMatchPersonNameSurnameOnlyHomographs は地名・企業名と同形の姓
+// （渋谷・大和・本田）が SurnameOnly（単独の姓一致）と判定され、FullNameSplit
+// とは区別されることを確認する（issue #59 段階1: 呼び出し側が判定根拠に応じて
+// 信頼度を作り分けるための前提）。
+func TestMatchPersonNameSurnameOnlyHomographs(t *testing.T) {
+	for _, in := range []string{"渋谷", "大和", "本田"} {
+		t.Run(in, func(t *testing.T) {
+			if got := MatchPersonName(in); got != SurnameOnly {
+				t.Errorf("MatchPersonName(%q) = %v, want SurnameOnly", in, got)
+			}
+			// 単独の姓一致は IsPersonName としては引き続き true（後方互換）。
+			if !IsPersonName(in) {
+				t.Errorf("IsPersonName(%q) = false, want true", in)
+			}
+		})
+	}
+}
+
+// TestMatchPersonNameFullNameSplit は「姓 + 名」に分割できる完全な氏名が
+// FullNameSplit と判定されることを確認する（SurnameOnly/GivenOnly との判定
+// 根拠の違いを固定する回帰テスト）。
+func TestMatchPersonNameFullNameSplit(t *testing.T) {
+	for _, in := range []string{"山田太郎", "山田 太郎", "越智凪沙"} {
+		t.Run(in, func(t *testing.T) {
+			if got := MatchPersonName(in); got != FullNameSplit {
+				t.Errorf("MatchPersonName(%q) = %v, want FullNameSplit", in, got)
+			}
+		})
+	}
+}
