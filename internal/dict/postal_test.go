@@ -50,6 +50,41 @@ func TestPostalCodeIndex(t *testing.T) {
 	}
 }
 
+// SamplePostalCodes は実在する 7 桁郵便番号だけを、重複なく決定的に返す
+// （internal/fixturegen が合成評価ケースの材料に使う列挙用エクスポート関数）。
+func TestSamplePostalCodes(t *testing.T) {
+	n := 20
+	codes := SamplePostalCodes(n)
+	if len(codes) != n {
+		t.Fatalf("len(SamplePostalCodes(%d)) = %d, want %d", n, len(codes), n)
+	}
+	seen := map[string]bool{}
+	for _, c := range codes {
+		if len(c) != 7 {
+			t.Errorf("SamplePostalCodes returned %q, want 7 digits", c)
+		}
+		if !ValidPostalCode(c) {
+			t.Errorf("SamplePostalCodes returned %q, which ValidPostalCode rejects", c)
+		}
+		if seen[c] {
+			t.Errorf("SamplePostalCodes returned duplicate %q", c)
+		}
+		seen[c] = true
+	}
+
+	if got := SamplePostalCodes(0); got != nil {
+		t.Fatalf("SamplePostalCodes(0) = %v, want nil", got)
+	}
+	if got := SamplePostalCodes(-1); got != nil {
+		t.Fatalf("SamplePostalCodes(-1) = %v, want nil", got)
+	}
+
+	// 決定的（再実行しても同じ結果）。
+	if again := SamplePostalCodes(n); len(again) != n || again[0] != codes[0] {
+		t.Fatalf("SamplePostalCodes(%d) is not deterministic: %v != %v", n, again, codes)
+	}
+}
+
 // 7 桁完全一致のビット照合ロジック（埋め込みデータから独立）。同じ上位 3 桁でも
 // 7 桁が異なれば一致しないこと（prefix 一致では通さない）を手作りのビットセットで確認する。
 func TestPostalInBitset(t *testing.T) {

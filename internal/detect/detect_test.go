@@ -884,6 +884,107 @@ high_recall = true
 	}
 }
 
+// TestPersonNameWeakFieldTrailingParticleFallback は issue #59 段階0: 弱いラベル
+// （姓・名・name 系）の値の直後に助詞・敬称が続き、通常の personNameValueShort が
+// 貪欲に取り込んで辞書照合に失敗する見逃し（FN）を、末尾の助詞・敬称を 1 回だけ
+// 剥がすフォールバックで拾うことを確認する。検出スパンは切り詰めた先頭セグメント。
+// 値は埋め込み姓名辞書のリテラルを使い、外部フィクスチャ不要（オフライン実行可能）。
+func TestPersonNameWeakFieldTrailingParticleFallback(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	tests := []struct {
+		name, line, wantMatch string
+	}{
+		{"姓 + 助詞混入の地続き文", "姓: 山田さんへ連絡", "山田"},
+		{"名 + です", "名: 花子です", "花子"},
+		{"last_name + 敬称", "last_name: 山田様がいらっしゃいました", "山田"},
+		{"user_name + 助詞", "user_name: 山田さんへ連絡", "山田"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, "person-name")
+			if fs[0].Match != tt.wantMatch {
+				t.Errorf("match = %q, want %q", fs[0].Match, tt.wantMatch)
+			}
+		})
+	}
+}
+
+// TestPersonNameWeakFieldTrailingParticleFallbackUnaffected は上記フォールバックが
+// 通常の完全一致（値の直後に助詞が続かない）を壊さないこと、および辞書に
+// 一致しない一般名詞では引き続き検出しないことを確認する。
+func TestPersonNameWeakFieldTrailingParticleFallbackUnaffected(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		// 助詞が続かない通常の完全一致は、切り詰めずフルの値のまま検出する。
+		{"姓 + 名（地続き文なし）", "姓: 山田太郎", []string{"person-name"}},
+		// 1 文字の単独要素は助詞混入時でも棄却する（validGivenField の長さ制約）。
+		{"first_name + 1文字 + 助詞", "first_name: 実さんへ連絡", nil},
+		// 辞書に一致しない一般名詞は、助詞が続いても検出しない。
+		{"名 + 一般名詞 + 助詞", "名: 一覧です", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestPersonNameChargeLabelConfidenceSplit は issue #59 段階1: 担当ラベル
+// （person-name-high-recall）が判定根拠（dict.MatchPersonName）に応じて
+// 信頼度を作り分けることを確認する。姓+名の分割（FullNameSplit）は Medium の
+// まま、単独の姓一致（SurnameOnly、渋谷・大和・本田のような地名・企業名と
+// 同形の姓を含む）は Low に降格し、Medium への一律昇格を避ける。
+func TestPersonNameChargeLabelConfidenceSplit(t *testing.T) {
+	d := newDetector(t, `
+min_confidence = "low"
+[rules]
+high_recall = true
+`)
+	tests := []struct {
+		name, line     string
+		wantConfidence rule.Confidence
+	}{
+		{"担当 + 姓名分割", "担当: 山田太郎", rule.Medium},
+		{"担当 + 地名同形の単独姓（渋谷）", "担当: 渋谷", rule.Low},
+		{"担当 + 地名同形の単独姓（大和）", "担当: 大和", rule.Low},
+		{"担当 + 企業名同形の単独姓（本田）", "担当: 本田", rule.Low},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, "person-name-high-recall")
+			if fs[0].Confidence != tt.wantConfidence {
+				t.Errorf("confidence = %v, want %v", fs[0].Confidence, tt.wantConfidence)
+			}
+		})
+	}
+}
+
+// TestPersonNameChargeLabelRejectsCompoundHomographs は issue #59 段階1: 関心
+// （関+心）・東大（東+大）・山田錦（山田+錦、denylist）のような、姓名分割は
+// 辞書上成立してしまうが実際には人名ではない一般名詞・固有名詞を、担当ラベルが
+// 検出しないことを確認する。
+func TestPersonNameChargeLabelRejectsCompoundHomographs(t *testing.T) {
+	d := newDetector(t, `
+min_confidence = "low"
+[rules]
+high_recall = true
+`)
+	for _, line := range []string{
+		"担当: 関心",
+		"担当: 東大",
+		"担当: 山田錦",
+	} {
+		t.Run(line, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, line))
+		})
+	}
+}
+
 // TestPersonNameASCIILabelCaseInsensitive は ASCII 強ラベル（full_name 等）と
 // 裸の name ラベルが大文字・キャメルケース表記でも検出されることを確認する
 // （#48）。normalize は ASCII の大小文字を変換しないため、ラベルの
