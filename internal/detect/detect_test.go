@@ -392,6 +392,161 @@ func TestDigitRulesIgnoreDistantNegativeContext(t *testing.T) {
 	assertRules(t, d.ScanLine("f.txt", 1, line), "jp-bank-account")
 }
 
+// mynumValid / mynumValid2 は検査用数字の合致するダミーのマイナンバー
+// （piifixtures 無しでも実行できるよう、チェックディジットを手計算した値）。
+// visaTestCard は Stripe 等が公開する Luhn 有効な Visa テスト番号。
+// shibuyaPostal は実在する郵便番号（渋谷区道玄坂、internal/dict のテストと同じ値）。
+const (
+	mynumValid    = "123456789018"
+	mynumValid2   = "100000000013"
+	visaTestCard  = "4242424242424242"
+	visaSepCard   = "4111-1111-1111-1111"
+	shibuyaPostal = "150-0043"
+)
+
+// P05: jp-my-number / credit-card / jp-postal-code / jp-passport /
+// jp-residence-card は、これまで NegativeContext が未設定で、値に隣接する
+// 通貨・カウンタ単位（「売上は 4242... 円」等）でも抑制されなかった
+// （issue #53 (a)）。単位隣接専用の語彙を適用し、値に直接隣接する場合のみ
+// 抑制することを確認する。
+func TestUnitAdjacentNegativeContextSuppressesFiveRules(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+	}{
+		{"マイナンバーに直後の円", "マイナンバー: " + mynumValid + "円"},
+		{"売上表記のカード番号（issue 実測例）", "売上は " + visaTestCard + " 円"},
+		{"郵便番号に直後のカウンタ", "〒" + shibuyaPostal + "件"},
+		{"パスポート番号に直後のカウンタ", "パスポート番号: TZ1234567件"},
+		{"在留カード番号に直後のカウンタ", "在留カード番号: AB12345678CD件"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line))
+		})
+	}
+}
+
+// 単位隣接専用の語彙は、既存 4 ルールの汎用窓語（注文・伝票・管理番号 等）を
+// 含まない。値と関係のない離れた位置に汎用語があるだけでは抑制せず、
+// 「カード番号 … で注文」「マイナンバー … を伝票に転記」のような正当な
+// 検出を取りこぼさないことを確認する（issue #53 (1) の FN 回避）。
+func TestUnitAdjacentNegativeContextIgnoresDistantGenericWords(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"マイナンバーを伝票に転記", "マイナンバー: " + mynumValid + " を伝票に転記", []string{"jp-my-number"}},
+		{"カード番号で注文", "カード番号: " + visaSepCard + " で注文", []string{"credit-card"}},
+		{"郵便番号を伝票に転記", "郵便番号: " + shibuyaPostal + " を伝票に転記", []string{"jp-postal-code"}},
+		{"パスポート番号を伝票に転記", "パスポート番号: TZ1234567 を伝票に転記", []string{"jp-passport"}},
+		{"在留カード番号を伝票に転記", "在留カード番号: AB12345678CD を伝票に転記", []string{"jp-residence-card"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// 採番ラベル接頭クラス（伝票番号・受付番号・予約番号 等）は、値に直接
+// 隣接する場合のみ抑制する（issue #53 (4)）。
+func TestNumberingLabelPrefixSuppressesAdjacentValue(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+	}{
+		{"伝票番号（issue 実測例）", "伝票番号 " + mynumValid2},
+		{"受付番号直後のカード番号", "受付番号 " + visaSepCard},
+		{"予約番号直後の郵便番号（肯定文脈も同一行に存在）", "郵便番号: 予約番号" + shibuyaPostal},
+		{"シリアル番号直後の在留カード番号（肯定文脈も同一行に存在）", "在留カード番号: シリアル番号AB12345678CD"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line))
+		})
+	}
+}
+
+// 採番ラベルが値から離れている場合は抑制しない（正ラベル + 離れた採番語）。
+// hasUnitBefore は空白・タブ以外を挟むと不成立になるため、「伝票番号」の
+// 語自体が行内にあっても値の直前でなければ通常どおり検出する。
+func TestNumberingLabelPrefixIgnoresDistantLabel(t *testing.T) {
+	d := newDetector(t, "")
+	line := "マイナンバー: " + mynumValid + " を伝票番号に転記"
+	assertRules(t, d.ScanLine("f.txt", 1, line), "jp-my-number")
+}
+
+// hasUnitAfter の requireBoundary（issue #53 (2)）: 修正前は単位直後が
+// ひらがな（助詞）でも「日本語文字」とみなして境界不成立にしていたため、
+// 「1234567件に到達した」のような助詞続きでカウンタ抑制が効かなかった
+// （「1234567件。」は句点なので元々抑制されており非一貫性だった）。
+// 直後が漢字（件名・名義等の複合語）の場合のみ境界不成立として抑制しない。
+func TestHasUnitAfterKanjiBoundary(t *testing.T) {
+	unit := []rune("件")
+	tests := []struct {
+		name string
+		line string
+		want bool
+	}{
+		{"助詞（ひらがな）続きは境界成立で抑制する", "1234567件に到達した", true},
+		{"漢字複合語（件名）は境界不成立で抑制しない", "1234567件名は空欄", false},
+		{"句点続きは境界成立で抑制する", "1234567件。", true},
+		{"行末は境界成立で抑制する", "1234567件", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rs := []rune(tt.line)
+			if got := hasUnitAfter(rs, 7, negativeContextWindowRunes, unit, true); got != tt.want {
+				t.Errorf("hasUnitAfter(%q, ...) = %v, want %v", tt.line, got, tt.want)
+			}
+		})
+	}
+}
+
+// hasUnitAfter の境界修正を実際の検出パイプラインで確認する
+// （直接の関数テストに加え、rule.Rule.NegativeContext 経由の統合確認）。
+func TestCounterSuffixBoundaryFixIntegration(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"助詞続きのカウンタは抑制する（境界バグ修正）", "口座番号: 1234567件に到達した", nil},
+		{"漢字複合語（件名）は引き続き抑制しない", "口座番号: 1234567件名は空欄", []string{"jp-bank-account"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// ScanDiffHunk はこれまで cross-line 負コンテキストを一切適用しておらず、
+// 追加行同士（両方 Added）でも抑制されなかった。フルスキャン（ScanContent）
+// では同じ内容が抑制されるため、pre-commit --staged とフルスキャンで結果が
+// 非対称になっていた（issue #53 (5)）。追加行同士は抑制し、文脈行
+// （未変更行）由来の抑制は引き続き適用しないことを確認する。
+func TestScanDiffHunkNegativeContextBetweenAddedLines(t *testing.T) {
+	d := newDetector(t, "")
+
+	// 追加行同士が隣接する場合は、フルスキャンと同じく負コンテキストで抑制する。
+	fs := d.ScanDiffHunk("f.txt", []DiffLine{
+		{Text: "口座番号: 1234567", Added: true},
+		{Text: "円", Added: true},
+	})
+	assertRules(t, fs)
+
+	// 負コンテキストが文脈行（未変更行）にある場合は抑制しない
+	// （追加した値の隣の既存行に「円」があっても、新規 PII を取りこぼさない設計）。
+	fs = d.ScanDiffHunk("f.txt", []DiffLine{
+		{Text: "口座番号: 1234567", Added: true},
+		{Text: "円", Added: false},
+	})
+	assertRules(t, fs, "jp-bank-account")
+}
+
 func TestLabeledRules(t *testing.T) {
 	piifixtures.Require(t)
 	d := newDetector(t, `min_confidence = "low"`)

@@ -338,22 +338,11 @@ func validPersonNameSurnameOnly(v string) bool {
 	return dict.MatchPersonName(strings.TrimSpace(v)) == dict.SurnameOnly
 }
 
-// digitRuleNegativeContext は桁ベースのルールを棄却する近傍語
-// （金額・数量・連番 ID など PII でない数字列の文脈）。
-//
-// 重要（隠れ結合）: 各語が「通貨接頭 / 通貨接尾 / カウンタ接尾 / 汎用」の
-// どれであるかは internal/detect 側の hasNegativeContextNear が分類する
-// （isCurrencyPrefix / isCurrencySuffix / isCounterSuffix・
-// negative_context.go）。ここに語を足しても detect 側の分類器を更新しないと
-// 黙って「汎用」扱いになり、前後の単位近接判定（数字の直後の「円」等）が
-// 効かない。語の追加時は両所を併せて更新すること。
-var digitRuleNegativeContext = []string{
-	"円", "¥", "￥", "$", "千", "万", "億", "人", "名", "件", "個", "回", "点", "%", "％",
-	// 注: "no." や "#" は採番ラベルだが、肯定文脈（口座・免許 等）が既に必須の
-	// ため FP 抑制効果は薄く、"license no." のような正規ラベルを誤って棄却する
-	// 副作用が大きいため除外している。
-	"注文", "伝票", "管理番号", "通し番号", "連番",
-}
+// digitRuleNegativeContext / digitRuleUnitAdjacentNegativeContext と、各語が
+// どの近接判定クラス（通貨接頭・通貨接尾・カウンタ接尾・採番ラベル接頭・
+// 汎用窓語）に属するかの分類は internal/rule/negative_context.go に同居する
+// （ClassifyNegativeKeyword が単一の情報源）。internal/detect 側はこの分類を
+// 呼ぶだけで、語彙を独自に分類しない。
 
 // jp-birthdate ルールで共用する部分パターン。
 var (
@@ -375,10 +364,11 @@ var (
 func Builtin() []Rule {
 	return []Rule{
 		{
-			ID:          "jp-my-number",
-			Description: "マイナンバー（個人番号）",
-			Prefilter:   PrefilterDigit,
-			Context:     []string{"マイナンバー", "個人番号", "mynumber", "my number", "my_number"},
+			ID:              "jp-my-number",
+			Description:     "マイナンバー（個人番号）",
+			Prefilter:       PrefilterDigit,
+			Context:         []string{"マイナンバー", "個人番号", "mynumber", "my number", "my_number"},
+			NegativeContext: digitRuleUnitAdjacentNegativeContext,
 			Validate: func(m string) bool {
 				return checksum.MyNumber(stripSeparators(m))
 			},
@@ -407,10 +397,11 @@ func Builtin() []Rule {
 			},
 		},
 		{
-			ID:          "jp-postal-code",
-			Description: "郵便番号",
-			Prefilter:   PrefilterDigit,
-			Context:     []string{"郵便番号", "郵便", "住所", "postal", "zipcode", "zip code", "〒"},
+			ID:              "jp-postal-code",
+			Description:     "郵便番号",
+			Prefilter:       PrefilterDigit,
+			Context:         []string{"郵便番号", "郵便", "住所", "postal", "zipcode", "zip code", "〒"},
+			NegativeContext: digitRuleUnitAdjacentNegativeContext,
 			// 7 桁完全一致（ビットセット生成済みのとき。未生成なら上位 3 桁実在チェック）。
 			Validate: dict.ValidPostalCode,
 			Patterns: []Pattern{
@@ -463,10 +454,11 @@ func Builtin() []Rule {
 			},
 		},
 		{
-			ID:          "credit-card",
-			Description: "クレジットカード番号（Luhn + ブランドプレフィックス検証）",
-			Prefilter:   PrefilterDigit,
-			Context:     []string{"クレジット", "カード番号", "credit", "card"},
+			ID:              "credit-card",
+			Description:     "クレジットカード番号（Luhn + ブランドプレフィックス検証）",
+			Prefilter:       PrefilterDigit,
+			Context:         []string{"クレジット", "カード番号", "credit", "card"},
+			NegativeContext: digitRuleUnitAdjacentNegativeContext,
 			Validate: func(m string) bool {
 				return checksum.CreditCard(stripSeparators(m))
 			},
@@ -500,10 +492,11 @@ func Builtin() []Rule {
 			},
 		},
 		{
-			ID:          "jp-passport",
-			Description: "旅券（パスポート）番号",
-			Prefilter:   PrefilterDigit,
-			Context:     []string{"パスポート", "旅券", "passport"},
+			ID:              "jp-passport",
+			Description:     "旅券（パスポート）番号",
+			Prefilter:       PrefilterDigit,
+			Context:         []string{"パスポート", "旅券", "passport"},
+			NegativeContext: digitRuleUnitAdjacentNegativeContext,
 			Patterns: []Pattern{
 				{Re: ag(`[A-Z]{2}\d{7}`), Base: High, RequireContext: true},
 			},
@@ -520,10 +513,11 @@ func Builtin() []Rule {
 			},
 		},
 		{
-			ID:          "jp-residence-card",
-			Description: "在留カード番号",
-			Prefilter:   PrefilterDigit,
-			Context:     []string{"在留", "residence card", "zairyu"},
+			ID:              "jp-residence-card",
+			Description:     "在留カード番号",
+			Prefilter:       PrefilterDigit,
+			Context:         []string{"在留", "residence card", "zairyu"},
+			NegativeContext: digitRuleUnitAdjacentNegativeContext,
 			Patterns: []Pattern{
 				{Re: ag(`[A-Z]{2}\d{8}[A-Z]{2}`), Base: High, RequireContext: true},
 			},

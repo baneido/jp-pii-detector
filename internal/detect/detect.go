@@ -265,7 +265,10 @@ type DiffLine struct {
 // 抑制（ignore マーカー・負コンテキスト）の駆動には使わない。これにより、
 // 追加した値の隣の既存行に「円」等の負コンテキストや古い jp-pii-detector:ignore が
 // あっても、追加行の新規 PII を取りこぼさない（セキュリティ検出器として偽陰性を避ける）。
-// 同一行の抑制（値そのものの行）は通常どおり適用される。
+// 同一行の抑制（値そのものの行）は通常どおり適用される。一方、追加行同士が隣接する
+// 場合（両方 Added）は、フルスキャン（ScanContent）と同じく隣接行の負コンテキストを
+// 適用する。そうしないと、同じ 2 行の追加が CI のフルスキャンでは抑制され
+// pre-commit --staged では報告されるという非対称が生まれるため。
 //
 // この「抑制は検出値が乗る行に対してのみ適用し、隣接行のマーカーを巻き添えに
 // しない」という原則は diff 経路専用ではなく、ScanContent 側の隣接行走査
@@ -291,10 +294,27 @@ func (d *Detector) ScanDiffHunk(file string, lines []DiffLine) []Finding {
 		candidates = append(candidates,
 			d.scanAdjacentLinesDiff(file, i+1, texts[i], texts[i+1], added[i], added[i+1], lineContexts[i], lineContexts[i+1])...)
 	}
-	// 文脈行起因の cross-line 負コンテキストは適用しない（上記の設計意図）。
+
+	// 文脈行由来の cross-line 負コンテキストは適用しない（上記の設計意図）。
+	// 非追加行を空文字にマスクした行スライスを使うことで、
+	// hasCrossLineNegativeContext の ±1 行参照が文脈行の負コンテキストを
+	// 拾わないようにしつつ、追加行同士の負コンテキストは通常どおり適用する。
+	maskedTexts := make([]string, len(texts))
+	for i, t := range texts {
+		if added[i] {
+			maskedTexts[i] = t
+		}
+	}
+	filtered := candidates[:0]
+	for _, f := range candidates {
+		if d.hasCrossLineNegativeContext(f, maskedTexts, lineContexts, f.Line-1) {
+			continue
+		}
+		filtered = append(filtered, f)
+	}
 	// テスト経路の Medium 系検出降格は ScanContent と同様、重複解決より先に
 	// 適用する（降格後の信頼度で重複解決の勝敗判定が行われるようにするため）。
-	demoted := d.applyPathDemotion(candidates)
+	demoted := d.applyPathDemotion(filtered)
 
 	// ScanContent と同様、単行パスと隣接行ペアパスをまたいだ重複を統合する
 	// （cross-line names は diff 走査では実行されないため対象は 2 系統のみ）。
