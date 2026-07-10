@@ -541,10 +541,13 @@ func Builtin() []Rule {
 			},
 		},
 		{
-			ID:              "jp-residence-card",
-			Description:     "在留カード番号",
-			Prefilter:       PrefilterDigit,
-			Context:         []string{"在留", "residence card", "zairyu"},
+			ID:          "jp-residence-card",
+			Description: "在留カード番号・特別永住者証明書番号",
+			Prefilter:   PrefilterDigit,
+			// 特別永住者証明書番号は在留カードと同一形式（英字2+数字8+英字2）のため
+			// パターンは共用し、Context に特別永住者証明書関連の語を追加して拾う。
+			Context: []string{"在留", "residence card", "zairyu",
+				"特別永住", "特別永住者証明書", "永住者証明書", "special permanent"},
 			NegativeContext: digitRuleUnitAdjacentNegativeContext,
 			Patterns: []Pattern{
 				{Re: ag(`[A-Z]{2}\d{8}[A-Z]{2}`), Base: High, RequireContext: true},
@@ -599,6 +602,63 @@ func Builtin() []Rule {
 			RequireContextWindow: digitRuleRequireContextWindow,
 			Patterns: []Pattern{
 				{Re: dg(`\d{8}`), Base: Medium, RequireContext: true},
+			},
+		},
+		{
+			ID:                   "jp-employment-insurance",
+			Description:          "雇用保険被保険者番号",
+			Prefilter:            PrefilterDigit,
+			Context:              []string{"雇用保険", "被保険者番号", "koyou hoken", "employment insurance"},
+			NegativeContext:      digitRuleNegativeContext,
+			RequireContextWindow: digitRuleRequireContextWindow,
+			Patterns: []Pattern{
+				// 区切りあり（4桁-6桁-1桁）は書式自体が固有の形状のため
+				// コンテキストなしで High とする（電話番号の区切りあり表記と同様）。
+				{Re: dg(`\d{4}-\d{6}-\d`), Base: High},
+				// 区切りなし 11 桁は桁数のみが手がかりのため周辺語を必須にする。
+				{Re: dg(`\d{11}`), Base: Medium, RequireContext: true},
+			},
+		},
+		{
+			ID:                   "jp-kaigo-insurance",
+			Description:          "介護保険被保険者番号",
+			Prefilter:            PrefilterDigit,
+			Context:              []string{"介護保険", "要介護", "被保険者証", "kaigo hoken"},
+			NegativeContext:      digitRuleNegativeContext,
+			RequireContextWindow: digitRuleRequireContextWindow,
+			Patterns: []Pattern{
+				// 10 桁は基礎年金番号（4桁-6桁、区切りなしでも同じ 10 桁形状）と
+				// 桁数が衝突するが、両ルールとも RequireContext:true のため
+				// 「介護保険」「年金」いずれか異なるキーワードが同一 40 ルーン窓に
+				// 共存しない限り同時発火しない。
+				{Re: dg(`\d{10}`), Base: Medium, RequireContext: true},
+			},
+		},
+		{
+			ID:          "jp-juminhyo-code",
+			Description: "住民票コード",
+			Prefilter:   PrefilterDigit,
+			Context:     []string{"住民票コード", "住民票", "juminhyo"},
+			// 検査数字の公式算式を一次資料から独立検証できていないため、
+			// 未検証の算式で実在値を棄却せず、11 桁の形状と周辺語を必須にする。
+			// 全桁同一のみ、明らかなダミー値として除外する。
+			Validate: func(m string) bool {
+				return !checksum.AllSame(m)
+			},
+			Patterns: []Pattern{
+				{Re: dg(`\d{11}`), Base: High, RequireContext: true},
+			},
+		},
+		{
+			ID:          "jp-invoice-number",
+			Description: "適格請求書発行事業者登録番号（インボイス登録番号）",
+			Prefilter:   PrefilterDigit,
+			Context:     []string{"登録番号", "適格請求書", "インボイス", "invoice number", "invoice registration"},
+			Patterns: []Pattern{
+				// T + 13 桁（法人は法人番号と同一の 13 桁、個人事業主等は
+				// 別途 13 桁が採番される）。検査数字の検証は未実装
+				// （将来の Validate 昇格候補。docs/development.md 参照）。
+				{Re: ag(`T\d{13}`), Base: Medium, RequireContext: true},
 			},
 		},
 		{

@@ -47,11 +47,11 @@ func Text(w io.Writer, findings []detect.Finding, unmask bool) {
 }
 
 type jsonFinding struct {
-	RuleID      string               `json:"rule_id"`
-	Description string               `json:"description"`
-	File        string               `json:"file"`
-	Line        int                  `json:"line"`
-	Column      int                  `json:"column"`
+	RuleID      string `json:"rule_id"`
+	Description string `json:"description"`
+	File        string `json:"file"`
+	Line        int    `json:"line"`
+	Column      int    `json:"column"`
 	// Offset/EndOffset はテキスト全体先頭からのルーン単位の半開区間。単一テキスト
 	// 走査（scan --stdin）で ComputeOffsets により付与されたときのみ出力する。
 	// 文字オフセット基準の利用側（Microsoft Presidio 連携など）向け。

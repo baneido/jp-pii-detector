@@ -2155,6 +2155,35 @@ func TestComputeOffsetsOutOfRange(t *testing.T) {
 	}
 }
 
+// 以下、issue #60（公的番号のカバレッジ拡充）で追加したルールのテスト。
+// JP_PII_FIXTURES を要求する既存ルールと異なり、値はチェックディジット計算や
+// 桁数・区切り文字だけで妥当性が決まる架空のダミー値のため、インラインの
+// リテラルで完結させる（piifixtures 不要）。
+
+// TestEmploymentInsuranceRule は雇用保険被保険者番号（4桁-6桁-1桁 / 11桁）を検証する。
+func TestEmploymentInsuranceRule(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+		conf       rule.Confidence
+	}{
+		{"区切りあり（4-6-1）はコンテキストなしでも high", "value = 1234-567890-1", []string{"jp-employment-insurance"}, rule.High},
+		{"区切りなし 11 桁はコンテキストが必要", "雇用保険被保険者番号: 12345678901", []string{"jp-employment-insurance"}, rule.Medium},
+		{"区切りなし 11 桁はコンテキストなしでは不成立", "value = 12345678901", nil, 0},
+		{"英語コンテキスト", "employment insurance no: 12345678901", []string{"jp-employment-insurance"}, rule.Medium},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, tt.want...)
+			if len(fs) == 1 && fs[0].Confidence != tt.conf {
+				t.Errorf("confidence = %v, want %v", fs[0].Confidence, tt.conf)
+			}
+		})
+	}
+}
+
 // ---- issue #58: 半角カナ折り畳み・カタカナ/ひらがな氏名・4 文字姓・ローマ字氏名 ----
 //
 // 以下のテストは JP_PII_FIXTURES に依存しない（値は internal/dict/gen-names で
@@ -2403,6 +2432,117 @@ cooccurrence_boost = true
 			if hasName != tt.boost {
 				t.Errorf("person-name present = %v, want %v (findings=%v)", hasName, tt.boost, ruleIDs(fs))
 			}
+		})
+	}
+}
+
+// TestEmploymentInsuranceBoundaryAndNegativeContext は、より長い数字列の一部を
+// 誤検出しないこと、および金額・件数文脈で抑制されることを確認する。
+func TestEmploymentInsuranceBoundaryAndNegativeContext(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+	}{
+		{"区切りありの一部は対象外（前後に数字が連結）", "id = 91234-567890-12"},
+		{"区切りなし 11 桁がより長い数字列の一部は対象外", "雇用保険 id=912345678901 番"},
+		// NegativeContext（件）が直後にあれば、コンテキスト語（雇用保険）が
+		// 同一行にあっても検出を棄却する。
+		{"件数文脈は NegativeContext で棄却される", "雇用保険の加入者数は 12345678901 件"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line))
+		})
+	}
+}
+
+// TestKaigoInsuranceRule は介護保険被保険者番号（10桁）を検証する。
+// 桁数は基礎年金番号（4桁-6桁、区切りなしでも同じ10桁形状）と衝突するが、
+// 両ルールとも RequireContext:true のため、コンテキスト語が異なる限り
+// 同一の10桁値に対してどちらか一方だけが成立する（同時発火しない）。
+func TestKaigoInsuranceRule(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"介護保険コンテキストで成立", "介護保険 被保険者証番号: 9876543210", []string{"jp-kaigo-insurance"}},
+		{"年金コンテキストでは基礎年金番号側が成立", "年金番号: 9876543210", []string{"jp-pension-number"}},
+		{"コンテキストなしでは不成立", "value = 9876543210", nil},
+		{"より長い数字列の一部は対象外", "介護保険 被保険者証番号: 912345678901", nil},
+		{"要介護コンテキスト", "要介護認定 被保険者番号 9876543210", []string{"jp-kaigo-insurance"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestJuminhyoCodeRule は住民票コード（無作為な10桁 + 検査数字1桁）を検証する。
+// 検査数字の公式算式を一次資料から独立検証できていないため、未検証の算式による
+// false negative を避け、11桁の形状・周辺語・全桁同一でないことだけを判定する。
+func TestJuminhyoCodeRule(t *testing.T) {
+	d := newDetector(t, "")
+	const value = "55512345670"
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"住民票コードコンテキストで成立", "住民票コード: " + value, []string{"jp-juminhyo-code"}},
+		{"住民票コンテキストでも成立", "住民票の写しに記載のコード " + value, []string{"jp-juminhyo-code"}},
+		{"末尾桁の値にかかわらず形状とコンテキストで成立", "住民票コード: 55512345679", []string{"jp-juminhyo-code"}},
+		{"コンテキストなしでは不成立", "value = " + value, nil},
+		{"全桁同一は無効", "住民票コード: 11111111111", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestInvoiceNumberRule は適格請求書発行事業者登録番号（T + 13桁）を検証する。
+func TestInvoiceNumberRule(t *testing.T) {
+	d := newDetector(t, "")
+	const valid = "T1234567890123"
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"登録番号コンテキスト", "登録番号: " + valid, []string{"jp-invoice-number"}},
+		{"インボイスコンテキスト", "インボイス登録番号 " + valid, []string{"jp-invoice-number"}},
+		{"英語コンテキスト", "invoice number: " + valid, []string{"jp-invoice-number"}},
+		{"コンテキストなしでは不成立", "value = " + valid, nil},
+		{"桁数不足（12桁）は対象外", "登録番号: T123456789012", nil},
+		{"より長い数字列の一部は対象外", "登録番号: " + valid + "4", nil},
+		{"英数字トークンに埋め込まれた場合は対象外", "登録番号: aT1234567890123b", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestResidenceCardSpecialPermanentContext は特別永住者証明書番号
+// （在留カードと同一形式）を、追加したコンテキスト語で検出できることを確認する。
+func TestResidenceCardSpecialPermanentContext(t *testing.T) {
+	d := newDetector(t, "")
+	const value = "AB12345678CD"
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"特別永住", "特別永住の在留資格に係る番号: " + value, []string{"jp-residence-card"}},
+		{"特別永住者証明書", "特別永住者証明書番号: " + value, []string{"jp-residence-card"}},
+		{"永住者証明書", "永住者証明書 " + value, []string{"jp-residence-card"}},
+		{"special permanent", "special permanent resident certificate: " + value, []string{"jp-residence-card"}},
+		{"コンテキストなしでは不成立", value, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
 		})
 	}
 }
