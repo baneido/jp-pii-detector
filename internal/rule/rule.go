@@ -84,6 +84,9 @@ type Rule struct {
 	Context []string
 	// NegativeContext は同一行（または近傍）に存在する場合に検出を
 	// 棄却する語。金額・数量・連番 ID など PII でない数字列の文脈を表す。
+	// 各語がどの近接判定（値の直前隣接・直後隣接・±window 汎用一致）で
+	// 扱われるかは ClassifyNegativeKeyword（negative_context.go）が単一の
+	// 情報源として分類する。
 	NegativeContext []string
 	// RequireContextWindow は RequireContext の肯定語をマッチ前後の
 	// ルーン数に限定する。0 の場合は後方互換のため行全体を見る。
@@ -95,8 +98,10 @@ type Rule struct {
 	// このルールの正規表現走査をまるごとスキップするリテラル集合（OR 条件）。
 	// 全パターンが特定のラベル語（氏名の「名」「姓」「name」等）を必須とする
 	// ルールで、語を含まない大量の行（日本語コメント等）の正規表現評価を
-	// 避けるための最適化。空なら無効。ASCII 語は正規表現と同じく大小文字を
-	// 区別する（正規化済みの行はそのまま渡す）。
+	// 避けるための最適化。空なら無効。ASCII 語は大小文字を区別しない
+	// （internal/detect の containsAnyLiteral が判定する。パターン側の
+	// `(?i:...)` ラベルに大文字表記が到達できるようにするため）。リテラルは
+	// 小文字で定義すること。
 	PrefilterLiterals []string
 	// Validate はマッチ文字列の追加検証（チェックディジット等）。
 	// nil の場合は常に有効。引数は正規化済みのマッチ文字列。
