@@ -139,9 +139,9 @@ var (
 	personNameValueShort = `[` + kanji + hiragana + katakana + `]{1,12}` +
 		`(?:[ ][` + kanji + hiragana + katakana + `]{1,12})?`
 	romajiNameValue = `[A-Za-z]{2,15}[ ][A-Za-z]{2,15}`
-	// romajiNameEndBoundary は 2 語の直後にさらに英字語が続くケースを除外する。
+	// romajiNameEndBoundary は 2 語の直後にさらに英数字・_ が続くケースを除外する。
 	// RE2 は lookahead 非対応のため、値の外側で終端・記号・空白終端を消費する。
-	romajiNameEndBoundary = `(?:$|[^A-Za-z[:space:]]|[[:space:]]+(?:$|[^A-Za-z[:space:]]))`
+	romajiNameEndBoundary = `(?:$|[^0-9A-Za-z_[:space:]]|[[:space:]]+(?:$|[^0-9A-Za-z_[:space:]]))`
 )
 
 // person-name ルールの一部パターンは、辞書検証ありの Medium 判定と辞書照合

@@ -284,7 +284,7 @@ func excludeSurnames(entries []string, surnames map[string]bool) []string {
 // ソートして追記する。既存の内容は一切変更しない（再実行しても重複しない）。
 // path が存在しない場合は新規作成する。追加すべき新規行が 1 つもない場合は
 // ファイルに一切書き込まない（ヘッダーの重複挿入を避ける）。
-func appendUniqueLines(path, header string, entries []string) error {
+func appendUniqueLines(path, header string, entries []string) (err error) {
 	existing, err := readNonCommentLines(path)
 	if err != nil {
 		return err
@@ -314,7 +314,11 @@ func appendUniqueLines(path, header string, entries []string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 
 	var b strings.Builder
 	// 既存内容が改行なしで終わっている場合に追記行と連結されないよう保護する。
