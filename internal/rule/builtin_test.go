@@ -166,6 +166,68 @@ func TestStripSeparators(t *testing.T) {
 	}
 }
 
+// validPersonNameFullSplit / validPersonNameSurnameOnly は担当ラベル
+// （person-name-high-recall）の Medium/Low パターンをそれぞれ限定する検証器
+// （issue #59 段階1）。同一正規表現に対する 2 Pattern 分割で、単独の姓一致
+// （渋谷・大和・本田のような地名・企業名と同形の姓）が Medium に一律昇格しない
+// ことを固定する回帰テスト。
+func TestValidPersonNameFullSplitAndSurnameOnly(t *testing.T) {
+	tests := []struct {
+		in              string
+		wantFullSplit   bool
+		wantSurnameOnly bool
+	}{
+		{"山田太郎", true, false},
+		{"山田 太郎", true, false},
+		{"渋谷", false, true},
+		{"大和", false, true},
+		{"本田", false, true},
+		{"花子", false, false}, // 単独の名一致（GivenOnly）はどちらのパターンにも含めない
+		{"関心", false, false}, // 分割不成立の一般名詞
+		{"東大", false, false},
+		{"森永", false, true},   // 分割（森+永）は不成立だが、辞書に直接収録された実在の姓（単独一致）
+		{"山田錦", false, false}, // denylist（非人名同形語）
+		{"営業部", false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			if got := validPersonNameFullSplit(tt.in); got != tt.wantFullSplit {
+				t.Errorf("validPersonNameFullSplit(%q) = %v, want %v", tt.in, got, tt.wantFullSplit)
+			}
+			if got := validPersonNameSurnameOnly(tt.in); got != tt.wantSurnameOnly {
+				t.Errorf("validPersonNameSurnameOnly(%q) = %v, want %v", tt.in, got, tt.wantSurnameOnly)
+			}
+		})
+	}
+}
+
+// validStrictFullName は person-name-structured（クロスライン）と裸の name
+// ラベルで使う、姓名辞書検証のうち最も厳しい検証（姓+名の分割かつ名成分 2 文字
+// 以上を必須にする。issue #59 段階1）。
+func TestValidStrictFullName(t *testing.T) {
+	tests := []struct {
+		in   string
+		want bool
+	}{
+		{"山田太郎", true},
+		{"山田 太郎", true},
+		{"越智凪沙", true},
+		{"山田", false},  // 単独の姓一致
+		{"太郎", false},  // 単独の名一致
+		{"渋谷", false},  // 地名・企業名と同形の姓（単独一致）
+		{"林 学", false}, // 分割は成立するが名成分が 1 文字
+		{"関心", false},  // 分割不成立の一般名詞
+		{"山田錦", false}, // denylist（非人名同形語）
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			if got := validStrictFullName(tt.in); got != tt.want {
+				t.Errorf("validStrictFullName(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 // notOrgName は氏名候補が組織・団体名の語尾（personNameOrgSuffixes）で
 // 終わらないことを検証する。値は特定個人を識別しない一般的な組織名・
 // 頻出姓のためリテラルで安全。

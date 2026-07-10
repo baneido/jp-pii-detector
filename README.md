@@ -16,20 +16,13 @@
 **○** 周辺の語（「TEL」「住所」など）と併用して実用的な精度 /
 **△** ラベル付き（`氏名:` など）に限定して検出
 
-「実測 F1」はラベル付き評価データセット（実在しうる PII を含むためリポジトリ外で管理。取得は
-[docs/development.md](docs/development.md)）に対する
-**F1 スコア**（適合率と再現率の調和平均）です。`JP_PII_FIXTURES` を設定して `go test ./internal/eval` で検証しており
-（数値が動くと CI が落ちる）、内訳は [docs/accuracy.md](docs/accuracy.md) を参照してください。
-バッジはルール自体の検出能力を見るため `min_confidence=low`、高再現率ルール無効で計測しています。
-評価データセットに対する値であり、あらゆる入力での精度を保証するものではありません。
-
 | 種別 | 例（すべて架空のダミー） | 精度 | 実測 F1 | 検出の決め手 |
 |---|---|:---:|:---:|---|
 | マイナンバー（個人番号） | `1234-5678-9018` | ◎ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 12 桁 + 検査用数字（総務省令のアルゴリズム） |
 | クレジットカード番号 | `4111-1111-1111-1111` | ◎ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | Luhn + ブランド判定（Visa/Master/JCB/Amex 等） |
 | メールアドレス | `taro@example.jp` | ◎ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | パターン + IANA TLD 実在チェック + 予約ドメイン除外 |
 | 電話番号 | `090-XXXX-XXXX` | ◎ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 携帯/IP/固定/+81 + 桁数検証 |
-| 郵便番号 | `〒150-0043` | ◎ / ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 7桁完全一致の実在チェック。〒マーク付きは単独、なしは周辺の語が必要 |
+| 郵便番号 | `〒150-0043` | ◎ / ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 7 桁完全一致の実在チェック（〒付きは単独、なしは周辺の語が必要） |
 | 住所 | `東京都渋谷区道玄坂2-10-7` | ○ | ![F1 0.89](https://img.shields.io/badge/F1-0.89-green) | 都道府県〜番地のパターン |
 | 運転免許証番号 | `免許証番号: 305012345678` | ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 12 桁 + 周辺の語が必要 |
 | 旅券（パスポート）番号 | `パスポート: TK1234567` | ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 英字2+数字7 + 周辺の語が必要 |
@@ -37,15 +30,22 @@
 | 在留カード番号 | `在留カード AB12345678CD` | ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 英2+数8+英2 + 周辺の語が必要 |
 | 銀行口座番号 | `口座番号: 1234567` | △ | ![F1 0.86](https://img.shields.io/badge/F1-0.86-green) | 7 桁 + 周辺の語が必要 |
 | 健康保険 保険者番号等 | `保険者番号: 12345678` | △ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 8 桁 + 周辺の語が必要 |
-| 生年月日 | `生年月日: 1990年1月23日` | △ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | ラベル付き（日本語・英語ラベル対応）。西暦・和暦（元号略記・元年含む）・区切りなし8桁に対応 |
-| 氏名 | `氏名: 山田 太郎` | △ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | ラベル付き（`氏名:`/`お名前:`/`customer_name:` 等）+ プレースホルダ・非人物キー除外。値が姓名辞書に一致すれば `medium` で**既定でも報告**。`姓:`/`名:` 等の弱いラベルは姓名辞書で検証済みのため常に `medium`。辞書に一致しない収録外の実在人名は `low` のまま既定では非表示（後述） |
+| 生年月日 | `生年月日: 1990年1月23日` | △ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | ラベル付き。西暦・和暦・区切りなし8桁に対応（詳細は docs/detection-methods.md） |
+| 氏名 | `氏名: 山田 太郎` | △ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | ラベル付き（`氏名:` 等）+ 姓名辞書照合。辞書一致は `medium`（既定で報告）、不一致は `low`（既定非表示、詳細は docs/detection-methods.md） |
 
-> **既定の報告範囲**: 信頼度 `medium` 以上を報告します（`min_confidence` で変更可）。
-> 氏名は値が姓名辞書に一致すれば `medium` で既定でも報告されますが、辞書に一致しない
-> 収録外の実在人名は誤検出が出やすいため `low` 扱いで、既定では報告されません。
-> 各検出は周辺キーワードの有無で `low` / `medium` / `high` に分かれます。キーワードが
-> 検出の前提になっているルールでは昇格は起きず、ルール固有の信頼度
-> （表の △ は `medium`、○ は `high`）で報告されます。
+> **既定で報告される範囲**: 信頼度 `medium` 以上のみを報告します（`min_confidence` で変更可）。
+> 氏名は姓名辞書に一致すれば `medium`（既定でも報告）、一致しない収録外の実在人名は
+> 誤検出リスクが高いため `low`（既定では非表示）のままです。
+> 信頼度は周辺キーワードの有無で `low` / `medium` / `high` に分かれますが、キーワードが
+> 検出の前提条件になっているルール（表の △ は `medium`、○ は `high`）では昇格せず、
+> ルール固有の基準信頼度のまま報告されます。
+
+「実測 F1」はラベル付き評価データセットに対する F1 スコア（適合率と再現率の調和平均）です。
+データセットは実在しうる PII を含むためリポジトリ外で管理しており、取得方法は
+[docs/development.md](docs/development.md) を参照してください。バッジはルール自体の検出能力を
+見るため `min_confidence=low`・高再現率ルール無効で計測しています。評価データセットに対する
+値であり、あらゆる入力での精度を保証するものではありません。ルール別の内訳は [docs/accuracy.md](docs/accuracy.md)、数値の検証・
+更新は `JP_PII_FIXTURES` を設定した `go test ./internal/eval`（CI ゲート）で行います。
 
 検出できる PII の種類、手法の詳細、設計判断は
 [docs/detection-methods.md](docs/detection-methods.md) を参照してください。
