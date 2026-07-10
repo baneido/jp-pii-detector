@@ -9,10 +9,10 @@ import (
 	"os"
 	"runtime/debug"
 
+	"github.com/baneido/jp-pii-detector/internal/baseline"
 	"github.com/baneido/jp-pii-detector/internal/config"
 	"github.com/baneido/jp-pii-detector/internal/detect"
 	"github.com/baneido/jp-pii-detector/internal/report"
-	"github.com/baneido/jp-pii-detector/internal/rule"
 	"github.com/baneido/jp-pii-detector/internal/source"
 )
 
@@ -70,7 +70,7 @@ Usage:
   jp-pii-detect scan --staged            git のステージ済み追加行を走査（pre-commit 用）
   jp-pii-detect scan --diff <range>      git diff の追加行を走査（例: origin/main...HEAD）
   jp-pii-detect scan --stdin             標準入力のテキスト 1 本を走査（外部連携用）
-  jp-pii-detect rules                    検出ルール一覧を表示
+  jp-pii-detect rules [--config <path>]  検出ルール一覧を表示（config 適用後の実効ルール。カスタムルールを含む）
   jp-pii-detect version                  バージョンを表示
 
 Scan flags:
@@ -86,8 +86,18 @@ Scan flags:
   --explain                JSON 出力に検出理由を含める
   --high-recall            偽陽性リスクの高い再現率重視ルールを有効化
   --exit-zero              検出があっても終了コード 0 を返す
+  --baseline <path>        ベースラインファイルを読み込み、記録済み（fingerprint が
+                           一致）の検出を結果と終了コードから除外する。--staged /
+                           --diff / フルスキャンいずれとも併用可能
+  --update-baseline        現在の検出内容でベースラインファイルを新規作成、または
+                           既存ファイルに追記して終了コード 0 で終了する
+                           （--baseline <path> の指定が必須）
+  --show-baseline          ベースラインで除外された検出も参考表示する（終了コードには
+                           影響しない。--baseline <path> の指定が必須）
 
 Exit codes: 0=検出なし 1=検出あり 2=エラー
+  （フルスキャン時、一部ファイルが読み取れなかった場合も 2 を返す。
+    収集済みの検出は通常どおり出力し、警告を stderr に出す）
 `
 
 func main() {
@@ -99,7 +109,7 @@ func main() {
 	case "scan":
 		os.Exit(runScan(os.Args[2:]))
 	case "rules":
-		runRules()
+		os.Exit(runRules(os.Args[2:]))
 	case "version":
 		fmt.Println(resolveVersion())
 	case "help", "-h", "--help":
@@ -122,9 +132,18 @@ func runScan(args []string) int {
 	explain := fs.Bool("explain", false, "")
 	highRecall := fs.Bool("high-recall", false, "")
 	exitZero := fs.Bool("exit-zero", false, "")
+	baselinePath := fs.String("baseline", "", "")
+	updateBaseline := fs.Bool("update-baseline", false, "")
+	showBaseline := fs.Bool("show-baseline", false, "")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+	if *updateBaseline && *baselinePath == "" {
+		return fail(fmt.Errorf("--update-baseline には --baseline <path> の指定が必要です"))
+	}
+	if *showBaseline && *baselinePath == "" {
+		return fail(fmt.Errorf("--show-baseline には --baseline <path> の指定が必要です"))
 	}
 
 	cfg, err := config.Load(*configPath)
@@ -143,6 +162,7 @@ func runScan(args []string) int {
 	}
 
 	var findings []detect.Finding
+	var warnings []error
 	switch {
 	case *stdin:
 		var data []byte
@@ -160,37 +180,121 @@ func runScan(args []string) int {
 		if len(paths) == 0 {
 			paths = []string{"."}
 		}
-		findings, err = source.ScanPaths(det, cfg, paths)
+		findings, warnings, err = source.ScanPaths(det, cfg, paths)
 	}
 	if err != nil {
 		return fail(err)
 	}
+	// 個々のファイルの読み取りエラーは致命的にせず、収集済みの findings は
+	// 通常どおり出力する。ただし黙って exit 0 にすると走査が不完全なまま
+	// 「検出なし」を装うことになり危険なため、警告を出力した上で常に exit 2
+	// にする（findings があっても --exit-zero 指定でも上書きしない）。
+	for _, w := range warnings {
+		fmt.Fprintln(os.Stderr, "jp-pii-detect: warning:", w)
+	}
+
+	// --update-baseline: 現在の findings（--staged / --diff / フルスキャンいずれの
+	// モードでも同じ findings 変数に集約されている）でベースラインファイルを
+	// 新規作成、または既存ファイルへ追記して終了コード 0 で終了する。他の
+	// フラグ（--baseline での既存フィルタ・出力形式）とは独立した早期リターン。
+	if *updateBaseline {
+		return updateBaselineFile(*baselinePath, findings)
+	}
+
+	// --baseline: 記録済み（fingerprint 一致）の検出を結果・終了コードから除外する。
+	// detect パッケージ側の走査（並列）はここまでで完了しており、Filter は
+	// 単一 goroutine の後処理なので追加のデータレース懸念はない。
+	reportFindings := findings
+	exitFindings := findings
+	var fpSalt string
+	if *baselinePath != "" {
+		bf, err := baseline.Load(*baselinePath)
+		if err != nil {
+			return fail(err)
+		}
+		fpSalt = bf.Salt
+		kept, baselined := baseline.Filter(findings, bf)
+		exitFindings = kept
+		reportFindings = kept
+		if *showBaseline {
+			// 参考表示用: フィルタ済み分も併せて出力するが、終了コードの判定には使わない。
+			reportFindings = append(append([]detect.Finding{}, kept...), baselined...)
+		}
+	}
+	var fpArgs []string
+	if fpSalt != "" {
+		fpArgs = []string{fpSalt}
+	}
 
 	switch *format {
 	case "text":
-		report.Text(os.Stdout, findings, *unmask)
+		report.Text(os.Stdout, reportFindings, *unmask)
 	case "json":
-		if err := report.JSON(os.Stdout, findings, *unmask, *explain); err != nil {
+		if err := report.JSON(os.Stdout, reportFindings, *unmask, *explain, fpArgs...); err != nil {
 			return fail(err)
 		}
 	case "sarif":
-		if err := report.SARIF(os.Stdout, findings, det.Rules(), *unmask); err != nil {
+		if err := report.SARIF(os.Stdout, reportFindings, det.Rules(), *unmask); err != nil {
 			return fail(err)
 		}
 	case "github":
-		report.GitHub(os.Stdout, findings, *unmask)
+		report.GitHub(os.Stdout, reportFindings, *unmask)
 	default:
 		return fail(fmt.Errorf("unknown format %q (text|json|sarif|github)", *format))
 	}
 
-	if len(findings) > 0 && !*exitZero {
+	if len(warnings) > 0 {
+		return 2
+	}
+	if len(exitFindings) > 0 && !*exitZero {
 		return 1
 	}
 	return 0
 }
 
-func runRules() {
-	for _, r := range rule.Builtin() {
+// updateBaselineFile は現在の findings でベースラインファイルを新規作成、
+// または既存ファイルに追記して保存する。gitleaks --baseline-path / detect-secrets
+// の baseline 更新運用と同様、常に終了コード 0 で返す（走査・書き込み自体の
+// エラーのみ 2 を返す）。
+func updateBaselineFile(path string, findings []detect.Finding) int {
+	bf, err := baseline.Load(path)
+	switch {
+	case err == nil:
+		baseline.Merge(bf, findings)
+	case baseline.IsNotExist(err):
+		bf, err = baseline.FromFindings(findings, "")
+		if err != nil {
+			return fail(err)
+		}
+	default:
+		return fail(err)
+	}
+	if err := baseline.Save(path, bf); err != nil {
+		return fail(err)
+	}
+	fmt.Printf("baseline を更新しました: %s（%d 件）\n", path, len(bf.Entries))
+	return 0
+}
+
+// runRules は --config を反映した実効ルール一覧（builtin + custom の合成後、
+// 無効化ルールを除いたもの）を表示する。detect.New と同じ合成ロジックを
+// 経由するため、scan コマンドが実際に使うルール集合と一致する。
+func runRules(args []string) int {
+	fs := flag.NewFlagSet("rules", flag.ExitOnError)
+	configPath := fs.String("config", "", "")
+	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		return fail(err)
+	}
+	det, err := detect.New(cfg)
+	if err != nil {
+		return fail(err)
+	}
+	for _, r := range det.Rules() {
 		ctx := ""
 		for _, p := range r.Patterns {
 			if p.RequireContext {
@@ -200,6 +304,7 @@ func runRules() {
 		}
 		fmt.Printf("%-22s %s%s\n", r.ID, r.Description, ctx)
 	}
+	return 0
 }
 
 func fail(err error) int {

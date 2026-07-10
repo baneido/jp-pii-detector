@@ -4,6 +4,7 @@ package detect
 import (
 	"sort"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/baneido/jp-pii-detector/internal/config"
@@ -16,6 +17,14 @@ const IgnoreMarker = "jp-pii-detector:ignore"
 
 // AllowMarker は後方互換のために残している旧除外マーカー。
 const AllowMarker = "pii-allow"
+
+// defaultPromotionContextWindow は RequireContextWindow 未設定のルールで
+// Base 信頼度を High へ昇格させる際に使う既定のコンテキスト探索半径（ルーン数）。
+// 昇格判定はこの半径に制限し、長い行の遠方にある無関係な 1 語だけで行全体の
+// マッチが昇格するのを防ぐ（issue #68 段階1(b)）。RequireContext 判定
+// （検出可否そのもの）はここでは変えず、ウィンドウ未設定なら従来通り行全体を
+// 見る（後方互換）。
+const defaultPromotionContextWindow = 40
 
 // Finding は 1 件の検出結果。
 //
@@ -57,6 +66,10 @@ type DetectReason struct {
 	// CooccurrenceBoosted は、[rules] cooccurrence_boost 有効時に近傍の別カテゴリ
 	// 高信頼 PII との共起で信頼度が 1 段昇格したことを示す（調査・チューニング用）。
 	CooccurrenceBoosted bool `json:"cooccurrence_boosted,omitempty"`
+	// PathDemoted はテスト経路（testdata/ 等）の信頼度降格が適用されたかを表す
+	// （internal/detect/path_profile.go）。true の場合、Confidence は既に
+	// 降格後の値（Low）になっている。
+	PathDemoted bool `json:"path_demoted,omitempty"`
 }
 
 // Detector は設定を適用済みの検出エンジン。
@@ -97,6 +110,11 @@ func New(cfg *config.Config) (*Detector, error) {
 				cr := r
 				crossLineName = &cr
 			}
+		}
+	}
+	for _, r := range cfg.CustomRules() {
+		if !disabled[r.ID] {
+			rules = append(rules, r)
 		}
 	}
 	normStopwords := make([]string, len(cfg.Allowlist.Stopwords))
@@ -177,12 +195,25 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 		if f.Confidence < d.minConf {
 			continue
 		}
-		if d.hasCrossLineNegativeContext(f, lines, f.Line-1) {
+		if d.hasCrossLineNegativeContext(f, lines, lineContexts, f.Line-1) {
 			continue
 		}
 		filtered = append(filtered, f)
 	}
-	return dedupAndSortFindings(filtered)
+	// テスト経路（testdata/ 等）の Medium 系検出は Finding 確定後・重複解決前に
+	// 降格する（path_profile.go）。降格であって除外ではないため、allowlist /
+	// jp-pii-detector:ignore とは独立に働く。重複解決 (resolveOverlapsPerLine)
+	// より先に適用し、降格後の信頼度で重複解決の勝敗判定が行われるようにする
+	// （降格された finding が誤って他の重複候補より優先されないようにするため）。
+	demoted := d.applyPathDemotion(filtered)
+
+	// 単行・隣接行ペア・クロスライン氏名の各パスは独立に候補を出すため、
+	// パスをまたいで同一箇所に重なる finding（例: 12 桁の数字が
+	// jp-my-number と jp-drivers-license の両方の候補になるケース）が
+	// 残ることがある。File+Line でグループ化した上で resolveOverlaps を
+	// 再適用し、パスをまたいだ重複を統合する。
+	resolved := resolveOverlapsPerLine(demoted)
+	return dedupAndSortFindings(resolved)
 }
 
 // maxCooccurrenceRetainedCandidates は cooccurrence_boost 有効時に、minConf 未満でも
@@ -196,8 +227,8 @@ const maxCooccurrenceRetainedCandidates = 2000
 // 意図的に狭く取る。
 const cooccurrenceWindowLines = 5
 
-// cooccurrenceBoostRuleIDs は共起昇格の対象となるルール。Base:Low 固定で
-// コンテキスト昇格経路を持たない氏名系ルールに限定する（P23 のスコープ）。
+// cooccurrenceBoostRuleIDs は共起昇格の対象となる氏名系ルール。
+// Low / Medium 候補を 1 段だけ昇格する（P23 のスコープ）。
 // person-name-structured はクロスライン検出専用で常に Medium 固定のため対象外。
 var cooccurrenceBoostRuleIDs = map[string]bool{
 	"person-name":             true,
@@ -354,7 +385,14 @@ type DiffLine struct {
 // 抑制（ignore マーカー・負コンテキスト）の駆動には使わない。これにより、
 // 追加した値の隣の既存行に「円」等の負コンテキストや古い jp-pii-detector:ignore が
 // あっても、追加行の新規 PII を取りこぼさない（セキュリティ検出器として偽陰性を避ける）。
-// 同一行の抑制（値そのものの行）は通常どおり適用される。
+// 同一行の抑制（値そのものの行）は通常どおり適用される。一方、追加行同士が隣接する
+// 場合（両方 Added）は、フルスキャン（ScanContent）と同じく隣接行の負コンテキストを
+// 適用する。そうしないと、同じ 2 行の追加が CI のフルスキャンでは抑制され
+// pre-commit --staged では報告されるという非対称が生まれるため。
+//
+// この「抑制は検出値が乗る行に対してのみ適用し、隣接行のマーカーを巻き添えに
+// しない」という原則は diff 経路専用ではなく、ScanContent 側の隣接行走査
+// （scanAdjacentLines）にも同様に適用される。
 func (d *Detector) ScanDiffHunk(file string, lines []DiffLine) []Finding {
 	texts := make([]string, len(lines))
 	added := make([]bool, len(lines))
@@ -378,8 +416,32 @@ func (d *Detector) ScanDiffHunk(file string, lines []DiffLine) []Finding {
 		candidates = append(candidates,
 			d.scanAdjacentLinesDiff(file, i+1, texts[i], texts[i+1], added[i], added[i+1], lineContexts[i], lineContexts[i+1])...)
 	}
-	// 文脈行起因の cross-line 負コンテキストは適用しない（上記の設計意図）。
-	return dedupAndSortFindings(candidates)
+
+	// 文脈行由来の cross-line 負コンテキストは適用しない（上記の設計意図）。
+	// 非追加行を空文字にマスクした行スライスを使うことで、
+	// hasCrossLineNegativeContext の ±1 行参照が文脈行の負コンテキストを
+	// 拾わないようにしつつ、追加行同士の負コンテキストは通常どおり適用する。
+	maskedTexts := make([]string, len(texts))
+	for i, t := range texts {
+		if added[i] {
+			maskedTexts[i] = t
+		}
+	}
+	filtered := candidates[:0]
+	for _, f := range candidates {
+		if d.hasCrossLineNegativeContext(f, maskedTexts, lineContexts, f.Line-1) {
+			continue
+		}
+		filtered = append(filtered, f)
+	}
+	// テスト経路の Medium 系検出降格は ScanContent と同様、重複解決より先に
+	// 適用する（降格後の信頼度で重複解決の勝敗判定が行われるようにするため）。
+	demoted := d.applyPathDemotion(filtered)
+
+	// ScanContent と同様、単行パスと隣接行ペアパスをまたいだ重複を統合する
+	// （cross-line names は diff 走査では実行されないため対象は 2 系統のみ）。
+	resolved := resolveOverlapsPerLine(demoted)
+	return dedupAndSortFindings(resolved)
 }
 
 func findingKey(f Finding) string {
@@ -400,6 +462,13 @@ func itoa(n int) string {
 	return string(buf[i:])
 }
 
+// scanAdjacentLines は RequireContext なルールについて、隣接 2 行を結合して
+// 走査することでラベルと値が別行に分かれるケースを補足する。抑制（ignore
+// マーカー）は検出値が乗る行に対してのみ適用し、結合文字列全体を
+// scanLineNoIgnore で走査したうえで各 finding の行ごとに ignoredLine を明示
+// チェックする。こうしないと、値が乗っていない側の行（ラベル行等）に残った
+// ignore マーカーが隣の値行の検出まで巻き添えで抑制してしまう
+// （scanAdjacentLinesDiff と同じ設計）。
 func (d *Detector) scanAdjacentLines(file string, firstLineNo int, first, second string, firstCtx, secondCtx lineContext) []Finding {
 	combined := first + "\n" + second
 	firstRunes := []rune(first)
@@ -407,19 +476,25 @@ func (d *Detector) scanAdjacentLines(file string, firstLineNo int, first, second
 	sep := len(firstRunes)
 
 	var out []Finding
-	for _, f := range d.ScanLine(file, firstLineNo, combined) {
+	for _, f := range d.scanLineNoIgnore(file, firstLineNo, combined) {
 		if !f.Reason.RequireContext {
 			continue
 		}
 		switch {
-		case f.end <= sep:
+		case f.end <= sep: // 値は 1 行目
+			if ignoredLine(first) {
+				continue
+			}
 			f.Line = firstLineNo
 			f.Column = f.start + 1
 			f.Match = string(firstRunes[f.start:f.end])
 			if d.hasSourceNegativeForFinding(f, first, firstCtx) {
 				continue
 			}
-		case f.start > sep:
+		case f.start > sep: // 値は 2 行目
+			if ignoredLine(second) {
+				continue
+			}
 			start := f.start - sep - 1
 			end := f.end - sep - 1
 			if start < 0 || end > len(secondRunes) {
@@ -660,12 +735,18 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 		}
 		ctxForMatch := func(start, end int, useWindow bool) []string {
 			var kws []string
-			if r.RequireContextWindow <= 0 {
-				kws = d.matchingContexts(norm, r.Context)
-			} else if useWindow {
+			switch {
+			case r.RequireContextWindow > 0:
 				kws = d.matchingContexts(contextWindow(norm, start, end, r.RequireContextWindow, &normRunes), r.Context)
-			} else {
+			case useWindow:
+				// RequireContext 判定（検出可否そのもの）は後方互換のため、
+				// ウィンドウ未設定なら従来通り行全体を見る。
 				kws = d.matchingContexts(norm, r.Context)
+			default:
+				// Base 信頼度の昇格（useWindow=false）はウィンドウ未設定でも
+				// 既定半径（defaultPromotionContextWindow）に制限する
+				// （issue #68 段階1(b)。無制限昇格による FP 増幅を防ぐ）。
+				kws = d.matchingContexts(contextWindow(norm, start, end, defaultPromotionContextWindow, &normRunes), r.Context)
 			}
 			if st := lineCtx.statementFor(start, end); st != nil && st.PositiveText != "" {
 				kws = append(kws, d.matchingContexts(st.PositiveText, r.Context)...)
@@ -676,13 +757,17 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 			if len(r.NegativeContext) == 0 {
 				return false
 			}
-			if d.hasNegativeContextNear(norm, start, end, negativeContextWindowRunes, &normRunes, r.NegativeContext) {
+			st := lineCtx.statementFor(start, end)
+			if st != nil && st.NegativeText != "" {
 				return true
 			}
-			if st := lineCtx.statementFor(start, end); st != nil && st.NegativeText != "" {
-				return true
+			if d.statementHasCleanPositiveLabel(st, r.Context) {
+				// 同一文に（負文脈語を伴わない）このルール自身の正ラベルが
+				// 明示されている場合は、離れた場所の一般的な負文脈語（金額単位・
+				// 件数等）で誤って棄却しない（正ラベル優先。issue #68 段階1(a)）。
+				return false
 			}
-			return false
+			return d.hasNegativeContextNear(norm, start, end, negativeContextWindowRunes, &normRunes, r.NegativeContext)
 		}
 		for _, p := range r.Patterns {
 			// FindAll はマッチ全体（末尾の境界ガード文字を含む）の直後から
@@ -801,14 +886,77 @@ func retainForCooccurrenceBoost(retainBudget *int, ruleID string, reason DetectR
 }
 
 func ignoredLine(line string) bool {
-	return strings.Contains(line, IgnoreMarker) || strings.Contains(line, AllowMarker)
+	return containsMarkerToken(line, IgnoreMarker) || containsMarkerToken(line, AllowMarker)
+}
+
+// containsMarkerToken は line 内に marker がトークン境界付き（`\b`相当）で
+// 出現するかを返す。単純な strings.Contains による部分文字列一致だと、旧
+// マーカー pii-allow が pii-allowlist のような無関係な識別子・ファイル名にも
+// 一致し、行全体が意図せず不可視化されてしまう。マーカーの直前・直後の文字が
+// マーカートークンの継続文字（英数字・ハイフン・アンダースコア）でない場合の
+// みマッチとみなすことで、独立した「単語」としてのみ照合する。
+func containsMarkerToken(line, marker string) bool {
+	for idx := 0; ; {
+		pos := strings.Index(line[idx:], marker)
+		if pos < 0 {
+			return false
+		}
+		start := idx + pos
+		end := start + len(marker)
+		before := true
+		if start > 0 {
+			r, _ := utf8.DecodeLastRuneInString(line[:start])
+			before = !isMarkerTokenChar(r)
+		}
+		after := true
+		if end < len(line) {
+			r, _ := utf8.DecodeRuneInString(line[end:])
+			after = !isMarkerTokenChar(r)
+		}
+		if before && after {
+			return true
+		}
+		// 境界に失敗した候補の次の文字から再探索する（marker 自体を
+		// スキップしすぎて後続の正しい出現を見逃さないよう 1 文字だけ進める）。
+		idx = start + 1
+	}
+}
+
+// isMarkerTokenChar はマーカートークンの継続文字（英数字・ハイフン・
+// アンダースコア）かどうかを返す。
+func isMarkerTokenChar(r rune) bool {
+	return r == '-' || r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r)
 }
 
 // containsAnyLiteral は haystack に literals のいずれかが含まれるかを返す
-// （リテラルプレフィルタ用。OR 条件）。
+// （リテラルプレフィルタ用。OR 条件）。ASCII 大文字小文字は無視する。氏名ルールの
+// ASCII 強ラベル・裸の name ラベルが `(?i:...)` 化された（#48）ため、プレフィルタ側
+// も大文字小文字を無視しないと FULL_NAME: 等の行が正規表現に到達する前にスキップ
+// されてしまう。大半の行（正規化済みでも ASCII 大文字を含まない行）では最初の
+// ループで決着し、小文字化コピーを確保しない。
 func containsAnyLiteral(haystack string, literals []string) bool {
 	for _, lit := range literals {
 		if strings.Contains(haystack, lit) {
+			return true
+		}
+	}
+	if !hasASCIIUpper(haystack) {
+		return false
+	}
+	lower := strings.ToLower(haystack)
+	for _, lit := range literals {
+		if strings.Contains(lower, lit) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasASCIIUpper は s に ASCII 大文字が 1 つでも含まれるかを返す。マルチバイト
+// UTF-8 の継続バイトは常に 0x80 以上のため、バイト単位の走査でも安全に判定できる。
+func hasASCIIUpper(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c >= 'A' && c <= 'Z' {
 			return true
 		}
 	}
