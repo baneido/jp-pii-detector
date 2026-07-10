@@ -57,6 +57,50 @@ func TestSplitCSVLineQuotedCommaDoesNotShiftColumns(t *testing.T) {
 	}
 }
 
+// 区切り文字の直後に半角空白を挟んだ引用フィールドも認識する。
+func TestSplitCSVLineInitialSpaceBeforeQuoteDoesNotShiftColumns(t *testing.T) {
+	tests := []struct {
+		name  string
+		line  string
+		delim byte
+		want  []string
+	}{
+		{"CSV", `a,  "b,c", d`, ',', []string{"a", "b,c", " d"}},
+		{"TSV", "a\t  \"b\tc\"\t d", '\t', []string{"a", "b\tc", " d"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fields, terminated := splitCSVLine(tt.line, tt.delim)
+			if !terminated {
+				t.Fatal("terminated = false, want true")
+			}
+			if len(fields) != len(tt.want) {
+				t.Fatalf("fields = %d 件, want %d: %+v", len(fields), len(tt.want), fields)
+			}
+			for i, f := range fields {
+				if got := tt.line[f.start:f.end]; got != tt.want[i] {
+					t.Errorf("fields[%d] = %q, want %q", i, got, tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+// 引用符が続かない区切り文字直後の空白は、従来どおり値の一部として保持する。
+func TestSplitCSVLinePreservesInitialSpaceInUnquotedField(t *testing.T) {
+	line := "a,  b , c"
+	fields, terminated := splitCSVLine(line, ',')
+	if !terminated {
+		t.Fatal("terminated = false, want true")
+	}
+	want := []string{"a", "  b ", " c"}
+	for i, f := range fields {
+		if got := line[f.start:f.end]; got != want[i] {
+			t.Errorf("fields[%d] = %q, want %q", i, got, want[i])
+		}
+	}
+}
+
 // "" はエスケープされた引用符 1 個として扱い、フィールドを終端しない。
 func TestSplitCSVLineEscapedQuoteDoesNotTerminateField(t *testing.T) {
 	line := `a,"b""c",d`
@@ -171,6 +215,43 @@ func TestCSVColumnContextQuotedFieldDoesNotShiftColumns(t *testing.T) {
 	}
 }
 
+// 区切り文字直後に空白を挟んだ引用フィールド内の区切り文字でも列がずれず、
+// ヘッダから離れた行の後続列へ文脈が届くことを CSV/TSV の双方で確認する。
+func TestCSVColumnContextInitialSpaceBeforeQuotedFieldDoesNotShiftColumns(t *testing.T) {
+	tests := []struct {
+		name    string
+		file    string
+		content string
+	}{
+		{
+			name: "CSV",
+			file: "data.csv",
+			content: "郵便番号, 備考, 口座番号\n" +
+				"100-0001, 至急, 1234567\n" +
+				`100-0001, "社内メモ, 至急", 7654321` + "\n",
+		},
+		{
+			name: "TSV",
+			file: "data.tsv",
+			content: "郵便番号\t 備考\t 口座番号\n" +
+				"100-0001\t 至急\t 1234567\n" +
+				"100-0001\t \"社内メモ\t至急\"\t 7654321\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := newDetector(t, "")
+			fs := d.ScanContent(tt.file, tt.content)
+			for _, f := range fs {
+				if f.RuleID == "jp-bank-account" && f.Line == 3 && f.Match == "7654321" {
+					return
+				}
+			}
+			t.Fatalf("line 3 の口座番号が検出されない: %+v", fs)
+		})
+	}
+}
+
 // 列名が偶然「金額・件数」等の負コンテキスト語を含む場合、その列は同じ行の
 // 別列由来の肯定文脈語を部分一致で拾っても抑制されること
 // （「電話対応件数」のような紛らわしい列名で FP が増える既知のリスクに対する
@@ -256,6 +337,51 @@ func TestCSVNameColumnPromotesRowsBeyondAdjacentWindow(t *testing.T) {
 			t.Errorf("jp-postal-code not found at line %d", line)
 		}
 	}
+}
+
+// 氏名列より前に、区切り文字直後の空白を挟んだ引用フィールドがあっても、
+// 引用符内の区切り文字で列がずれず氏名を検出できることを CSV/TSV 双方で確認する。
+func TestCSVNameColumnInitialSpaceBeforeQuotedFieldDoesNotShiftColumns(t *testing.T) {
+	tests := []struct {
+		name    string
+		file    string
+		content string
+	}{
+		{
+			name: "CSV",
+			file: "data.csv",
+			content: "種別, 備考, 氏名\n" +
+				"通常, 至急, 山田太郎\n" +
+				`通常, "社内メモ, 至急", 山田太郎` + "\n",
+		},
+		{
+			name: "TSV",
+			file: "data.tsv",
+			content: "種別\t 備考\t 氏名\n" +
+				"通常\t 至急\t 山田太郎\n" +
+				"通常\t \"社内メモ\t至急\"\t 山田太郎\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := newDetector(t, highRecallTOML)
+			fs := d.ScanContent(tt.file, tt.content)
+			for _, f := range fs {
+				if f.RuleID == "person-name-structured" && f.Line == 3 && f.Match == "山田太郎" {
+					return
+				}
+			}
+			t.Fatalf("line 3 の氏名が検出されない: %+v", fs)
+		})
+	}
+}
+
+// CSV 氏名列でも min_confidence を尊重し、Medium の構造化氏名を High 設定で
+// 報告しない（scanCrossLineNames と同じ信頼度ゲート）。
+func TestCSVNameColumnRespectsMinimumConfidence(t *testing.T) {
+	d := newDetector(t, "min_confidence = \"high\"\n[rules]\nhigh_recall = true\n")
+	fs := d.ScanContent("data.csv", "氏名,備考\n山田太郎,社内\n")
+	assertRules(t, fs)
 }
 
 // 高再現率が既定 OFF のときは氏名列の構造化検出も走らない（既定挙動を変えない）。

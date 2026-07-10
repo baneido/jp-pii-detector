@@ -36,17 +36,27 @@ type csvField struct {
 }
 
 // splitCSVLine は正規化済みの 1 行を RFC 4180 準拠の引用符処理（"" は
-// リテラルな引用符 1 個にエスケープ）でフィールドに分割する。フィールド内
-// 改行で引用符が行末までに閉じないレコードは terminated=false を返す。
+// リテラルな引用符 1 個にエスケープ）でフィールドに分割する。実務でよくある
+// 区切り文字直後の半角空白を挟んだ引用フィールドも認識する。ただし、引用符が
+// 続かない空白は従来どおりフィールド本文に含める。フィールド内改行で引用符が
+// 行末までに閉じないレコードは terminated=false を返す。
 // この関数は 1 行だけを見るため、そのようなレコード（複数物理行にまたがる
 // 1 論理行）を正しく再構成することはできない。呼び出し側は terminated=false
 // を検出したら、それ以降のレコードへの列コンテキスト付与を打ち切り、
 // 列がずれた誤帰属を避ける。
 func splitCSVLine(line string, delim byte) (fields []csvField, terminated bool) {
 	i, n := 0, len(line)
+	afterDelimiter := false
 	for {
 		var f csvField
-		if i < n && line[i] == '"' {
+		quoteStart := i
+		if afterDelimiter {
+			for quoteStart < n && line[quoteStart] == ' ' {
+				quoteStart++
+			}
+		}
+		if quoteStart < n && line[quoteStart] == '"' {
+			i = quoteStart
 			i++ // 開き引用符
 			f.start = i
 			for i < n {
@@ -81,6 +91,7 @@ func splitCSVLine(line string, delim byte) (fields []csvField, terminated bool) 
 			break
 		}
 		i++ // 区切り文字を読み飛ばす
+		afterDelimiter = true
 	}
 	return fields, true
 }
@@ -245,6 +256,9 @@ func csvLineContexts(file string, lines []string) []lineContext {
 // フリガナ（カタカナ）列はラベル語彙としては一致しうるが、埋め込み姓名辞書が
 // 漢字ベースのため ValidCrossLineName が値を通さず、対象外になる。
 func (d *Detector) scanCSVNameColumns(file string, lines []string) []Finding {
+	if rule.Medium < d.minConf {
+		return nil
+	}
 	if d.crossLineName == nil {
 		return nil
 	}
