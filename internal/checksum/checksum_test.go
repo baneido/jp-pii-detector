@@ -78,12 +78,16 @@ func luhnComplete(prefix string) string {
 }
 
 // TestCreditCard は「フォーマット妥当性」（Luhn + ブランドプレフィックス +
-// 桁数）のみを検証する。公知のテスト用ダミー PAN（4111111111111111 等）は
-// isKnownTestPAN の denylist で棄却される仕様のため、ここでは luhnComplete
-// で生成した合成番号のみを valid ケースに使う（denylist 自体は
-// TestCreditCardRejectsKnownTestPAN で検証する）。
+// 桁数）のみを検証する。決済処理業者が公開するテスト用 PAN も、実在番号と
+// 値だけでは安全に区別できないため検出対象とする。
 func TestCreditCard(t *testing.T) {
 	valid := []string{
+		"4111111111111111",                 // Visa 16 桁テスト番号
+		"5555555555554444",                 // Mastercard テスト番号
+		"3530111333300000",                 // JCB 16 桁テスト番号
+		"378282246310005",                  // Amex テスト番号
+		"30569309025904",                   // Diners 14 桁テスト番号
+		"6011111111111117",                 // Discover テスト番号
 		luhnComplete("400000123456789"),    // Visa 16 桁（合成番号。旧 13 桁形式は非対応）
 		luhnComplete("422222222222222222"), // Visa 19 桁
 		luhnComplete("222100000000000"),    // Mastercard 2-series 下限
@@ -117,39 +121,6 @@ func TestCreditCard(t *testing.T) {
 		if CreditCard(v) {
 			t.Errorf("CreditCard(%q) = true, want false", v)
 		}
-	}
-}
-
-// TestCreditCardRejectsKnownTestPAN は決済処理業者が公開しているテスト用
-// ダミー PAN が CreditCard() で棄却されることを検証する（isKnownTestPAN の
-// SHA-256 denylist 経由）。値自体は各決済処理業者のドキュメントで公開されて
-// いる周知のダミー番号であり、実在の PII ではない。
-func TestCreditCardRejectsKnownTestPAN(t *testing.T) {
-	knownTestPANs := []string{
-		"4242424242424242", // Visa（Stripe ドキュメント記載）
-		"4111111111111111", // Visa（複数決済処理業者で共通利用）
-		"5555555555554444", // Mastercard（Stripe ドキュメント記載）
-		"5105105105105100", // Mastercard（複数決済処理業者で共通利用）
-		"378282246310005",  // American Express（Stripe ドキュメント記載）
-		"371449635398431",  // American Express（Stripe ドキュメント記載）
-		"6011111111111117", // Discover（Stripe ドキュメント記載）
-		"6011000990139424", // Discover（Stripe ドキュメント記載）
-		"3530111333300000", // JCB（Stripe ドキュメント記載）
-		"3566002020360505", // JCB（Stripe ドキュメント記載）
-		"30569309025904",   // Diners Club（Stripe ドキュメント記載）
-		"38520000023237",   // Diners Club（Stripe ドキュメント記載）
-	}
-	for _, v := range knownTestPANs {
-		if CreditCard(v) {
-			t.Errorf("CreditCard(%q) = true, want false（公知のテスト用ダミー PAN）", v)
-		}
-		if !isKnownTestPAN(v) {
-			t.Errorf("isKnownTestPAN(%q) = false, want true", v)
-		}
-	}
-	// denylist に含まれない合成番号はハッシュが一致しないため false。
-	if isKnownTestPAN(luhnComplete("400000123456789")) {
-		t.Error("isKnownTestPAN(合成 Visa 番号) = true, want false")
 	}
 }
 
