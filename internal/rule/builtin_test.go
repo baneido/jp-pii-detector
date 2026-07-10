@@ -93,19 +93,18 @@ func TestValidEmail(t *testing.T) {
 	}
 }
 
-// validPhone の「加入者番号部（末尾 4 桁）が全桁同一はダミー値」棄却を検証する。
-// 昇順連番（090-1234-5678 等）の棄却は見送っているため許容されたままであることも確認する。
-// フィクスチャ不要のためピュアなインラインリテラルのみで完結させる。
-func TestValidPhoneSubscriberAllSame(t *testing.T) {
+// 加入者番号部の並びだけでは実在番号と安全に区別できないため、末尾 4 桁が
+// 全桁同一または連番でも、電話番号全体の形式が妥当なら許容する。
+func TestValidPhoneAllowsSubscriberPatterns(t *testing.T) {
 	tests := []struct {
 		name string
 		in   string
 		want bool
 	}{
-		{"携帯 加入者番号部が全桁同一は棄却", "090-0000-0000", false},
-		{"携帯 加入者番号部が連番は許容（棄却は見送り）", "090-1234-5678", true},
-		{"固定 加入者番号部が全桁同一は棄却", "03-1234-0000", false},
-		{"国際表記 携帯 加入者番号部が全桁同一は棄却", "+81-90-0000-0000", false},
+		{"携帯 加入者番号部が全桁同一", "090-1234-2222", true},
+		{"携帯 加入者番号部が連番", "090-1234-5678", true},
+		{"固定 加入者番号部が全桁同一", "03-1234-0000", true},
+		{"国際表記 携帯 加入者番号部が全桁同一", "+81-90-1234-2222", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -189,18 +188,17 @@ func TestValidDriversLicense(t *testing.T) {
 	}
 }
 
-// validBankAccount / validHealthInsurance は全桁同一・先頭ゼロ埋め連番の
-// ダミー値（0000001 等）を棄却する。口座番号・保険者番号は検査用数字を
-// 持たないため、これ以上の検証はできない。
+// validBankAccount / validHealthInsurance は全桁同一のダミー値だけを棄却する。
+// 口座番号・保険者番号は検査用数字を持たず、連番も実在しうるため許容する。
 func TestValidBankAccount(t *testing.T) {
 	tests := []struct {
 		name string
 		in   string
 		want bool
 	}{
-		{"実在しうる値", "1234569", true},
+		{"昇順連番も実在しうる", "1234567", true},
 		{"全桁同一は棄却", "0000000", false},
-		{"先頭ゼロ埋め＋末尾昇順連番は棄却", "0000001", false},
+		{"先頭ゼロ埋め＋末尾昇順連番も許容", "0000001", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -217,9 +215,9 @@ func TestValidHealthInsurance(t *testing.T) {
 		in   string
 		want bool
 	}{
-		{"実在しうる値", "12345689", true},
+		{"昇順連番も実在しうる", "12345678", true},
 		{"全桁同一は棄却", "00000000", false},
-		{"先頭ゼロ埋め＋末尾昇順連番は棄却", "00000123", false},
+		{"先頭ゼロ埋め＋末尾昇順連番も許容", "00000123", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

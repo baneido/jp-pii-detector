@@ -865,17 +865,18 @@ func validDriversLicense(m string) bool {
 	return m != "" && m[0] != '0' && !checksum.AllSame(m) && !checksum.IsZeroPaddedSequential(m)
 }
 
-// validBankAccount は銀行口座番号（7 桁）の全桁同一・ゼロ埋め連番
-// （0000001 等）のダミー値を棄却する。口座番号自体は検査用数字を
-// 持たないため、これ以上の検証はできない。
+// validBankAccount は銀行口座番号（7 桁）の全桁同一のダミー値を棄却する。
+// 口座番号自体は検査用数字を持たず、連番も実在しうるため、それ以上の
+// ヒューリスティックは適用しない。
 func validBankAccount(m string) bool {
-	return !checksum.AllSame(m) && !checksum.IsZeroPaddedSequential(m)
+	return !checksum.AllSame(m)
 }
 
-// validHealthInsurance は健康保険 保険者番号・被保険者番号（8 桁）の
-// 全桁同一・ゼロ埋め連番のダミー値を棄却する。
+// validHealthInsurance は健康保険 保険者番号・被保険者番号（8 桁）の全桁同一の
+// ダミー値を棄却する。連番も実在しうるため、それ以上のヒューリスティックは
+// 適用しない。
 func validHealthInsurance(m string) bool {
-	return !checksum.AllSame(m) && !checksum.IsZeroPaddedSequential(m)
+	return !checksum.AllSame(m)
 }
 
 // validPassport は旅券（パスポート）番号（英字 2 + 数字 7）の末尾 7 桁が
@@ -906,12 +907,6 @@ func validResidenceCard(m string) bool {
 func validPhone(m string) bool {
 	d := stripSeparators(strings.TrimPrefix(m, "+"))
 	if checksum.AllSame(d) {
-		return false
-	}
-	// 加入者番号部（末尾 4 桁）が全桁同一はダミー値として棄却する
-	// （携帯番号の末尾が 0000 で終わるケース等）。加入者番号部が昇順連番の
-	// 値の棄却は、公的な採番禁止規則の一次情報が確認できるまで見送る。
-	if len(d) >= 4 && checksum.AllSame(d[len(d)-4:]) {
 		return false
 	}
 	if strings.HasPrefix(d, "81") {
