@@ -1,6 +1,6 @@
 # 日本郵便 KEN_ALL（住所の郵便番号 UTF-8 版）由来の市区町村名一覧。
 # dict.MunicipalitySuffixMatch（jp-address-high-recall の Validate）が使う。
-# 生成: go run ./internal/dict/gen -input utf_ken_all.zip -output internal/dict/postal_codes.bitset -municipalities-output internal/dict/municipalities.txt
+# 生成: go run ./internal/dict/gen -ken-all-input utf_ken_all.zip -output internal/dict/postal_codes.bitset -municipalities-output internal/dict/municipalities.txt
 # 配布元: https://www.post.japanpost.jp/zipcode/dl/utf-zip.html
 あきる野市
 あさぎり町
