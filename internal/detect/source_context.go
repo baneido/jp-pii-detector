@@ -215,7 +215,7 @@ func splitSourceStatements(line string) []sourceSegment {
 			}
 			continue
 		}
-		if (c == '"' || c == '\'' || c == '`') && quoteStartsAt(line, i) {
+		if c == '`' || (c == '"' || c == '\'') && quoteStartsAt(line, i) {
 			quote = c
 			continue
 		}
@@ -233,8 +233,10 @@ func splitSourceStatements(line string) []sourceSegment {
 	return out
 }
 
-// quoteStartsAt は line[i]（ダブルクォート・シングルクォート・バッククォートの
-// いずれか）を文字列リテラルの開始とみなすべきかを返す。
+// quoteStartsAt は line[i]（ダブルクォート・シングルクォートのいずれか）を
+// 文字列リテラルの開始とみなすべきかを返す。バッククォートは JS/TS の
+// tagged template literal（sql`...` 等）で識別子に直結できるため、呼び出し側で
+// 常に文字列リテラルの開始として扱う。
 // 素朴な実装（#39 まで）はクォート文字が出た時点で無条件に
 // クォート開始とみなしていたため、コメント中の英語の省略形（don't 等）の
 // アポストロフィが「文字列開始」と誤認され、以降の行末までが（閉じクォートが
@@ -360,7 +362,7 @@ func indexUnquotedByte(s string, match func(i int) bool) int {
 			}
 			continue
 		}
-		if (c == '"' || c == '\'' || c == '`') && quoteStartsAt(s, i) {
+		if c == '`' || (c == '"' || c == '\'') && quoteStartsAt(s, i) {
 			quote = c
 			continue
 		}
