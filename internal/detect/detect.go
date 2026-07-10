@@ -93,14 +93,11 @@ type Finding struct {
 	// matchStart/matchEnd はパターン全体（境界ガード込み、キャプチャグループ
 	// より広いことがある）のルーン単位の半開区間。start/end（キャプチャ
 	// グループ＝報告対象）とは別に持ち、scanAdjacentLines /
-	// scanAdjacentLinesDiff が「結合文字列のどちら側の行に実体があるか」を
-	// 判定する際に使う。氏名ラベルのように値のパターン自体にラベル＋
-	// セパレータ（`\s*` 等、結合用の改行 1 文字も飲み込みうる）を含むルールは、
-	// キャプチャグループ（値のみ）は一方の行に収まっていても、パターン全体は
-	// 結合用の改行を越えて反対側の行のラベルへ食い込んでいることがある
-	// （値だけを見ると同一行判定になり誤って検出してしまう）。matchStart/
-	// matchEnd を使うことで、この越境（結合用の改行 1 文字を超える食い込み）を
-	// 検出し、対象外にできる。
+	// scanAdjacentLinesDiff で person-name のパターン全体が結合用の改行を
+	// 越えたかを判定する際に使う。person-name は専用の scanCrossLineNames が
+	// 同じ値を person-name-structured として検出するため、この越境候補だけを
+	// 対象外にする。jp-birthdate のようにラベル埋め込み正規表現でクロスライン
+	// 検出するルールには、この越境情報を理由とした一律抑制を適用しない。
 	matchStart, matchEnd int
 }
 
@@ -389,11 +386,9 @@ func (d *Detector) scanAdjacentLines(file string, firstLineNo int, first string,
 	for _, f := range d.scanLineNoIgnore(file, firstLineNo, combined, crossLinePromotionWindow) {
 		switch {
 		case f.end <= sep: // 値は 1 行目
-			// パターン全体（境界ガード込み）が結合用の改行 1 文字を超えて
-			// 2 行目へ食い込んでいる場合は、値ではなくラベル側の正規表現
-			// （personNameSep の `\s*` 等）が結合用の改行を飲み込んで越境した
-			// 疑わしいマッチなので対象外にする（Finding.matchStart 参照）。
-			if f.matchEnd > sep+1 {
+			// person-name は専用の scanCrossLineNames と重複する越境候補だけを
+			// 対象外にする。他ルールのラベル埋め込み cross-line match は維持する。
+			if f.RuleID == "person-name" && f.matchEnd > sep+1 {
 				continue
 			}
 			if ignoredLine(first) {
@@ -406,7 +401,7 @@ func (d *Detector) scanAdjacentLines(file string, firstLineNo int, first string,
 				continue
 			}
 		case f.start > sep: // 値は 2 行目
-			if f.matchStart < sep {
+			if f.RuleID == "person-name" && f.matchStart < sep {
 				continue
 			}
 			if ignoredLine(second) {
@@ -515,8 +510,8 @@ func (d *Detector) scanAdjacentLinesDiff(file string, firstLineNo int, first str
 	for _, f := range d.scanLineNoIgnore(file, firstLineNo, combined, crossLinePromotionWindow) {
 		switch {
 		case f.end <= sep: // 値は 1 行目
-			// scanAdjacentLines と同じ越境防御（Finding.matchStart 参照）。
-			if f.matchEnd > sep+1 {
+			// scanAdjacentLines と同じく person-name の越境候補だけを抑制する。
+			if f.RuleID == "person-name" && f.matchEnd > sep+1 {
 				continue
 			}
 			if !firstAdded || ignoredLine(first) {
@@ -529,7 +524,7 @@ func (d *Detector) scanAdjacentLinesDiff(file string, firstLineNo int, first str
 				continue
 			}
 		case f.start > sep: // 値は 2 行目
-			if f.matchStart < sep {
+			if f.RuleID == "person-name" && f.matchStart < sep {
 				continue
 			}
 			if !secondAdded || ignoredLine(second) {

@@ -1164,6 +1164,22 @@ func TestScanContentAdjacentLabelPromotesNonRequireContextRuleWithinWindow(t *te
 	}
 }
 
+// TestScanContentAdjacentBirthdateWithEmbeddedLabel は、ラベルを正規表現自体に
+// 埋め込む非 RequireContext ルールも隣接行をまたいで検出できることを確認する。
+// person-name の重複抑制用越境ガードを全ルールに適用すると、この正当なマッチまで
+// 巻き添えで失われる。
+func TestScanContentAdjacentBirthdateWithEmbeddedLabel(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanContent("f.txt", "生年月日:\n1990/01/01")
+	assertRules(t, fs, "jp-birthdate")
+	if fs[0].Line != 2 || fs[0].Column != 1 {
+		t.Fatalf("location = %d:%d, want 2:1", fs[0].Line, fs[0].Column)
+	}
+	if fs[0].Match != "1990/01/01" {
+		t.Fatalf("match = %q, want 1990/01/01", fs[0].Match)
+	}
+}
+
 // TestScanContentDedupPrefersPromotedConfidenceOverUnpromoted は
 // dedupAndSortFindings が同一 span の候補のうち信頼度の高い方を残すことを
 // 確認する。単独行走査（ラベルなし・Medium）と隣接行相関（ラベルあり・High）が
@@ -1328,6 +1344,24 @@ func TestScanDiffHunkAdjacentLabelPromotesNonRequireContextRule(t *testing.T) {
 	assertRules(t, fs, "jp-phone-number")
 	if fs[0].Confidence != rule.High {
 		t.Fatalf("confidence = %v, want high", fs[0].Confidence)
+	}
+}
+
+// TestScanDiffHunkAdjacentBirthdateWithEmbeddedLabel は、未変更のラベル行と追加した
+// 値行を結合する diff 経路でも jp-birthdate のラベル埋め込み正規表現を維持する
+// ことを確認する。
+func TestScanDiffHunkAdjacentBirthdateWithEmbeddedLabel(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanDiffHunk("f.txt", []DiffLine{
+		{Text: "生年月日:", Added: false},
+		{Text: "1990/01/01", Added: true},
+	})
+	assertRules(t, fs, "jp-birthdate")
+	if fs[0].Line != 2 || fs[0].Column != 1 {
+		t.Fatalf("location = %d:%d, want 2:1", fs[0].Line, fs[0].Column)
+	}
+	if fs[0].Match != "1990/01/01" {
+		t.Fatalf("match = %q, want 1990/01/01", fs[0].Match)
 	}
 }
 
