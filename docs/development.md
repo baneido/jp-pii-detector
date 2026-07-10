@@ -294,6 +294,8 @@ internal/
   文脈シグナルにしたい場合は `Context` に語をすべて足さず、`ContextPattern`
   （`Rule.ContextPatterns`）で「安価な `Literals` ゲート → 正規表現で候補切り出し
   → 辞書 `Validate`」の専用経路にする（`jp-bank-account` の銀行名辞書照合を参照）。
+  日本語の連続文を候補の前方に取り込みうる場合は `ValidateSuffixes` を有効にし、
+  辞書に一致する最長の接尾部分を回収する。
   `Context` の線形走査（`containsWord`）に大きな辞書を混ぜるとホットパスが劣化する。
 - **Prefilter**: パターンが特定の文字種（数字、`@`、日本語）なしにマッチし得ない
   場合は `Prefilter` を設定する。該当文字を含まない行の走査が丸ごと省ける。
@@ -402,7 +404,8 @@ $ go run ./internal/dict/gen \
 zengin-code 等が公開する公式マスタ（約 1,100 件）そのものではありません。
 `jp-bank-account` ルールは、この辞書と `internal/rule/builtin.go` の
 `bankNameCandidateRe`（`(候補)(銀行|信用金庫|信用組合|信金|信組|労働金庫|ろうきん|農協)`
-のアンカー正規表現）で候補を切り出し、`dict.IsBankName` で O(1) 検証した結果を
+のアンカー正規表現）で候補を切り出し、候補の接尾部分を長い順に
+`dict.IsBankName` で O(1) 検証した結果を
 `rule.ContextPattern` 経由の文脈シグナルとして使います（銀行名 1,000 語超を
 `Context` の線形走査に混ぜないための専用経路。`internal/detect/context.go` の
 `matchContextPatterns` を参照）。支店辞書（全国支店で数百 KB〜数 MB 規模になりうる）は

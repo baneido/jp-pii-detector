@@ -277,8 +277,10 @@ func validNameFieldOpt(v string, allowSurname, allowGiven, allow1CharSurname boo
 var bankNameSuffixes = []string{"銀行", "信用金庫", "信用組合", "信金", "信組", "労働金庫", "ろうきん", "農協"}
 
 // bankNameCandidateRe は「(金融機関名候補)(業態サフィックス)」の形を切り出す
-// アンカー正規表現。キャプチャグループ 1 はサフィックスを含む完全な名称
-// （例: "三菱UFJ銀行"）で、dict.IsBankName に渡してO(1)で実在性を検証する。
+// アンカー正規表現。キャプチャグループ 1 はサフィックスを含む候補で、
+// ContextPattern.ValidateSuffixes が辞書に一致する最長の接尾部分を検証する。
+// これにより、銀行名の直前に助詞や熟語が空白なしで続く日本語文でも、
+// 完全な金融機関名（例: "三菱UFJ銀行"）だけを回収できる。
 // 数百〜千語規模の辞書を Context の線形走査に混ぜないための専用経路
 // （internal/detect の ContextPattern・bankNameSuffixes の Literals ゲートを参照）。
 var bankNameCandidateRe = regexp.MustCompile(
@@ -494,7 +496,7 @@ func Builtin() []Rule {
 			// 注: このコメント自体が dogfooding で自己検出されないよう、
 			// 具体的な銀行名・口座番号の実値は書かない。
 			ContextPatterns: []ContextPattern{
-				{Re: bankNameCandidateRe, Validate: dict.IsBankName, Literals: bankNameSuffixes},
+				{Re: bankNameCandidateRe, Validate: dict.IsBankName, ValidateSuffixes: true, Literals: bankNameSuffixes},
 			},
 			NegativeContext:      digitRuleNegativeContext,
 			RequireContextWindow: digitRuleRequireContextWindow,
@@ -510,7 +512,7 @@ func Builtin() []Rule {
 			// 銀行名候補の専用経路は「ゆうちょ銀行」表記だけを文脈として使う。
 			// 任意の銀行名は通常の銀行口座ルール（jp-bank-account）側の文脈で扱う。
 			ContextPatterns: []ContextPattern{
-				{Re: bankNameCandidateRe, Validate: isYuchoBankName, Literals: bankNameSuffixes},
+				{Re: bankNameCandidateRe, Validate: isYuchoBankName, ValidateSuffixes: true, Literals: bankNameSuffixes},
 			},
 			NegativeContext:      digitRuleNegativeContext,
 			RequireContextWindow: digitRuleRequireContextWindow,

@@ -85,6 +85,10 @@ type ContextPattern struct {
 	Re *regexp.Regexp
 	// Validate は候補が有効な文脈語かどうかを判定する（辞書照合など）。
 	Validate func(candidate string) bool
+	// ValidateSuffixes は Re が日本語の地の文を候補の前方に取り込む場合に、
+	// 候補全体だけでなくルーン境界ごとの接尾部分も長い順に Validate する。
+	// 辞書に一致した最長の接尾部分を文脈語として採用する。
+	ValidateSuffixes bool
 	// Literals はいずれか 1 つも行に含まれなければ Re の評価自体を
 	// スキップする安価な事前ゲート（OR 条件）。空なら常に Re を評価する。
 	Literals []string
