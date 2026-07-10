@@ -107,6 +107,9 @@ type Rule struct {
 	ContextPatterns []ContextPattern
 	// NegativeContext は同一行（または近傍）に存在する場合に検出を
 	// 棄却する語。金額・数量・連番 ID など PII でない数字列の文脈を表す。
+	// 各語がどの近接判定（値の直前隣接・直後隣接・±window 汎用一致）で
+	// 扱われるかは ClassifyNegativeKeyword（negative_context.go）が単一の
+	// 情報源として分類する。
 	NegativeContext []string
 	// RequireContextWindow は RequireContext の肯定語をマッチ前後の
 	// ルーン数に限定する。0 の場合は後方互換のため行全体を見る。
