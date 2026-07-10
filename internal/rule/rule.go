@@ -51,6 +51,10 @@ type Pattern struct {
 	// RequireContext が true の場合、コンテキストキーワードが
 	// 同一行に存在しなければ検出を破棄する。
 	RequireContext bool
+	// IgnoreNegativeContext が true の場合、Rule.NegativeContext による
+	// 棄却をこのパターンには適用しない。同一ルール内で既存の高精度パターンと
+	// 負文脈を必要とする高偽陽性パターンが混在する場合に使う。
+	IgnoreNegativeContext bool
 	// Validate はこのパターン固有の追加検証（nil なら検証なし）。
 	// ルール全体の Rule.Validate に加えて適用され、パターンごとに
 	// 異なる検証（例: 氏名の弱いラベルだけ姓名辞書で照合する）を
