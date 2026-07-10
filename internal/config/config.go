@@ -56,6 +56,13 @@ type Config struct {
 		// HighRecall は高再現率ルールを明示的に有効化する。
 		// 偽陽性リスクが高いため既定では無効。
 		HighRecall bool `toml:"high_recall"`
+		// PathDemotion はテスト経路（testdata/ ・ fixtures/ ・ *_test.go 等）に
+		// 対する信頼度降格（Medium→Low、対象は RequireContext かつ Base=Medium の
+		// ルールのみ）を有効にする。既定で有効。値そのものを消す除外ではなく、
+		// 既定の min_confidence=medium 運用で非表示になる降格に留まるため、
+		// --min-confidence low で常に確認できる。無効化すると全ルールが
+		// パスに関わらず通常どおりの信頼度で報告される。
+		PathDemotion bool `toml:"path_demotion"`
 		// Custom は利用者定義の追加ルール。
 		Custom []CustomRule `toml:"custom"`
 	} `toml:"rules"`
@@ -91,7 +98,9 @@ func Default() *Config {
 }
 
 func defaultConfig() *Config {
-	return &Config{MinConfidence: "medium"}
+	cfg := &Config{MinConfidence: "medium"}
+	cfg.Rules.PathDemotion = true
+	return cfg
 }
 
 // Load は設定ファイルを読み込む。path が空の場合はカレントディレクトリから
