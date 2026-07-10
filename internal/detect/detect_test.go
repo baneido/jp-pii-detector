@@ -450,6 +450,161 @@ func TestDigitRulesIgnoreDistantNegativeContext(t *testing.T) {
 	assertRules(t, d.ScanLine("f.txt", 1, line), "jp-bank-account")
 }
 
+// mynumValid / mynumValid2 は検査用数字の合致するダミーのマイナンバー
+// （piifixtures 無しでも実行できるよう、チェックディジットを手計算した値）。
+// visaTestCard は Stripe 等が公開する Luhn 有効な Visa テスト番号。
+// shibuyaPostal は実在する郵便番号（渋谷区道玄坂、internal/dict のテストと同じ値）。
+const (
+	mynumValid    = "123456789018"
+	mynumValid2   = "100000000013"
+	visaTestCard  = "4242424242424242"
+	visaSepCard   = "4111-1111-1111-1111"
+	shibuyaPostal = "150-0043"
+)
+
+// P05: jp-my-number / credit-card / jp-postal-code / jp-passport /
+// jp-residence-card は、これまで NegativeContext が未設定で、値に隣接する
+// 通貨・カウンタ単位（「売上は 4242... 円」等）でも抑制されなかった
+// （issue #53 (a)）。単位隣接専用の語彙を適用し、値に直接隣接する場合のみ
+// 抑制することを確認する。
+func TestUnitAdjacentNegativeContextSuppressesFiveRules(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+	}{
+		{"マイナンバーに直後の円", "マイナンバー: " + mynumValid + "円"},
+		{"売上表記のカード番号（issue 実測例）", "売上は " + visaTestCard + " 円"},
+		{"郵便番号に直後のカウンタ", "〒" + shibuyaPostal + "件"},
+		{"パスポート番号に直後のカウンタ", "パスポート番号: TZ1234567件"},
+		{"在留カード番号に直後のカウンタ", "在留カード番号: AB12345678CD件"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line))
+		})
+	}
+}
+
+// 単位隣接専用の語彙は、既存 4 ルールの汎用窓語（注文・伝票・管理番号 等）を
+// 含まない。値と関係のない離れた位置に汎用語があるだけでは抑制せず、
+// 「カード番号 … で注文」「マイナンバー … を伝票に転記」のような正当な
+// 検出を取りこぼさないことを確認する（issue #53 (1) の FN 回避）。
+func TestUnitAdjacentNegativeContextIgnoresDistantGenericWords(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"マイナンバーを伝票に転記", "マイナンバー: " + mynumValid + " を伝票に転記", []string{"jp-my-number"}},
+		{"カード番号で注文", "カード番号: " + visaSepCard + " で注文", []string{"credit-card"}},
+		{"郵便番号を伝票に転記", "郵便番号: " + shibuyaPostal + " を伝票に転記", []string{"jp-postal-code"}},
+		{"パスポート番号を伝票に転記", "パスポート番号: TZ1234567 を伝票に転記", []string{"jp-passport"}},
+		{"在留カード番号を伝票に転記", "在留カード番号: AB12345678CD を伝票に転記", []string{"jp-residence-card"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// 採番ラベル接頭クラス（伝票番号・受付番号・予約番号 等）は、値に直接
+// 隣接する場合のみ抑制する（issue #53 (4)）。
+func TestNumberingLabelPrefixSuppressesAdjacentValue(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+	}{
+		{"伝票番号（issue 実測例）", "伝票番号 " + mynumValid2},
+		{"受付番号直後のカード番号", "受付番号 " + visaSepCard},
+		{"予約番号直後の郵便番号（肯定文脈も同一行に存在）", "郵便番号: 予約番号" + shibuyaPostal},
+		{"シリアル番号直後の在留カード番号（肯定文脈も同一行に存在）", "在留カード番号: シリアル番号AB12345678CD"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line))
+		})
+	}
+}
+
+// 採番ラベルが値から離れている場合は抑制しない（正ラベル + 離れた採番語）。
+// hasUnitBefore は空白・タブ以外を挟むと不成立になるため、「伝票番号」の
+// 語自体が行内にあっても値の直前でなければ通常どおり検出する。
+func TestNumberingLabelPrefixIgnoresDistantLabel(t *testing.T) {
+	d := newDetector(t, "")
+	line := "マイナンバー: " + mynumValid + " を伝票番号に転記"
+	assertRules(t, d.ScanLine("f.txt", 1, line), "jp-my-number")
+}
+
+// hasUnitAfter の requireBoundary（issue #53 (2)）: 修正前は単位直後が
+// ひらがな（助詞）でも「日本語文字」とみなして境界不成立にしていたため、
+// 「1234567件に到達した」のような助詞続きでカウンタ抑制が効かなかった
+// （「1234567件。」は句点なので元々抑制されており非一貫性だった）。
+// 直後が漢字（件名・名義等の複合語）の場合のみ境界不成立として抑制しない。
+func TestHasUnitAfterKanjiBoundary(t *testing.T) {
+	unit := []rune("件")
+	tests := []struct {
+		name string
+		line string
+		want bool
+	}{
+		{"助詞（ひらがな）続きは境界成立で抑制する", "1234567件に到達した", true},
+		{"漢字複合語（件名）は境界不成立で抑制しない", "1234567件名は空欄", false},
+		{"句点続きは境界成立で抑制する", "1234567件。", true},
+		{"行末は境界成立で抑制する", "1234567件", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rs := []rune(tt.line)
+			if got := hasUnitAfter(rs, 7, negativeContextWindowRunes, unit, true); got != tt.want {
+				t.Errorf("hasUnitAfter(%q, ...) = %v, want %v", tt.line, got, tt.want)
+			}
+		})
+	}
+}
+
+// hasUnitAfter の境界修正を実際の検出パイプラインで確認する
+// （直接の関数テストに加え、rule.Rule.NegativeContext 経由の統合確認）。
+func TestCounterSuffixBoundaryFixIntegration(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"助詞続きのカウンタは抑制する（境界バグ修正）", "口座番号: 1234567件に到達した", nil},
+		{"漢字複合語（件名）は引き続き抑制しない", "口座番号: 1234567件名は空欄", []string{"jp-bank-account"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// ScanDiffHunk はこれまで cross-line 負コンテキストを一切適用しておらず、
+// 追加行同士（両方 Added）でも抑制されなかった。フルスキャン（ScanContent）
+// では同じ内容が抑制されるため、pre-commit --staged とフルスキャンで結果が
+// 非対称になっていた（issue #53 (5)）。追加行同士は抑制し、文脈行
+// （未変更行）由来の抑制は引き続き適用しないことを確認する。
+func TestScanDiffHunkNegativeContextBetweenAddedLines(t *testing.T) {
+	d := newDetector(t, "")
+
+	// 追加行同士が隣接する場合は、フルスキャンと同じく負コンテキストで抑制する。
+	fs := d.ScanDiffHunk("f.txt", []DiffLine{
+		{Text: "口座番号: 1234567", Added: true},
+		{Text: "円", Added: true},
+	})
+	assertRules(t, fs)
+
+	// 負コンテキストが文脈行（未変更行）にある場合は抑制しない
+	// （追加した値の隣の既存行に「円」があっても、新規 PII を取りこぼさない設計）。
+	fs = d.ScanDiffHunk("f.txt", []DiffLine{
+		{Text: "口座番号: 1234567", Added: true},
+		{Text: "円", Added: false},
+	})
+	assertRules(t, fs, "jp-bank-account")
+}
+
 func TestLabeledRules(t *testing.T) {
 	piifixtures.Require(t)
 	d := newDetector(t, `min_confidence = "low"`)
@@ -787,6 +942,222 @@ high_recall = true
 	}
 }
 
+// TestPersonNameWeakFieldTrailingParticleFallback は issue #59 段階0: 弱いラベル
+// （姓・名・name 系）の値の直後に助詞・敬称が続き、通常の personNameValueShort が
+// 貪欲に取り込んで辞書照合に失敗する見逃し（FN）を、末尾の助詞・敬称を 1 回だけ
+// 剥がすフォールバックで拾うことを確認する。検出スパンは切り詰めた先頭セグメント。
+// 値は埋め込み姓名辞書のリテラルを使い、外部フィクスチャ不要（オフライン実行可能）。
+func TestPersonNameWeakFieldTrailingParticleFallback(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	tests := []struct {
+		name, line, wantMatch string
+	}{
+		{"姓 + 助詞混入の地続き文", "姓: 山田さんへ連絡", "山田"},
+		{"名 + です", "名: 花子です", "花子"},
+		{"last_name + 敬称", "last_name: 山田様がいらっしゃいました", "山田"},
+		{"user_name + 助詞", "user_name: 山田さんへ連絡", "山田"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, "person-name")
+			if fs[0].Match != tt.wantMatch {
+				t.Errorf("match = %q, want %q", fs[0].Match, tt.wantMatch)
+			}
+		})
+	}
+}
+
+// TestPersonNameWeakFieldTrailingParticleFallbackUnaffected は上記フォールバックが
+// 通常の完全一致（値の直後に助詞が続かない）を壊さないこと、および辞書に
+// 一致しない一般名詞では引き続き検出しないことを確認する。
+func TestPersonNameWeakFieldTrailingParticleFallbackUnaffected(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		// 助詞が続かない通常の完全一致は、切り詰めずフルの値のまま検出する。
+		{"姓 + 名（地続き文なし）", "姓: 山田太郎", []string{"person-name"}},
+		// 1 文字の単独要素は助詞混入時でも棄却する（validGivenField の長さ制約）。
+		{"first_name + 1文字 + 助詞", "first_name: 実さんへ連絡", nil},
+		// 辞書に一致しない一般名詞は、助詞が続いても検出しない。
+		{"名 + 一般名詞 + 助詞", "名: 一覧です", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestPersonNameChargeLabelConfidenceSplit は issue #59 段階1: 担当ラベル
+// （person-name-high-recall）が判定根拠（dict.MatchPersonName）に応じて
+// 信頼度を作り分けることを確認する。姓+名の分割（FullNameSplit）は Medium の
+// まま、単独の姓一致（SurnameOnly、渋谷・大和・本田のような地名・企業名と
+// 同形の姓を含む）は Low に降格し、Medium への一律昇格を避ける。
+func TestPersonNameChargeLabelConfidenceSplit(t *testing.T) {
+	d := newDetector(t, `
+min_confidence = "low"
+[rules]
+high_recall = true
+`)
+	tests := []struct {
+		name, line     string
+		wantConfidence rule.Confidence
+	}{
+		{"担当 + 姓名分割", "担当: 山田太郎", rule.Medium},
+		{"担当 + 地名同形の単独姓（渋谷）", "担当: 渋谷", rule.Low},
+		{"担当 + 地名同形の単独姓（大和）", "担当: 大和", rule.Low},
+		{"担当 + 企業名同形の単独姓（本田）", "担当: 本田", rule.Low},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, "person-name-high-recall")
+			if fs[0].Confidence != tt.wantConfidence {
+				t.Errorf("confidence = %v, want %v", fs[0].Confidence, tt.wantConfidence)
+			}
+		})
+	}
+}
+
+// TestPersonNameChargeLabelRejectsCompoundHomographs は issue #59 段階1: 関心
+// （関+心）・東大（東+大）・山田錦（山田+錦、denylist）のような、姓名分割は
+// 辞書上成立してしまうが実際には人名ではない一般名詞・固有名詞を、担当ラベルが
+// 検出しないことを確認する。
+func TestPersonNameChargeLabelRejectsCompoundHomographs(t *testing.T) {
+	d := newDetector(t, `
+min_confidence = "low"
+[rules]
+high_recall = true
+`)
+	for _, line := range []string{
+		"担当: 関心",
+		"担当: 東大",
+		"担当: 山田錦",
+	} {
+		t.Run(line, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, line))
+		})
+	}
+}
+
+// TestPersonNameASCIILabelCaseInsensitive は ASCII 強ラベル（full_name 等）と
+// 裸の name ラベルが大文字・キャメルケース表記でも検出されることを確認する
+// （#48）。normalize は ASCII の大小文字を変換しないため、ラベルの
+// `(?i:...)` 化と PrefilterLiterals 側の大小文字無視比較の両方が必要になる。
+// 弱いラベル（last_name/first_name 等）は今回のスコープ外で、大文字表記のままでは
+// 引き続き検出されないことも合わせて確認する。
+func TestPersonNameASCIILabelCaseInsensitive(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"大文字 FULL_NAME", "FULL_NAME: 田中太郎", []string{"person-name"}},
+		{"混在 Customer_Name", "Customer_Name: 山田花子", []string{"person-name"}},
+		{"大文字 PATIENT_NAME", "PATIENT_NAME: 田中太郎", []string{"person-name"}},
+		{"キャメルケース customerName", "customerName: 山田花子", []string{"person-name"}},
+		{"大文字 裸 NAME", "NAME: 田中太郎", []string{"person-name"}},
+		{"混在 裸 Name", "Name: 山田花子", []string{"person-name"}},
+		{"JSON 風大文字キー", `{"FULL_NAME": "田中太郎"}`, []string{"person-name"}},
+		// スコープ外: 弱いラベル（last_name/first_name）は大文字表記では
+		// 引き続き検出しない（#48 の対応方針どおり強ラベル・裸 name のみ対応）。
+		{"弱いラベル大文字は対象外", "LAST_NAME: 田中太郎", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestPersonNameKatakanaMiddleDotValue はカタカナ中黒区切りの氏名
+// （「ジョン・スミス」等）が強いラベルで全体（中黒を含む）を捕捉することを
+// 確認する（#48）。personNameValue のみを拡張し、弱いラベル用の
+// personNameValueShort は対象外のため、その境界も確認する。
+func TestPersonNameKatakanaMiddleDotValue(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	t.Run("full_name 中黒区切り", func(t *testing.T) {
+		fs := d.ScanLine("f.txt", 1, "full_name: ジョン・スミス")
+		assertRules(t, fs, "person-name")
+		if fs[0].Match != "ジョン・スミス" {
+			t.Fatalf("match = %q, want %q", fs[0].Match, "ジョン・スミス")
+		}
+	})
+	t.Run("氏名 中黒区切り", func(t *testing.T) {
+		fs := d.ScanLine("f.txt", 1, "氏名：メアリー・ジョーンズ")
+		assertRules(t, fs, "person-name")
+		if fs[0].Match != "メアリー・ジョーンズ" {
+			t.Fatalf("match = %q, want %q", fs[0].Match, "メアリー・ジョーンズ")
+		}
+	})
+	// スコープ外: 弱いラベル（姓）は personNameValueShort を使うため中黒を
+	// またいで値を捕捉せず、辞書照合にも通らないため検出しない。
+	t.Run("姓ラベルは対象外", func(t *testing.T) {
+		assertRules(t, d.ScanLine("f.txt", 1, "姓: ジョン・スミス"))
+	})
+}
+
+// TestPersonNameBracketAdjacentLabel は強いラベルに鉤括弧・丸括弧が
+// コロンなしで直結するケース（ご氏名「田中美咲」等）を検出することを確認する
+// （#48）。personNameSepOrBracket は強いラベル専用で、弱いラベル（姓 等）には
+// 適用しないことも確認する。
+func TestPersonNameBracketAdjacentLabel(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	tests := []struct {
+		name, line, wantMatch string
+	}{
+		{"日本語ラベル 鉤括弧直結", "ご氏名「田中太郎」", "田中太郎"},
+		{"日本語ラベル 二重鉤括弧直結", "お名前『山田花子』", "山田花子"},
+		{"ASCII強ラベル 丸括弧直結", "full_name(田中太郎)", "田中太郎"},
+		{"ASCII強ラベル 全角丸括弧直結", "customer_name（山田花子）", "山田花子"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, "person-name")
+			if fs[0].Match != tt.wantMatch {
+				t.Fatalf("match = %q, want %q", fs[0].Match, tt.wantMatch)
+			}
+		})
+	}
+	// スコープ外: 弱いラベル（姓）はコロン必須の personNameSep のままで、
+	// 鉤括弧直結では検出しない。
+	t.Run("弱いラベルは対象外", func(t *testing.T) {
+		assertRules(t, d.ScanLine("f.txt", 1, "姓「田中」"))
+	})
+}
+
+// TestPersonNameSingleCharSurnameAllowed は姓ラベル（姓/last_name）専用で、
+// 辞書収録済みの実在 1 文字姓（林・東 等）を許可することを確認する（#48）。
+// 名ラベル・姓名不定の name ラベルは「名: 東」のような方角語等との衝突を
+// 避けるため、引き続き 1 文字を許可しない（validGivenField/validFullNameField
+// は allow1CharSurname=false のまま）。
+func TestPersonNameSingleCharSurnameAllowed(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"姓ラベル + 実在1字姓(林)", "姓: 林", []string{"person-name"}},
+		{"姓ラベル + 実在1字姓(東)", "姓: 東", []string{"person-name"}},
+		{"last_name + 実在1字姓", "last_name: 林", []string{"person-name"}},
+		// 辞書未収録の1文字は従来どおり棄却する。
+		{"姓ラベル + 辞書外1文字", "姓: 私", nil},
+		// スコープ外: 名・姓名不定ラベルは1文字姓を許可しない。
+		{"名ラベルは対象外", "名: 林", nil},
+		{"nameラベルは対象外", "name: 林", nil},
+		{"first_nameは対象外", "first_name: 東", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
 func TestAllowlist(t *testing.T) {
 	piifixtures.Require(t)
 	stopword := piifixtures.MustGet(t, "detect.phone_mobile_stopword")
@@ -870,7 +1241,12 @@ func TestResolveOverlaps(t *testing.T) {
 		{"重複なしは全件残る", []Finding{mk("a", rule.High, 0, 5), mk("b", rule.High, 5, 10)}, []string{"a", "b"}},
 		{"信頼度が高い方が勝つ", []Finding{mk("lo", rule.Medium, 0, 8), mk("hi", rule.High, 4, 10)}, []string{"hi"}},
 		{"同率なら長い方が勝つ", []Finding{mk("short", rule.High, 0, 6), mk("long", rule.High, 4, 16)}, []string{"long"}},
-		{"同率同長は先勝ち", []Finding{mk("first", rule.High, 0, 6), mk("second", rule.High, 3, 9)}, []string{"first"}},
+		// 信頼度・長さが同率のときは RuleID の辞書順で決める（挿入順＝
+		// Builtin() 定義順には依存しない、issue #64 の付随改善）。
+		{"同率同長は RuleID の辞書順", []Finding{mk("first", rule.High, 0, 6), mk("second", rule.High, 3, 9)}, []string{"first"}},
+		// 挿入順を逆にしても RuleID の辞書順という結果は変わらないことを
+		// 確認する（旧実装は挿入順＝先勝ちだったため、ここが "zzz" になっていた）。
+		{"同率同長は挿入順に依存しない", []Finding{mk("zzz", rule.High, 0, 6), mk("aaa", rule.High, 3, 9)}, []string{"aaa"}},
 		// 後から来た 1 件が既存の複数と重なるケース（旧実装は最初の 1 件
 		// としか比較せず重複が残った）。
 		{"複数と重なる場合は全部置き換える",
@@ -880,6 +1256,57 @@ func TestResolveOverlaps(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assertRules(t, resolveOverlaps(tt.in), tt.want...)
+		})
+	}
+}
+
+// TestResolveOverlapsPerLine は resolveOverlapsPerLine 単体のテスト（issue #64）。
+// File+Line でグループ化してから resolveOverlaps を再適用することを確認する。
+func TestResolveOverlapsPerLine(t *testing.T) {
+	mk := func(file string, line int, id string, conf rule.Confidence, start, end int) Finding {
+		return Finding{File: file, Line: line, RuleID: id, Confidence: conf, start: start, end: end}
+	}
+	tests := []struct {
+		name string
+		in   []Finding
+		want []string
+	}{
+		{
+			"同一行で重なるパス間 finding は高信頼度のみ残る",
+			[]Finding{
+				mk("f.txt", 2, "jp-my-number", rule.Medium, 0, 12),
+				mk("f.txt", 2, "jp-drivers-license", rule.High, 0, 12),
+			},
+			[]string{"jp-drivers-license"},
+		},
+		{
+			"別の行にある finding は行を無視して統合されない（同じ列・同じ長さでも別行なら両方残る）",
+			[]Finding{
+				mk("f.txt", 1, "jp-phone-number", rule.High, 5, 18),
+				mk("f.txt", 2, "jp-phone-number", rule.High, 5, 18),
+			},
+			[]string{"jp-phone-number", "jp-phone-number"},
+		},
+		{
+			"別ファイルの finding も行を無視して統合されない",
+			[]Finding{
+				mk("a.txt", 1, "jp-phone-number", rule.High, 5, 18),
+				mk("b.txt", 1, "jp-phone-number", rule.High, 5, 18),
+			},
+			[]string{"jp-phone-number", "jp-phone-number"},
+		},
+		{
+			"重ならない finding は同一行でも両方残る",
+			[]Finding{
+				mk("f.txt", 1, "a", rule.High, 0, 5),
+				mk("f.txt", 1, "b", rule.High, 5, 10),
+			},
+			[]string{"a", "b"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, resolveOverlapsPerLine(tt.in), tt.want...)
 		})
 	}
 }
@@ -1448,6 +1875,71 @@ func TestBirthdateRejectsInvalidDates(t *testing.T) {
 	assertRules(t, d.ScanLine("f.txt", 1, "生年月日: 2000-01-01"), "jp-birthdate")
 }
 
+// jp-birthdate の表記ゆれ（元号アルファベット略記・元年・区切りなし8桁・
+// 英語ラベル・ラベル直後の注記）が検出されることを確認する（issue #45）。
+func TestBirthdateNotationVariants(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+	}{
+		{"元号の単字略記（ドット区切り）", "生年月日: S60.1.2"},
+		{"元号の単字略記（スラッシュ区切り）", "誕生日: H5/4/1"},
+		{"元年（漢字元号）", "生年月日: 令和元年5月1日"},
+		{"元年（単字略記）", "生年月日: R元.5.1"},
+		{"区切りなし8桁（YYYYMMDD）", "生年月日: 19850102"},
+		{"区切りなし8桁（コロンなし直結）", "生年月日19850102"},
+		{"英語ラベル birthday", "birthday: 1985-01-02"},
+		{"英語ラベル birth date（スペース区切り）", "birth date: 1985-01-02"},
+		{"英語ラベル date_of_birth", "date_of_birth: 1985-01-02"},
+		{"英語ラベル DOB（大文字）", "DOB: 1985-01-02"},
+		{"ラベル直後に注記が挟まる（西暦）", "生年月日(西暦): 1985-01-02"},
+		{"ラベル直後に注記が挟まる（8桁形式）", "生年月日（西暦）: 19850102"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), "jp-birthdate")
+		})
+	}
+}
+
+// jp-birthdate は表記ゆれを拡充しても、以下は誤って拾わないことを確認する:
+//   - ラベルの前方境界チェックで除外されるべき、英語ラベルが別の単語の一部
+//     になっているケース（adobe: など）
+//   - ラベルなしの裸 8 桁（処理日・有効期限などと同形のため、ラベル直結を
+//     必須とする設計を維持）
+//   - 月日のレンジ外の区切りなし8桁（生年月日: 20259999 等）
+func TestBirthdateVariantsNegative(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+	}{
+		{"dob が adobe の一部", "adobe: 1985-01-02"},
+		{"dob が wardrobe_id の一部", "wardrobe_id: 19850102"},
+		{"ラベルなしの裸8桁", "19850102"},
+		{"無関係なラベルの8桁（有効期限）", "有効期限: 20250101"},
+		{"区切りなし8桁で月がレンジ外", "生年月日: 20259999"},
+		{"区切りなし8桁で日がレンジ外", "生年月日: 19850132"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line))
+		})
+	}
+}
+
+// jp-birthdate ラベル直結の8桁と jp-health-insurance の文脈依存8桁
+// （保険者番号などのラベルが 40 ルーン以内にある）が同一行・同一箇所で
+// 重なった場合の帰属を固定する。両ルールとも Base: Medium かつ検出値が
+// 同じ長さのため resolveOverlaps は「先勝ち」で決着する。ラベル直結という
+// より強いシグナルを持つ jp-birthdate 側を優先させるため、internal/rule
+// の Builtin() では jp-birthdate を jp-health-insurance より前に登録している。
+// 少なくとも検出漏れにならないことも合わせて確認する。
+func TestBirthdateWinsOverHealthInsuranceOverlap(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanLine("f.txt", 1, "保険者番号 生年月日: 19850102")
+	assertRules(t, fs, "jp-birthdate")
+}
+
 // --- ComputeOffsets（scan --stdin 用の文字オフセット付与）---
 
 // TestComputeOffsets は行・列ベースの検出位置を、テキスト全体先頭からの
@@ -1526,6 +2018,97 @@ func TestComputeOffsetsOutOfRange(t *testing.T) {
 			}
 		})
 	}
+}
+
+// --- パスをまたぐ finding の重複解決（issue #64）---
+//
+// resolveOverlaps は単行走査 1 回分の候補にしか適用されておらず、単行パス・
+// 隣接行ペアパス・クロスライン氏名パスが独立に出す候補は findingKey
+// （RuleID+行+範囲の完全一致）でしか dedup されなかった。異なるルールが同じ
+// 値・重なる範囲に別々のパスからマッチすると、矛盾する複数 finding が
+// 二重報告される。以下は resolveOverlapsPerLine 追加の回帰テスト。
+
+// 12345678901 から検査用数字を計算した既知のマイナンバー値（internal/checksum の
+// TestMyNumberKnownValue と同じ値）。運転免許証番号の Validate
+// （先頭 2 桁が公安委員会コードで 0 以外・全桁同一でない）も満たすため、
+// 「免許番号:」ラベルの次行に置くと jp-my-number（単行パス、Medium）と
+// jp-drivers-license（隣接行ペアパス、High）の双方の候補になる。
+const knownMyNumberDriversLicenseCollision = "123456789018"
+
+// TestScanContentCrossPassDedupDriversLicenseVsMyNumber は本 issue で確認された
+// 再現ケース: 前行「免許番号:」＋次行に MyNumber の検査用数字も満たす 12 桁。
+// 単行パスが吐く jp-my-number（Medium）と隣接行ペアパスが吐く
+// jp-drivers-license（High, RequireContext 充足）が同じ範囲に重なるが、
+// ScanContent の結果は confidence の高い jp-drivers-license のみを含み、
+// jp-my-number を含まないこと。
+func TestScanContentCrossPassDedupDriversLicenseVsMyNumber(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanContent("f.txt", "免許番号:\n"+knownMyNumberDriversLicenseCollision)
+	assertRules(t, fs, "jp-drivers-license")
+	if fs[0].Confidence != rule.High {
+		t.Fatalf("confidence = %v, want high", fs[0].Confidence)
+	}
+	if fs[0].Line != 2 || fs[0].Column != 1 {
+		t.Fatalf("location = %d:%d, want 2:1", fs[0].Line, fs[0].Column)
+	}
+	if fs[0].Match != knownMyNumberDriversLicenseCollision {
+		t.Fatalf("match = %q, want %q", fs[0].Match, knownMyNumberDriversLicenseCollision)
+	}
+}
+
+// TestScanDiffHunkCrossPassDedupDriversLicenseVsMyNumber は同じ衝突ケースを
+// ScanDiffHunk（単行パス＋隣接行ペアパスの 2 系統）でも確認する。
+func TestScanDiffHunkCrossPassDedupDriversLicenseVsMyNumber(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanDiffHunk("f.txt", []DiffLine{
+		{Text: "免許番号:", Added: false},
+		{Text: knownMyNumberDriversLicenseCollision, Added: true},
+	})
+	assertRules(t, fs, "jp-drivers-license")
+	if fs[0].Confidence != rule.High {
+		t.Fatalf("confidence = %v, want high", fs[0].Confidence)
+	}
+}
+
+// TestScanContentCrossPassDedupKeepsUnrelatedFindingsOnDifferentLines は
+// resolveOverlapsPerLine が File+Line でグループ化せずグローバルに
+// resolveOverlaps を適用してしまう回帰を防ぐ。Finding.start/end は行内
+// オフセットのため、たまたま同じ列位置・同じ長さの無関係な finding が
+// 別々の行にあると、行を無視した重複解決では誤って片方だけに間引かれて
+// しまう。ここでは 2 行それぞれの電話番号が同じ列・同じ長さで検出される
+// ケースを使い、両方とも残ることを確認する。
+func TestScanContentCrossPassDedupKeepsUnrelatedFindingsOnDifferentLines(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanContent("f.txt", "TEL: 090-1234-5678\nTEL: 080-9876-5432")
+	assertRules(t, fs, "jp-phone-number", "jp-phone-number")
+	if fs[0].Line != 1 || fs[0].Column != 6 || fs[0].Match != "090-1234-5678" {
+		t.Fatalf("finding[0] = %+v, want line 1 col 6 090-1234-5678", fs[0])
+	}
+	if fs[1].Line != 2 || fs[1].Column != 6 || fs[1].Match != "080-9876-5432" {
+		t.Fatalf("finding[1] = %+v, want line 2 col 6 080-9876-5432", fs[1])
+	}
+}
+
+// TestScanContentCrossPassDedupKeepsSinglePassFinding は、1 つのパスからしか
+// 出ない finding（他パスと重ならない）が resolveOverlapsPerLine の追加後も
+// 素通りで残ることを確認する（単行パスのみ・隣接行ペアパスのみ・
+// クロスライン氏名パスのみのケースを 1 つずつ）。
+func TestScanContentCrossPassDedupKeepsSinglePassFinding(t *testing.T) {
+	t.Run("単行パスのみ", func(t *testing.T) {
+		d := newDetector(t, "")
+		fs := d.ScanContent("f.txt", "TEL: 090-1234-5678")
+		assertRules(t, fs, "jp-phone-number")
+	})
+	t.Run("隣接行ペアパスのみ", func(t *testing.T) {
+		d := newDetector(t, "")
+		fs := d.ScanContent("f.txt", "口座番号:\n1234567")
+		assertRules(t, fs, "jp-bank-account")
+	})
+	t.Run("クロスライン氏名パスのみ", func(t *testing.T) {
+		d := newDetector(t, highRecallTOML)
+		fs := d.ScanContent("f.txt", "氏名:\n山田太郎")
+		assertRules(t, fs, "person-name-structured")
+	})
 }
 
 // --- [[rules.custom]]（.jp-pii.toml の利用者定義ルール）---

@@ -1,9 +1,17 @@
 package detect
 
+import "sort"
+
 // resolveOverlaps は同一行内で範囲が重なる検出を信頼度順
-// （同率なら範囲が長い方、それも同率なら先勝ち）で集約する。
+// （同率なら範囲が長い方、それも同率なら RuleID の辞書順）で集約する。
 // 例: クレジットカード 16 桁の先頭 12 桁にマイナンバーのパターンが
 // 重なった場合、検証を通った信頼度の高い方だけを残す。
+//
+// 呼び出し元は fs を同一ファイル・同一行の finding だけに揃えること
+// （start/end は行内オフセットのため、異なる行の finding を混ぜると
+// 無関係な検出同士を誤って重複解決してしまう）。複数の走査パス
+// （単行・隣接行ペア・クロスライン氏名）をまたいで統合したい場合は
+// resolveOverlapsPerLine を使う。
 func resolveOverlaps(fs []Finding) []Finding {
 	var out []Finding
 	for _, f := range fs {
@@ -30,13 +38,51 @@ func resolveOverlaps(fs []Finding) []Finding {
 	return out
 }
 
+// resolveOverlapsPerLine は単行走査・隣接行ペア走査・クロスライン氏名走査など、
+// 複数のパスから集めた候補をまとめて重複解決する。resolveOverlaps は同一行内の
+// finding しか正しく比較できない（start/end が行内オフセットのため）ので、
+// File+Line でグループ化してからグループごとに resolveOverlaps を適用する。
+// ここでの並べ替えはグループ化のためだけのもので、最終的な順序は呼び出し元の
+// dedupAndSortFindings が File・Line・Column で再ソートする。
+func resolveOverlapsPerLine(fs []Finding) []Finding {
+	if len(fs) < 2 {
+		return fs
+	}
+	sorted := make([]Finding, len(fs))
+	copy(sorted, fs)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if sorted[i].File != sorted[j].File {
+			return sorted[i].File < sorted[j].File
+		}
+		return sorted[i].Line < sorted[j].Line
+	})
+
+	var out []Finding
+	for i := 0; i < len(sorted); {
+		j := i + 1
+		for j < len(sorted) && sorted[j].File == sorted[i].File && sorted[j].Line == sorted[i].Line {
+			j++
+		}
+		out = append(out, resolveOverlaps(sorted[i:j])...)
+		i = j
+	}
+	return out
+}
+
 func overlaps(a, b Finding) bool {
 	return a.start < b.end && b.start < a.end
 }
 
+// better は a が b より優先されるかを返す。信頼度・範囲の長さが同率の場合は
+// RuleID の辞書順にフォールバックする。Builtin() の定義順（候補スライスへの
+// 挿入順）に依存しない決定的なタイブレークにするための措置で、ルール追加順が
+// 変わっても重複解決の結果が変わらないようにする。
 func better(a, b Finding) bool {
 	if a.Confidence != b.Confidence {
 		return a.Confidence > b.Confidence
 	}
-	return (a.end - a.start) > (b.end - b.start)
+	if (a.end - a.start) != (b.end - b.start) {
+		return (a.end - a.start) > (b.end - b.start)
+	}
+	return a.RuleID < b.RuleID
 }
