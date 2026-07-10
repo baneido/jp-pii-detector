@@ -176,6 +176,29 @@ func TestParseInvalidRegex(t *testing.T) {
 	}
 }
 
+func TestParseCooccurrenceBoostDefaultsFalse(t *testing.T) {
+	cfg, err := Parse("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Rules.CooccurrenceBoost {
+		t.Error("CooccurrenceBoost = true, want false by default")
+	}
+}
+
+func TestParseCooccurrenceBoostOptIn(t *testing.T) {
+	cfg, err := Parse(`
+[rules]
+cooccurrence_boost = true
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Rules.CooccurrenceBoost {
+		t.Error("CooccurrenceBoost = false, want true")
+	}
+}
+
 func TestDefault(t *testing.T) {
 	cfg := Default()
 	if cfg.MinConfidence != "medium" {
@@ -183,6 +206,9 @@ func TestDefault(t *testing.T) {
 	}
 	if cfg.Rules.HighRecall {
 		t.Error("HighRecall = true, want false by default")
+	}
+	if cfg.Rules.CooccurrenceBoost {
+		t.Error("CooccurrenceBoost = true, want false by default")
 	}
 	for _, id := range rule.HighRecallRuleIDs() {
 		if !containsString(cfg.Rules.Disabled, id) {
