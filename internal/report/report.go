@@ -217,7 +217,7 @@ func SARIF(w io.Writer, findings []detect.Finding, rules []rule.Rule, unmask boo
 		Locations []sarifLocation `json:"locations"`
 		// PartialFingerprints はマスク方針を迂回しない安定な識別子。生の検出値は
 		// 低エントロピー値を候補列挙で照合されうるため含めず、ルール ID・ファイル
-		// パス・位置・同一位置での出現回数（occurrence）から算出する。
+		// パス・同一ルールのファイル内出現順（occurrence）から算出する。
 		PartialFingerprints map[string]string `json:"partialFingerprints,omitempty"`
 	}
 
@@ -251,11 +251,14 @@ func SARIF(w io.Writer, findings []detect.Finding, rules []rule.Rule, unmask boo
 		}
 		res.Locations = []sarifLocation{loc}
 
-		fpKey := fmt.Sprintf("%s\x00%s\x00%d\x00%d\x00%d\x00%d", f.RuleID, f.File, f.Line, f.Column, endLine, endCol)
+		// 行・カラムは周辺行の増減だけで変わるため fingerprint には含めない。
+		// findings は検出位置順に安定ソート済みなので、同一ルール・同一ファイル内の
+		// occurrence は行が前後へ移動しても維持され、別の出現は区別できる。
+		fpKey := f.RuleID + "\x00" + f.File
 		idx := occurrence[fpKey]
 		occurrence[fpKey] = idx + 1
 		res.PartialFingerprints = map[string]string{
-			"primaryLocationLineHash": locationFingerprint(f.RuleID, f.File, f.Line, f.Column, endLine, endCol, idx),
+			"primaryLocationLineHash": locationFingerprint(f.RuleID, f.File, idx),
 		}
 
 		results = append(results, res)
@@ -281,10 +284,11 @@ func SARIF(w io.Writer, findings []detect.Finding, rules []rule.Rule, unmask boo
 }
 
 // locationFingerprint は SARIF の partialFingerprints 用に、ルール ID・ファイルパス・
-// 位置・同一位置での出現回数から安定なハッシュを算出する。生の PII 値は含めない。
-func locationFingerprint(ruleID, file string, line, column, endLine, endColumn, occurrence int) string {
+// 同一ルールのファイル内出現順から安定なハッシュを算出する。行・カラムと生の PII
+// 値は含めないため、周辺行の増減で同じ検出の位置がずれても識別子は変わらない。
+func locationFingerprint(ruleID, file string, occurrence int) string {
 	h := sha256.New()
-	fmt.Fprintf(h, "%s\x00%s\x00%d\x00%d\x00%d\x00%d\x00%d", ruleID, file, line, column, endLine, endColumn, occurrence)
+	fmt.Fprintf(h, "%s\x00%s\x00%d", ruleID, file, occurrence)
 	sum := h.Sum(nil)
 	return hex.EncodeToString(sum[:8])
 }

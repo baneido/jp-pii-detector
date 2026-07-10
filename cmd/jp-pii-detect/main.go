@@ -402,19 +402,25 @@ func reorderArgs(fs *flag.FlagSet, args []string) []string {
 			positional = append(positional, a)
 			continue
 		}
+		f := fs.Lookup(name)
+		if f == nil {
+			// "-weird.txt" のようにフラグと同じ見た目でも、この FlagSet に
+			// 定義されていないトークンはパスとして保持する。既知フラグだけを
+			// 前方へ移動しないと、従来は最初のパス以降に置けたハイフン始まりの
+			// ファイル名が「未定義のフラグ」に変わってしまう。
+			positional = append(positional, a)
+			continue
+		}
 		flags = append(flags, a)
 		if hasValue {
 			continue
 		}
 		// bool フラグは値を取らない。それ以外（string 等）は次のトークンを値として
-		// 一緒に前方へ運ぶ。未知のフラグは判別できないため運ばず、Parse 側で
-		// 「未定義のフラグ」として通常どおりエラーにする。
-		if f := fs.Lookup(name); f != nil {
-			if bf, ok := f.Value.(interface{ IsBoolFlag() bool }); !ok || !bf.IsBoolFlag() {
-				if i+1 < len(args) {
-					i++
-					flags = append(flags, args[i])
-				}
+		// 一緒に前方へ運ぶ。
+		if bf, ok := f.Value.(interface{ IsBoolFlag() bool }); !ok || !bf.IsBoolFlag() {
+			if i+1 < len(args) {
+				i++
+				flags = append(flags, args[i])
 			}
 		}
 	}

@@ -364,6 +364,22 @@ func TestScanDoubleDashStopsFlagParsing(t *testing.T) {
 	}
 }
 
+// TestScanHyphenLeadingPathAfterPositional は、既知フラグだけを並べ替え、
+// "-weird.txt" のような未定義フラグ風のパスを位置引数のまま保つことを確認する。
+// PR 以前は最初の位置引数以降を flag.Parse がそのままパスとして残していたため、
+// この呼び出しは後方互換として成功する必要がある。
+func TestScanHyphenLeadingPathAfterPositional(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"a.txt", "-weird.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("no pii\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, code := run(t, dir, "scan", ".", "-weird.txt"); code != 0 {
+		t.Errorf("exit = %d, want 0（-weird.txt はパスとして扱う）", code)
+	}
+}
+
 // TestScanStdinOffsets は scan --stdin が標準入力を 1 本のテキストとして走査し、
 // json 出力に offset/end_offset（テキスト先頭からのルーン単位の半開区間）を付与
 // すること、そのオフセットで元テキストを切り出すと検出値に一致することを確認する。

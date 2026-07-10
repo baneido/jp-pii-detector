@@ -386,8 +386,8 @@ func TestSARIFRegionEndpoints(t *testing.T) {
 	}
 }
 
-// TestSARIFPartialFingerprints は partialFingerprints が付与され、生の Match 値を
-// 使わずにルール ID・ファイル・位置・同一位置の出現順で安定することを確認する。
+// TestSARIFPartialFingerprints は partialFingerprints が付与され、生の Match 値や
+// 行・カラムを使わずにルール ID・ファイル・ファイル内出現順で安定することを確認する。
 func TestSARIFPartialFingerprints(t *testing.T) {
 	base := detect.Finding{RuleID: "test-rule", Description: "test", File: "a.txt", Line: 3, Column: 1, Match: "ABCDE", Confidence: rule.High}
 	sameLocationDifferentValue := base
@@ -416,9 +416,10 @@ func TestSARIFPartialFingerprints(t *testing.T) {
 		t.Errorf("検出値だけが変わってもフィンガープリントは同じであるべき: %s != %s", fp1, fp2)
 	}
 
-	// 位置が変われば別のフィンガープリントになる。
+	// 周辺行の増減で位置だけが変わっても同じフィンガープリントになる。
 	moved := base
-	moved.Line++
+	moved.Line += 10
+	moved.Column += 3
 	var movedBuf bytes.Buffer
 	if err := SARIF(&movedBuf, []detect.Finding{moved}, nil, true); err != nil {
 		t.Fatal(err)
@@ -428,12 +429,15 @@ func TestSARIFPartialFingerprints(t *testing.T) {
 		t.Fatal(err)
 	}
 	fpMoved := movedDoc.Runs[0].Results[0].PartialFingerprints["primaryLocationLineHash"]
-	if fpMoved == fp1 {
-		t.Errorf("位置が変わればフィンガープリントは異なるべき: %s == %s", fpMoved, fp1)
+	if fpMoved != fp1 {
+		t.Errorf("位置だけが変わってもフィンガープリントは同じであるべき: %s != %s", fpMoved, fp1)
 	}
 
-	// 同一位置に複数件が残った場合は出現順で別のフィンガープリントになる。
-	dup := []detect.Finding{base, sameLocationDifferentValue}
+	// 同一ルール・同一ファイルの別出現は、位置に依存しない出現順で区別する。
+	secondOccurrence := sameLocationDifferentValue
+	secondOccurrence.Line = 20
+	secondOccurrence.Column = 4
+	dup := []detect.Finding{base, secondOccurrence}
 	var dupBuf bytes.Buffer
 	if err := SARIF(&dupBuf, dup, nil, true); err != nil {
 		t.Fatal(err)
@@ -445,10 +449,10 @@ func TestSARIFPartialFingerprints(t *testing.T) {
 	fpA := dupDoc.Runs[0].Results[0].PartialFingerprints["primaryLocationLineHash"]
 	fpB := dupDoc.Runs[0].Results[1].PartialFingerprints["primaryLocationLineHash"]
 	if fpA == fpB {
-		t.Errorf("同一位置の複数件は異なるフィンガープリントになるべき: %s == %s", fpA, fpB)
+		t.Errorf("同一ファイルの別出現は異なるフィンガープリントになるべき: %s == %s", fpA, fpB)
 	}
 	if fpA != fp1 {
-		t.Errorf("同一位置 1 件目のフィンガープリントは単独時と一致するべき: %s != %s", fpA, fp1)
+		t.Errorf("ファイル内 1 件目のフィンガープリントは単独時と一致するべき: %s != %s", fpA, fp1)
 	}
 }
 
