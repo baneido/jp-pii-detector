@@ -110,6 +110,16 @@ func TestSplitSourceStatementsKeepsBacktickStrings(t *testing.T) {
 			want: []string{"q := `SELECT a; SELECT b`"},
 		},
 		{
+			name: "comma and semicolon inside tagged template literal",
+			line: "query = sql`SELECT a, b; SELECT c`, next = 2",
+			want: []string{"query = sql`SELECT a, b; SELECT c`", " next = 2"},
+		},
+		{
+			name: "member expression tagged template literal",
+			line: "component = styled.div`color:red; margin:0, auto`, next = 2",
+			want: []string{"component = styled.div`color:red; margin:0, auto`", " next = 2"},
+		},
+		{
 			name: "real comma between statements still splits",
 			line: "a := `x`, b := `y`",
 			want: []string{"a := `x`", " b := `y`"},
@@ -142,6 +152,15 @@ func TestSourceLineContextsSkipUnknownFiles(t *testing.T) {
 	if len(ctxs[0].Statements) != 0 {
 		t.Fatalf("memo.txt statements = %#v, want none", ctxs[0].Statements)
 	}
+}
+
+// JS/TS の tagged template literal は開始バッククォートが識別子に直結する。
+// 内部のカンマで文脈範囲が分断されず、タグ付き文字列の後半にある値にも
+// 左辺のラベルが適用されることを統合レベルで確認する。
+func TestScanContentUsesSourceContextForTaggedTemplateLiteral(t *testing.T) {
+	d := newDetector(t, "")
+	content := "const bankAccountNo = sql`SELECT value=0, account=1234567`"
+	assertRules(t, d.ScanContent("user.ts", content), "jp-bank-account")
 }
 
 func TestSourceLineContextsSkipUnknownCrossLineFiles(t *testing.T) {
