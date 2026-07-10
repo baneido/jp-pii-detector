@@ -411,10 +411,61 @@ func TestLabeledRules(t *testing.T) {
 	}
 }
 
-func TestPersonNameHiddenByDefault(t *testing.T) {
+// TestPersonNameDefaultVisibility は既定 min_confidence=medium での可視化を
+// 検証する（issue #44）。姓名辞書に一致する値はラベルだけで Medium に昇格し
+// 既定で報告されるが、辞書に一致しない値（辞書外の実在人名・非人名の値・
+// 単独姓のみの曖昧フィールド一致）は引き続き Low のまま既定では報告されない。
+func TestPersonNameDefaultVisibility(t *testing.T) {
 	piifixtures.Require(t)
 	d := newDetector(t, "") // 既定 min_confidence = medium
-	assertRules(t, d.ScanLine("f.txt", 1, "氏名: "+piifixtures.MustGet(t, "detect.name_full_spaced")))
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"辞書一致の氏名は既定で可視化", "氏名: 山田太郎", []string{"person-name"}},
+		{"辞書一致の氏名（name + 姓+名分割）", "name: 田中太郎", []string{"person-name"}},
+		{"辞書外の実在人名は既定では非表示", "氏名: " + piifixtures.MustGet(t, "detect.name_dict_external_full"), nil},
+		{"非人名の値は既定では非表示", "氏名: 株式会社", nil},
+		{"単独姓のみの曖昧 name ラベルは既定では非表示", "name: 大和", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestPersonNameConfidencePromotion は辞書検証済みマッチが Medium に、
+// 辞書に一致しないマッチが Low に留まることを信頼度レベルで検証する
+// （issue #44: person-name Medium twin）。
+func TestPersonNameConfidencePromotion(t *testing.T) {
+	piifixtures.Require(t)
+	d := newDetector(t, `min_confidence = "low"`)
+	tests := []struct {
+		name, line string
+		conf       rule.Confidence
+	}{
+		// 強いラベル + 姓名辞書に分割できる値 → Medium。
+		{"氏名 + 辞書一致（分割可）", "氏名: 山田太郎", rule.Medium},
+		// 強いラベル + 辞書外の実在人名 → 収録外なので Low のまま。
+		{"氏名 + 辞書外の実在人名", "氏名: " + piifixtures.MustGet(t, "detect.name_dict_external_full"), rule.Low},
+		// 強いラベル + 非人名の値（組織名等）→ Low のまま。
+		{"氏名 + 非人名の値", "氏名: 株式会社", rule.Low},
+		// 曖昧な name ラベル + 単独姓のみ（分割不可）→ Low のまま
+		// （地名・一般名詞と同形の単独姓による FP を Medium に上げない）。
+		{"name + 単独姓のみ", "name: 大和", rule.Low},
+		// 曖昧な name ラベル + 姓+名に分割できる値 → Medium。
+		{"name + 姓+名に分割できる値", "name: 田中太郎", rule.Medium},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, "person-name")
+			if fs[0].Confidence != tt.conf {
+				t.Errorf("confidence = %v, want %v", fs[0].Confidence, tt.conf)
+			}
+		})
+	}
 }
 
 func TestHighRecallRulesDisabledByDefault(t *testing.T) {
@@ -647,6 +698,29 @@ high_recall = true
 		{"株式会社 + 敬称", "山田工業株式会社様", nil},
 		// 担当ラベル（敬称なし）は姓名辞書で組織・部署を棄却する。
 		{"部署 + 担当", "担当: 営業部", nil},
+		// 単漢字語尾の姓は辞書一致（dict.IsPersonName）を先に評価するため、
+		// 職業・役割・部署 denylist（notRoleWord）の巻き添えにならない。
+		// 値はいずれも実在頻出姓（辞書収録済み）で、単独では特定個人を
+		// 識別しないためリテラルで安全（田中/山田 と同様の扱い）。
+		{"衝突姓（屋）+ さん", "土屋さんから電話がありました", []string{"person-name-high-recall"}},
+		{"衝突姓（部）+ 様", "阿部様がいらっしゃいました", []string{"person-name-high-recall"}},
+		{"衝突姓（部）+ さん", "服部さんに確認する", []string{"person-name-high-recall"}},
+		// 職業語尾（者/員/手/屋/師/士/長/生/部/課/係/室/先/中）は辞書非一致の場合に
+		// 棄却する。実測 FP をリテラルで安全に再現する。
+		{"職業（屋）+ さん", "近所の本屋さんに行った", nil},
+		{"職業（手）+ さん", "バスの運転手さんに聞いた", nil},
+		{"役割語（先）+ 様", "取引先様各位にご連絡します", nil},
+		{"役割語（者）+ 様", "関係者様各位へ通知する", nil},
+		{"役割語（者）+ 様（保護者）", "保護者様へお知らせします", nil},
+		{"御中 + 様（中）", "株式会社サンプル御中様", nil},
+		{"部署（部）+ 殿", "経理部殿までご提出ください", nil},
+		{"部署（課）+ 殿", "総務課殿へ提出", nil},
+		// かな氏名は辞書一致必須の allowlist 方式（dict.IsPersonName）で検証する。
+		// さくら は辞書収録済みのひらがな名として検出され、たくさん・みなさん は
+		// 「たく」「みな」が辞書に無いため棄却される。
+		{"かな氏名 + さん", "さくらさんと話した", []string{"person-name-high-recall"}},
+		{"かな日常語（たくさん）", "在庫がたくさんある", nil},
+		{"かな日常語（みなさん）", "みなさんこんにちは", nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -788,6 +862,32 @@ regexes = ["@baneido\\.com$"]
 		{"インラインマーカー", "TEL: " + phone + " // pii-allow ダミー", nil},
 		{"ignore コメント", "TEL: " + phone + " # jp-pii-detector:ignore", nil},
 		{"除外対象外は検出", "TEL: " + phone, []string{"jp-phone-number"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// ignore マーカーはトークン境界一致で判定する（#50）。単純な部分文字列一致
+// だと、旧マーカー pii-allow が pii-allowlist のような無関係な識別子・
+// ファイル名にも一致し、行ごと誤って不可視化されてしまう。フィクスチャ不要の
+// 電話番号リテラル（090-1234-5678、区切りありなので Base High で単体検出）を
+// 使い、外部データなしで実行できるようにしている。
+func TestMarkerTokenBoundary(t *testing.T) {
+	d := newDetector(t, "")
+	phone := "090-1234-5678"
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"pii-allow 単独では従来通り抑制される", "TEL: " + phone + " // pii-allow", nil},
+		{"pii-allowlist は無関係な文字列として抑制しない", "TEL: " + phone + " // pii-allowlist.md 参照", []string{"jp-phone-number"}},
+		{"文字列リテラル内の pii-allow を含む識別子は抑制しない", `errCode := "pii-allowlist-violation"; TEL: ` + phone, []string{"jp-phone-number"}},
+		{"prefix-pii-allow のようにハイフンで連結された継続文字は抑制しない", "TEL: " + phone + " // prefix-pii-allow", []string{"jp-phone-number"}},
+		{"jp-pii-detector:ignore 単独では従来通り抑制される", "TEL: " + phone + " // jp-pii-detector:ignore", nil},
+		{"jp-pii-detector:ignored のような接尾辞つき識別子は抑制しない", "TEL: " + phone + " // jp-pii-detector:ignored-reason", []string{"jp-phone-number"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -986,6 +1086,61 @@ func TestReasonRecordsPromotionAndContext(t *testing.T) {
 	}
 }
 
+// issue #68 段階1(b): RequireContext のないパターンを Base から High へ昇格
+// させる判定は、RequireContextWindow 未設定でも既定半径
+// （defaultPromotionContextWindow = 40 ルーン）に制限される。昇格前は行全体を
+// 無制限に探索していたため、長い行の遠方にある無関係な 1 語だけで行全体の
+// マッチが昇格していた（FP 増幅要因）。マイナンバーの検査用数字
+// "123456789018" は internal/checksum.TestMyNumber の genMyNumber("12345678901")
+// と同じ値でフィクスチャなしに使える。
+func TestPromotionRequiresNearbyContext(t *testing.T) {
+	d := newDetector(t, "")
+	const mynum = "123456789018"
+	tests := []struct {
+		name      string
+		line      string
+		wantConf  rule.Confidence
+		wantPromo bool
+	}{
+		{
+			name:      "直後40ルーン以内のキーワードは昇格する",
+			line:      mynum + strings.Repeat("あ", 10) + "マイナンバー",
+			wantConf:  rule.High,
+			wantPromo: true,
+		},
+		{
+			name:      "直後40ルーンを超えるキーワードは昇格しない",
+			line:      mynum + strings.Repeat("あ", 50) + "マイナンバー",
+			wantConf:  rule.Medium,
+			wantPromo: false,
+		},
+		{
+			name:      "直前40ルーン以内のキーワードは昇格する",
+			line:      "マイナンバー" + strings.Repeat("あ", 10) + mynum,
+			wantConf:  rule.High,
+			wantPromo: true,
+		},
+		{
+			name:      "直前40ルーンを超えるキーワードは昇格しない",
+			line:      "マイナンバー" + strings.Repeat("あ", 50) + mynum,
+			wantConf:  rule.Medium,
+			wantPromo: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, "jp-my-number")
+			if fs[0].Confidence != tt.wantConf {
+				t.Errorf("confidence = %v, want %v", fs[0].Confidence, tt.wantConf)
+			}
+			if fs[0].Reason.ContextPromoted != tt.wantPromo {
+				t.Errorf("context promoted = %v, want %v", fs[0].Reason.ContextPromoted, tt.wantPromo)
+			}
+		})
+	}
+}
+
 func TestReasonNotValidatedWhenNoValidator(t *testing.T) {
 	piifixtures.Require(t)
 	d := newDetector(t, "")
@@ -1160,6 +1315,29 @@ func TestScanContentAdjacentKeepsSourceNegativeContextOnValueLine(t *testing.T) 
 	assertRules(t, d.ScanContent("user.yaml", content))
 }
 
+// 回帰テスト（#50）: scanAdjacentLines は隣接 2 行を結合した文字列に対して
+// 旧実装では ScanLine（＝ignoredLine を結合文字列全体に適用）を呼んでいたため、
+// ラベル行に残った ignore マーカーが、マーカーを持たない値行の検出まで
+// 巻き添えで抑制してしまっていた。scanAdjacentLinesDiff と同じく
+// scanLineNoIgnore ＋ 値が乗る行だけの ignoredLine チェックに揃えたことで、
+// 値行（マーカーなし）の検出は巻き添えにされない。
+func TestScanContentAdjacentIgnoreDoesNotSuppressOtherLine(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanContent("f.txt", "口座番号 // jp-pii-detector:ignore\n1234567")
+	assertRules(t, fs, "jp-bank-account")
+	if fs[0].Line != 2 || fs[0].Column != 1 {
+		t.Fatalf("location = %d:%d, want 2:1", fs[0].Line, fs[0].Column)
+	}
+}
+
+// 逆方向: 値そのものが乗る行に ignore マーカーがあれば、従来どおり抑制される
+// （巻き添え防止の修正が、値行自身の抑制まで壊していないことの確認）。
+func TestScanContentAdjacentIgnoreSuppressesOwnLine(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanContent("f.txt", "口座番号\n1234567 // jp-pii-detector:ignore")
+	assertRules(t, fs)
+}
+
 func TestScanDiffHunkSourceContextFromContextLine(t *testing.T) {
 	d := newDetector(t, "")
 	fs := d.ScanDiffHunk("user.yaml", []DiffLine{
@@ -1176,6 +1354,38 @@ func TestScanDiffHunkKeepsSourceNegativeContextOnAddedLine(t *testing.T) {
 		{Text: `bankAccountId: "1234567"`, Added: true},
 	})
 	assertRules(t, fs)
+}
+
+// issue #68 段階1(a): 同一文にこのルール自身の正ラベルが（負文脈語を伴わずに）
+// 明示されている場合、hasNegativeNear は離れた場所の一般的な負文脈語（連番等）
+// で誤って値を棄却しない（正ラベル優先）。一方、ラベル自体が id 等の負文脈語を
+// 伴う場合（bankAccountId）は対象外で、旧来どおり（無条件ハードドロップ）棄却
+// され続ける。この2ケースを直接対比する。
+func TestSourceContextPositiveLabelOverridesDistantNegativeContext(t *testing.T) {
+	d := newDetector(t, "")
+
+	// 正ラベル（bankAccountNo）+ 同一文内の離れた一般負文脈語（連番）。
+	// 新方式では棄却されない（旧方式は無条件ドロップしていた＝FN）。
+	positive := `bankAccountNo := "1234567 連番ではない"`
+	assertRules(t, d.ScanContent("account.go", positive), "jp-bank-account")
+
+	// ラベル自体が負文脈語を伴う（bankAccountId）→ 正ラベル優先の例外対象外。
+	// 旧方式・新方式のいずれでも棄却される（回帰確認）。
+	negativeLabel := `bankAccountId := "1234567 連番ではない"`
+	assertRules(t, d.ScanContent("account.go", negativeLabel))
+}
+
+// issue #68 段階1(a) の続き: ScanContent の隣接行負コンテキストフィルタ
+// （hasCrossLineNegativeContext, negative_context.go）にも同じ正ラベル優先の
+// 例外が効くことを確認する。クロスライン統語（ラベル行＋値行）で作られた
+// 正ラベルは、値の行と同一文ではない「さらに次の行」にある一般負文脈語
+// （連番）では棄却されない。detect.go 側の hasNegativeNear だけを直しても、
+// ここが直っていないと ScanContent 経路では結局棄却されてしまう
+// （フルツリー走査 internal/source が使う経路のため実運用上重要）。
+func TestScanContentSourceContextPositiveLabelOverridesAdjacentLineNegativeContext(t *testing.T) {
+	d := newDetector(t, "")
+	content := "bankAccountNo:\n1234567\n連番"
+	assertRules(t, d.ScanContent("account.yaml", content), "jp-bank-account")
 }
 
 // 構造化・複数行の氏名検出（person-name-structured）。値は埋め込み姓名辞書に
@@ -1568,22 +1778,20 @@ func TestKaigoInsuranceRule(t *testing.T) {
 	}
 }
 
-// TestJuminhyoCodeRule は住民票コード（10桁本体 + 検査数字1桁、モジュラス11・
-// ウエイト2〜7巡回）を検証する。checksum.JuminhyoCode の算式に基づき、本体
-// "5551234567" の検査数字は 0 → 完全な値は "55512345670"（自己整合的に計算した
-// テスト専用のダミー値。internal/checksum/checksum_test.go の genJuminhyoCode
-// と同じ算式で導出）。
+// TestJuminhyoCodeRule は住民票コード（無作為な10桁 + 検査数字1桁）を検証する。
+// 検査数字の公式算式を一次資料から独立検証できていないため、未検証の算式による
+// false negative を避け、11桁の形状・周辺語・全桁同一でないことだけを判定する。
 func TestJuminhyoCodeRule(t *testing.T) {
 	d := newDetector(t, "")
-	const valid = "55512345670"
+	const value = "55512345670"
 	tests := []struct {
 		name, line string
 		want       []string
 	}{
-		{"コンテキストありかつ検査数字が正しい", "住民票コード: " + valid, []string{"jp-juminhyo-code"}},
-		{"住民票コンテキストでも成立", "住民票の写しに記載のコード " + valid, []string{"jp-juminhyo-code"}},
-		{"検査数字が不一致", "住民票コード: 55512345679", nil},
-		{"コンテキストなしでは検査数字が正しくても不成立", "value = " + valid, nil},
+		{"住民票コードコンテキストで成立", "住民票コード: " + value, []string{"jp-juminhyo-code"}},
+		{"住民票コンテキストでも成立", "住民票の写しに記載のコード " + value, []string{"jp-juminhyo-code"}},
+		{"末尾桁の値にかかわらず形状とコンテキストで成立", "住民票コード: 55512345679", []string{"jp-juminhyo-code"}},
+		{"コンテキストなしでは不成立", "value = " + value, nil},
 		{"全桁同一は無効", "住民票コード: 11111111111", nil},
 	}
 	for _, tt := range tests {

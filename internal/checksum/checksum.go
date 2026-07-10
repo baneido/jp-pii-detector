@@ -37,42 +37,6 @@ func MyNumber(digits string) bool {
 	return int(digits[11]-'0') == check
 }
 
-// JuminhyoCode は住民票コード 11 桁（無作為な 10 桁の本体 + 1 桁の検査数字）の
-// 検査数字を検証する。算式は住民基本台帳法施行規則第一条第二号が委任する
-// 総務大臣告示（平成14年総務省告示第436号）による、モジュラス11・
-// 下位桁からウエイト2〜7巡回方式:
-//
-//	Pn = 検査数字を除いた 10 桁のうち末尾から n 桁目の数字
-//	Qn = n+1 (n <= 6), n-5 (n >= 7)
-//	検査数字 = 11 - (ΣPn*Qn mod 11)、ただし mod 11 の余りが 0 または 1 のとき 0
-//
-// これは本体桁数が 11→10 に短縮される点を除き、本パッケージの MyNumber
-// （個人番号。平成26年総務省令第85号）と同一の算式構造であり、個人番号は
-// 住民票コードを変換して生成される制度上の関係にある。告示原文（官報）そのものの
-// 逐語確認はオンラインでは完了できなかったため、上記の重み・余り処理は
-// MyNumber の一次資料（総務省令）と、告示436号を同方式として引用する複数の
-// 独立した二次資料との整合を根拠にしている。実データでの裏取り
-// （JP_PII_FIXTURES 経由のテストベクタ整備）は別途 TODO。
-func JuminhyoCode(digits string) bool {
-	if len(digits) != 11 || !numeric(digits) || AllSame(digits) {
-		return false
-	}
-	sum := 0
-	for n := 1; n <= 10; n++ {
-		p := int(digits[10-n] - '0')
-		q := n + 1
-		if n >= 7 {
-			q = n - 5
-		}
-		sum += p * q
-	}
-	check := 11 - sum%11
-	if check >= 10 {
-		check = 0
-	}
-	return int(digits[10]-'0') == check
-}
-
 // Luhn は Luhn アルゴリズム（ISO/IEC 7812）でチェックディジットを検証する。
 func Luhn(digits string) bool {
 	if len(digits) < 2 || !numeric(digits) {

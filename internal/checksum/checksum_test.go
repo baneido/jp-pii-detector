@@ -57,59 +57,6 @@ func TestMyNumberKnownValue(t *testing.T) {
 	}
 }
 
-// genJuminhyoCode は先頭 10 桁から検査数字を計算して 11 桁を生成する
-// （実装と独立に算式を書き下したもの。JuminhyoCode のドキュメンテーション
-// コメントに記載の算式を参照）。
-func genJuminhyoCode(first10 string) string {
-	sum := 0
-	for n := 1; n <= 10; n++ {
-		p := int(first10[10-n] - '0')
-		q := n + 1
-		if n >= 7 {
-			q = n - 5
-		}
-		sum += p * q
-	}
-	r := sum % 11
-	check := 0
-	if r > 1 {
-		check = 11 - r
-	}
-	return first10 + fmt.Sprint(check)
-}
-
-func TestJuminhyoCode(t *testing.T) {
-	valid := []string{
-		genJuminhyoCode("1234567890"), // = 12345678903
-		genJuminhyoCode("9876543210"), // = 98765432103
-		genJuminhyoCode("0000000001"), // = 00000000019
-	}
-	for _, v := range valid {
-		if !JuminhyoCode(v) {
-			t.Errorf("JuminhyoCode(%q) = false, want true", v)
-		}
-	}
-	invalid := []string{
-		"12345678901",  // 検査数字不一致（正しくは 3）
-		"123456789034", // 12 桁
-		"1234567890",   // 10 桁（検査数字なし）
-		"11111111111",  // 全桁同一はダミー扱い
-		"",
-	}
-	for _, v := range invalid {
-		if JuminhyoCode(v) {
-			t.Errorf("JuminhyoCode(%q) = true, want false", v)
-		}
-	}
-}
-
-func TestJuminhyoCodeKnownValue(t *testing.T) {
-	// 手計算による既知値: 1234567890 の検査数字は 3
-	if got := genJuminhyoCode("1234567890"); got != "12345678903" {
-		t.Fatalf("genJuminhyoCode = %q, want 12345678903", got)
-	}
-}
-
 func TestLuhn(t *testing.T) {
 	if !Luhn("4111111111111111") {
 		t.Error("Luhn(4111111111111111) = false, want true")

@@ -551,10 +551,11 @@ func Builtin() []Rule {
 			Description: "住民票コード",
 			Prefilter:   PrefilterDigit,
 			Context:     []string{"住民票コード", "住民票", "juminhyo"},
-			// 検査数字（モジュラス11・ウエイト2〜7巡回）で偽陽性を大きく抑えられるが、
-			// 告知要求制限のかかる機微番号のため周辺語も併せて必須とする。
+			// 検査数字の公式算式を一次資料から独立検証できていないため、
+			// 未検証の算式で実在値を棄却せず、11 桁の形状と周辺語を必須にする。
+			// 全桁同一のみ、明らかなダミー値として除外する。
 			Validate: func(m string) bool {
-				return checksum.JuminhyoCode(m)
+				return !checksum.AllSame(m)
 			},
 			Patterns: []Pattern{
 				{Re: dg(`\d{11}`), Base: High, RequireContext: true},
