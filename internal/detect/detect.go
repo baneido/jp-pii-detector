@@ -182,24 +182,33 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 	if d.crossLineName != nil {
 		candidates = append(candidates, d.scanCrossLineNames(file, lines)...)
 	}
-	if d.cooccurrenceBoost {
-		candidates = d.applyCooccurrenceBoost(candidates)
-	}
 
-	// 隣接行の負コンテキスト（金額・数量・連番 ID 等）で抑制してから重複解決する。
-	// Confidence < minConf のふるい落としをここでも行う（cooccurrence_boost 無効時は
-	// scanLineNoIgnoreWithContext 内で既に minConf 未満が除かれているため無害な
-	// 二重チェック。有効時は、昇格しなかった保持済み Low 候補をここで最終的に除く）。
+	// 隣接行の負コンテキスト（金額・数量・連番 ID 等）で抑制される候補は、
+	// cooccurrence_boost のアンカーにも昇格対象にも使わない。
 	filtered := candidates[:0]
 	for _, f := range candidates {
-		if f.Confidence < d.minConf {
-			continue
-		}
 		if d.hasCrossLineNegativeContext(f, lines, lineContexts, f.Line-1) {
 			continue
 		}
 		filtered = append(filtered, f)
 	}
+	candidates = filtered
+
+	if d.cooccurrenceBoost {
+		candidates = d.applyCooccurrenceBoost(candidates)
+	}
+
+	// Confidence < minConf のふるい落としをここでも行う（cooccurrence_boost 無効時は
+	// scanLineNoIgnoreWithContext 内で既に minConf 未満が除かれているため無害な
+	// 二重チェック。有効時は、昇格しなかった保持済み Low 候補をここで最終的に除く）。
+	filtered = candidates[:0]
+	for _, f := range candidates {
+		if f.Confidence < d.minConf {
+			continue
+		}
+		filtered = append(filtered, f)
+	}
+
 	// テスト経路（testdata/ 等）の Medium 系検出は Finding 確定後・重複解決前に
 	// 降格する（path_profile.go）。降格であって除外ではないため、allowlist /
 	// jp-pii-detector:ignore とは独立に働く。重複解決 (resolveOverlapsPerLine)
@@ -211,7 +220,8 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 	// パスをまたいで同一箇所に重なる finding（例: 12 桁の数字が
 	// jp-my-number と jp-drivers-license の両方の候補になるケース）が
 	// 残ることがある。File+Line でグループ化した上で resolveOverlaps を
-	// 再適用し、パスをまたいだ重複を統合する。
+	// 再適用し、パスをまたいだ重複を統合する。共起昇格とパス降格の適用後の
+	// 信頼度を重複解決のタイブレークに反映させる。
 	resolved := resolveOverlapsPerLine(demoted)
 	return dedupAndSortFindings(resolved)
 }

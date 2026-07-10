@@ -1965,12 +1965,13 @@ func TestComputeOffsetsOutOfRange(t *testing.T) {
 // --- P23: 複数エンティティ共起ブースト（[rules] cooccurrence_boost）---
 //
 // piifixtures を使わず inline literal のみでテストする（外部データセットが
-// 無い CI/開発機でも走る）。通常の正例・負例には姓名辞書に一致しない
-// 「桐谷太郎」を使い、単独では Low の候補が共起時だけ Medium へ昇格することを
-// 確認する。電話番号は区切りあり携帯
-// （0[5-9]0-\d{4}-\d{4}）で Base:High・Validated（validPhone）な高信頼アンカーに
-// 使う。min_confidence は既定の "medium" を明示して氏名（Base:Low）が
-// 昇格なしでは報告されないことを前提にする。
+// 無い CI/開発機でも走る）。氏名は「架空太郎」（人名らしい形だが姓名辞書には
+// 無く dict.IsPersonName は false になるため、person-name の twin のうち
+// Base:Low 側だけがヒットする。notPlaceholderName は通るので Reason.Validated
+// は true になる）、電話番号は区切りあり携帯（0[5-9]0-\d{4}-\d{4}）で
+// Base:High・Validated（validPhone）な高信頼アンカーに使う。min_confidence は
+// 既定の "medium" を明示して氏名（Base:Low）が昇格なしでは報告されないことを
+// 前提にする。
 
 func TestCooccurrenceBoostPromotesNearbyPersonName(t *testing.T) {
 	d := newDetector(t, `
@@ -1979,7 +1980,7 @@ min_confidence = "medium"
 [rules]
 cooccurrence_boost = true
 `)
-	content := "氏名: 桐谷太郎\n電話: 090-1234-5678"
+	content := "氏名: 架空太郎\n電話: 090-1234-5678"
 	fs := d.ScanContent("f.txt", content)
 	assertRules(t, fs, "person-name", "jp-phone-number")
 	for _, f := range fs {
@@ -1995,12 +1996,23 @@ cooccurrence_boost = true
 	}
 }
 
+func TestCooccurrenceBoostIgnoresCrossLineNegativeAnchor(t *testing.T) {
+	d := newDetector(t, `
+min_confidence = "medium"
+
+[rules]
+cooccurrence_boost = true
+`)
+	content := "氏名: 架空太郎\n免許証番号: 123456789012\n円"
+	assertRules(t, d.ScanContent("f.txt", content))
+}
+
 // TestCooccurrenceBoostDisabledByDefault は opt-in していない既定設定では、
 // 辞書不一致の氏名+電話が近接していても氏名が既定どおり非表示のままであることを
 // 確認する。
 func TestCooccurrenceBoostDisabledByDefault(t *testing.T) {
 	d := newDetector(t, "") // 既定 min_confidence=medium, cooccurrence_boost=false
-	content := "氏名: 桐谷太郎\n電話: 090-1234-5678"
+	content := "氏名: 架空太郎\n電話: 090-1234-5678"
 	assertRules(t, d.ScanContent("f.txt", content), "jp-phone-number")
 }
 
@@ -2013,7 +2025,7 @@ min_confidence = "medium"
 [rules]
 cooccurrence_boost = true
 `)
-	content := "氏名: 桐谷太郎\n備考: 特になし\n備考: 特になし"
+	content := "氏名: 架空太郎\n備考: 特になし\n備考: 特になし"
 	assertRules(t, d.ScanContent("f.txt", content))
 }
 
@@ -2027,7 +2039,7 @@ min_confidence = "medium"
 [rules]
 cooccurrence_boost = true
 `)
-	content := "氏名: 桐谷太郎\n" + strings.Repeat("filler line\n", 50) + "電話: 090-1234-5678"
+	content := "氏名: 架空太郎\n" + strings.Repeat("filler line\n", 50) + "電話: 090-1234-5678"
 	assertRules(t, d.ScanContent("f.txt", content), "jp-phone-number")
 }
 
@@ -2050,7 +2062,7 @@ min_confidence = "medium"
 [rules]
 cooccurrence_boost = true
 `)
-			content := "氏名: 桐谷太郎\n" + strings.Repeat("\n", tt.gap) + "電話: 090-1234-5678"
+			content := "氏名: 架空太郎\n" + strings.Repeat("\n", tt.gap) + "電話: 090-1234-5678"
 			fs := d.ScanContent("f.txt", content)
 			hasName := false
 			for _, f := range fs {
@@ -2091,7 +2103,7 @@ min_confidence = "medium"
 [rules]
 cooccurrence_boost = true
 `)
-	content := "氏名: 桐谷太郎\n住所: 東京都渋谷区道玄坂2丁目10番7号"
+	content := "氏名: 架空太郎\n住所: 東京都渋谷区道玄坂2丁目10番7号"
 	assertRules(t, d.ScanContent("f.txt", content), "jp-address")
 }
 
@@ -2129,7 +2141,7 @@ min_confidence = "medium"
 cooccurrence_boost = true
 `)
 	fs := d.ScanDiffHunk("f.txt", []DiffLine{
-		{Text: "氏名: 桐谷太郎", Added: true},
+		{Text: "氏名: 架空太郎", Added: true},
 		{Text: "電話: 090-1234-5678", Added: true},
 	})
 	assertRules(t, fs, "jp-phone-number")
