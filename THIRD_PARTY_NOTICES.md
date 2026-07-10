@@ -3,7 +3,10 @@
 ## japanese-personal-name-dataset
 
 This repository includes derived dictionary entries from
-[`shuheilocale/japanese-personal-name-dataset`](https://github.com/shuheilocale/japanese-personal-name-dataset).
+[`shuheilocale/japanese-personal-name-dataset`](https://github.com/shuheilocale/japanese-personal-name-dataset),
+including kanji surname/given-name entries, katakana readings derived from the
+dataset's hiragana reading columns, and Hepburn-romanized entries derived from
+its romaji columns (see `internal/dict/gen-names`).
 
 MIT License
 

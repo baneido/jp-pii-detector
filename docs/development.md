@@ -551,6 +551,40 @@ $ go run ./internal/dict/gen \
 郵便番号の増減で `jp-postal-code` の精度数値が動くことがあるため、新しいビットセットを
 コミットしたら eval / バッジの再生成も行ってください。
 
+姓名辞書（[`internal/dict/surnames.txt`](../internal/dict/surnames.txt) /
+[`given_names.txt`](../internal/dict/given_names.txt)）のカタカナ読みと、ローマ字姓名辞書
+（[`romaji_surnames.txt`](../internal/dict/romaji_surnames.txt) /
+[`romaji_given_names.txt`](../internal/dict/romaji_given_names.txt)、
+`person-name-romaji` ルール専用）は
+[`shuheilocale/japanese-personal-name-dataset`](https://github.com/shuheilocale/japanese-personal-name-dataset)
+（MIT。ライセンス全文は [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md)）の CSV から
+[`internal/dict/gen-names`](../internal/dict/gen-names) で生成する。既存エントリは変更せず、
+未収録の新規エントリだけをソート済みで追記する（再実行しても重複しない）。
+
+```console
+$ go run ./internal/dict/gen-names \
+    -last-names last_name_org.csv \
+    -given-names-man first_name_man_opti.csv \
+    -given-names-woman first_name_woman_opti.csv \
+    -surnames-out internal/dict/surnames.txt \
+    -given-names-out internal/dict/given_names.txt \
+    -romaji-surnames-out internal/dict/romaji_surnames.txt \
+    -romaji-given-names-out internal/dict/romaji_given_names.txt
+```
+
+名側は同データセットが提供する「curated popular names」サブセット（`*_opti.csv`）に限定して
+いる。カタカナ・ローマ字表記の氏名はサービス名・製品名や辞書外の英単語と同形になりやすく
+（さくら・ひかり型、Ken/Kai/Mori 型の誤検出）、全件（`*_org.csv`、数千〜1 万件規模）を
+無条件に取り込むと適合率への影響が大きいおそれがあるため、代表的な部分集合から始め、外部
+評価データセット（`$JP_PII_FIXTURES`）で適合率を確認してから拡大する方針をとっている
+（issue #58）。姓は全件（`last_name_org.csv`、1999 件）を使っている。4 文字姓
+（勅使河原・小比類巻 等）は同データセットに収録が無いため、`surnames.txt` に人手で追加した
+小さな代表集合を個別に参照している。辞書を拡張したら
+`go test ./internal/dict ./internal/detect ./internal/eval` で検証し、person-name /
+jp-address の精度が動く場合は eval / バッジの再生成も行うこと。
+
+新ルールは `jp-pii-detect rules` に自動で表示されます。
+
 ### リリース
 
 `v*` タグを push すると `.github/workflows/release.yml` が Linux runner 上で

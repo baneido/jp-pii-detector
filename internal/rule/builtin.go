@@ -69,7 +69,12 @@ func stripSeparators(s string) string {
 const (
 	kanji    = `\x{4E00}-\x{9FFF}\x{3005}` // 漢字 + 々
 	hiragana = `\x{3041}-\x{3096}`
-	katakana = `\x{30A1}-\x{30FA}\x{30FC}` // カタカナ + ー
+	// katakana はカタカナ + ー に加え、結合濁点・半濁点（\x{3099}\x{309A}）を含む。
+	// normalize.Line は半角カナの濁点・半濁点（ﾞﾟ）を 1 ルーン = 1 ルーンの不変条件を
+	// 保つため未合成の結合文字のまま全角カナへ畳む（例: ｶﾞ → カ + \x{3099}）ため、
+	// この文字クラスに含めないと半角カナ由来の濁音・半濁音を含む値
+	// （フリガナ: ﾔﾏﾀﾞ 等）が氏名・住所の値パターンから漏れる。jp-pii-detector:ignore
+	katakana = `\x{30A1}-\x{30FA}\x{30FC}\x{3099}\x{309A}`
 
 	digitRuleRequireContextWindow = 40
 
@@ -91,7 +96,10 @@ const (
 var (
 	// personNameLabelJP は値の前に来る氏名系の日本語ラベル（語そのものが人物を
 	// 表す強いラベル）。氏名漢字 / 氏名カナ / お名前カナ 等は末尾サフィックスで吸収する。
-	personNameLabelJP = `(?:氏名|お名前|ご氏名|名前|姓名|フリガナ|ふりがな|フルネーム|` +
+	// 「フリガナ」は濁点未合成形（フリ(?:ガ|カ\x{3099})ナ）も許す。半角カナ由来の
+	// 「ﾌﾘｶﾞﾅ」は normalize.Line で「フリカ」+ 結合濁点 + 「ナ」（ガではなくカ+結合濁点）
+	// に畳まれるため、これがないと半角カナ表記のラベル行を取りこぼす。
+	personNameLabelJP = `(?:氏名|お名前|ご氏名|名前|姓名|フリ(?:ガ|カ\x{3099})ナ|ふりがな|フルネーム|` +
 		`患者名|契約者名|利用者名|顧客名|会員名|申込者名|請求先名|受取人|担当者名)(?:漢字|カナ|かな)?`
 	// personNameLabelASCIIStrong は語そのものが「人」を表す ASCII キー。
 	// 辞書照合なしで検出する（収録外の人名も拾う）。user_name / account_name /
@@ -130,6 +138,10 @@ var (
 	// 捕捉し、長さ・人名らしさの最終判断は validSurnameField 等の検証器に委ねる。
 	personNameValueShort = `[` + kanji + hiragana + katakana + `]{1,12}` +
 		`(?:[ ][` + kanji + hiragana + katakana + `]{1,12})?`
+	romajiNameValue = `[A-Za-z]{2,15}[ ][A-Za-z]{2,15}`
+	// romajiNameEndBoundary は 2 語の直後にさらに英数字・_ が続くケースを除外する。
+	// RE2 は lookahead 非対応のため、値の外側で終端・記号・空白終端を消費する。
+	romajiNameEndBoundary = `(?:$|[^0-9A-Za-z_[:space:]]|[[:space:]]+(?:$|[^0-9A-Za-z_[:space:]]))`
 	// personNameValueShortFallback は弱いラベルの見逃し（FN）修正用フォールバック。
 	// personNameValueShort は末尾の助詞・敬称も同じ文字クラスに含まれるため貪欲に
 	// 取り込んでしまい（例: 「山田さんへ連絡」を丸ごと 1 語として捕捉）、姓名辞書に
@@ -302,7 +314,9 @@ func validGivenField(v string) bool   { return validNameFieldOpt(v, false, true,
 func validFullNameField(v string) bool { return validNameFieldOpt(v, true, true, false) }
 
 func validNameFieldOpt(v string, allowSurname, allowGiven, allow1CharSurname bool) bool {
-	v = strings.TrimSpace(v)
+	// 半角カナ由来の濁点・半濁点（結合文字のまま normalize.Line を通過している）を
+	// 辞書照合前に合成する（ﾀﾞ → タ+結合濁点 → ダ）。
+	v = dict.ComposeKana(strings.TrimSpace(v))
 	if dict.SplitsAsFullName(v) {
 		return true
 	}
@@ -310,6 +324,20 @@ func validNameFieldOpt(v string, allowSurname, allowGiven, allow1CharSurname boo
 		return allow1CharSurname && allowSurname && dict.IsSurname(v)
 	}
 	return (allowSurname && dict.IsSurname(v)) || (allowGiven && dict.IsGivenName(v))
+}
+
+// validRomajiFullName は person-name-romaji ルールの値検証。値は半角スペース
+// 区切りの英単語 2 語（語順不問）で、小文字化したうえで一方がローマ字姓辞書、
+// もう一方がローマ字名辞書に収録されている場合のみ true を返す（Yamada Taro /
+// Taro Yamada のどちらの語順も許可する）。単語が 2 つでない場合は false。
+func validRomajiFullName(v string) bool {
+	fields := strings.Fields(v)
+	if len(fields) != 2 {
+		return false
+	}
+	a, b := strings.ToLower(fields[0]), strings.ToLower(fields[1])
+	return (dict.IsRomajiSurname(a) && dict.IsRomajiGivenName(b)) ||
+		(dict.IsRomajiGivenName(a) && dict.IsRomajiSurname(b))
 }
 
 // validStrictFullName は姓+名の分割（dict.FullNameSplit）が成立し、かつ名側の
@@ -578,9 +606,11 @@ func Builtin() []Rule {
 			Description: "氏名（ラベル付き）",
 			Prefilter:   PrefilterCJK,
 			// ラベル語を 1 つも含まない行（日本語コメント等）は正規表現走査を
-			// まるごとスキップする（ホットパス最適化）。
+			// まるごとスキップする（ホットパス最適化）。"フリガナ" は半角カナ
+			// 「ﾌﾘｶﾞﾅ」が normalize.Line で濁点未合成のまま畳まれた形
+			// （フリ・カ・結合濁点・ナ。"フリガナ" の合成済み ガ ではない）。
 			PrefilterLiterals: []string{
-				"名", "姓", "苗字", "フリガナ", "ふりがな", "フルネーム", "受取人", "name",
+				"名", "姓", "苗字", "フリガナ", "フリガナ", "ふりがな", "フルネーム", "受取人", "name",
 			},
 			// プレースホルダ（未定・該当なし・テスト等）の値はすべてのパターンで
 			// 棄却する。非人物キー（project_name 等）はラベルの前方境界で除外する。
@@ -720,6 +750,37 @@ func Builtin() []Rule {
 			// クロスライン走査（scanCrossLineNames）が CrossLineNameLabelRe /
 			// CrossLineNameValueRe / ValidCrossLineName を使って検出する。
 			// 高再現率モードでのみ有効（HighRecallRuleIDs）。
+		},
+		{
+			ID:          "person-name-romaji",
+			Description: "氏名（ローマ字表記・高再現率）",
+			// 値が ASCII 文字（[A-Za-z]）のみのため PrefilterCJK は使えない
+			// （person-name ルールは CJK 前提でこの行を素通りする）。代わりに
+			// PrefilterLiterals の "name" だけでホットパスを絞る。
+			Prefilter:         PrefilterNone,
+			PrefilterLiterals: []string{"name"},
+			// 姓辞書・名辞書の共起（語順不問）を必須にする。ヘボン式の表記揺れ
+			// （Itô/Itoh/Ito 等）や、辞書外の英単語（Ken/Kai/Mori 等）との衝突は
+			// 網羅できないため、初期実装は高再現率モード限定（既定オフ、
+			// HighRecallRuleIDs）とする。
+			Validate: validRomajiFullName,
+			Patterns: []Pattern{
+				// 強い ASCII ラベル（full_name / customer_name 等）。
+				{Re: regexp.MustCompile(
+					personNameBoundary +
+						personNameLabelASCIIStrong +
+						personNameSep +
+						`(` + romajiNameValue + `)` + romajiNameEndBoundary,
+				), Base: Medium},
+				// 裸の name ラベル。kebab-case / dotted key は除外する
+				// （personNameBareNameBoundary、person-name ルールと同様）。
+				{Re: regexp.MustCompile(
+					personNameBareNameBoundary +
+						`name` +
+						personNameSep +
+						`(` + romajiNameValue + `)` + romajiNameEndBoundary,
+				), Base: Medium},
+			},
 		},
 	}
 }

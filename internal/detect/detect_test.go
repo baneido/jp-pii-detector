@@ -2155,6 +2155,143 @@ func TestComputeOffsetsOutOfRange(t *testing.T) {
 	}
 }
 
+// ---- issue #58: 半角カナ折り畳み・カタカナ/ひらがな氏名・4 文字姓・ローマ字氏名 ----
+//
+// 以下のテストは JP_PII_FIXTURES に依存しない（値は internal/dict/gen-names で
+// 生成した辞書エントリ、または人手追加のダミー氏名を直接使う）。
+
+// TestPersonNameHalfwidthKatakana は半角カナのフリガナラベル・値
+// （振込明細・レガシー CSV に頻出）を検出することを確認する。normalize.Line が
+// 半角カナを未合成の結合文字つき全角カナへ折り畳み、katakana 文字クラス
+// （internal/rule）が結合文字 \x{3099}\x{309A} を許容することで検出できる。
+func TestPersonNameHalfwidthKatakana(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"半角カナ フリガナラベル・値（濁点あり）", "ﾌﾘｶﾞﾅ: ﾔﾏﾀﾞ ﾀﾛｳ", []string{"person-name"}},
+		{"半角カナ フリガナラベル 全角＝区切り", "ﾌﾘｶﾞﾅ＝ﾔﾏﾀﾞ ﾀﾛｳ", []string{"person-name"}},
+		{"全角フリガナラベル・半角カナ値", "フリガナ: ﾔﾏﾀﾞ ﾀﾛｳ", []string{"person-name"}},
+		{"半角カナラベル・全角カナ値", "ﾌﾘｶﾞﾅ: ヤマダ タロウ", []string{"person-name"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestPersonNameHalfwidthKatakanaPreservesOriginalMatchText は、検出値が
+// 正規化前の元の半角カナ表記のまま報告される（マスク・報告は生テキスト基準）
+// ことを確認する。internal/normalize の 1 ルーン = 1 ルーン不変条件の直接的な帰結。
+func TestPersonNameHalfwidthKatakanaPreservesOriginalMatchText(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	fs := d.ScanLine("f.txt", 1, "ﾌﾘｶﾞﾅ: ﾔﾏﾀﾞ ﾀﾛｳ")
+	assertRules(t, fs, "person-name")
+	if fs[0].Match != "ﾔﾏﾀﾞ ﾀﾛｳ" {
+		t.Errorf("Match = %q, want original half-width text %q", fs[0].Match, "ﾔﾏﾀﾞ ﾀﾛｳ")
+	}
+}
+
+// TestPersonNameKatakanaDictionaryWeakFields はカタカナ読みの姓・名
+// （internal/dict/gen-names で生成）が弱いラベル（姓・名）で検出されることを
+// 確認する。辞書拡充前はカタカナ単独の値がすべて false になっていた
+// （issue #58 の問題 (2)）。
+func TestPersonNameKatakanaDictionaryWeakFields(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"姓（カタカナ）", "姓: サトウ", []string{"person-name"}},
+		{"名（カタカナ）", "名: サクラ", []string{"person-name"}},
+		{"フリガナ（姓+名 空白区切り）", "フリガナ: サトウ サクラ", []string{"person-name"}},
+		{"フリガナ（姓+名 区切りなし）", "フリガナ: サトウサクラ", []string{"person-name"}},
+		// 辞書外のカタカナ語は弱いラベルでは棄却する。
+		{"名 + 辞書外カタカナ", "名: サービス", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestPersonNameFourCharacterSurname は 4 文字姓（issue #58 で人手追加。従来の
+// 辞書は最長 3 文字だった）が弱いラベルで検出されることを確認する。
+func TestPersonNameFourCharacterSurname(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	tests := []struct {
+		name, line string
+	}{
+		{"4文字姓（漢字）", "姓: 勅使河原"},
+		{"4文字姓（カタカナ読み）", "姓: テシガハラ"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), "person-name")
+		})
+	}
+}
+
+// TestPersonNameRomajiHighRecall は person-name-romaji ルール（issue #58 段階
+// 3）の検出を確認する。ASCII の強いラベル・裸の name ラベルの両方で、姓名
+// ローマ字辞書の共起（語順不問）を必須にする。既定では無効（高再現率モード限定）。
+func TestPersonNameRomajiHighRecall(t *testing.T) {
+	d := newDetector(t, `
+min_confidence = "low"
+[rules]
+high_recall = true
+`)
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"name ラベル 姓→名の順", "name: Yamada Tarou", []string{"person-name-romaji"}},
+		{"name ラベル 名→姓の順（語順不問）", "name: Tarou Yamada", []string{"person-name-romaji"}},
+		{"full_name ラベル", "full_name: Yamada Tarou", []string{"person-name-romaji"}},
+		{"JSON 風キー引用符", `{"full_name": "Yamada Tarou"}`, []string{"person-name-romaji"}},
+		{"name ラベル 3 語は先頭 2 語だけ検出しない", "name: Yamada Tarou Extra", nil},
+		{"full_name ラベル 3 語は先頭 2 語だけ検出しない", "full_name: Yamada Tarou Extra", nil},
+		{"2 語目に数字が直結する場合は検出しない", "name: Yamada Tarou2023", nil},
+		{"2 語目に underscore が直結する場合は検出しない", "name: Yamada Tarou_id", nil},
+		// 辞書外の英単語は棄却する。
+		{"辞書外の英単語 2 語", "name: Hello World", nil},
+		// 裸の name ラベルの前方境界（kebab-case・dotted key）は除外する。
+		{"project-name（非人物キー）", "project-name: Yamada Tarou", nil},
+		{"filename（複合識別子）", "filename: Yamada Tarou", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestPersonNameRomajiDisabledByDefault は person-name-romaji が高再現率
+// モード限定（既定オフ）であることを確認する。
+func TestPersonNameRomajiDisabledByDefault(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	assertRules(t, d.ScanLine("f.txt", 1, "name: Yamada Tarou"))
+}
+
+// TestAddressStillDetectedAfterKatakanaClassExpansion は、katakana 文字クラス
+// （internal/rule）へ結合濁点・半濁点を追加した変更（issue #58）が、通常の
+// 全角住所検出を壊していないことを確認する回帰テスト。
+func TestAddressStillDetectedAfterKatakanaClassExpansion(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct{ name, line string }{
+		{"都道府県+市区+番地", "住所: 東京都千代田区丸の内1-1-1"},
+		{"府+市+区+番地", "勤務地: 大阪府大阪市北区梅田2-2-2"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), "jp-address")
+		})
+	}
+}
+
 // --- P23: 複数エンティティ共起ブースト（[rules] cooccurrence_boost）---
 //
 // piifixtures を使わず inline literal のみでテストする（外部データセットが
