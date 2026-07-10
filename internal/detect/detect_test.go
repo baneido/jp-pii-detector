@@ -1538,6 +1538,121 @@ func TestScanContentRejectsCrossLineNegativeContext(t *testing.T) {
 	assertRules(t, d.ScanContent("f.txt", "口座番号: "+bankAccount+strings.Repeat("あ", 25)+"\n円"), "jp-bank-account")
 }
 
+// TestScanContentAdjacentLinesSkipBlankLines は issue #62 の「論理隣接」化を
+// 検証する: ラベルと値の間に空行が 1〜2 行挟まっても相関が成立すること
+// （j-i<=3。空行なしの物理隣接は既存テストで確認済み）。
+func TestScanContentAdjacentLinesSkipBlankLines(t *testing.T) {
+	d := newDetector(t, "")
+	bankAccount := "1234567"
+
+	// 空行 1 行（j-i=2）。
+	fs := d.ScanContent("f.txt", "口座番号:\n\n"+bankAccount)
+	assertRules(t, fs, "jp-bank-account")
+	if fs[0].Line != 3 || fs[0].Column != 1 {
+		t.Fatalf("location = %d:%d, want 3:1", fs[0].Line, fs[0].Column)
+	}
+	if fs[0].Match != bankAccount {
+		t.Fatalf("match = %q, want %q", fs[0].Match, bankAccount)
+	}
+
+	// 空行 2 行（j-i=3、許容される上限）。
+	fs = d.ScanContent("f.txt", "口座番号:\n\n\n"+bankAccount)
+	assertRules(t, fs, "jp-bank-account")
+	if fs[0].Line != 4 {
+		t.Fatalf("line = %d, want 4", fs[0].Line)
+	}
+}
+
+// TestScanContentAdjacentLinesTooFarNotDetected は j-i>3（空行 3 行以上）では
+// 相関しないことを確認する負例。
+func TestScanContentAdjacentLinesTooFarNotDetected(t *testing.T) {
+	d := newDetector(t, "")
+	bankAccount := "1234567"
+	assertRules(t, d.ScanContent("f.txt", "口座番号:\n\n\n\n"+bankAccount))
+}
+
+// TestScanContentAdjacentLabelPromotesNonRequireContextRuleWithinWindow は、
+// RequireContext ではないルール（電話番号）も隣接行のラベルで High に昇格する
+// ことを確認する。従来は scanAdjacentLines が RequireContext finding 以外を
+// 一律に捨てていたため、min_confidence=high 運用ではこのケースを原理的に
+// 見逃していた（issue #62 の問題(2)）。空行を 1 行挟んでも成立することも兼ねて
+// 確認する。
+func TestScanContentAdjacentLabelPromotesNonRequireContextRuleWithinWindow(t *testing.T) {
+	d := newDetector(t, `min_confidence = "high"`)
+	phone := "090" + "1234" + "5678"
+
+	fs := d.ScanContent("f.txt", "電話番号:\n\n"+phone)
+	assertRules(t, fs, "jp-phone-number")
+	if fs[0].Confidence != rule.High {
+		t.Fatalf("confidence = %v, want high", fs[0].Confidence)
+	}
+	if !fs[0].Reason.ContextPromoted {
+		t.Fatalf("reason.ContextPromoted = false, want true")
+	}
+}
+
+// TestScanContentAdjacentBirthdateWithEmbeddedLabel は、ラベルを正規表現自体に
+// 埋め込む非 RequireContext ルールも隣接行をまたいで検出できることを確認する。
+// person-name の重複抑制用越境ガードを全ルールに適用すると、この正当なマッチまで
+// 巻き添えで失われる。
+func TestScanContentAdjacentBirthdateWithEmbeddedLabel(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanContent("f.txt", "生年月日:\n1990/01/01")
+	assertRules(t, fs, "jp-birthdate")
+	if fs[0].Line != 2 || fs[0].Column != 1 {
+		t.Fatalf("location = %d:%d, want 2:1", fs[0].Line, fs[0].Column)
+	}
+	if fs[0].Match != "1990/01/01" {
+		t.Fatalf("match = %q, want 1990/01/01", fs[0].Match)
+	}
+}
+
+// TestScanContentDedupPrefersPromotedConfidenceOverUnpromoted は
+// dedupAndSortFindings が同一 span の候補のうち信頼度の高い方を残すことを
+// 確認する。単独行走査（ラベルなし・Medium）と隣接行相関（ラベルあり・High）が
+// 同じ span を候補として生成するため、先勝ちのままだと min_confidence=medium
+// 運用で昇格結果が捨てられてしまう（issue #62 の回帰項目）。
+func TestScanContentDedupPrefersPromotedConfidenceOverUnpromoted(t *testing.T) {
+	d := newDetector(t, "") // 既定の min_confidence = medium
+	phone := "090" + "1234" + "5678"
+
+	fs := d.ScanContent("f.txt", "電話番号:\n"+phone)
+	assertRules(t, fs, "jp-phone-number")
+	if fs[0].Confidence != rule.High {
+		t.Fatalf("confidence = %v, want high（dedup は高信頼度を優先すべき）", fs[0].Confidence)
+	}
+}
+
+// TestScanContentAdjacentLabelIgnoreMarkerDoesNotSuppressValueLine は
+// ignore マーカーの抑制判定が値の乗る行ごとであることを確認する。従来は
+// 結合文字列全体に対して ignoredLine を判定していたため、ラベル行だけの
+// マーカーが隣の値行の検出まで消していた（非対称バグ、issue #62）。
+func TestScanContentAdjacentLabelIgnoreMarkerDoesNotSuppressValueLine(t *testing.T) {
+	d := newDetector(t, "")
+	bankAccount := "1234567"
+	fs := d.ScanContent("f.txt", "口座番号: // "+IgnoreMarker+"\n"+bankAccount)
+	assertRules(t, fs, "jp-bank-account")
+}
+
+// TestScanContentAdjacentValueLineIgnoreMarkerStillSuppresses は、値行自体の
+// マーカーは従来どおり抑制することを確認する（上のテストとの対称性）。
+func TestScanContentAdjacentValueLineIgnoreMarkerStillSuppresses(t *testing.T) {
+	d := newDetector(t, "")
+	bankAccount := "1234567"
+	fs := d.ScanContent("f.txt", "口座番号:\n"+bankAccount+" // "+IgnoreMarker)
+	assertRules(t, fs)
+}
+
+// TestScanContentRejectsCrossLineNegativeContextAcrossBlankLine は
+// hasCrossLineNegativeContext も論理隣接（空行スキップ）に統一されていることを
+// 確認する。空行を挟んだ先に負コンテキスト（円）があるケースを抑制できないと、
+// 隣接行相関の到達範囲拡大に伴い新規の誤検出が増える（issue #62 のリスク項目）。
+func TestScanContentRejectsCrossLineNegativeContextAcrossBlankLine(t *testing.T) {
+	d := newDetector(t, "")
+	bankAccount := "1234567"
+	assertRules(t, d.ScanContent("f.txt", "口座番号: "+bankAccount+"\n\n円"))
+}
+
 func TestScanContentUsesSourceContext(t *testing.T) {
 	d := newDetector(t, "")
 	assertRules(t, d.ScanContent("user.ts", `const bankAccountNo = "1234567"`), "jp-bank-account")
@@ -1610,6 +1725,84 @@ func TestScanDiffHunkKeepsSourceNegativeContextOnAddedLine(t *testing.T) {
 		{Text: `bankAccountId: "1234567"`, Added: true},
 	})
 	assertRules(t, fs)
+}
+
+// TestScanDiffHunkAdjacentLinesSkipBlankLines は diff 走査経路でも論理隣接
+// （空行スキップ）が効くことを確認する。git diff -U3 の文脈行に空行が
+// 挟まっていても、追加行の値をラベルで正しく相関できる必要がある（issue #62）。
+func TestScanDiffHunkAdjacentLinesSkipBlankLines(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanDiffHunk("f.txt", []DiffLine{
+		{Text: "口座番号:", Added: false},
+		{Text: "", Added: false},
+		{Text: "1234567", Added: true},
+	})
+	assertRules(t, fs, "jp-bank-account")
+	if fs[0].Line != 3 {
+		t.Fatalf("line = %d, want 3", fs[0].Line)
+	}
+}
+
+// TestScanDiffHunkAdjacentLinesTooFarNotDetected は diff 経路でも j-i>3 では
+// 相関しないことを確認する負例。
+func TestScanDiffHunkAdjacentLinesTooFarNotDetected(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanDiffHunk("f.txt", []DiffLine{
+		{Text: "口座番号:", Added: false},
+		{Text: "", Added: false},
+		{Text: "", Added: false},
+		{Text: "", Added: false},
+		{Text: "1234567", Added: true},
+	})
+	assertRules(t, fs)
+}
+
+// TestScanDiffHunkAdjacentLabelPromotesNonRequireContextRule は diff 経路でも
+// 非 RequireContext ルール（電話番号）が文脈行のラベルで昇格することを確認する
+// （ScanContent 側の TestScanContentAdjacentLabelPromotesNonRequireContextRuleWithinWindow
+// との full/diff 対称性）。
+func TestScanDiffHunkAdjacentLabelPromotesNonRequireContextRule(t *testing.T) {
+	d := newDetector(t, `min_confidence = "high"`)
+	phone := "090" + "1234" + "5678"
+	fs := d.ScanDiffHunk("f.txt", []DiffLine{
+		{Text: "電話番号:", Added: false},
+		{Text: phone, Added: true},
+	})
+	assertRules(t, fs, "jp-phone-number")
+	if fs[0].Confidence != rule.High {
+		t.Fatalf("confidence = %v, want high", fs[0].Confidence)
+	}
+}
+
+// TestScanDiffHunkAdjacentBirthdateWithEmbeddedLabel は、未変更のラベル行と追加した
+// 値行を結合する diff 経路でも jp-birthdate のラベル埋め込み正規表現を維持する
+// ことを確認する。
+func TestScanDiffHunkAdjacentBirthdateWithEmbeddedLabel(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanDiffHunk("f.txt", []DiffLine{
+		{Text: "生年月日:", Added: false},
+		{Text: "1990/01/01", Added: true},
+	})
+	assertRules(t, fs, "jp-birthdate")
+	if fs[0].Line != 2 || fs[0].Column != 1 {
+		t.Fatalf("location = %d:%d, want 2:1", fs[0].Line, fs[0].Column)
+	}
+	if fs[0].Match != "1990/01/01" {
+		t.Fatalf("match = %q, want 1990/01/01", fs[0].Match)
+	}
+}
+
+// TestScanDiffHunkAdjacentLabelIgnoreMarkerDoesNotSuppressAddedValue は、
+// 文脈行（ラベル）だけの ignore マーカーが追加行の値を消さないことを確認する
+// （diff 経路は元から scanLineNoIgnore + 値行ごとの判定だったため既存の挙動だが、
+// ScanContent 側の対称性修正（issue #62）とセットで回帰確認する）。
+func TestScanDiffHunkAdjacentLabelIgnoreMarkerDoesNotSuppressAddedValue(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanDiffHunk("f.txt", []DiffLine{
+		{Text: "口座番号: // " + IgnoreMarker, Added: false},
+		{Text: "1234567", Added: true},
+	})
+	assertRules(t, fs, "jp-bank-account")
 }
 
 // issue #68 段階1(a): 同一文にこのルール自身の正ラベルが（負文脈語を伴わずに）
