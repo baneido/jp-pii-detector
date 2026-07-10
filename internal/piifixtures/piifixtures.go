@@ -60,7 +60,11 @@ type DiffLine struct {
 // Line は従来どおり 1 行の ScanLine、Content は複数行の ScanContent、Diff は
 // 追加行だけを評価する ScanDiffHunk に対応する。Want は、そのケースで検出されるべき
 // ルール ID の集合（空なら「何も検出されないべき」陰性ケース）。File は
-// ソースコード文脈などファイル名依存の挙動を評価したい場合だけ指定する。
+// ソースコード文脈などファイル名依存の挙動を評価したい場合だけ指定する。Tags は
+// Span.Tags と同様、表記ゆれ（notation:fullwidth 等）やケースの由来
+// （source:synthetic 等）でケース単位に層別集計するためのメタデータで、検出結果
+// そのものには影響せず internal/eval の Stratified 集計にだけ使う。既知タグの
+// 語彙は docs/development.md を参照。
 type Case struct {
 	File    string     `json:"file,omitempty"`
 	Line    string     `json:"line,omitempty"`
@@ -68,6 +72,7 @@ type Case struct {
 	Diff    []DiffLine `json:"diff,omitempty"`
 	Want    []string   `json:"want,omitempty"`
 	Spans   []Span     `json:"spans,omitempty"`
+	Tags    []string   `json:"tags,omitempty"`
 }
 
 type data struct {
