@@ -337,3 +337,30 @@ func TestContainsASCIIAlnum(t *testing.T) {
 		})
 	}
 }
+
+// validRomajiFullName は person-name-romaji の値検証。2 語（語順不問）で、
+// 一方がローマ字姓辞書、もう一方がローマ字名辞書に収録されている場合のみ true。
+// 大文字小文字は問わない。
+func TestValidRomajiFullName(t *testing.T) {
+	tests := []struct {
+		in   string
+		want bool
+	}{
+		{"Yamada Tarou", true},
+		{"Tarou Yamada", true},        // 語順不問
+		{"yamada tarou", true},        // 小文字
+		{"YAMADA TAROU", true},        // 大文字
+		{"Hello World", false},        // 辞書外の英単語
+		{"Yamada Yamada", false},      // 姓のみ 2 語（名が無い）
+		{"Yamada", false},             // 1 語のみ
+		{"Yamada Tarou Extra", false}, // 3 語
+		{"", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			if got := validRomajiFullName(tt.in); got != tt.want {
+				t.Errorf("validRomajiFullName(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}

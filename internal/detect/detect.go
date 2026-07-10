@@ -18,13 +18,51 @@ const IgnoreMarker = "jp-pii-detector:ignore"
 // AllowMarker は後方互換のために残している旧除外マーカー。
 const AllowMarker = "pii-allow"
 
+// maxAdjacentLineGap は隣接行相関（ScanContent の 2 行ウィンドウ・ScanDiffHunk の
+// 文脈行相関・scanCrossLineNames・hasCrossLineNegativeContext）で許容する論理隣接の
+// 最大行差。空白のみの行を最大 2 行まで挟んでも「論理的に隣接」とみなす
+// （j-i<=3。j-i=1 は空行なしの物理隣接、2〜3 は空行 1〜2 行を挟むケース）。
+const maxAdjacentLineGap = 3
+
+// crossLinePromotionWindow は隣接行相関で非 RequireContext ルールを昇格させる際に
+// 使う、値のマッチ位置からのルーン窓。digitRuleRequireContextWindow
+// （internal/rule/builtin.go）と同じ 40 を採用し、遠く離れたラベルによる
+// 誤昇格を抑える。
+const crossLinePromotionWindow = 40
+
 // defaultPromotionContextWindow は RequireContextWindow 未設定のルールで
 // Base 信頼度を High へ昇格させる際に使う既定のコンテキスト探索半径（ルーン数）。
 // 昇格判定はこの半径に制限し、長い行の遠方にある無関係な 1 語だけで行全体の
 // マッチが昇格するのを防ぐ（issue #68 段階1(b)）。RequireContext 判定
 // （検出可否そのもの）はここでは変えず、ウィンドウ未設定なら従来通り行全体を
-// 見る（後方互換）。
+// 見る（後方互換）。単一行走査での既定値であり、隣接行相関の昇格には
+// crossLinePromotionWindow を使う（scanLineNoIgnore の promotionWindow 引数）。
 const defaultPromotionContextWindow = 40
+
+// nextNonBlankIndex は lines[i] より後ろで最初の非空白行（strings.TrimSpace が
+// 空でない行）のインデックスを返す。i からの行差が maxGap を超える前に見つから
+// なければ -1（間の行がすべて空白のときだけ論理的に隣接とみなすため、非空白行が
+// 見つかった時点で探索を打ち切る＝それより先の行との「隣接」は別途その行を
+// 起点に評価される）。
+func nextNonBlankIndex(lines []string, i, maxGap int) int {
+	for j := i + 1; j < len(lines) && j-i <= maxGap; j++ {
+		if strings.TrimSpace(lines[j]) != "" {
+			return j
+		}
+	}
+	return -1
+}
+
+// prevNonBlankIndex は nextNonBlankIndex の逆方向版（lines[i] より前で最初の
+// 非空白行）。
+func prevNonBlankIndex(lines []string, i, maxGap int) int {
+	for j := i - 1; j >= 0 && i-j <= maxGap; j-- {
+		if strings.TrimSpace(lines[j]) != "" {
+			return j
+		}
+	}
+	return -1
+}
 
 // Finding は 1 件の検出結果。
 //
@@ -52,6 +90,15 @@ type Finding struct {
 	EndOffset int  `json:"-"`
 	// span（ルーン単位、重複解決用）
 	start, end int
+	// matchStart/matchEnd はパターン全体（境界ガード込み、キャプチャグループ
+	// より広いことがある）のルーン単位の半開区間。start/end（キャプチャ
+	// グループ＝報告対象）とは別に持ち、scanAdjacentLines /
+	// scanAdjacentLinesDiff で person-name のパターン全体が結合用の改行を
+	// 越えたかを判定する際に使う。person-name は専用の scanCrossLineNames が
+	// 同じ値を person-name-structured として検出するため、この越境候補だけを
+	// 対象外にする。jp-birthdate のようにラベル埋め込み正規表現でクロスライン
+	// 検出するルールには、この越境情報を理由とした一律抑制を適用しない。
+	matchStart, matchEnd int
 }
 
 // DetectReason は検出の根拠を表す。生の PII は含めない。
@@ -176,8 +223,17 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 	for i, line := range lines {
 		candidates = append(candidates, d.scanLineWithContext(file, i+1, line, lineContexts[i], retainBudget)...)
 	}
-	for i := 0; i+1 < len(lines); i++ {
-		candidates = append(candidates, d.scanAdjacentLines(file, i+1, lines[i], lines[i+1], lineContexts[i], lineContexts[i+1])...)
+	// 論理的に隣接する（間が空白のみの行に限り最大 maxAdjacentLineGap 行差までの）
+	// 行ペアを走査する。
+	for i := range lines {
+		if strings.TrimSpace(lines[i]) == "" {
+			continue
+		}
+		j := nextNonBlankIndex(lines, i, maxAdjacentLineGap)
+		if j < 0 {
+			continue
+		}
+		candidates = append(candidates, d.scanAdjacentLines(file, i+1, lines[i], j+1, lines[j], lineContexts[i], lineContexts[j])...)
 	}
 	if d.crossLineName != nil {
 		candidates = append(candidates, d.scanCrossLineNames(file, lines)...)
@@ -355,16 +411,23 @@ func lineStartRuneOffsets(content string) []int {
 }
 
 // dedupAndSortFindings は候補から重複を除き、ファイル・行・列・終端で安定ソートする。
+// 同一キー（ルール・ファイル・行・span）の候補が複数ある場合は信頼度の高い方を残す。
+// findingKey は信頼度を含まないため、先勝ちのままだと隣接行相関による昇格結果
+// （High）が、先に追加された未昇格の同一 finding（Medium/Low、標準の単一行走査由来）に
+// 負けて捨てられてしまう（min_confidence=medium 運用で顕在化する）。
 func dedupAndSortFindings(candidates []Finding) []Finding {
-	seen := map[string]bool{}
+	index := map[string]int{}
 	var findings []Finding
 	for _, f := range candidates {
 		key := findingKey(f)
-		if seen[key] {
+		if i, ok := index[key]; ok {
+			if f.Confidence > findings[i].Confidence {
+				findings[i] = f
+			}
 			continue
 		}
+		index[key] = len(findings)
 		findings = append(findings, f)
-		seen[key] = true
 	}
 	sort.SliceStable(findings, func(i, j int) bool {
 		if findings[i].File != findings[j].File {
@@ -421,10 +484,18 @@ func (d *Detector) ScanDiffHunk(file string, lines []DiffLine) []Finding {
 			candidates = append(candidates, d.scanLineWithContext(file, i+1, line, lineContexts[i], nil)...)
 		}
 	}
-	// 隣接 2 行は RequireContext を文脈行ラベルで昇格させる。抑制は値の行（追加行）基準。
-	for i := 0; i+1 < len(texts); i++ {
+	// 論理的に隣接する行ペアを文脈行ラベルで昇格させる（間は空白のみ・最大
+	// maxAdjacentLineGap 行差まで）。抑制は値の行（追加行）基準。
+	for i := range texts {
+		if strings.TrimSpace(texts[i]) == "" {
+			continue
+		}
+		j := nextNonBlankIndex(texts, i, maxAdjacentLineGap)
+		if j < 0 {
+			continue
+		}
 		candidates = append(candidates,
-			d.scanAdjacentLinesDiff(file, i+1, texts[i], texts[i+1], added[i], added[i+1], lineContexts[i], lineContexts[i+1])...)
+			d.scanAdjacentLinesDiff(file, i+1, texts[i], j+1, texts[j], added[i], added[j], lineContexts[i], lineContexts[j])...)
 	}
 
 	// 文脈行由来の cross-line 負コンテキストは適用しない（上記の設計意図）。
@@ -472,26 +543,30 @@ func itoa(n int) string {
 	return string(buf[i:])
 }
 
-// scanAdjacentLines は RequireContext なルールについて、隣接 2 行を結合して
-// 走査することでラベルと値が別行に分かれるケースを補足する。抑制（ignore
-// マーカー）は検出値が乗る行に対してのみ適用し、結合文字列全体を
-// scanLineNoIgnore で走査したうえで各 finding の行ごとに ignoredLine を明示
-// チェックする。こうしないと、値が乗っていない側の行（ラベル行等）に残った
-// ignore マーカーが隣の値行の検出まで巻き添えで抑制してしまう
-// （scanAdjacentLinesDiff と同じ設計）。
-func (d *Detector) scanAdjacentLines(file string, firstLineNo int, first, second string, firstCtx, secondCtx lineContext) []Finding {
+// scanAdjacentLines は論理的に隣接する 2 行（firstLineNo・secondLineNo。間に
+// 空白のみの行を最大 maxAdjacentLineGap 行差まで挟んでもよい）を結合して走査する。
+// RequireContext ルールはラベル・値がどちらの行にあってもコンテキストが成立し、
+// 非 RequireContext ルールも値の位置から crossLinePromotionWindow ルーン以内に
+// ラベルがあれば High へ昇格する（遠距離ラベルによる誤昇格は窓で抑える）。
+//
+// ignore マーカーは結合文字列ではなく値が乗る行ごとに判定する（scanLineNoIgnore を
+// 使い ScanLine の全体判定を経由しない）ため、ラベル側だけの marker が値側の
+// 検出を消さない（scanAdjacentLinesDiff と対称）。
+func (d *Detector) scanAdjacentLines(file string, firstLineNo int, first string, secondLineNo int, second string, firstCtx, secondCtx lineContext) []Finding {
 	combined := first + "\n" + second
 	firstRunes := []rune(first)
 	secondRunes := []rune(second)
 	sep := len(firstRunes)
 
 	var out []Finding
-	for _, f := range d.scanLineNoIgnore(file, firstLineNo, combined) {
-		if !f.Reason.RequireContext {
-			continue
-		}
+	for _, f := range d.scanLineNoIgnore(file, firstLineNo, combined, crossLinePromotionWindow) {
 		switch {
 		case f.end <= sep: // 値は 1 行目
+			// person-name は専用の scanCrossLineNames と重複する越境候補だけを
+			// 対象外にする。他ルールのラベル埋め込み cross-line match は維持する。
+			if f.RuleID == "person-name" && f.matchEnd > sep+1 {
+				continue
+			}
 			if ignoredLine(first) {
 				continue
 			}
@@ -502,6 +577,9 @@ func (d *Detector) scanAdjacentLines(file string, firstLineNo int, first, second
 				continue
 			}
 		case f.start > sep: // 値は 2 行目
+			if f.RuleID == "person-name" && f.matchStart < sep {
+				continue
+			}
 			if ignoredLine(second) {
 				continue
 			}
@@ -510,7 +588,10 @@ func (d *Detector) scanAdjacentLines(file string, firstLineNo int, first, second
 			if start < 0 || end > len(secondRunes) {
 				continue
 			}
-			f.Line = firstLineNo + 1
+			if ignoredLine(second) {
+				continue
+			}
+			f.Line = secondLineNo
 			f.Column = start + 1
 			f.Match = string(secondRunes[start:end])
 			f.start, f.end = start, end
@@ -539,8 +620,15 @@ func (d *Detector) scanCrossLineNames(file string, lines []string) []Finding {
 		return nil
 	}
 	var out []Finding
-	for i := 0; i+1 < len(lines); i++ {
-		label, value := lines[i], lines[i+1]
+	for i := range lines {
+		if strings.TrimSpace(lines[i]) == "" {
+			continue
+		}
+		j := nextNonBlankIndex(lines, i, maxAdjacentLineGap)
+		if j < 0 {
+			continue
+		}
+		label, value := lines[i], lines[j]
 		// ラベル行・値行はそれぞれ「ラベルと区切りだけ」「氏名だけ」をアンカー付きで
 		// 要求するため、行末コメント（jp-pii-detector:ignore を含む）が付くと正規表現が
 		// マッチせず自然に抑制される。明示的な ignore マーカー判定は不要。
@@ -564,7 +652,7 @@ func (d *Detector) scanCrossLineNames(file string, lines []string) []Finding {
 			RuleID:      d.crossLineName.ID,
 			Description: d.crossLineName.Description,
 			File:        file,
-			Line:        i + 2,
+			Line:        j + 1,
 			Column:      rs + 1,
 			Match:       string(origRunes[rs:re]),
 			Confidence:  rule.Medium,
@@ -581,9 +669,11 @@ func (d *Detector) scanCrossLineNames(file string, lines []string) []Finding {
 }
 
 // scanAdjacentLinesDiff は scanAdjacentLines の差分版。検出値が追加行に乗る
-// RequireContext finding だけを残す。文脈行の ignore マーカーでは抑制せず
-// （scanLineNoIgnore を使う）、抑制判定は値が乗る行（必ず追加行）に対してのみ行う。
-func (d *Detector) scanAdjacentLinesDiff(file string, firstLineNo int, first, second string, firstAdded, secondAdded bool, firstCtx, secondCtx lineContext) []Finding {
+// finding だけを残す（RequireContext・非 RequireContext のいずれも対象。
+// 非 RequireContext ルールは crossLinePromotionWindow ルーン以内のラベルでのみ
+// 昇格する）。文脈行の ignore マーカーでは抑制せず（scanLineNoIgnore を使う）、
+// 抑制判定は値が乗る行（必ず追加行）に対してのみ行う。
+func (d *Detector) scanAdjacentLinesDiff(file string, firstLineNo int, first string, secondLineNo int, second string, firstAdded, secondAdded bool, firstCtx, secondCtx lineContext) []Finding {
 	if !firstAdded && !secondAdded {
 		return nil
 	}
@@ -593,12 +683,13 @@ func (d *Detector) scanAdjacentLinesDiff(file string, firstLineNo int, first, se
 	sep := len(firstRunes)
 
 	var out []Finding
-	for _, f := range d.scanLineNoIgnore(file, firstLineNo, combined) {
-		if !f.Reason.RequireContext {
-			continue
-		}
+	for _, f := range d.scanLineNoIgnore(file, firstLineNo, combined, crossLinePromotionWindow) {
 		switch {
 		case f.end <= sep: // 値は 1 行目
+			// scanAdjacentLines と同じく person-name の越境候補だけを抑制する。
+			if f.RuleID == "person-name" && f.matchEnd > sep+1 {
+				continue
+			}
 			if !firstAdded || ignoredLine(first) {
 				continue
 			}
@@ -609,6 +700,9 @@ func (d *Detector) scanAdjacentLinesDiff(file string, firstLineNo int, first, se
 				continue
 			}
 		case f.start > sep: // 値は 2 行目
+			if f.RuleID == "person-name" && f.matchStart < sep {
+				continue
+			}
 			if !secondAdded || ignoredLine(second) {
 				continue
 			}
@@ -617,7 +711,7 @@ func (d *Detector) scanAdjacentLinesDiff(file string, firstLineNo int, first, se
 			if start < 0 || end > len(secondRunes) {
 				continue
 			}
-			f.Line = firstLineNo + 1
+			f.Line = secondLineNo
 			f.Column = start + 1
 			f.Match = string(secondRunes[start:end])
 			f.start, f.end = start, end
@@ -680,7 +774,7 @@ func (d *Detector) ScanLine(file string, lineNo int, line string) []Finding {
 	if line == "" || ignoredLine(line) {
 		return nil
 	}
-	return d.scanLineNoIgnore(file, lineNo, line)
+	return d.scanLineNoIgnore(file, lineNo, line, 0)
 }
 
 // scanLineWithContext は ScanContent の行単位走査の本体。retainBudget が非 nil
@@ -692,23 +786,26 @@ func (d *Detector) scanLineWithContext(file string, lineNo int, line string, lin
 	if line == "" || ignoredLine(line) {
 		return nil
 	}
-	return d.scanLineNoIgnoreWithContext(file, lineNo, line, lineCtx, retainBudget)
+	return d.scanLineNoIgnoreWithContext(file, lineNo, line, lineCtx, 0, retainBudget)
 }
 
-// scanLineNoIgnore は ScanLine の本体（ignore マーカー判定を除く）。差分の
-// 隣接行走査では、文脈行に残った ignore マーカーで追加行の値を抑制しないよう、
-// この経路を使って結合文字列を走査する。cooccurrence_boost の保持は行わない
-// （retainBudget は常に nil）。
-func (d *Detector) scanLineNoIgnore(file string, lineNo int, line string) []Finding {
-	return d.scanLineNoIgnoreWithContext(file, lineNo, line, lineContext{}, nil)
+// scanLineNoIgnore は ScanLine の本体（ignore マーカー判定を除く）。差分・
+// ScanContent の隣接行走査では、文脈行に残った ignore マーカーで隣接行の値を
+// 抑制しないよう、この経路を使って結合文字列を走査する。promotionWindow は
+// 非 RequireContext ルールを文脈語で昇格させる際に使うルーン窓（0 なら
+// defaultPromotionContextWindow、隣接行相関では crossLinePromotionWindow）。
+// cooccurrence_boost 用の候補保持は行わない。
+func (d *Detector) scanLineNoIgnore(file string, lineNo int, line string, promotionWindow int) []Finding {
+	return d.scanLineNoIgnoreWithContext(file, lineNo, line, lineContext{}, promotionWindow, nil)
 }
 
 // scanLineNoIgnoreWithContext が本体。retainBudget が非 nil かつ残数 > 0 の場合のみ、
 // minConf 未満の cooccurrenceBoostRuleIDs 候補（Validated またはコンテキスト有り）を
 // 保持する（呼び出し元でその後 applyCooccurrenceBoost → 最終 minConf フィルタを適用する
 // 前提。ScanLine/ScanDiffHunk からの呼び出しは retainBudget=nil のため従来どおり
-// minConf 未満は即座に破棄する）。
-func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line string, lineCtx lineContext, retainBudget *int) []Finding {
+// minConf 未満は即座に破棄する）。promotionWindow は非 RequireContext ルールの
+// 昇格窓で、0 以下なら defaultPromotionContextWindow に解決する。
+func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line string, lineCtx lineContext, promotionWindow int, retainBudget *int) []Finding {
 	if line == "" {
 		return nil
 	}
@@ -743,20 +840,20 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 		if len(r.PrefilterLiterals) > 0 && !containsAnyLiteral(norm, r.PrefilterLiterals) {
 			continue
 		}
-		ctxForMatch := func(start, end int, useWindow bool) []string {
+		// ctxForMatch は window>0 のときだけマッチ前後 window ルーンに限定して
+		// コンテキスト語を探し、window<=0 なら行全体を見る。呼び出し側が窓を
+		// 使い分ける: RequireContext 判定（検出可否そのもの）には
+		// r.RequireContextWindow を渡し、未設定（0）なら後方互換のため行全体を
+		// 見る。Base 信頼度の昇格判定には promotionWindow を渡すが、これは常に
+		// 呼び出し側で 0 以下なら defaultPromotionContextWindow に解決してから
+		// 渡す（issue #68 段階1(b)。無制限昇格による FP 増幅を防ぐ）ため、ここでは
+		// 単純に window>0 かどうかだけを見ればよい。
+		ctxForMatch := func(start, end int, window int) []string {
 			var kws []string
-			switch {
-			case r.RequireContextWindow > 0:
-				kws = d.matchingContexts(contextWindow(norm, start, end, r.RequireContextWindow, &normRunes), r.Context)
-			case useWindow:
-				// RequireContext 判定（検出可否そのもの）は後方互換のため、
-				// ウィンドウ未設定なら従来通り行全体を見る。
+			if window > 0 {
+				kws = d.matchingContexts(contextWindow(norm, start, end, window, &normRunes), r.Context)
+			} else {
 				kws = d.matchingContexts(norm, r.Context)
-			default:
-				// Base 信頼度の昇格（useWindow=false）はウィンドウ未設定でも
-				// 既定半径（defaultPromotionContextWindow）に制限する
-				// （issue #68 段階1(b)。無制限昇格による FP 増幅を防ぐ）。
-				kws = d.matchingContexts(contextWindow(norm, start, end, defaultPromotionContextWindow, &normRunes), r.Context)
 			}
 			if st := lineCtx.statementFor(start, end); st != nil && st.PositiveText != "" {
 				kws = append(kws, d.matchingContexts(st.PositiveText, r.Context)...)
@@ -791,7 +888,8 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 				if m == nil {
 					break
 				}
-				start, end := m[0]+pos, m[1]+pos
+				fullStart, fullEnd := m[0]+pos, m[1]+pos
+				start, end := fullStart, fullEnd
 				if len(m) >= 4 && m[2] >= 0 {
 					start, end = m[2]+pos, m[3]+pos
 				}
@@ -810,7 +908,7 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 					ContextWindow:  r.RequireContextWindow,
 				}
 				if p.RequireContext {
-					kws := ctxForMatch(start, end, true)
+					kws := ctxForMatch(start, end, r.RequireContextWindow)
 					if len(kws) == 0 {
 						continue
 					}
@@ -839,7 +937,14 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 				// （口座番号などの△ルールが常に high になるのを防ぐ）。
 				conf := p.Base
 				if !p.RequireContext && conf < rule.High {
-					kws := ctxForMatch(start, end, false)
+					// promotionWindow<=0（通常の単一行走査）なら
+					// defaultPromotionContextWindow に解決する。隣接行相関から
+					// 渡される crossLinePromotionWindow はそのまま使う。
+					window := promotionWindow
+					if window <= 0 {
+						window = defaultPromotionContextWindow
+					}
+					kws := ctxForMatch(start, end, window)
 					if len(kws) > 0 {
 						reason.ContextKeywords = kws
 						reason.ContextPromoted = true
@@ -853,6 +958,11 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 				// バイトオフセット → ルーン位置（正規化は 1:1 なので元行と一致）
 				rs := len([]rune(norm[:start]))
 				re := rs + len([]rune(entity))
+				// パターン全体（境界ガード込み）のルーン位置も併せて記録する
+				// （scanAdjacentLines 等の越境判定用。詳細は Finding.matchStart
+				// のコメントを参照）。
+				mrs := len([]rune(norm[:fullStart]))
+				mre := len([]rune(norm[:fullEnd]))
 				if origRunes == nil {
 					origRunes = []rune(line)
 				}
@@ -866,6 +976,8 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 					Confidence:  conf,
 					Reason:      reason,
 					start:       rs,
+					matchStart:  mrs,
+					matchEnd:    mre,
 					end:         re,
 				})
 			}

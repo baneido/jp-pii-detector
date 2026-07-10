@@ -329,9 +329,9 @@ internal/
    - git モード: `git diff -U3` で文脈行付きの差分を取得し、`detect.ScanDiffHunk` で
      走査します。検出値が**追加行に乗っているもののみ**を報告し、文脈行（未変更行）上の
      既存 PII は報告しません。
-   - ラベルが**直前・直後の未変更行**にあり値だけを追加したケースでも、コンテキスト必須
-     ルールが発火します（行をまたぐ相関は隣接 ±1 行のみ。ScanContent の 2 行ウィンドウに
-     準ずる）。
+   - ラベルが**論理的に隣接する未変更行**（間が空白のみの行なら最大 2 行挟んでもよい。
+     `j-i<=3`）にあり値だけを追加したケースでも、コンテキスト必須ルールが発火します
+     （ScanContent の論理隣接ウィンドウに準じます）。
    - 文脈行は正のコンテキスト補完にのみ使い、抑制（ignore マーカー・負コンテキスト）の
      駆動には使わないため、追加行の新規 PII を既存行の都合で取りこぼしません。
 2. **detect.ScanLine** が 1 行ごとに処理します。
@@ -363,13 +363,24 @@ internal/
      - `RequireContext` のパターンはキーワードの存在が前提のため昇格せず、`Base` の
        信頼度のまま報告します。
    - **resolveOverlaps** で範囲が重なる検出を信頼度（同率なら長い方）で 1 件に集約します。
-   - **detect.ScanContent** は通常の行単位検出に加え、隣接 2 行を結合した仮想ウィンドウを
-     `RequireContext` ルールに限定して走査します。検出位置は元の行と列へマップし直します。
+   - **detect.ScanContent / detect.ScanDiffHunk** は通常の行単位検出に加え、
+     「行 i と、間が空白のみの行を挟んでもよい後続の最初の非空白行 j」（`j-i<=3`。
+     空行なしの物理隣接は `j-i=1`）を結合した仮想ウィンドウとして走査します（論理隣接）。
+     `RequireContext` ルールだけでなく非 `RequireContext` ルールも対象で、後者は値の
+     マッチ位置から 40 ルーン以内にラベルがある場合だけ High へ昇格します
+     （`digitRuleRequireContextWindow` と同じ窓幅を流用し、遠く離れたラベルによる
+     誤昇格を抑えます。昇格時は `Reason.ContextPromoted` を立てます）。ignore マーカーは
+     結合文字列ではなく値が乗る行ごとに判定するため、ラベル側だけの marker が値側の
+     検出を消しません（フル走査・diff 走査とも対称）。検出位置は元の行と列へマップし直します。
+     単独行走査で得た finding と論理隣接ウィンドウで得た finding が同じ span になった場合、
+     `dedupAndSortFindings` は信頼度の高い方を残します。
      ソースコード文脈では、`bankAccountNo:` の次行に値があるような key/value 分離も
      logical context として値行に付与します。diff では文脈行由来の source context は正の
      コンテキスト補完にだけ使い、文脈行由来の負コンテキストでは追加行を抑制しません。
-     隣接 2 行の仮想ウィンドウで得た finding も、元の値行へ戻した後にその行の source
+     論理隣接ウィンドウで得た finding も、元の値行へ戻した後にその行の source
      `NegativeText` を評価し、コード限定の負コンテキストを迂回しません。
+     隣接行の負コンテキスト判定（`hasCrossLineNegativeContext`、ScanContent 経由のみ）も
+     同じ論理隣接規則で前後の非空白行を見るため、空行を挟んだ負コンテキストも取りこぼしません。
 3. **report** が `min_confidence` で絞った結果を指定フォーマットで出力します。
    検出値は既定でマスクされます。JSON 出力では `--explain` 指定時のみ `reason` を含めます。
 
@@ -547,6 +558,40 @@ $ go run ./internal/dict/gen \
 `-jigyosyo-input` を取り違えないでください（取り違えると実質ゼロ件取り込みになります）。
 郵便番号の増減で `jp-postal-code` の精度数値が動くことがあるため、新しいビットセットを
 コミットしたら eval / バッジの再生成も行ってください。
+
+姓名辞書（[`internal/dict/surnames.txt`](../internal/dict/surnames.txt) /
+[`given_names.txt`](../internal/dict/given_names.txt)）のカタカナ読みと、ローマ字姓名辞書
+（[`romaji_surnames.txt`](../internal/dict/romaji_surnames.txt) /
+[`romaji_given_names.txt`](../internal/dict/romaji_given_names.txt)、
+`person-name-romaji` ルール専用）は
+[`shuheilocale/japanese-personal-name-dataset`](https://github.com/shuheilocale/japanese-personal-name-dataset)
+（MIT。ライセンス全文は [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md)）の CSV から
+[`internal/dict/gen-names`](../internal/dict/gen-names) で生成する。既存エントリは変更せず、
+未収録の新規エントリだけをソート済みで追記する（再実行しても重複しない）。
+
+```console
+$ go run ./internal/dict/gen-names \
+    -last-names last_name_org.csv \
+    -given-names-man first_name_man_opti.csv \
+    -given-names-woman first_name_woman_opti.csv \
+    -surnames-out internal/dict/surnames.txt \
+    -given-names-out internal/dict/given_names.txt \
+    -romaji-surnames-out internal/dict/romaji_surnames.txt \
+    -romaji-given-names-out internal/dict/romaji_given_names.txt
+```
+
+名側は同データセットが提供する「curated popular names」サブセット（`*_opti.csv`）に限定して
+いる。カタカナ・ローマ字表記の氏名はサービス名・製品名や辞書外の英単語と同形になりやすく
+（さくら・ひかり型、Ken/Kai/Mori 型の誤検出）、全件（`*_org.csv`、数千〜1 万件規模）を
+無条件に取り込むと適合率への影響が大きいおそれがあるため、代表的な部分集合から始め、外部
+評価データセット（`$JP_PII_FIXTURES`）で適合率を確認してから拡大する方針をとっている
+（issue #58）。姓は全件（`last_name_org.csv`、1999 件）を使っている。4 文字姓
+（勅使河原・小比類巻 等）は同データセットに収録が無いため、`surnames.txt` に人手で追加した
+小さな代表集合を個別に参照している。辞書を拡張したら
+`go test ./internal/dict ./internal/detect ./internal/eval` で検証し、person-name /
+jp-address の精度が動く場合は eval / バッジの再生成も行うこと。
+
+新ルールは `jp-pii-detect rules` に自動で表示されます。
 
 ### リリース
 

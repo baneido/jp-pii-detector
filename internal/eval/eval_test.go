@@ -43,8 +43,9 @@ var wantF1 = map[string]float64{
 // 姓名辞書一致等の twin パターン）が Base: Medium で報告されるため、既定設定
 // （cli の min_confidence=medium）でも辞書検証済みの検出は残る（issue #44）。
 // 辞書検証を伴わないフォールバックパターンは Base: Low のままフィルタで
-// 除外されるため、low プロファイル（1.00）より F1 が下がる。この差分を
-// ゴールデン値でそのまま可視化する。
+// 除外されるが、現行の評価データセットの陽性はすべて辞書検証済みの Medium
+// パターンでも検出できるため、medium プロファイルの F1 は low と同じ 1.00。
+// 辞書や評価ケースの変更でこの関係が動いた場合は、実測値に合わせて更新する。
 //
 // 他の 13 ルールは、低プロファイル（wantF1）で TP になっている検出のパターン
 // Base がいずれも Medium 以上（RequireContext のパターンは昇格せず Base の
@@ -63,7 +64,7 @@ var wantF1Medium = map[string]float64{
 	"jp-residence-card":   1.00,
 	"jp-bank-account":     0.86,
 	"jp-health-insurance": 1.00,
-	"person-name":         0.92,
+	"person-name":         1.00,
 	"jp-birthdate":        1.00,
 }
 

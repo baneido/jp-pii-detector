@@ -34,6 +34,80 @@ func TestLine(t *testing.T) {
 	}
 }
 
+// TestLineFoldsHalfwidthKatakana は半角カナ（U+FF61-FF9F）を対応する全角カナ・
+// 句読点へ折り畳むことを確認する（issue #58 段階 1）。濁点・半濁点（ﾞﾟ）は
+// 結合文字 U+3099/U+309A のまま返る（1 ルーン = 1 ルーンの不変条件を保つため、
+// 直前の仮名と合成しない）。
+func TestLineFoldsHalfwidthKatakana(t *testing.T) {
+	const dakuten = "゙"
+	const handakuten = "゚"
+	tests := []struct{ name, in, want string }{
+		{"半角カナ ア行", "ｱｲｳｴｵ", "アイウエオ"},
+		{"半角カナ 拗音・促音", "ｷｬｯﾁ", "キャッチ"},
+		{"半角カナ 濁点（未合成のまま）", "ｶﾞｷﾞｸﾞｹﾞｺﾞ", "カ" + dakuten + "キ" + dakuten + "ク" + dakuten + "ケ" + dakuten + "コ" + dakuten},
+		{"半角カナ 半濁点（未合成のまま）", "ﾊﾟﾋﾟﾌﾟﾍﾟﾎﾟ", "ハ" + handakuten + "ヒ" + handakuten + "フ" + handakuten + "ヘ" + handakuten + "ホ" + handakuten},
+		{"半角句読点・中点", "ｱｲｳ｡ｴｵ､ｶｷ･ｸ｢ｹ｣", "アイウ。エオ、カキ・ク「ケ」"},
+		{"半角プロロング記号（数字非隣接はー）", "ｻｰﾊﾞｰ", "サー" + "ハ" + dakuten + "ー"},
+		{"フリガナラベル（半角カナ）", "ﾌﾘｶﾞﾅ: ﾔﾏﾀﾞ ﾀﾛｳ", "フリ" + "カ" + dakuten + "ナ: ヤマ" + "タ" + dakuten + " タロウ"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := Line(tt.in); got != tt.want {
+				t.Errorf("Line(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestLineHalfwidthProlongedMarkDigitAdjacency は半角プロロング記号
+// （U+FF70）が全角「ー」へ写像された後も、数字隣接時のみ '-' になる既存規則が
+// そのまま適用されることを確認する。
+func TestLineHalfwidthProlongedMarkDigitAdjacency(t *testing.T) {
+	tests := []struct{ name, in, want string }{
+		{"半角プロロング記号 数字直後", "123ｰ", "123-"},
+		{"半角プロロング記号 数字直前", "ｰ123", "-123"},
+		// 1 つめの ｰ は前後とも非数字（ー のまま）、2 つめの ｰ は直後が数字（- になる）。
+		{"半角プロロング記号 混在", "ｻｰﾊﾞｰ123", "サー" + "ハ" + "゙" + "-123"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := Line(tt.in); got != tt.want {
+				t.Errorf("Line(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestLineHalfwidthKatakanaKeepsRuneCount は半角カナを含む行でも 1 ルーン = 1
+// ルーンの不変条件（正規化後の位置が元テキストの位置と一致する）が保たれることを
+// 確認する。フィクスチャに依存しない。
+func TestLineHalfwidthKatakanaKeepsRuneCount(t *testing.T) {
+	for _, in := range []string{
+		"ﾌﾘｶﾞﾅ: ﾔﾏﾀﾞ ﾀﾛｳ",
+		"住所: ﾄｳｷｮｳﾄ",
+		"ｱｲｳｴｵｶﾞｷﾞｸﾞｹﾞｺﾞﾊﾟﾋﾟﾌﾟﾍﾟﾎﾟ",
+	} {
+		got := Line(in)
+		if gotLen, wantLen := len([]rune(got)), len([]rune(in)); gotLen != wantLen {
+			t.Errorf("Line(%q) rune count = %d, want %d (元テキストと同じ)", in, gotLen, wantLen)
+		}
+	}
+}
+
+// TestLineHalfwidthKatakanaIsNotASCIIFastPath は半角カナを含む行が ASCII
+// ファストパスを通らず、実際に変換されることを確認する（変換対象を含むため
+// needsConversion が true を返すはず）。
+func TestLineHalfwidthKatakanaIsNotASCIIFastPath(t *testing.T) {
+	in := "ｻﾄｳ"
+	got := Line(in)
+	if got == in {
+		t.Errorf("Line(%q) = %q, 半角カナが変換されていない", in, got)
+	}
+	if got != "サトウ" {
+		t.Errorf("Line(%q) = %q, want %q", in, got, "サトウ")
+	}
+}
+
 func TestLineKeepsRuneCount(t *testing.T) {
 	piifixtures.Require(t)
 	in := piifixtures.MustGet(t, "normalize.postal_addr_in")
@@ -61,7 +135,8 @@ func TestLineJapaneseNoConversionFastPath(t *testing.T) {
 		"これは普通の日本語の文章です。",
 		"サーバーの設定を確認する", // 数字に隣接しない長音記号は保持
 		"顧客の連絡先を控える",
-		"ﾃﾞｰﾀ",      // 半角カナ語。半角カナ長音記号 U+FF70 は数字非隣接のため保持
+		// 半角カナ語（例:「ﾃﾞｰﾀ」）は半角カナ折り畳み（issue #58）により常に
+		// 変換対象となるため、ここには含めない（TestLineFoldsHalfwidthKatakana 参照）。
 		"アンリ゠ベルクソン", // 片仮名人名の区切り。U+30A0 は数字非隣接のため保持
 		"1〜2",       // 波ダッシュは意図的に変換対象外（長音記号類にもハイフン類にも含めない）
 	} {
@@ -84,7 +159,10 @@ func TestLineExpandedConversionTargets(t *testing.T) {
 		name, in, want string
 	}{
 		{"半角カナ長音記号（数字隣接）は変換", "1ｰ2", "1-2"},
-		{"半角カナ長音記号（半角カナ語）は保持", "ﾃﾞｰﾀ", "ﾃﾞｰﾀ"},
+		// 半角カナ語自体は半角カナ折り畳み（issue #58）により常に全角へ変換される。
+		// プロロング記号は数字非隣接のため '-' ではなく全角「ー」のまま
+		// （濁点は結合文字 U+3099 のまま未合成。TestLineFoldsHalfwidthKatakana 参照）。
+		{"半角カナ長音記号（半角カナ語）は全角へ折り畳まれる", "ﾃﾞｰﾀ", "テ" + "゙" + "ー" + "タ"},
 		{"片仮名二重ハイフン（数字隣接）は変換", "1゠2", "1-2"},
 		{"片仮名二重ハイフン（人名区切り）は保持", "アンリ゠ベルクソン", "アンリ゠ベルクソン"},
 		{"HYPHEN BULLET は無条件変換", "1⁃2", "1-2"},

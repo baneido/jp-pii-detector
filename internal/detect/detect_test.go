@@ -1538,6 +1538,121 @@ func TestScanContentRejectsCrossLineNegativeContext(t *testing.T) {
 	assertRules(t, d.ScanContent("f.txt", "口座番号: "+bankAccount+strings.Repeat("あ", 25)+"\n円"), "jp-bank-account")
 }
 
+// TestScanContentAdjacentLinesSkipBlankLines は issue #62 の「論理隣接」化を
+// 検証する: ラベルと値の間に空行が 1〜2 行挟まっても相関が成立すること
+// （j-i<=3。空行なしの物理隣接は既存テストで確認済み）。
+func TestScanContentAdjacentLinesSkipBlankLines(t *testing.T) {
+	d := newDetector(t, "")
+	bankAccount := "1234567"
+
+	// 空行 1 行（j-i=2）。
+	fs := d.ScanContent("f.txt", "口座番号:\n\n"+bankAccount)
+	assertRules(t, fs, "jp-bank-account")
+	if fs[0].Line != 3 || fs[0].Column != 1 {
+		t.Fatalf("location = %d:%d, want 3:1", fs[0].Line, fs[0].Column)
+	}
+	if fs[0].Match != bankAccount {
+		t.Fatalf("match = %q, want %q", fs[0].Match, bankAccount)
+	}
+
+	// 空行 2 行（j-i=3、許容される上限）。
+	fs = d.ScanContent("f.txt", "口座番号:\n\n\n"+bankAccount)
+	assertRules(t, fs, "jp-bank-account")
+	if fs[0].Line != 4 {
+		t.Fatalf("line = %d, want 4", fs[0].Line)
+	}
+}
+
+// TestScanContentAdjacentLinesTooFarNotDetected は j-i>3（空行 3 行以上）では
+// 相関しないことを確認する負例。
+func TestScanContentAdjacentLinesTooFarNotDetected(t *testing.T) {
+	d := newDetector(t, "")
+	bankAccount := "1234567"
+	assertRules(t, d.ScanContent("f.txt", "口座番号:\n\n\n\n"+bankAccount))
+}
+
+// TestScanContentAdjacentLabelPromotesNonRequireContextRuleWithinWindow は、
+// RequireContext ではないルール（電話番号）も隣接行のラベルで High に昇格する
+// ことを確認する。従来は scanAdjacentLines が RequireContext finding 以外を
+// 一律に捨てていたため、min_confidence=high 運用ではこのケースを原理的に
+// 見逃していた（issue #62 の問題(2)）。空行を 1 行挟んでも成立することも兼ねて
+// 確認する。
+func TestScanContentAdjacentLabelPromotesNonRequireContextRuleWithinWindow(t *testing.T) {
+	d := newDetector(t, `min_confidence = "high"`)
+	phone := "090" + "1234" + "5678"
+
+	fs := d.ScanContent("f.txt", "電話番号:\n\n"+phone)
+	assertRules(t, fs, "jp-phone-number")
+	if fs[0].Confidence != rule.High {
+		t.Fatalf("confidence = %v, want high", fs[0].Confidence)
+	}
+	if !fs[0].Reason.ContextPromoted {
+		t.Fatalf("reason.ContextPromoted = false, want true")
+	}
+}
+
+// TestScanContentAdjacentBirthdateWithEmbeddedLabel は、ラベルを正規表現自体に
+// 埋め込む非 RequireContext ルールも隣接行をまたいで検出できることを確認する。
+// person-name の重複抑制用越境ガードを全ルールに適用すると、この正当なマッチまで
+// 巻き添えで失われる。
+func TestScanContentAdjacentBirthdateWithEmbeddedLabel(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanContent("f.txt", "生年月日:\n1990/01/01")
+	assertRules(t, fs, "jp-birthdate")
+	if fs[0].Line != 2 || fs[0].Column != 1 {
+		t.Fatalf("location = %d:%d, want 2:1", fs[0].Line, fs[0].Column)
+	}
+	if fs[0].Match != "1990/01/01" {
+		t.Fatalf("match = %q, want 1990/01/01", fs[0].Match)
+	}
+}
+
+// TestScanContentDedupPrefersPromotedConfidenceOverUnpromoted は
+// dedupAndSortFindings が同一 span の候補のうち信頼度の高い方を残すことを
+// 確認する。単独行走査（ラベルなし・Medium）と隣接行相関（ラベルあり・High）が
+// 同じ span を候補として生成するため、先勝ちのままだと min_confidence=medium
+// 運用で昇格結果が捨てられてしまう（issue #62 の回帰項目）。
+func TestScanContentDedupPrefersPromotedConfidenceOverUnpromoted(t *testing.T) {
+	d := newDetector(t, "") // 既定の min_confidence = medium
+	phone := "090" + "1234" + "5678"
+
+	fs := d.ScanContent("f.txt", "電話番号:\n"+phone)
+	assertRules(t, fs, "jp-phone-number")
+	if fs[0].Confidence != rule.High {
+		t.Fatalf("confidence = %v, want high（dedup は高信頼度を優先すべき）", fs[0].Confidence)
+	}
+}
+
+// TestScanContentAdjacentLabelIgnoreMarkerDoesNotSuppressValueLine は
+// ignore マーカーの抑制判定が値の乗る行ごとであることを確認する。従来は
+// 結合文字列全体に対して ignoredLine を判定していたため、ラベル行だけの
+// マーカーが隣の値行の検出まで消していた（非対称バグ、issue #62）。
+func TestScanContentAdjacentLabelIgnoreMarkerDoesNotSuppressValueLine(t *testing.T) {
+	d := newDetector(t, "")
+	bankAccount := "1234567"
+	fs := d.ScanContent("f.txt", "口座番号: // "+IgnoreMarker+"\n"+bankAccount)
+	assertRules(t, fs, "jp-bank-account")
+}
+
+// TestScanContentAdjacentValueLineIgnoreMarkerStillSuppresses は、値行自体の
+// マーカーは従来どおり抑制することを確認する（上のテストとの対称性）。
+func TestScanContentAdjacentValueLineIgnoreMarkerStillSuppresses(t *testing.T) {
+	d := newDetector(t, "")
+	bankAccount := "1234567"
+	fs := d.ScanContent("f.txt", "口座番号:\n"+bankAccount+" // "+IgnoreMarker)
+	assertRules(t, fs)
+}
+
+// TestScanContentRejectsCrossLineNegativeContextAcrossBlankLine は
+// hasCrossLineNegativeContext も論理隣接（空行スキップ）に統一されていることを
+// 確認する。空行を挟んだ先に負コンテキスト（円）があるケースを抑制できないと、
+// 隣接行相関の到達範囲拡大に伴い新規の誤検出が増える（issue #62 のリスク項目）。
+func TestScanContentRejectsCrossLineNegativeContextAcrossBlankLine(t *testing.T) {
+	d := newDetector(t, "")
+	bankAccount := "1234567"
+	assertRules(t, d.ScanContent("f.txt", "口座番号: "+bankAccount+"\n\n円"))
+}
+
 func TestScanContentUsesSourceContext(t *testing.T) {
 	d := newDetector(t, "")
 	assertRules(t, d.ScanContent("user.ts", `const bankAccountNo = "1234567"`), "jp-bank-account")
@@ -1610,6 +1725,84 @@ func TestScanDiffHunkKeepsSourceNegativeContextOnAddedLine(t *testing.T) {
 		{Text: `bankAccountId: "1234567"`, Added: true},
 	})
 	assertRules(t, fs)
+}
+
+// TestScanDiffHunkAdjacentLinesSkipBlankLines は diff 走査経路でも論理隣接
+// （空行スキップ）が効くことを確認する。git diff -U3 の文脈行に空行が
+// 挟まっていても、追加行の値をラベルで正しく相関できる必要がある（issue #62）。
+func TestScanDiffHunkAdjacentLinesSkipBlankLines(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanDiffHunk("f.txt", []DiffLine{
+		{Text: "口座番号:", Added: false},
+		{Text: "", Added: false},
+		{Text: "1234567", Added: true},
+	})
+	assertRules(t, fs, "jp-bank-account")
+	if fs[0].Line != 3 {
+		t.Fatalf("line = %d, want 3", fs[0].Line)
+	}
+}
+
+// TestScanDiffHunkAdjacentLinesTooFarNotDetected は diff 経路でも j-i>3 では
+// 相関しないことを確認する負例。
+func TestScanDiffHunkAdjacentLinesTooFarNotDetected(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanDiffHunk("f.txt", []DiffLine{
+		{Text: "口座番号:", Added: false},
+		{Text: "", Added: false},
+		{Text: "", Added: false},
+		{Text: "", Added: false},
+		{Text: "1234567", Added: true},
+	})
+	assertRules(t, fs)
+}
+
+// TestScanDiffHunkAdjacentLabelPromotesNonRequireContextRule は diff 経路でも
+// 非 RequireContext ルール（電話番号）が文脈行のラベルで昇格することを確認する
+// （ScanContent 側の TestScanContentAdjacentLabelPromotesNonRequireContextRuleWithinWindow
+// との full/diff 対称性）。
+func TestScanDiffHunkAdjacentLabelPromotesNonRequireContextRule(t *testing.T) {
+	d := newDetector(t, `min_confidence = "high"`)
+	phone := "090" + "1234" + "5678"
+	fs := d.ScanDiffHunk("f.txt", []DiffLine{
+		{Text: "電話番号:", Added: false},
+		{Text: phone, Added: true},
+	})
+	assertRules(t, fs, "jp-phone-number")
+	if fs[0].Confidence != rule.High {
+		t.Fatalf("confidence = %v, want high", fs[0].Confidence)
+	}
+}
+
+// TestScanDiffHunkAdjacentBirthdateWithEmbeddedLabel は、未変更のラベル行と追加した
+// 値行を結合する diff 経路でも jp-birthdate のラベル埋め込み正規表現を維持する
+// ことを確認する。
+func TestScanDiffHunkAdjacentBirthdateWithEmbeddedLabel(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanDiffHunk("f.txt", []DiffLine{
+		{Text: "生年月日:", Added: false},
+		{Text: "1990/01/01", Added: true},
+	})
+	assertRules(t, fs, "jp-birthdate")
+	if fs[0].Line != 2 || fs[0].Column != 1 {
+		t.Fatalf("location = %d:%d, want 2:1", fs[0].Line, fs[0].Column)
+	}
+	if fs[0].Match != "1990/01/01" {
+		t.Fatalf("match = %q, want 1990/01/01", fs[0].Match)
+	}
+}
+
+// TestScanDiffHunkAdjacentLabelIgnoreMarkerDoesNotSuppressAddedValue は、
+// 文脈行（ラベル）だけの ignore マーカーが追加行の値を消さないことを確認する
+// （diff 経路は元から scanLineNoIgnore + 値行ごとの判定だったため既存の挙動だが、
+// ScanContent 側の対称性修正（issue #62）とセットで回帰確認する）。
+func TestScanDiffHunkAdjacentLabelIgnoreMarkerDoesNotSuppressAddedValue(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanDiffHunk("f.txt", []DiffLine{
+		{Text: "口座番号: // " + IgnoreMarker, Added: false},
+		{Text: "1234567", Added: true},
+	})
+	assertRules(t, fs, "jp-bank-account")
 }
 
 // issue #68 段階1(a): 同一文にこのルール自身の正ラベルが（負文脈語を伴わずに）
@@ -1987,6 +2180,143 @@ func TestEmploymentInsuranceRule(t *testing.T) {
 			if len(fs) == 1 && fs[0].Confidence != tt.conf {
 				t.Errorf("confidence = %v, want %v", fs[0].Confidence, tt.conf)
 			}
+		})
+	}
+}
+
+// ---- issue #58: 半角カナ折り畳み・カタカナ/ひらがな氏名・4 文字姓・ローマ字氏名 ----
+//
+// 以下のテストは JP_PII_FIXTURES に依存しない（値は internal/dict/gen-names で
+// 生成した辞書エントリ、または人手追加のダミー氏名を直接使う）。
+
+// TestPersonNameHalfwidthKatakana は半角カナのフリガナラベル・値
+// （振込明細・レガシー CSV に頻出）を検出することを確認する。normalize.Line が
+// 半角カナを未合成の結合文字つき全角カナへ折り畳み、katakana 文字クラス
+// （internal/rule）が結合文字 \x{3099}\x{309A} を許容することで検出できる。
+func TestPersonNameHalfwidthKatakana(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"半角カナ フリガナラベル・値（濁点あり）", "ﾌﾘｶﾞﾅ: ﾔﾏﾀﾞ ﾀﾛｳ", []string{"person-name"}},
+		{"半角カナ フリガナラベル 全角＝区切り", "ﾌﾘｶﾞﾅ＝ﾔﾏﾀﾞ ﾀﾛｳ", []string{"person-name"}},
+		{"全角フリガナラベル・半角カナ値", "フリガナ: ﾔﾏﾀﾞ ﾀﾛｳ", []string{"person-name"}},
+		{"半角カナラベル・全角カナ値", "ﾌﾘｶﾞﾅ: ヤマダ タロウ", []string{"person-name"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestPersonNameHalfwidthKatakanaPreservesOriginalMatchText は、検出値が
+// 正規化前の元の半角カナ表記のまま報告される（マスク・報告は生テキスト基準）
+// ことを確認する。internal/normalize の 1 ルーン = 1 ルーン不変条件の直接的な帰結。
+func TestPersonNameHalfwidthKatakanaPreservesOriginalMatchText(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	fs := d.ScanLine("f.txt", 1, "ﾌﾘｶﾞﾅ: ﾔﾏﾀﾞ ﾀﾛｳ")
+	assertRules(t, fs, "person-name")
+	if fs[0].Match != "ﾔﾏﾀﾞ ﾀﾛｳ" {
+		t.Errorf("Match = %q, want original half-width text %q", fs[0].Match, "ﾔﾏﾀﾞ ﾀﾛｳ")
+	}
+}
+
+// TestPersonNameKatakanaDictionaryWeakFields はカタカナ読みの姓・名
+// （internal/dict/gen-names で生成）が弱いラベル（姓・名）で検出されることを
+// 確認する。辞書拡充前はカタカナ単独の値がすべて false になっていた
+// （issue #58 の問題 (2)）。
+func TestPersonNameKatakanaDictionaryWeakFields(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"姓（カタカナ）", "姓: サトウ", []string{"person-name"}},
+		{"名（カタカナ）", "名: サクラ", []string{"person-name"}},
+		{"フリガナ（姓+名 空白区切り）", "フリガナ: サトウ サクラ", []string{"person-name"}},
+		{"フリガナ（姓+名 区切りなし）", "フリガナ: サトウサクラ", []string{"person-name"}},
+		// 辞書外のカタカナ語は弱いラベルでは棄却する。
+		{"名 + 辞書外カタカナ", "名: サービス", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestPersonNameFourCharacterSurname は 4 文字姓（issue #58 で人手追加。従来の
+// 辞書は最長 3 文字だった）が弱いラベルで検出されることを確認する。
+func TestPersonNameFourCharacterSurname(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	tests := []struct {
+		name, line string
+	}{
+		{"4文字姓（漢字）", "姓: 勅使河原"},
+		{"4文字姓（カタカナ読み）", "姓: テシガハラ"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), "person-name")
+		})
+	}
+}
+
+// TestPersonNameRomajiHighRecall は person-name-romaji ルール（issue #58 段階
+// 3）の検出を確認する。ASCII の強いラベル・裸の name ラベルの両方で、姓名
+// ローマ字辞書の共起（語順不問）を必須にする。既定では無効（高再現率モード限定）。
+func TestPersonNameRomajiHighRecall(t *testing.T) {
+	d := newDetector(t, `
+min_confidence = "low"
+[rules]
+high_recall = true
+`)
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"name ラベル 姓→名の順", "name: Yamada Tarou", []string{"person-name-romaji"}},
+		{"name ラベル 名→姓の順（語順不問）", "name: Tarou Yamada", []string{"person-name-romaji"}},
+		{"full_name ラベル", "full_name: Yamada Tarou", []string{"person-name-romaji"}},
+		{"JSON 風キー引用符", `{"full_name": "Yamada Tarou"}`, []string{"person-name-romaji"}},
+		{"name ラベル 3 語は先頭 2 語だけ検出しない", "name: Yamada Tarou Extra", nil},
+		{"full_name ラベル 3 語は先頭 2 語だけ検出しない", "full_name: Yamada Tarou Extra", nil},
+		{"2 語目に数字が直結する場合は検出しない", "name: Yamada Tarou2023", nil},
+		{"2 語目に underscore が直結する場合は検出しない", "name: Yamada Tarou_id", nil},
+		// 辞書外の英単語は棄却する。
+		{"辞書外の英単語 2 語", "name: Hello World", nil},
+		// 裸の name ラベルの前方境界（kebab-case・dotted key）は除外する。
+		{"project-name（非人物キー）", "project-name: Yamada Tarou", nil},
+		{"filename（複合識別子）", "filename: Yamada Tarou", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestPersonNameRomajiDisabledByDefault は person-name-romaji が高再現率
+// モード限定（既定オフ）であることを確認する。
+func TestPersonNameRomajiDisabledByDefault(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	assertRules(t, d.ScanLine("f.txt", 1, "name: Yamada Tarou"))
+}
+
+// TestAddressStillDetectedAfterKatakanaClassExpansion は、katakana 文字クラス
+// （internal/rule）へ結合濁点・半濁点を追加した変更（issue #58）が、通常の
+// 全角住所検出を壊していないことを確認する回帰テスト。
+func TestAddressStillDetectedAfterKatakanaClassExpansion(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct{ name, line string }{
+		{"都道府県+市区+番地", "住所: 東京都千代田区丸の内1-1-1"},
+		{"府+市+区+番地", "勤務地: 大阪府大阪市北区梅田2-2-2"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), "jp-address")
 		})
 	}
 }
