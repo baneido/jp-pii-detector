@@ -9,7 +9,7 @@ import (
 const negativeContextWindowRunes = 20
 
 func (d *Detector) hasCrossLineNegativeContext(f Finding, lines []string, lineContexts []lineContext, lineIdx int) bool {
-	if lineIdx < 0 || lineIdx >= len(lines) {
+	if f.ignoreNegativeContext || lineIdx < 0 || lineIdx >= len(lines) {
 		return false
 	}
 	var negCtx, posCtx []string

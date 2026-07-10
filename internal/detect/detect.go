@@ -52,6 +52,9 @@ type Finding struct {
 	EndOffset int  `json:"-"`
 	// span（ルーン単位、重複解決用）
 	start, end int
+	// ignoreNegativeContext はマッチしたパターンが Rule.NegativeContext の
+	// 適用対象外であることを表す。隣接行の負文脈フィルタにも引き継ぐ。
+	ignoreNegativeContext bool
 }
 
 // DetectReason は検出の根拠を表す。生の PII は含めない。
@@ -457,7 +460,7 @@ func (d *Detector) scanAdjacentLinesDiff(file string, firstLineNo int, first, se
 }
 
 func (d *Detector) hasSourceNegativeForFinding(f Finding, line string, lineCtx lineContext) bool {
-	if len(lineCtx.Statements) == 0 || !d.ruleHasNegativeContext(f.RuleID) {
+	if f.ignoreNegativeContext || len(lineCtx.Statements) == 0 || !d.ruleHasNegativeContext(f.RuleID) {
 		return false
 	}
 	norm := normalize.Line(line)
@@ -629,7 +632,7 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 					}
 					reason.ContextKeywords = kws
 				}
-				if hasNegativeNear(start, end) {
+				if !p.IgnoreNegativeContext && hasNegativeNear(start, end) {
 					continue
 				}
 				if r.Validate != nil {
@@ -670,16 +673,17 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 					origRunes = []rune(line)
 				}
 				found = append(found, Finding{
-					RuleID:      r.ID,
-					Description: r.Description,
-					File:        file,
-					Line:        lineNo,
-					Column:      rs + 1,
-					Match:       string(origRunes[rs:re]),
-					Confidence:  conf,
-					Reason:      reason,
-					start:       rs,
-					end:         re,
+					RuleID:                r.ID,
+					Description:           r.Description,
+					File:                  file,
+					Line:                  lineNo,
+					Column:                rs + 1,
+					Match:                 string(origRunes[rs:re]),
+					Confidence:            conf,
+					Reason:                reason,
+					start:                 rs,
+					end:                   re,
+					ignoreNegativeContext: p.IgnoreNegativeContext,
 				})
 			}
 		}

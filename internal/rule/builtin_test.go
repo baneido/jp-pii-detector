@@ -27,11 +27,9 @@ func TestValidPhone(t *testing.T) {
 		{"携帯 区切りなし", piifixtures.MustGet(t, "rule.phone_mobile_nosep"), true},
 		{"固定 10 桁", piifixtures.MustGet(t, "rule.phone_landline_sep"), true},
 		{"固定 10 桁・seed 辞書未収録の市外局番", "04992-2-1234", true},
-		// 固定電話・区切りなし 10 桁（P10: 市外局番辞書による validPhone 拡張で
-		// 新たに検出可能になったパターン）。フィクスチャの市外局番が
-		// internal/dict/area_codes.txt のシードデータに含まれていない場合、
-		// この行は失敗する（要: シードデータの拡充、または実データへの差し替え）。
-		{"固定 10 桁 区切りなし", piifixtures.MustGet(t, "rule.phone_landline_nosep"), true},
+		// 新規 fixture キーを増やさず、既存の区切りあり固定電話から同じ番号の
+		// 区切りなし表記を作って市外局番辞書による validPhone 拡張を検証する。
+		{"固定 10 桁 区切りなし", stripSeparators(piifixtures.MustGet(t, "detect.phone_fixed_tokyo")), true},
 		{"IP 電話", piifixtures.MustGet(t, "rule.phone_ip_sep"), true},
 		{"国際表記 携帯", piifixtures.MustGet(t, "rule.phone_mobile_intl"), true},
 		{"国際表記 固定 9 桁", piifixtures.MustGet(t, "rule.phone_landline_intl"), true},

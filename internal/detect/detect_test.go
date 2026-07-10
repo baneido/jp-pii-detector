@@ -125,6 +125,7 @@ func TestPhoneNumberAdjacentToASCIILeftLabelIsDetected(t *testing.T) {
 func TestPhoneRule(t *testing.T) {
 	piifixtures.Require(t)
 	d := newDetector(t, "")
+	fixedNoSep := strings.ReplaceAll(piifixtures.MustGet(t, "detect.phone_fixed_tokyo"), "-", "")
 	tests := []struct {
 		name, line string
 		want       []string
@@ -136,7 +137,7 @@ func TestPhoneRule(t *testing.T) {
 		// P10（#56）: 固定電話・区切りなし 10 桁。市外局番辞書（dict.ValidAreaCode）による
 		// validPhone 拡張と新パターンで新たに検出可能になった。RequireContext のため
 		// コンテキストキーワードが必須。
-		{"固定電話区切りなしコンテキストあり", "電話番号：" + piifixtures.MustGet(t, "detect.phone_landline_nosep"), []string{"jp-phone-number"}},
+		{"固定電話区切りなしコンテキストあり", "電話番号：" + fixedNoSep, []string{"jp-phone-number"}},
 		{"国際表記", piifixtures.MustGet(t, "detect.phone_intl_mobile"), []string{"jp-phone-number"}},
 		{"IP電話", piifixtures.MustGet(t, "detect.phone_ip"), []string{"jp-phone-number"}},
 		{"全角と長音記号", "電話番号：" + piifixtures.MustGet(t, "detect.phone_mobile_fullwidth_longvowel"), []string{"jp-phone-number"}},
@@ -162,12 +163,47 @@ func TestPhoneNoSepWithoutContextIsMedium(t *testing.T) {
 
 // P10（#56）: 固定電話・区切りなし 10 桁パターンは RequireContext のため、
 // コンテキストキーワードがなければ市外局番として実在するプレフィックスでも
-// 検出しない。値自体も市外局番辞書（area_codes.txt のシードデータ）に
-// 存在しないプレフィックスなので、実在 PII 形式ではなくインラインで安全。
+// 検出しない。新規 fixture キーは作らず、既存の区切りあり固定電話から同じ番号の
+// 区切りなし表記を組み立てる。
 func TestPhoneLandlineNoSepRequiresContext(t *testing.T) {
+	piifixtures.Require(t)
 	d := newDetector(t, "")
-	assertRules(t, d.ScanLine("f.txt", 1, "0212345678"))
-	assertRules(t, d.ScanLine("f.txt", 1, "電話番号：0212345678"))
+	fixedNoSep := strings.ReplaceAll(piifixtures.MustGet(t, "detect.phone_fixed_tokyo"), "-", "")
+	assertRules(t, d.ScanLine("f.txt", 1, fixedNoSep))
+	assertRules(t, d.ScanLine("f.txt", 1, "電話番号："+fixedNoSep), "jp-phone-number")
+}
+
+// P10（#56）: 新規の区切りなし固定電話だけに負文脈を適用し、既存の電話番号
+// パターンは近傍に伝票番号等があっても従来どおり検出する。
+func TestPhoneNegativeContextOnlyAppliesToLandlineNoSep(t *testing.T) {
+	piifixtures.Require(t)
+	d := newDetector(t, "")
+	fixedSep := piifixtures.MustGet(t, "detect.phone_fixed_tokyo")
+	fixedNoSep := strings.ReplaceAll(fixedSep, "-", "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"区切りあり携帯", "伝票番号:0001 " + piifixtures.MustGet(t, "detect.phone_mobile_sep"), []string{"jp-phone-number"}},
+		{"区切りなし携帯", "伝票番号:0001 " + piifixtures.MustGet(t, "detect.phone_mobile_nosep"), []string{"jp-phone-number"}},
+		{"区切りあり固定電話", "伝票番号:0001 " + fixedSep, []string{"jp-phone-number"}},
+		{"IP 電話", "伝票番号:0001 " + piifixtures.MustGet(t, "detect.phone_ip"), []string{"jp-phone-number"}},
+		{"国際表記", "伝票番号:0001 " + piifixtures.MustGet(t, "detect.phone_intl_mobile"), []string{"jp-phone-number"}},
+		{"区切りなし固定電話", "電話番号: " + fixedNoSep + " 伝票番号", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// ScanContent の隣接行負文脈フィルタでも、既存パターンの除外指定が維持される。
+func TestPhoneExistingPatternIgnoresAdjacentLineNegativeContext(t *testing.T) {
+	piifixtures.Require(t)
+	d := newDetector(t, "")
+	content := piifixtures.MustGet(t, "detect.phone_mobile_sep") + "\n伝票番号"
+	assertRules(t, d.ScanContent("f.txt", content), "jp-phone-number")
 }
 
 // P10（#56）: 区切りあり固定電話は area_codes.txt の seed 辞書が未完成でも

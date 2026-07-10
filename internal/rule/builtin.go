@@ -295,24 +295,25 @@ func Builtin() []Rule {
 			Prefilter:   PrefilterDigit,
 			Context:     []string{"電話", "携帯", "連絡先", "tel", "phone", "fax", "mobile", "denwa"},
 			// 桁ベースの区切りなし固定電話パターンは業務 ID・型番等と衝突しやすいため、
-			// 金額・数量・連番 ID 文脈での棄却（NegativeContext）を全パターンに適用する。
+			// 金額・数量・連番 ID 文脈で棄却する。既存パターンは従来の検出挙動を
+			// 維持するため IgnoreNegativeContext で適用対象から外す。
 			NegativeContext:      digitRuleNegativeContext,
 			RequireContextWindow: digitRuleRequireContextWindow,
 			Validate:             validPhone,
 			Patterns: []Pattern{
 				// 区切りあり携帯・IP 電話（060/070/080/090/050）
-				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0-\d{4}-\d{4}`), Base: High},
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0-\d{4}-\d{4}`), Base: High, IgnoreNegativeContext: true},
 				// 区切りなし携帯・IP 電話
-				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0\d{8}`), Base: Medium},
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0\d{8}`), Base: Medium, IgnoreNegativeContext: true},
 				// 区切りあり固定電話（市外局番 2〜5 桁）
-				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}-\d{1,4}-\d{4}`), Base: Medium},
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}-\d{1,4}-\d{4}`), Base: Medium, IgnoreNegativeContext: true},
 				// 区切りなし固定電話（10 桁）。裸の \d{10} は型番・伝票番号等との
 				// 衝突が非常に多く単独では出せないため、コンテキストキーワード必須
 				// （RequireContext）にした上で validPhone が市外局番辞書
 				// （dict.ValidAreaCode）で先頭一致の実在性を検証する。
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{9}`), Base: Medium, RequireContext: true},
 				// 国際表記 +81
-				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`\+81[- ]?\d{1,4}[- ]?\d{1,4}[- ]?\d{3,4}`), Base: High},
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`\+81[- ]?\d{1,4}[- ]?\d{1,4}[- ]?\d{3,4}`), Base: High, IgnoreNegativeContext: true},
 			},
 		},
 		{
