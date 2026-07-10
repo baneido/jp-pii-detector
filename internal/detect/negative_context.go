@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/baneido/jp-pii-detector/internal/normalize"
+	"github.com/baneido/jp-pii-detector/internal/rule"
 )
 
 const negativeContextWindowRunes = 20
@@ -95,16 +96,18 @@ func (d *Detector) hasNegativeContextNear(s string, start, end, radius int, rune
 
 	var generic []string
 	for _, kw := range kws {
-		switch {
-		case isCurrencyPrefix(kw):
+		switch rule.ClassifyNegativeKeyword(kw) {
+		case rule.NegativeKeywordCurrencyPrefix, rule.NegativeKeywordLabelPrefix:
+			// 通貨記号（¥100）と採番ラベル（伝票番号 100...）は、どちらも
+			// 値の直前に隣接する場合のみ抑制する（hasUnitBefore）。
 			if hasUnitBefore(rs, runeStart, radius, []rune(kw)) {
 				return true
 			}
-		case isCurrencySuffix(kw):
+		case rule.NegativeKeywordCurrencySuffix:
 			if hasUnitAfter(rs, runeEnd, radius, []rune(kw), false) {
 				return true
 			}
-		case isCounterSuffix(kw):
+		case rule.NegativeKeywordCounterSuffix:
 			if hasUnitAfter(rs, runeEnd, radius, []rune(kw), true) {
 				return true
 			}
@@ -116,35 +119,6 @@ func (d *Detector) hasNegativeContextNear(s string, start, end, radius int, rune
 		return false
 	}
 	return d.containsAnyContext(contextWindow(s, start, end, radius, runes), generic)
-}
-
-// isCurrencyPrefix / isCurrencySuffix / isCounterSuffix は
-// rule.digitRuleNegativeContext（internal/rule/builtin.go）の各語を
-// 単位の種別に分類する。どれにも該当しない語は hasNegativeContextNear で
-// 「汎用」として近傍一致のみで扱う。語リスト（rule 側）に追加した語の
-// 単位近接判定を効かせるには、この分類（detect 側）も併せて更新すること。
-func isCurrencyPrefix(kw string) bool {
-	switch kw {
-	case "¥", "￥", "$":
-		return true
-	}
-	return false
-}
-
-func isCurrencySuffix(kw string) bool {
-	switch kw {
-	case "円", "千", "万", "億", "%", "％":
-		return true
-	}
-	return false
-}
-
-func isCounterSuffix(kw string) bool {
-	switch kw {
-	case "人", "名", "件", "個", "回", "点":
-		return true
-	}
-	return false
 }
 
 func hasUnitBefore(rs []rune, start, radius int, unit []rune) bool {
@@ -182,7 +156,11 @@ func hasUnitAfter(rs []rune, end, radius int, unit []rune, requireBoundary bool)
 	if unitEnd > to || !runesEqual(rs[i:unitEnd], unit) {
 		return false
 	}
-	return !requireBoundary || unitEnd == len(rs) || !isJapaneseLetter(rs[unitEnd])
+	// requireBoundary はカウンタ接尾語（件・人 等）専用。直後が漢字なら
+	// 「件名」「名義」のような漢字複合語の一部とみなし、単位としては
+	// 扱わない（境界不成立）。ひらがな（件に/件が/件を のような助詞続き）や
+	// 記号・行末は単位として独立しているとみなし、抑制を適用する。
+	return !requireBoundary || unitEnd == len(rs) || !isKanji(rs[unitEnd])
 }
 
 func runesEqual(a, b []rune) bool {
@@ -197,6 +175,9 @@ func runesEqual(a, b []rune) bool {
 	return true
 }
 
-func isJapaneseLetter(r rune) bool {
-	return (r >= 0x3040 && r <= 0x30ff) || (r >= 0x3400 && r <= 0x9fff)
+// isKanji は CJK 統合漢字（拡張 A を含む）かどうかを返す。ひらがな・
+// カタカナはここに含めない（hasUnitAfter の requireBoundary が、助詞続き
+// （件に/件が 等）と漢字複合語（件名 等）を区別するために使う）。
+func isKanji(r rune) bool {
+	return r >= 0x3400 && r <= 0x9fff
 }
