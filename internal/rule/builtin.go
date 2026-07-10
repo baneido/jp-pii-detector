@@ -96,8 +96,12 @@ var (
 	// personNameLabelASCIIStrong は語そのものが「人」を表す ASCII キー。
 	// 辞書照合なしで検出する（収録外の人名も拾う）。user_name / account_name /
 	// contact_name はハンドル名・システム名でありうるため強ラベルには入れず、
-	// 辞書照合つきの弱ラベル側で扱う。
-	personNameLabelASCIIStrong = `(?:full_?name|customer_?name|patient_?name|applicant_?name)`
+	// 辞書照合つきの弱ラベル側で扱う。normalize は ASCII の大小文字を変換しない
+	// ため、`(?i:...)` で FULL_NAME: / CustomerName: のような大文字・キャメル
+	// ケース表記も拾う（#48）。あわせて PrefilterLiterals 側
+	// （containsAnyLiteral）も大文字小文字を無視しないと、正規表現に到達する前に
+	// 行がスキップされてしまう点に注意。
+	personNameLabelASCIIStrong = `(?i:full_?name|customer_?name|patient_?name|applicant_?name)`
 	// personNameBoundary は強・弱ラベル共通の前方境界。識別子連結文字
 	// （英数字・_）に加えて漢字・かなも禁止し、登録名前 / 会社名 / 変数名前 のように
 	// ラベル語が複合名詞の一部になっているケースを除外する。
@@ -109,16 +113,95 @@ var (
 	// personNameSep はラベルと値の区切り。キー側の閉じ引用符（"name":）と
 	// 値側の開き引用符・括弧（: "山田" / ：「山田」）の両方を許容する。
 	personNameSep = `["']?\s*[:=]\s*["'「『（(]?\s*`
+	// personNameSepOrBracket は personNameSep に加え、コロン・イコールなしで
+	// 鉤括弧・丸括弧が値に直結するケース（ご氏名「田中美咲」等。jp-pii-detector:ignore）も区切りとして
+	// 許容する。強いラベル（personNameLabelJP / personNameLabelASCIIStrong）専用。
+	// 弱いラベル（姓・名 等）は日常語との衝突を避けるため personNameSep のまま
+	// コロン必須とする（#48）。
+	personNameSepOrBracket = `(?:` + personNameSep + `|[「『（(])`
 	// personNameValue は氏名の値（漢字・かな・カナ列。任意で半角スペース
-	// 区切りの 2 語）。強いラベル用に 2 文字以上を要求する。
+	// 区切りの 2 語）。強いラベル用に 2 文字以上を要求する。カタカナ中黒
+	// （U+30FB、「ジョン・スミス」等）も値の一部として許容する（#48）。
 	// 既知の軽微な限界: `氏名: 山田 様` のように値の後に敬称が続くと、敬称まで
 	// マスク対象に含まれうる（検出の成否・評価には影響しない表示上の過剰取り込み）。
-	personNameValue = `[` + kanji + hiragana + katakana + `]{2,12}` +
-		`(?:[ ][` + kanji + hiragana + katakana + `]{1,12})?`
+	personNameValue = `[` + kanji + hiragana + katakana + `\x{30FB}]{2,12}` +
+		`(?:[ ][` + kanji + hiragana + katakana + `\x{30FB}]{1,12})?`
 	// personNameValueShort は弱いラベル（姓・名の単一フィールド）用。1 文字も
 	// 捕捉し、長さ・人名らしさの最終判断は validSurnameField 等の検証器に委ねる。
 	personNameValueShort = `[` + kanji + hiragana + katakana + `]{1,12}` +
 		`(?:[ ][` + kanji + hiragana + katakana + `]{1,12})?`
+	// personNameValueShortFallback は弱いラベルの見逃し（FN）修正用フォールバック。
+	// personNameValueShort は末尾の助詞・敬称も同じ文字クラスに含まれるため貪欲に
+	// 取り込んでしまい（例: 「山田さんへ連絡」を丸ごと 1 語として捕捉）、姓名辞書に
+	// 一致せず検出を落とすことがある。この派生パターンは非貪欲キャプチャ（group 1、
+	// 自前で括弧を持つ。呼び出し側で personNameValueShort のように再度括弧で
+	// 囲まないこと）の直後に personNameTrailingParticles のいずれかが続くことを
+	// 必須にすることで、最初に助詞・敬称が現れた位置で先頭セグメントを切り出す
+	// （1 回だけ剥がす）。助詞・敬称自体は non-capturing のため検出スパンには
+	// 含まれない。通常どおり値の直後に助詞が続かない行では一致せず、
+	// personNameValueShort 側のパターンのみが有効になる。
+	personNameValueShortFallback = `([` + kanji + hiragana + katakana + `]{1,12}?)` +
+		`(?:` + strings.Join(personNameTrailingParticles, "|") + `)`
+)
+
+// personNameTrailingParticles は氏名の値の直後に続きうる助詞・敬称
+// （personNameValueShortFallback 専用）。値と地続きの文（「山田さんへ連絡」等）を
+// 辞書照合前に切り離すために使う。
+var personNameTrailingParticles = []string{
+	// 敬称
+	"さん", "様", "殿", "先生", "先輩", "君", "ちゃん", "氏",
+	// 複合助詞（単独助詞より先に試しても結果に影響しないが、可読性のため先に置く）
+	"とは", "では", "でも", "には", "からは", "までは", "より",
+	// 単独助詞
+	"から", "まで", "は", "が", "を", "に", "で", "と", "も", "の", "へ", "や", "な", "か",
+}
+
+// person-name ルールの一部パターンは、辞書検証ありの Medium 判定と辞書照合
+// なしの Low 判定を同一正規表現の 2 枚組（twin）で持つ。twin 間で正規表現
+// オブジェクトを共有し、二重コンパイルを避けるためパッケージ変数として
+// 定義する。
+var (
+	// personNameStrongLabelRe は強いラベル（氏名系日本語ラベル / full_name 等）
+	// 用パターン。personNameSepOrBracket により、コロンなしで鉤括弧が値に直結する
+	// ケースにも対応する（#48、詳細は personNameSepOrBracket のコメント参照）。
+	personNameStrongLabelRe = regexp.MustCompile(
+		personNameBoundary +
+			`(?:` + personNameLabelJP + `|` + personNameLabelASCIIStrong + `)` +
+			personNameSepOrBracket +
+			`(` + personNameValue + `)`,
+	)
+	// personNameUserNameRe は姓名どちらが入るか不定の ASCII キー
+	// （user_name / account_name / contact_name）用パターン。
+	personNameUserNameRe = regexp.MustCompile(
+		personNameBoundary +
+			`(?:user_?name|account_?name|contact_?name)` +
+			personNameSep +
+			`(` + personNameValueShort + `)`,
+	)
+	// personNameBareRe は裸の name ラベル用パターン。`(?i:name)` により
+	// NAME: / Name: のような大文字表記も拾う（#48）。
+	personNameBareRe = regexp.MustCompile(
+		personNameBareNameBoundary +
+			`(?i:name)` +
+			personNameSep +
+			`(` + personNameValueShort + `)`,
+	)
+	// personNameUserNameFallbackRe / personNameBareFallbackRe は上記 2 つの
+	// 見逃し修正フォールバック版（personNameValueShortFallback を使い、値の
+	// 直後に助詞・敬称が続くケースを拾う）。twin と同様、Medium/Low の 2
+	// Pattern で正規表現オブジェクトを共有する。
+	personNameUserNameFallbackRe = regexp.MustCompile(
+		personNameBoundary +
+			`(?:user_?name|account_?name|contact_?name)` +
+			personNameSep +
+			personNameValueShortFallback,
+	)
+	personNameBareFallbackRe = regexp.MustCompile(
+		personNameBareNameBoundary +
+			`name` +
+			personNameSep +
+			personNameValueShortFallback,
+	)
 )
 
 // personNamePlaceholders は氏名の値として現れるダミー語（人名ではない）。
@@ -164,53 +247,129 @@ func notOrgName(v string) bool {
 	return true
 }
 
+// personNameRoleSuffixes は職業・役割・部署を表す語尾。敬称パターンの実測 FP
+// である 本屋さん・運転手さん（職業）、取引先様・関係者様・保護者様・御中様
+// （役割語）、経理部殿・総務課殿（部署）を棄却するために使う。単漢字の語尾
+// （屋・部・課 等）は姓（阿部・服部・土屋・北条 等）と衝突するため、
+// honorificPersonNameValid は辞書照合（dict.IsPersonName）を先に評価する順序で
+// この denylist を適用し、辞書収録済みの衝突姓を巻き添えにしない。
+var personNameRoleSuffixes = []string{
+	"者", "員", "手", "屋", "師", "士", "長", "生", "部", "課", "係", "室", "先", "中",
+}
+
+// notRoleWord は氏名候補 v が職業・役割・部署の語尾（personNameRoleSuffixes）で
+// 終わらないことを返す。
+func notRoleWord(v string) bool {
+	v = strings.TrimSpace(v)
+	for _, s := range personNameRoleSuffixes {
+		if strings.HasSuffix(v, s) {
+			return false
+		}
+	}
+	return true
+}
+
+// honorificPersonNameValid は敬称（様/さん/氏/殿）付き漢字氏名候補 v の検証器。
+// 組織名の語尾（notOrgName）は常に棄却する。姓名辞書（dict.IsPersonName）に
+// 一致すれば単漢字語尾の姓（阿部・土屋 等）でも許可し、辞書に無い値だけを
+// 職業・役割・部署語尾（notRoleWord）で追加検証する。この評価順序により、
+// 辞書未収録の実在人名（denylist 非該当）は引き続き Medium で検出される
+// （detect_test.go の「敬称 + 辞書外の姓」ケースを参照）。
+func honorificPersonNameValid(v string) bool {
+	v = strings.TrimSpace(v)
+	if !notOrgName(v) {
+		return false
+	}
+	if dict.IsPersonName(v) {
+		return true
+	}
+	return notRoleWord(v)
+}
+
 // 弱いラベル（姓・名・last_name 等）の値検証。1 文字の単独要素は日常語と
 // 衝突しやすいため、単独要素は 2 文字以上かつラベル種別（姓/名）に一致する
 // 場合のみ許可する。「姓 + 名」に分割できる完全な氏名はラベル種別を問わず許可する。
-func validSurnameField(v string) bool { return validNameField(v, true, false) }
-func validGivenField(v string) bool   { return validNameField(v, false, true) }
+//
+// 例外: 姓ラベル（姓/名字/苗字/last_name）専用の validSurnameField のみ、
+// 辞書収録済みの実在 1 文字姓（林・森・原・東 等 75 件）を allow1CharSurname
+// で許可する（#48）。名フィールド・姓名不定フィールドは「名: 東」のような
+// 方角語等との衝突を避けるため現状どおり 1 文字を許可しない。
+func validSurnameField(v string) bool { return validNameFieldOpt(v, true, false, true) }
+func validGivenField(v string) bool   { return validNameFieldOpt(v, false, true, false) }
 
 // validFullNameField は姓・名のいずれか、または姓+名に分割できる値を許可する
 // （name / user_name など姓名どちらが入るか不定のフィールド用）。
-func validFullNameField(v string) bool { return validNameField(v, true, true) }
+func validFullNameField(v string) bool { return validNameFieldOpt(v, true, true, false) }
 
-func validNameField(v string, allowSurname, allowGiven bool) bool {
+func validNameFieldOpt(v string, allowSurname, allowGiven, allow1CharSurname bool) bool {
 	v = strings.TrimSpace(v)
 	if dict.SplitsAsFullName(v) {
 		return true
 	}
 	if len([]rune(v)) < 2 {
-		return false
+		return allow1CharSurname && allowSurname && dict.IsSurname(v)
 	}
 	return (allowSurname && dict.IsSurname(v)) || (allowGiven && dict.IsGivenName(v))
 }
 
-// digitRuleNegativeContext は桁ベースのルールを棄却する近傍語
-// （金額・数量・連番 ID など PII でない数字列の文脈）。
-//
-// 重要（隠れ結合）: 各語が「通貨接頭 / 通貨接尾 / カウンタ接尾 / 汎用」の
-// どれであるかは internal/detect 側の hasNegativeContextNear が分類する
-// （isCurrencyPrefix / isCurrencySuffix / isCounterSuffix・
-// negative_context.go）。ここに語を足しても detect 側の分類器を更新しないと
-// 黙って「汎用」扱いになり、前後の単位近接判定（数字の直後の「円」等）が
-// 効かない。語の追加時は両所を併せて更新すること。
-var digitRuleNegativeContext = []string{
-	"円", "¥", "￥", "$", "千", "万", "億", "人", "名", "件", "個", "回", "点", "%", "％",
-	// 注: "no." や "#" は採番ラベルだが、肯定文脈（口座・免許 等）が既に必須の
-	// ため FP 抑制効果は薄く、"license no." のような正規ラベルを誤って棄却する
-	// 副作用が大きいため除外している。
-	"注文", "伝票", "管理番号", "通し番号", "連番",
+// validStrictFullName は姓+名の分割（dict.FullNameSplit）が成立し、かつ名側の
+// 成分が 2 文字以上であることを要求する、姓名辞書検証のうち最も厳しい検証。
+// 単独の姓・名一致（渋谷・大和・本田のような地名・企業名と同形の姓を含む）は
+// 許可しない。person-name-structured（クロスライン、structured.go）と裸の
+// name ラベルで使う（同一行の他フィールドより誤検出リスクが高いため）。
+func validStrictFullName(v string) bool {
+	v = strings.TrimSpace(v)
+	_, given, ok := dict.SplitFullName(v)
+	return ok && len([]rune(given)) >= 2
 }
+
+// validPersonNameFullSplit は姓+名の分割（dict.FullNameSplit）が成立する
+// 場合のみ許可する。担当ラベル（person-name-high-recall）の Medium パターン用。
+// 単独の姓一致（SurnameOnly）は validPersonNameSurnameOnly 側の Low パターンで
+// 別途扱うため、ここには含めない（渋谷・大和・本田のような地名・企業名と同形の
+// 姓が Medium に一律昇格するのを避ける）。
+func validPersonNameFullSplit(v string) bool {
+	return dict.MatchPersonName(strings.TrimSpace(v)) == dict.FullNameSplit
+}
+
+// validPersonNameSurnameOnly は単独の姓一致（dict.SurnameOnly）の場合のみ許可
+// する。担当ラベル（person-name-high-recall）の Low パターン用。
+func validPersonNameSurnameOnly(v string) bool {
+	return dict.MatchPersonName(strings.TrimSpace(v)) == dict.SurnameOnly
+}
+
+// digitRuleNegativeContext / digitRuleUnitAdjacentNegativeContext と、各語が
+// どの近接判定クラス（通貨接頭・通貨接尾・カウンタ接尾・採番ラベル接頭・
+// 汎用窓語）に属するかの分類は internal/rule/negative_context.go に同居する
+// （ClassifyNegativeKeyword が単一の情報源）。internal/detect 側はこの分類を
+// 呼ぶだけで、語彙を独自に分類しない。
+
+// jp-birthdate ルールで共用する部分パターン。
+var (
+	// birthdateLabel はラベル部（日本語 2 語 + 英語表記ゆれ）。英語ラベルは
+	// "dob" のような短い略記が adobe / wardrobe 等の単語内部に現れうるため、
+	// personNameBoundary と同じ前方境界（非英数字・非漢字かな）を英語側にのみ
+	// 付与してスコープを絞る（`adobe:` 等は前方が英字のため境界で除外される）。
+	// 日本語ラベルには前方境界を課さない。「対象者の生年月日:」のような、
+	// ラベル直前に助詞・漢字が続く既存の使い方をそのまま許容するため。
+	// 大小文字は英語ラベルのみ区別しない（日本語ラベルに大小文字はないため無関係）。
+	birthdateLabel = `(?:生年月日|誕生日|` + personNameBoundary +
+		`(?i:birth\s?date|birthday|date[_ ]of[_ ]birth|dob))`
+	// birthdateLabelSep はラベルと値の区切り。ラベル直後に「(西暦)」等の注記が
+	// 挟まる表記を許容してから、既存の区切り（コロン/イコール）を許容する。
+	birthdateLabelSep = `(?:[(（][^)）]{1,10}[)）])?\s*[:=]?\s*`
+)
 
 // Builtin は組み込みルール一覧を返す。
 func Builtin() []Rule {
 	return []Rule{
 		{
-			ID:          "jp-my-number",
-			Description: "マイナンバー（個人番号）",
-			Prefilter:   PrefilterDigit,
-			Context:     []string{"マイナンバー", "個人番号", "mynumber", "my number", "my_number"},
-			Validate:    validMyNumber,
+			ID:              "jp-my-number",
+			Description:     "マイナンバー（個人番号）",
+			Prefilter:       PrefilterDigit,
+			Context:         []string{"マイナンバー", "個人番号", "mynumber", "my number", "my_number"},
+			NegativeContext: digitRuleUnitAdjacentNegativeContext,
+			Validate:        validMyNumber,
 			Patterns: []Pattern{
 				{Re: dgNoAlnumHyphen(`\d{12}`), Base: Medium},
 				// 前後にハイフンが続く場合はクレジットカード等の
@@ -236,10 +395,11 @@ func Builtin() []Rule {
 			},
 		},
 		{
-			ID:          "jp-postal-code",
-			Description: "郵便番号",
-			Prefilter:   PrefilterDigit,
-			Context:     []string{"郵便番号", "郵便", "住所", "postal", "zipcode", "zip code", "〒"},
+			ID:              "jp-postal-code",
+			Description:     "郵便番号",
+			Prefilter:       PrefilterDigit,
+			Context:         []string{"郵便番号", "郵便", "住所", "postal", "zipcode", "zip code", "〒"},
+			NegativeContext: digitRuleUnitAdjacentNegativeContext,
 			// 7 桁完全一致（ビットセット生成済みのとき。未生成なら上位 3 桁実在チェック）。
 			Validate: dict.ValidPostalCode,
 			Patterns: []Pattern{
@@ -292,10 +452,11 @@ func Builtin() []Rule {
 			},
 		},
 		{
-			ID:          "credit-card",
-			Description: "クレジットカード番号（Luhn + ブランドプレフィックス検証）",
-			Prefilter:   PrefilterDigit,
-			Context:     []string{"クレジット", "カード番号", "credit", "card"},
+			ID:              "credit-card",
+			Description:     "クレジットカード番号（Luhn + ブランドプレフィックス検証）",
+			Prefilter:       PrefilterDigit,
+			Context:         []string{"クレジット", "カード番号", "credit", "card"},
+			NegativeContext: digitRuleUnitAdjacentNegativeContext,
 			Validate: func(m string) bool {
 				return checksum.CreditCard(stripSeparators(m))
 			},
@@ -325,11 +486,12 @@ func Builtin() []Rule {
 			},
 		},
 		{
-			ID:          "jp-passport",
-			Description: "旅券（パスポート）番号",
-			Prefilter:   PrefilterDigit,
-			Context:     []string{"パスポート", "旅券", "passport"},
-			Validate:    validPassport,
+			ID:              "jp-passport",
+			Description:     "旅券（パスポート）番号",
+			Prefilter:       PrefilterDigit,
+			Context:         []string{"パスポート", "旅券", "passport"},
+			NegativeContext: digitRuleUnitAdjacentNegativeContext,
+			Validate:        validPassport,
 			Patterns: []Pattern{
 				{Re: ag(`[A-Z]{2}\d{7}`), Base: High, RequireContext: true},
 			},
@@ -346,11 +508,12 @@ func Builtin() []Rule {
 			},
 		},
 		{
-			ID:          "jp-residence-card",
-			Description: "在留カード番号",
-			Prefilter:   PrefilterDigit,
-			Context:     []string{"在留", "residence card", "zairyu"},
-			Validate:    validResidenceCard,
+			ID:              "jp-residence-card",
+			Description:     "在留カード番号",
+			Prefilter:       PrefilterDigit,
+			Context:         []string{"在留", "residence card", "zairyu"},
+			NegativeContext: digitRuleUnitAdjacentNegativeContext,
+			Validate:        validResidenceCard,
 			Patterns: []Pattern{
 				{Re: ag(`[A-Z]{2}\d{8}[A-Z]{2}`), Base: High, RequireContext: true},
 			},
@@ -365,6 +528,35 @@ func Builtin() []Rule {
 			Validate:             validBankAccount,
 			Patterns: []Pattern{
 				{Re: dg(`\d{7}`), Base: Medium, RequireContext: true},
+			},
+		},
+		{
+			// jp-health-insurance より前に登録する。両ルールの 8 桁パターンが
+			// 同一行・同一箇所で重なった場合、resolveOverlaps は「同信頼度・
+			// 同じ長さなら先勝ち」で決着するため、ラベル直結という強いシグナルを
+			// 持つ jp-birthdate 側を優先させる（TestBirthdateWinsOverHealthInsuranceOverlap）。
+			ID:          "jp-birthdate",
+			Description: "生年月日（ラベル付き）",
+			Prefilter:   PrefilterDigit,
+			// 形式（西暦・和暦・区切りなし8桁）だけでなく、実在する暦日かを検証する。
+			// 2023-99-99 や 2023-02-29（閏年でない）などを棄却する。
+			Validate: validBirthdate,
+			Patterns: []Pattern{
+				// 区切りあり形式。西暦 4 桁、または和暦（元号の漢字表記 or
+				// 明治/大正/昭和/平成/令和を表す単字アルファベット略記 M/T/S/H/R）＋
+				// 年（1-2 桁の数字、または改元年を表す「元」）。
+				{Re: regexp.MustCompile(
+					birthdateLabel + birthdateLabelSep +
+						`((?:(?:19|20)\d{2}|(?:明治|大正|昭和|平成|令和|[MTSHR])(?:元|\d{1,2}))[年/.-]\d{1,2}[月/.-]\d{1,2}日?)`,
+				), Base: Medium},
+				// ラベル直結・区切りなしの 8 桁連結（YYYYMMDD）。DB エクスポート等で
+				// 最頻出の表記。月日のレンジをパターン側で絞り込み、ラベルへの
+				// 直結を必須とすることで、処理日・有効期限など無関係な 8 桁列や、
+				// ラベルなしの裸 8 桁を拾わない。
+				{Re: regexp.MustCompile(
+					birthdateLabel + birthdateLabelSep +
+						`((?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01]))(?:[^0-9]|$)`,
+				), Base: Medium},
 			},
 		},
 		{
@@ -393,51 +585,78 @@ func Builtin() []Rule {
 			Validate: notPlaceholderName,
 			Patterns: []Pattern{
 				// 強いラベル: 氏名系の日本語ラベルと、語そのものが「人」を表す
-				// 複合 ASCII キー（full_name / customer_name 等）。値が人名らしいかは
-				// 問わず（収録外の人名も拾うため）辞書照合はしない。前方境界
+				// 複合 ASCII キー（full_name / customer_name 等）。前方境界
 				// personNameBoundary で漢字・かな直後（登録名前: 等）を除外する。
 				// JSON/YAML のキー引用符（"氏名":）と値の引用符・括弧にも対応。
-				{Re: regexp.MustCompile(
-					personNameBoundary +
-						`(?:` + personNameLabelJP + `|` + personNameLabelASCIIStrong + `)` +
-						personNameSep +
-						`(` + personNameValue + `)`,
-				), Base: Low},
-				// 弱いラベル: 姓側（姓・名字・苗字・last_name）。単独要素は 2 文字以上の
-				// 姓、または姓+名に分割できる氏名のみ許可する（validSurnameField）。
+				// personNameSepOrBracket により、コロンなしで鉤括弧が値に直結する
+				// ケースにも対応する（#48、詳細は personNameSepOrBracket のコメント参照）。
+				// 同一正規表現の 2 枚組（twin）: 値が姓名辞書に一致すれば Medium
+				// （既定 min_confidence=medium で報告）、一致しない収録外の実在
+				// 人名は Low のまま拾う。resolveOverlaps が同一スパンで信頼度の
+				// 高い Medium を残す。
+				{Re: personNameStrongLabelRe, Base: Medium, Validate: dict.IsPersonName},
+				{Re: personNameStrongLabelRe, Base: Low},
+				// 弱いラベル: 姓側（姓・名字・苗字・last_name）。validSurnameField が
+				// 姓名辞書で検証済み（単独要素は 2 文字以上の姓、または姓+名に
+				// 分割できる氏名のみ許可）のため、Base は Medium。
 				{Re: regexp.MustCompile(
 					personNameBoundary +
 						`(?:姓|名字|苗字|last_?name)` +
 						personNameSep +
 						`(` + personNameValueShort + `)`,
-				), Base: Low, Validate: validSurnameField},
-				// 弱いラベル: 名側（名・first_name）。単独要素は 2 文字以上の名、
-				// または姓+名に分割できる氏名のみ許可する（validGivenField）。
-				// 1 文字名（学・実 等）と姓（名: 田中）は棄却される。
+				), Base: Medium, Validate: validSurnameField},
+				// 姓側の見逃し修正フォールバック: 値の直後に助詞・敬称が続き辞書照合に
+				// 失敗するケース（姓: 山田さんへ連絡 jp-pii-detector:ignore）で、
+				// 先頭セグメントだけを切り出して再照合する
+				// （personNameValueShortFallback を参照）。plain パターンと
+				// 同じ validSurnameField で検証されるため Base も同じ Medium。
+				{Re: regexp.MustCompile(
+					personNameBoundary +
+						`(?:姓|名字|苗字|last_?name)` +
+						personNameSep +
+						personNameValueShortFallback,
+				), Base: Medium, Validate: validSurnameField},
+				// 弱いラベル: 名側（名・first_name）。validGivenField が姓名辞書で
+				// 検証済み（単独要素は 2 文字以上の名、または姓+名に分割できる
+				// 氏名のみ許可。1 文字名（学・実 等）と姓（名: 田中）は棄却）
+				// のため、Base は Medium。
 				{Re: regexp.MustCompile(
 					personNameBoundary +
 						`(?:名|first_?name)` +
 						personNameSep +
 						`(` + personNameValueShort + `)`,
-				), Base: Low, Validate: validGivenField},
-				// 弱いラベル: 姓名どちらが入るか不定の ASCII キー
-				// （user_name / account_name / contact_name）。ハンドル名・システム名
-				// （管理者・共有アカウント 等）を姓名辞書で棄却する。
+				), Base: Medium, Validate: validGivenField},
+				// 名側の見逃し修正フォールバック（姓側と同様）。
 				{Re: regexp.MustCompile(
 					personNameBoundary +
-						`(?:user_?name|account_?name|contact_?name)` +
+						`(?:名|first_?name)` +
 						personNameSep +
-						`(` + personNameValueShort + `)`,
-				), Base: Low, Validate: validFullNameField},
+						personNameValueShortFallback,
+				), Base: Medium, Validate: validGivenField},
+				// 弱いラベル: 姓名どちらが入るか不定の ASCII キー
+				// （user_name / account_name / contact_name）。ハンドル名・システム名
+				// （管理者・共有アカウント 等）は姓名辞書で棄却する。同一正規表現の
+				// 2 枚組: 姓+名に分割できる値のみ Medium（dict.SplitsAsFullName）。
+				// name フィールドの値が単独の姓（大和 等、地名・一般名詞と同形になり
+				// やすい）のみの場合は Low のまま昇格させない。
+				{Re: personNameUserNameRe, Base: Medium, Validate: dict.SplitsAsFullName},
+				{Re: personNameUserNameRe, Base: Low, Validate: validFullNameField},
+				// 姓名不定 ASCII キーの見逃し修正フォールバック（姓側と同様）。plain
+				// パターンと同じ 2 枚組の判定基準（dict.SplitsAsFullName /
+				// validFullNameField）に揃える。
+				{Re: personNameUserNameFallbackRe, Base: Medium, Validate: dict.SplitsAsFullName},
+				{Re: personNameUserNameFallbackRe, Base: Low, Validate: validFullNameField},
 				// 裸の name ラベル。kebab-case / dotted key（project-name /
 				// project.name 等）の末尾 name を誤検出しないよう前方境界で `-` `.`
 				// も禁止し、値は姓名辞書で検証する（name: 株式会社 等を棄却）。
-				{Re: regexp.MustCompile(
-					personNameBareNameBoundary +
-						`name` +
-						personNameSep +
-						`(` + personNameValueShort + `)`,
-				), Base: Low, Validate: validFullNameField},
+				// `(?i:name)` により NAME: / Name: のような大文字表記も拾う（#48）。
+				// user_name 系と同様、姓+名に分割できる値のみ Medium とし、
+				// 値が単独の姓（大和 等）のみの場合は Low のまま昇格させない。
+				{Re: personNameBareRe, Base: Medium, Validate: dict.SplitsAsFullName},
+				{Re: personNameBareRe, Base: Low, Validate: validFullNameField},
+				// 裸の name ラベルの見逃し修正フォールバック（user_name 系と同様）。
+				{Re: personNameBareFallbackRe, Base: Medium, Validate: dict.SplitsAsFullName},
+				{Re: personNameBareFallbackRe, Base: Low, Validate: validFullNameField},
 			},
 		},
 		{
@@ -450,17 +669,44 @@ func Builtin() []Rule {
 				// 担当者・宛名・連絡先ラベル。敬称のような強い人物シグナルが無いため、
 				// 組織名・部署名（営業部 等）の誤検出を姓名辞書（allowlist）で抑える。
 				// 収録外の実在人名は取りこぼす（コンパクト辞書による再現率の上限）。
+				//
+				// 同一正規表現に対し、判定根拠（dict.MatchPersonName）ごとに信頼度を
+				// 作り分ける 2 Pattern に分割する（Medium 一括を回避）。姓+名の分割
+				// （FullNameSplit）は強い根拠として Medium のまま。単独の姓一致
+				// （SurnameOnly）は地名・企業名と同形の姓（渋谷・大和・本田 等）を
+				// 含みうるため Low に降格する。単独の名一致（GivenOnly）は根拠が弱く
+				// 誤検出リスクが高いためどちらのパターンにも含めない（取りこぼす）。
 				{Re: regexp.MustCompile(
 					`(?:担当|担当者|宛名|連絡先)` + personNameSep +
 						`([` + kanji + `]{2,8}(?:[ ][` + kanji + `]{1,8})?)`,
-				), Base: Medium, Validate: dict.IsPersonName},
-				// 敬称アンカー（様/さん/氏/殿）。敬称は人物を強く示すため、辞書 allowlist
-				// ではなく組織語尾の denylist（notOrgName）で「田中商事様」等を棄却する。
-				// これにより辞書未収録の実在人名（桐谷太郎様 等）を巻き添えで落とさない。
+				), Base: Medium, Validate: validPersonNameFullSplit},
+				{Re: regexp.MustCompile(
+					`(?:担当|担当者|宛名|連絡先)` + personNameSep +
+						`([` + kanji + `]{2,8}(?:[ ][` + kanji + `]{1,8})?)`,
+				), Base: Low, Validate: validPersonNameSurnameOnly},
+				// 敬称アンカー（氏名の漢字表記 + 様/さん/氏/殿）。組織語尾
+				// （notOrgName）は常に棄却し、辞書一致（dict.IsPersonName）を
+				// 優先しつつ、辞書に無い値は職業・役割・部署の語尾 denylist
+				// （notRoleWord）でも検証する（honorificPersonNameValid）。
+				// これにより辞書未収録の実在人名（denylist 非該当）は Medium の
+				// まま検出しつつ、職業語・役割語・部署語を伴う実測 FP を追加で
+				// 棄却する。
 				{Re: regexp.MustCompile(
 					`(?:^|[^` + kanji + hiragana + katakana + `])` +
 						`([` + kanji + `]{2,8})(?:様|さん|氏|殿)`,
-				), Base: Medium, Validate: notOrgName},
+				), Base: Medium, Validate: honorificPersonNameValid},
+				// 敬称アンカー（ひらがな・カタカナの氏名 + 様/さん/氏/殿）。この
+				// 文字種には notRoleWord のような語尾 denylist が効かないほど
+				// 日常語との衝突が多いため、辞書一致必須の allowlist 方式
+				// （dict.IsPersonName）で検証する。辞書収録済みのひらがな名
+				// （例: さくら）は敬称付きでも検出され、日常語（例: たくさん・
+				// みなさん）は辞書不在で棄却される。カタカナ人名は辞書未収録の
+				// ため、外来語名の敬称付き表記はこのパターンでは解消しない
+				// （辞書拡充は別課題として切り離す）。
+				{Re: regexp.MustCompile(
+					`(?:^|[^` + kanji + hiragana + katakana + `])` +
+						`([` + hiragana + katakana + `]{2,8})(?:様|さん|氏|殿)`,
+				), Base: Medium, Validate: dict.IsPersonName},
 			},
 		},
 		{
@@ -472,20 +718,6 @@ func Builtin() []Rule {
 			// クロスライン走査（scanCrossLineNames）が CrossLineNameLabelRe /
 			// CrossLineNameValueRe / ValidCrossLineName を使って検出する。
 			// 高再現率モードでのみ有効（HighRecallRuleIDs）。
-		},
-		{
-			ID:          "jp-birthdate",
-			Description: "生年月日（ラベル付き）",
-			Prefilter:   PrefilterDigit,
-			// 形式（西暦・和暦）だけでなく、実在する暦日かを検証する。
-			// 2023-99-99 や 2023-02-29（閏年でない）などを棄却する。
-			Validate: validBirthdate,
-			Patterns: []Pattern{
-				{Re: regexp.MustCompile(
-					`(?:生年月日|誕生日)\s*[:=]?\s*` +
-						`((?:(?:19|20)\d{2}|(?:明治|大正|昭和|平成|令和)\d{1,2})[年/.-]\d{1,2}[月/.-]\d{1,2}日?)`,
-				), Base: Medium},
-			},
 		},
 	}
 }
@@ -582,11 +814,27 @@ func validPhone(m string) bool {
 	return false
 }
 
-// birthdateRe は jp-birthdate の捕捉値（西暦 4 桁 or 和暦元号＋年・月・日）を
-// 分解する。グループ: 1=西暦年 / 2=元号 / 3=和暦年 / 4=月 / 5=日。
-// 区切りはルールの正規表現と同じ（年→月は [年/.-]、月→日は [月/.-]、末尾 日?）。
+// birthdateRe は jp-birthdate の区切りあり捕捉値（西暦 4 桁 or 和暦元号＋年・月・日）
+// を分解する。グループ: 1=西暦年 / 2=元号（漢字 or 単字アルファベット略記）/
+// 3=和暦年（数字、または改元年を表す「元」）/ 4=月 / 5=日。区切りはルールの
+// 正規表現と同じ（年→月は [年/.-]、月→日は [月/.-]、末尾 日?）。
 var birthdateRe = regexp.MustCompile(
-	`^(?:((?:19|20)\d{2})|(明治|大正|昭和|平成|令和)(\d{1,2}))[年/.-](\d{1,2})[月/.-](\d{1,2})日?$`)
+	`^(?:((?:19|20)\d{2})|(明治|大正|昭和|平成|令和|[MTSHR])(元|\d{1,2}))[年/.-](\d{1,2})[月/.-](\d{1,2})日?$`)
+
+// birthdateDigitsRe は jp-birthdate の「ラベル直結・区切りなし8桁」捕捉値
+// （YYYYMMDD）を分解する。月日のレンジは検出側の正規表現で既に絞り込み済み
+// なので、ここでは西暦年/月/日への分解のみを行う。グループ: 1=西暦年 / 2=月 / 3=日。
+var birthdateDigitsRe = regexp.MustCompile(`^((?:19|20)\d{2})(\d{2})(\d{2})$`)
+
+// birthdateEraAbbrev は運転免許証・保険証等の転記で一般的な元号の単字
+// アルファベット略記を正式名称へ変換する。
+var birthdateEraAbbrev = map[string]string{
+	"M": "明治",
+	"T": "大正",
+	"S": "昭和",
+	"H": "平成",
+	"R": "令和",
+}
 
 // warekiEra は元号の改元年（西暦）と、その元号で取りうる最大の和暦年を返す。
 // 改元年を元年（1 年）とし、西暦 = start + 和暦年 - 1 で換算する。令和は
@@ -610,7 +858,15 @@ func warekiEra(era string) (start, maxYear int, ok bool) {
 // validBirthdate は捕捉した生年月日が実在する暦日かを検証する。形式上は
 // 成立しても暦として無効な値（2023-99-99 / 2023-02-29 / 昭和65年… 等）を棄却する。
 // 未来日や年齢の妥当性までは判定しない（信頼度ではなく検出可否のみを扱うため）。
+// まず区切りなし8桁（YYYYMMDD）として解釈を試み、ダメなら区切りあり形式
+// （西暦 or 和暦、単字アルファベット略記・元年を含む）として解釈する。
 func validBirthdate(m string) bool {
+	if sub := birthdateDigitsRe.FindStringSubmatch(m); sub != nil {
+		year, _ := strconv.Atoi(sub[1])
+		month, _ := strconv.Atoi(sub[2])
+		day, _ := strconv.Atoi(sub[3])
+		return validCalendarDate(year, month, day)
+	}
 	sub := birthdateRe.FindStringSubmatch(m)
 	if sub == nil {
 		return false
@@ -619,8 +875,17 @@ func validBirthdate(m string) bool {
 	if sub[1] != "" {
 		year, _ = strconv.Atoi(sub[1])
 	} else {
-		eraYear, _ := strconv.Atoi(sub[3])
-		start, maxYear, ok := warekiEra(sub[2])
+		era := sub[2]
+		if full, ok := birthdateEraAbbrev[era]; ok {
+			era = full
+		}
+		var eraYear int
+		if sub[3] == "元" {
+			eraYear = 1
+		} else {
+			eraYear, _ = strconv.Atoi(sub[3])
+		}
+		start, maxYear, ok := warekiEra(era)
 		if !ok || eraYear < 1 || eraYear > maxYear {
 			return false
 		}
