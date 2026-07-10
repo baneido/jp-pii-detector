@@ -120,6 +120,34 @@ func TestNumericSeparatorVariantsRejectLongTokenPrefixes(t *testing.T) {
 	}
 }
 
+// TestNumericBoundariesAllowAdjacentIndependentValues は、区切り文字 1 個の外側に
+// 別の数字があるだけで既存の数値ルールを棄却しないことを確認する。長い同一
+// トークンの部分一致は上のテストで個別に防ぎつつ、ログ・CSV・フォームで普通に
+// 現れる複数値の隣接を許容する。
+func TestNumericBoundariesAllowAdjacentIndependentValues(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"電話番号の後ろに年", "TEL: 03-1234-5678 2024年度", []string{"jp-phone-number"}},
+		{"年の後ろに電話番号", "更新日2024 03-1234-5678", []string{"jp-phone-number"}},
+		{"電話番号2件", "TEL:03-1234-5678 03-1234-5679", []string{"jp-phone-number", "jp-phone-number"}},
+		{"郵便番号と電話番号", "郵便番号: 100-0001 090-1234-5678", []string{"jp-postal-code", "jp-phone-number"}},
+		{"口座番号と別数字", "口座番号: 1234567 8888", []string{"jp-bank-account"}},
+		{"保険者番号と別数字", "保険者番号: 12345678 9999", []string{"jp-health-insurance"}},
+		{"運転免許証番号と別数字", "免許証番号: 305012345678 8888", []string{"jp-drivers-license"}},
+		{"基礎年金番号（ハイフン）と別数字", "基礎年金番号: 1234-567890 8888", []string{"jp-pension-number"}},
+		{"基礎年金番号（連続）と別数字", "基礎年金番号: 1234567890 8888", []string{"jp-pension-number"}},
+		{"パスポート番号と別数字", "パスポート番号: AB1234567 8888", []string{"jp-passport"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
 func TestNumericEntitiesInsideASCIIIdentifiersExcluded(t *testing.T) {
 	d := newDetector(t, "")
 	tests := []struct {
