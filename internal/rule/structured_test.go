@@ -4,14 +4,22 @@ import "testing"
 
 // 値は埋め込み姓名辞書に含まれる一般的な氏名のリテラルを使う（外部フィクスチャ
 // 不要・オフライン実行可能。dict/names_test.go と同じ方針）。
+//
+// ValidCrossLineName は姓+名の分割（FullNameSplit）かつ名成分 2 文字以上を
+// 必須にする（issue #59 段階1）。単独の姓・名一致（渋谷・大和・本田のような
+// 地名・企業名と同形の姓を含む）は、クロスライン検出の「次行＝値」前提が
+// 同一行ほど強くないことを踏まえて許可しない。
 func TestValidCrossLineName(t *testing.T) {
-	valid := []string{"山田太郎", "山田 太郎", "山田", "太郎"}
+	valid := []string{"山田太郎", "山田 太郎"}
 	for _, v := range valid {
 		if !ValidCrossLineName(v) {
 			t.Errorf("ValidCrossLineName(%q) = false, want true", v)
 		}
 	}
 	invalid := []string{
+		"山田",       // 単独の姓一致（FullNameSplit ではない）
+		"太郎",       // 単独の名一致（FullNameSplit ではない）
+		"渋谷",       // 地名・企業名と同形の姓（単独一致）
 		"株式会社",     // 組織名
 		"山田商事株式会社", // 組織語尾
 		"未定",       // プレースホルダ

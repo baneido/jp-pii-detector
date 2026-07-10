@@ -3,8 +3,6 @@ package rule
 import (
 	"regexp"
 	"strings"
-
-	"github.com/baneido/jp-pii-detector/internal/dict"
 )
 
 // 構造化・複数行の氏名検出（高再現率）で使う公開ヘルパ。
@@ -48,10 +46,11 @@ var (
 
 // ValidCrossLineName は次行の値 v が氏名として妥当かを返す。クロスライン検出は
 // 「ラベルの次行はほぼ確実に値」という同一行ほど強くない前提に立つため、同一行の
-// 強いラベル（辞書照合なし）より厳しく、コンパクト姓名辞書での照合を必須にする
-// （プレースホルダ・組織名も棄却）。辞書未収録の氏名は取りこぼす（高再現率モード
-// 限定の適合率↔再現率トレードオフ）。
+// 強いラベル（辞書照合なし）より厳しく、姓+名の分割（FullNameSplit）かつ名成分
+// 2 文字以上を必須にする（プレースホルダ・組織名も棄却）。単独の姓・名一致
+// （渋谷・大和・本田のような地名・企業名と同形の姓を含む）は許可しない。
+// 辞書未収録の氏名は取りこぼす（高再現率モード限定の適合率↔再現率トレードオフ）。
 func ValidCrossLineName(v string) bool {
 	v = strings.TrimSpace(v)
-	return notPlaceholderName(v) && notOrgName(v) && dict.IsPersonName(v)
+	return notPlaceholderName(v) && notOrgName(v) && validStrictFullName(v)
 }
