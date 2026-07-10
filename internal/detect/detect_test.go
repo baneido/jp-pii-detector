@@ -2155,6 +2155,191 @@ func TestComputeOffsetsOutOfRange(t *testing.T) {
 	}
 }
 
+// --- P23: 複数エンティティ共起ブースト（[rules] cooccurrence_boost）---
+//
+// piifixtures を使わず inline literal のみでテストする（外部データセットが
+// 無い CI/開発機でも走る）。氏名は「架空太郎」（人名らしい形だが姓名辞書には
+// 無く dict.IsPersonName は false になるため、person-name の twin のうち
+// Base:Low 側だけがヒットする。notPlaceholderName は通るので Reason.Validated
+// は true になる）、電話番号は区切りあり携帯（0[5-9]0-\d{4}-\d{4}）で
+// Base:High・Validated（validPhone）な高信頼アンカーに使う。min_confidence は
+// 既定の "medium" を明示して氏名（Base:Low）が昇格なしでは報告されないことを
+// 前提にする。
+
+func TestCooccurrenceBoostPromotesNearbyPersonName(t *testing.T) {
+	d := newDetector(t, `
+min_confidence = "medium"
+
+[rules]
+cooccurrence_boost = true
+`)
+	content := "氏名: 架空太郎\n電話: 090-1234-5678"
+	fs := d.ScanContent("f.txt", content)
+	assertRules(t, fs, "person-name", "jp-phone-number")
+	for _, f := range fs {
+		if f.RuleID != "person-name" {
+			continue
+		}
+		if f.Confidence != rule.Medium {
+			t.Errorf("person-name confidence = %v, want %v（Low→Medium の 1 段昇格）", f.Confidence, rule.Medium)
+		}
+		if !f.Reason.CooccurrenceBoosted {
+			t.Error("Reason.CooccurrenceBoosted = false, want true")
+		}
+	}
+}
+
+func TestCooccurrenceBoostIgnoresCrossLineNegativeAnchor(t *testing.T) {
+	d := newDetector(t, `
+min_confidence = "medium"
+
+[rules]
+cooccurrence_boost = true
+`)
+	content := "氏名: 架空太郎\n免許証番号: 123456789012\n円"
+	assertRules(t, d.ScanContent("f.txt", content))
+}
+
+// TestCooccurrenceBoostDisabledByDefault は opt-in していない既定設定では、
+// 辞書不一致の氏名+電話が近接していても氏名が既定どおり非表示のままであることを
+// 確認する。
+func TestCooccurrenceBoostDisabledByDefault(t *testing.T) {
+	d := newDetector(t, "") // 既定 min_confidence=medium, cooccurrence_boost=false
+	content := "氏名: 架空太郎\n電話: 090-1234-5678"
+	assertRules(t, d.ScanContent("f.txt", content), "jp-phone-number")
+}
+
+// TestCooccurrenceBoostIsolatedNameNotPromoted は近傍に異なるカテゴリの高信頼
+// PII が無い単発の氏名は昇格しないことを確認する（負例）。
+func TestCooccurrenceBoostIsolatedNameNotPromoted(t *testing.T) {
+	d := newDetector(t, `
+min_confidence = "medium"
+
+[rules]
+cooccurrence_boost = true
+`)
+	content := "氏名: 架空太郎\n備考: 特になし\n備考: 特になし"
+	assertRules(t, d.ScanContent("f.txt", content))
+}
+
+// TestCooccurrenceBoostFarApartEntitiesNotPromoted は大きなファイルで氏名と
+// 電話番号がウィンドウ（±cooccurrenceWindowLines 行）を大きく超えて離れている
+// 場合、無関係な PII 同士を誤って共起昇格させないことを確認する（負例）。
+func TestCooccurrenceBoostFarApartEntitiesNotPromoted(t *testing.T) {
+	d := newDetector(t, `
+min_confidence = "medium"
+
+[rules]
+cooccurrence_boost = true
+`)
+	content := "氏名: 架空太郎\n" + strings.Repeat("filler line\n", 50) + "電話: 090-1234-5678"
+	assertRules(t, d.ScanContent("f.txt", content), "jp-phone-number")
+}
+
+// TestCooccurrenceBoostWindowBoundary は cooccurrenceWindowLines（±5 行）の
+// 境界ちょうどで昇格する/しないが切り替わることを確認する。
+func TestCooccurrenceBoostWindowBoundary(t *testing.T) {
+	tests := []struct {
+		name  string
+		gap   int // 氏名行と電話番号行の間に挟む空行数
+		boost bool
+	}{
+		{"ウィンドウ内（5行差）", 4, true},
+		{"ウィンドウ外（6行差）", 5, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := newDetector(t, `
+min_confidence = "medium"
+
+[rules]
+cooccurrence_boost = true
+`)
+			content := "氏名: 架空太郎\n" + strings.Repeat("\n", tt.gap) + "電話: 090-1234-5678"
+			fs := d.ScanContent("f.txt", content)
+			hasName := false
+			for _, f := range fs {
+				if f.RuleID == "person-name" {
+					hasName = true
+				}
+			}
+			if hasName != tt.boost {
+				t.Errorf("person-name present = %v, want %v (findings=%v)", hasName, tt.boost, ruleIDs(fs))
+			}
+		})
+	}
+}
+
+// TestCooccurrenceBoostRejectsPlaceholderName はプレースホルダ値（未定 等）が
+// notPlaceholderName で最初から候補にすらならないため、近傍に高信頼 PII が
+// あっても昇格・報告されないことを確認する（Validated でない候補は昇格しない）。
+func TestCooccurrenceBoostRejectsPlaceholderName(t *testing.T) {
+	d := newDetector(t, `
+min_confidence = "medium"
+
+[rules]
+cooccurrence_boost = true
+`)
+	content := "氏名: 未定\n電話: 090-1234-5678"
+	assertRules(t, d.ScanContent("f.txt", content), "jp-phone-number")
+}
+
+// TestCooccurrenceBoostExcludesAddressAnchor は jp-address がチェックサム検証も
+// RequireContext によるラベル必須化も無いため、現時点では昇格の根拠（アンカー）
+// に含めないことを確認する（試合スコア・日付住所等のボーダー FP を道連れに
+// 昇格させるリスクを避けるための意図的なスコープ限定。P11 の住所誤検出対策が
+// 先行してから再検討する）。
+func TestCooccurrenceBoostExcludesAddressAnchor(t *testing.T) {
+	d := newDetector(t, `
+min_confidence = "medium"
+
+[rules]
+cooccurrence_boost = true
+`)
+	content := "氏名: 架空太郎\n住所: 東京都渋谷区道玄坂2丁目10番7号"
+	assertRules(t, d.ScanContent("f.txt", content), "jp-address")
+}
+
+// TestCooccurrenceBoostHighRecallMediumToHigh は person-name-high-recall
+// （Base:Medium）が近傍アンカーで Medium→High まで昇格しうることを確認する
+// （「まれに Medium→High」の 1 段昇格。high_recall と cooccurrence_boost の
+// 両方が opt-in されて初めて効く）。
+func TestCooccurrenceBoostHighRecallMediumToHigh(t *testing.T) {
+	d := newDetector(t, `
+min_confidence = "high"
+
+[rules]
+high_recall = true
+cooccurrence_boost = true
+`)
+	content := "担当: 田中太郎\n電話: 090-1234-5678"
+	fs := d.ScanContent("f.txt", content)
+	assertRules(t, fs, "person-name-high-recall", "jp-phone-number")
+	for _, f := range fs {
+		if f.RuleID == "person-name-high-recall" && f.Confidence != rule.High {
+			t.Errorf("person-name-high-recall confidence = %v, want %v", f.Confidence, rule.High)
+		}
+	}
+}
+
+// TestScanDiffHunkDoesNotApplyCooccurrenceBoost は ScanDiffHunk（git diff 走査）が
+// cooccurrence_boost の対象外であることを確認する。ScanDiffHunk は文脈行を
+// 昇格の根拠にしない設計を維持するため、フルスキャン専用の ScanContent とは
+// 意図的に別経路のまま扱う。
+func TestScanDiffHunkDoesNotApplyCooccurrenceBoost(t *testing.T) {
+	d := newDetector(t, `
+min_confidence = "medium"
+
+[rules]
+cooccurrence_boost = true
+`)
+	fs := d.ScanDiffHunk("f.txt", []DiffLine{
+		{Text: "氏名: 架空太郎", Added: true},
+		{Text: "電話: 090-1234-5678", Added: true},
+	})
+	assertRules(t, fs, "jp-phone-number")
+}
+
 // --- パスをまたぐ finding の重複解決（issue #64）---
 //
 // resolveOverlaps は単行走査 1 回分の候補にしか適用されておらず、単行パス・
