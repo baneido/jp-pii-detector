@@ -56,6 +56,12 @@ type Config struct {
 		// HighRecall は高再現率ルールを明示的に有効化する。
 		// 偽陽性リスクが高いため既定では無効。
 		HighRecall bool `toml:"high_recall"`
+		// CooccurrenceBoost は、氏名系ルール（person-name 等）の Low / Medium
+		// 候補を、同一ファイル内の近傍に検証済み/ラベル
+		// 付きの高信頼 PII（電話番号・郵便番号・マイナンバー等）があるときだけ
+		// 1 段昇格（Low→Medium 等）させる。既存の報告結果を変えないよう、
+		// 既定では無効（opt-in）。
+		CooccurrenceBoost bool `toml:"cooccurrence_boost"`
 		// PathDemotion はテスト経路（testdata/ ・ fixtures/ ・ *_test.go 等）に
 		// 対する信頼度降格（Medium→Low、対象は RequireContext かつ Base=Medium の
 		// ルールのみ）を有効にする。既定で有効。値そのものを消す除外ではなく、
