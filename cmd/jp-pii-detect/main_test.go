@@ -138,6 +138,51 @@ func TestErrorsExitTwo(t *testing.T) {
 	}
 }
 
+// 走査対象の一部ファイルが読み取れない場合でも、収集できた findings は
+// 通常どおり出力しつつ、警告を stderr に出し、終了コードは 2（部分走査）に
+// なること。黙って exit 0/1 にすると走査が不完全なまま結果を装うことになり
+// セキュリティツールとして危険なため。
+func TestScanPartialErrorExitsTwoWithReport(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root では読み取り権限のチェックが効かないためスキップ")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "ok.txt"), []byte("口座番号: 1234567\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	denied := filepath.Join(dir, "denied.txt")
+	if err := os.WriteFile(denied, []byte("no pii\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(denied, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(denied, 0o644) })
+
+	cmd := exec.Command(binPath, "scan", ".")
+	cmd.Dir = dir
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	code := 0
+	if err != nil {
+		ee, ok := err.(*exec.ExitError)
+		if !ok {
+			t.Fatalf("run: %v", err)
+		}
+		code = ee.ExitCode()
+	}
+	if code != 2 {
+		t.Errorf("exit = %d, want 2（部分走査）", code)
+	}
+	if !strings.Contains(string(out), "jp-bank-account") {
+		t.Errorf("収集済みの findings が出力されていない: %s", out)
+	}
+	if !strings.Contains(stderr.String(), "denied.txt") {
+		t.Errorf("stderr に警告が出力されていない: %s", stderr.String())
+	}
+}
+
 func TestMinConfidenceFlagOverride(t *testing.T) {
 	piifixtures.Require(t)
 	dir := t.TempDir()
@@ -266,6 +311,206 @@ func TestScanStdinNoFindings(t *testing.T) {
 	}
 }
 
+// baselineJSON は scan --baseline --format json を実行し、パース済みの
+// findings（rule_id/file/fingerprint のみ）と count、終了コードを返す。
+func baselineJSON(t *testing.T, dir string, args ...string) (findings []struct {
+	RuleID      string `json:"rule_id"`
+	File        string `json:"file"`
+	Fingerprint string `json:"fingerprint"`
+}, count, code int) {
+	t.Helper()
+	out, code := run(t, dir, args...)
+	var doc struct {
+		Count    int `json:"count"`
+		Findings []struct {
+			RuleID      string `json:"rule_id"`
+			File        string `json:"file"`
+			Fingerprint string `json:"fingerprint"`
+		} `json:"findings"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, out)
+	}
+	return doc.Findings, doc.Count, code
+}
+
+// TestBaselineUpdateThenFilterSuppressesKnownFindings は --update-baseline →
+// --baseline の往復で、既知の finding が exit 0（0 件）になることを確認する
+// positive ケース。メールアドレスは機微でない架空ドメインを使うためフィクスチャ
+// 不要（TestScanStdinOffsets と同じ慣習）。
+func TestBaselineUpdateThenFilterSuppressesKnownFindings(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "legacy.txt"), []byte("担当: legacy.user@kaisha.co.jp まで\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	baselinePath := filepath.Join(dir, "baseline.json")
+
+	// baseline 導入前は通常どおり検出されて exit 1。
+	if _, code := run(t, dir, "scan", "."); code != 1 {
+		t.Fatalf("baseline 導入前: exit = %d, want 1", code)
+	}
+
+	out, code := run(t, dir, "scan", "--baseline", baselinePath, "--update-baseline", ".")
+	if code != 0 {
+		t.Fatalf("--update-baseline: exit = %d, want 0\n%s", code, out)
+	}
+	if !strings.Contains(out, baselinePath) {
+		t.Errorf("update-baseline の完了メッセージにパスが含まれない: %s", out)
+	}
+	if _, err := os.Stat(baselinePath); err != nil {
+		t.Fatalf("baseline file not created: %v", err)
+	}
+
+	findings, count, code := baselineJSON(t, dir, "scan", "--baseline", baselinePath, "--format", "json", ".")
+	if code != 0 {
+		t.Fatalf("--baseline: exit = %d, want 0（既知の finding は除外される）", code)
+	}
+	if count != 0 || len(findings) != 0 {
+		t.Errorf("findings = %v, want empty（baseline 済み）", findings)
+	}
+}
+
+// TestBaselineNewFindingStillFails は baseline に無い新規 finding が引き続き
+// exit 1 になることを確認する negative ケース。
+func TestBaselineNewFindingStillFails(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "legacy.txt"), []byte("担当: legacy.user@kaisha.co.jp まで\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	baselinePath := filepath.Join(dir, "baseline.json")
+	if _, code := run(t, dir, "scan", "--baseline", baselinePath, "--update-baseline", "."); code != 0 {
+		t.Fatal("update-baseline should exit 0")
+	}
+
+	// 新規ファイルに別のメールアドレスを追加する（baseline には未記録）。
+	if err := os.WriteFile(filepath.Join(dir, "new.txt"), []byte("担当: new.user@kaisha.co.jp まで\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	findings, count, code := baselineJSON(t, dir, "scan", "--baseline", baselinePath, "--format", "json", ".")
+	if code != 1 {
+		t.Fatalf("新規 finding があるので exit = %d, want 1", code)
+	}
+	if count != 1 || len(findings) != 1 || findings[0].File != "new.txt" {
+		t.Errorf("findings = %v, want only new.txt", findings)
+	}
+}
+
+// TestBaselineValueChangeStillFires は baseline 済みだった finding でも、
+// 検出値自体が変わっていれば別 fingerprint として扱われ、引き続き検出される
+// ことを確認する（fingerprint は値に依存し、行番号には依存しない設計の検証）。
+func TestBaselineValueChangeStillFires(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "legacy.txt")
+	if err := os.WriteFile(path, []byte("担当: legacy.user@kaisha.co.jp まで\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	baselinePath := filepath.Join(dir, "baseline.json")
+	if _, code := run(t, dir, "scan", "--baseline", baselinePath, "--update-baseline", "."); code != 0 {
+		t.Fatal("update-baseline should exit 0")
+	}
+
+	// 同じファイル・同じ行の値だけを変更する。
+	if err := os.WriteFile(path, []byte("担当: legacy.user.changed@kaisha.co.jp まで\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	findings, count, code := baselineJSON(t, dir, "scan", "--baseline", baselinePath, "--format", "json", ".")
+	if code != 1 {
+		t.Fatalf("値が変わった finding は exit = %d, want 1", code)
+	}
+	if count != 1 || len(findings) != 1 || findings[0].File != "legacy.txt" {
+		t.Errorf("findings = %v, want the changed legacy.txt finding", findings)
+	}
+}
+
+// TestBaselineUpdateMergesWithExisting は --update-baseline を 2 回実行した
+// とき、既存の fingerprint を保ったまま新規分だけが追記される（＝2 回目以降も
+// 1 回目の記録が失われない）ことを確認する。
+func TestBaselineUpdateMergesWithExisting(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "legacy.txt"), []byte("担当: legacy.user@kaisha.co.jp まで\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	baselinePath := filepath.Join(dir, "baseline.json")
+	if _, code := run(t, dir, "scan", "--baseline", baselinePath, "--update-baseline", "."); code != 0 {
+		t.Fatal("1st update-baseline should exit 0")
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "new.txt"), []byte("担当: new.user@kaisha.co.jp まで\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, code := run(t, dir, "scan", "--baseline", baselinePath, "--update-baseline", "."); code != 0 {
+		t.Fatal("2nd update-baseline should exit 0")
+	}
+
+	// 両方のファイルとも既知になっているはず。
+	_, count, code := baselineJSON(t, dir, "scan", "--baseline", baselinePath, "--format", "json", ".")
+	if code != 0 || count != 0 {
+		t.Errorf("count = %d, code = %d, want 0/0（両方とも baseline 済み）", count, code)
+	}
+}
+
+// TestBaselineShowBaselineDisplaysWithoutAffectingExitCode は --show-baseline
+// が baseline 済みの finding も参考表示するが、終了コードには影響しないことを
+// 確認する。
+func TestBaselineShowBaselineDisplaysWithoutAffectingExitCode(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "legacy.txt"), []byte("担当: legacy.user@kaisha.co.jp まで\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	baselinePath := filepath.Join(dir, "baseline.json")
+	if _, code := run(t, dir, "scan", "--baseline", baselinePath, "--update-baseline", "."); code != 0 {
+		t.Fatal("update-baseline should exit 0")
+	}
+
+	// --baseline のみ: 既知分のみなので exit 0、表示も 0 件。
+	_, count, code := baselineJSON(t, dir, "scan", "--baseline", baselinePath, "--format", "json", ".")
+	if code != 0 || count != 0 {
+		t.Fatalf("--baseline のみ: count=%d code=%d, want 0/0", count, code)
+	}
+
+	// --show-baseline を付けると baseline 済み分が参考表示されるが、
+	// 新規 finding が無いので終了コードは 0 のまま。
+	findings, count, code := baselineJSON(t, dir, "scan", "--baseline", baselinePath, "--show-baseline", "--format", "json", ".")
+	if code != 0 {
+		t.Fatalf("--show-baseline: exit = %d, want 0（新規 finding が無いため）", code)
+	}
+	if count != 1 || len(findings) != 1 || findings[0].File != "legacy.txt" {
+		t.Errorf("--show-baseline should list the baselined finding for reference: %v", findings)
+	}
+}
+
+// TestBaselineFlagValidation は --update-baseline / --show-baseline が
+// --baseline <path> 無しで指定された場合、走査せず exit 2 になることを確認する。
+func TestBaselineFlagValidation(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("no pii\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"scan", "--update-baseline", "."},
+		{"scan", "--show-baseline", "."},
+	} {
+		if _, code := run(t, dir, args...); code != 2 {
+			t.Errorf("%v: exit = %d, want 2", args, code)
+		}
+	}
+}
+
+// TestBaselineLoadMissingFileExitsTwo は --baseline に存在しないファイルを
+// 指定した場合、走査エラーとして exit 2 になることを確認する
+// （--update-baseline と違い、事前作成なしでは自動生成しない）。
+func TestBaselineLoadMissingFileExitsTwo(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("no pii\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, code := run(t, dir, "scan", "--baseline", filepath.Join(dir, "nonexistent-baseline.json"), "."); code != 2 {
+		t.Errorf("exit = %d, want 2", code)
+	}
+}
+
 func TestRulesCommand(t *testing.T) {
 	out, code := run(t, t.TempDir(), "rules")
 	if code != 0 {
@@ -275,6 +520,50 @@ func TestRulesCommand(t *testing.T) {
 		if !strings.Contains(out, id) {
 			t.Errorf("rules output missing %s:\n%s", id, out)
 		}
+	}
+}
+
+// rules コマンドは --config を反映した実効ルール一覧（builtin + custom の合成後、
+// 無効化ルールを除いたもの）を表示する。
+func TestRulesCommandWithConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, ".jp-pii.toml")
+	cfgBody := `
+[rules]
+disabled = ["credit-card"]
+
+[[rules.custom]]
+id = "student-id"
+description = "学籍番号"
+pattern = 'S\d{8}'
+digit_boundary = true
+`
+	if err := os.WriteFile(cfgPath, []byte(cfgBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, code := run(t, dir, "rules", "--config", cfgPath)
+	if code != 0 {
+		t.Errorf("exit = %d, want 0:\n%s", code, out)
+	}
+	if strings.Contains(out, "credit-card") {
+		t.Errorf("rules output should not include disabled rule credit-card:\n%s", out)
+	}
+	if !strings.Contains(out, "student-id") {
+		t.Errorf("rules output missing custom rule student-id:\n%s", out)
+	}
+}
+
+// カスタムルールの正規表現コンパイル失敗は、rules コマンドでも
+// panic ではなく exit 2（設定エラー）として扱う。
+func TestRulesCommandInvalidCustomRule(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, ".jp-pii.toml")
+	cfgBody := "[[rules.custom]]\nid = \"bad\"\npattern = \"(\"\n"
+	if err := os.WriteFile(cfgPath, []byte(cfgBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, code := run(t, dir, "rules", "--config", cfgPath); code != 2 {
+		t.Errorf("exit = %d, want 2 for invalid custom rule regex", code)
 	}
 }
 

@@ -2,6 +2,7 @@ package dict
 
 import (
 	_ "embed"
+	"fmt"
 	"strings"
 )
 
@@ -48,6 +49,36 @@ func PostalCodeIndex(digits string) uint32 {
 		n = n*10 + uint32(digits[i]-'0')
 	}
 	return n
+}
+
+// samplePostalStride はビットセット走査の刻み幅。10,000,000 = 2^7 * 5^7 と
+// 互いに素な値（奇数かつ 5 の倍数でない）にすることで、走査が全インデックスを
+// 巡回しつつ、郵便番号帯（先頭桁＝地域）へ偏らずに散らばる。
+const samplePostalStride = 1_500_001
+
+// SamplePostalCodes はビットセットから実在する 7 桁郵便番号を n 件、決定的に
+// 抽出する（samplePostalStride 刻みで走査するため、上位桁＝地域に偏らない）。
+// マイナンバー・クレジットカードと異なりチェックディジットが無く「実在するか」
+// でしか合成できないため、実データ（postal_codes.bitset。既にコミット済みで
+// 新規の秘匿情報ではない）から抽出する。internal/fixturegen が合成評価ケースの
+// 材料に使う。n が実在件数を超える場合は見つかった分だけを返す。
+func SamplePostalCodes(n int) []string {
+	if n <= 0 {
+		return nil
+	}
+	out := make([]string, 0, n)
+	idx := uint32(0)
+	for range postalCodeCount {
+		if len(out) >= n {
+			break
+		}
+		byteIdx := idx >> 3
+		if int(byteIdx) < len(postalBitset) && postalBitset[byteIdx]&(1<<(idx&7)) != 0 {
+			out = append(out, fmt.Sprintf("%07d", idx))
+		}
+		idx = (idx + samplePostalStride) % postalCodeCount
+	}
+	return out
 }
 
 func digitsOnly(s string) string {

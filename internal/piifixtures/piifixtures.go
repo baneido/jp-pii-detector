@@ -38,6 +38,14 @@ type Span struct {
 	Start  int      `json:"start"`
 	End    int      `json:"end"`
 	Tags   []string `json:"tags,omitempty"`
+	// WantConfidence は任意項目（"low" | "medium" | "high"）。設定すると、この
+	// スパンの検出が期待信頼度以上で報告されることを要求する（内部で Base のまま
+	// 昇格しない等、低い信頼度に埋もれて既定設定では黙って見えなくなる「実質的な
+	// 検出漏れ」を可視化するため）。省略時はこのスパンを信頼度チェックの対象外とする。
+	// 後方互換: 既存データセット JSON はこのフィールドを持たないが、
+	// encoding/json は未知フィールドを無視して Unmarshal するため、コード側を
+	// 先にデプロイしてもデータセット未更新のまま全テストが green のまま動く。
+	WantConfidence string `json:"want_confidence,omitempty"`
 }
 
 // DiffLine は diff hunk 内の 1 行。Added が true なら追加行、false なら文脈行。
@@ -52,14 +60,11 @@ type DiffLine struct {
 // Line は従来どおり 1 行の ScanLine、Content は複数行の ScanContent、Diff は
 // 追加行だけを評価する ScanDiffHunk に対応する。Want は、そのケースで検出されるべき
 // ルール ID の集合（空なら「何も検出されないべき」陰性ケース）。File は
-// ソースコード文脈などファイル名依存の挙動を評価したい場合だけ指定する。
-//
-// Tags はケース単位の層化用メタデータ（例: "probe-fn:mynumber-space-separated" /
-// "probe-fp:creditcard-wellknown-test-visa-1" / "known-limitation"）。Span.Tags は
-// 検出範囲（rule_id 必須）単位のタグで、Want:[] の陰性ケース（FP プローブ等、
-// 検出されるべき rule_id が存在しない）には付けられない。ケース全体に対する
-// タグ付けが必要な陰性ケースは、この Case.Tags を使う（省略時は後方互換で
-// タグなし扱いになり、既存データセットに影響しない）。
+// ソースコード文脈などファイル名依存の挙動を評価したい場合だけ指定する。Tags は
+// Span.Tags と同様、表記ゆれ（notation:fullwidth 等）やケースの由来
+// （source:synthetic 等）でケース単位に層別集計するためのメタデータで、検出結果
+// そのものには影響せず internal/eval の Stratified 集計にだけ使う。既知タグの
+// 語彙は docs/development.md を参照。
 type Case struct {
 	File    string     `json:"file,omitempty"`
 	Line    string     `json:"line,omitempty"`
