@@ -132,12 +132,13 @@ func TestProbeResolvedFixedPhoneWithoutSeparator(t *testing.T) {
 	}
 }
 
-// TestProbeRegressionCSVAdjacentRowContextLimitation は issue 記載の
-// 「CSV 2 行目以降」系統。RequireContext 系ルールのクロスライン相関は
-// ±1 行の隣接ウィンドウのみ（CLAUDE.md 明記のアーキテクチャ上の設計）のため、
-// ヘッダ行のラベルは直後の 1 データ行までしか文脈を補完できない。
-// 3 行目以降は同じ列でも検出されない（known-limitation）。
-func TestProbeRegressionCSVAdjacentRowContextLimitation(t *testing.T) {
+// TestProbeResolvedCSVColumnContext は issue 記載の「CSV 2 行目以降」系統。
+// 元は隣接ウィンドウ（±1 行）の制約でヘッダ直後の 1 データ行しか検出できない
+// known-limitation だったが、#63 の CSV/TSV 列コンテキスト機構
+// （internal/detect/csv_context.go）でヘッダのラベルを同一列の全データ行へ
+// 伝播するようになったため、3 行目以降も検出に転じた（回帰データセットとして
+// 機能している証拠。期待値を反転した）。
+func TestProbeResolvedCSVColumnContext(t *testing.T) {
 	d := newDetector(t, "")
 	csv := "支店番号,口座番号\n001,1234567\n002,2345678\n003,3456789\n"
 	fs := d.ScanContent("data.csv", csv)
@@ -148,15 +149,12 @@ func TestProbeRegressionCSVAdjacentRowContextLimitation(t *testing.T) {
 			got[f.Line] = true
 		}
 	}
-	// ヘッダ（1 行目）に隣接する 2 行目のみ検出される。
-	if !got[2] {
-		t.Errorf("2 行目（ヘッダ直後）が検出されていない: %+v", fs)
-	}
-	// 3 行目・4 行目はヘッダから 2 行以上離れているため検出されない
-	// （±1 行ウィンドウの外）。将来 #62 等でウィンドウが拡張されれば
-	// ここが検出に転じうる。
-	if got[3] || got[4] {
-		t.Errorf("3/4 行目が検出された（±1 行ウィンドウの想定を超えて拡張された可能性、テストと pii-fixtures.json を要更新）: %+v", fs)
+	// ヘッダのラベルが同一列（口座番号列）の全データ行へ伝播するため、
+	// 2〜4 行目すべてが検出される。
+	for _, line := range []int{2, 3, 4} {
+		if !got[line] {
+			t.Errorf("%d 行目が検出されていない（列コンテキストが全データ行へ伝播していない）: %+v", line, fs)
+		}
 	}
 }
 

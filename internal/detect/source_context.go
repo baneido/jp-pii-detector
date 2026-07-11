@@ -12,6 +12,10 @@ type sourceKind int
 const (
 	sourceKindNone sourceKind = iota
 	sourceKindCode
+	// sourceKindCSV は .csv/.tsv 用の種別。汎用のコード文パーサ
+	// （splitSourceStatements、カンマを文区切りとして扱う）は誤解釈するため
+	// sourceExtensions には追加せず、csv_context.go の専用パーサへ分岐する。
+	sourceKindCSV
 )
 
 type statementContext struct {
@@ -136,13 +140,24 @@ func sourceKindForPath(path string) sourceKind {
 	if base == ".env" || strings.HasPrefix(base, ".env.") {
 		return sourceKindCode
 	}
-	if sourceExtensions[strings.ToLower(filepath.Ext(path))] {
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".csv", ".tsv":
+		return sourceKindCSV
+	}
+	if sourceExtensions[ext] {
 		return sourceKindCode
 	}
 	return sourceKindNone
 }
 
 func sourceLineContexts(file string, lines []string) []lineContext {
+	// CSV/TSV はヘッダ列名からフィールド単位の文脈を組み立てる専用パーサへ
+	// 分岐する（フル走査限定。diff 走査ではヘッダ行が hunk 外のことが多く
+	// 誤帰属のリスクが高いため sourceLineContextsForDiff では使わない）。
+	if sourceKindForPath(file) == sourceKindCSV {
+		return csvLineContexts(file, lines)
+	}
 	out, ok := baseSourceLineContexts(file, lines)
 	if !ok {
 		return out
@@ -169,7 +184,10 @@ func sourceLineContextsForDiff(file string, lines []string, added []bool) []line
 
 func baseSourceLineContexts(file string, lines []string) ([]lineContext, bool) {
 	out := make([]lineContext, len(lines))
-	if sourceKindForPath(file) == sourceKindNone {
+	// sourceKindCSV はここでは常に ok=false（コード文パーサ対象外）。
+	// sourceLineContextsForDiff がこの関数だけを使うため、結果として CSV は
+	// diff 走査での列コンテキスト付与から自動的に除外される。
+	if sourceKindForPath(file) != sourceKindCode {
 		return out, false
 	}
 	for i, line := range lines {
