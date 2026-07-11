@@ -1,0 +1,56 @@
+name: 見逃しの報告（False negative）
+description: 検出されるべき PII が検出されない問題を報告します
+title: "[FN] "
+labels: ["false-negative"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        見逃し（検出されるべき PII が検出されない）の報告ありがとうございます。
+        誤検出・見逃しの報告は、この検出器の精度改善に最も役立ちます。
+
+        ⚠️ **実在の PII は絶対に貼らないでください。** 再現用テキストは必ずマスク／
+        ダミー化してください（例: `090-XXXX-XXXX`）。
+  - type: input
+    id: pii-type
+    attributes:
+      label: 検出されてほしい PII の種別
+      placeholder: "例: マイナンバー / 電話番号 / 住所 / 氏名 など"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: jp-pii-detect のバージョン
+      description: "`jp-pii-detect version` の出力"
+      placeholder: "例: v0.3.6"
+    validations:
+      required: true
+  - type: textarea
+    id: repro-text
+    attributes:
+      label: 検出されなかった例（必ずダミー化）
+      description: "⚠️ 実在の PII は絶対に貼らないでください。書式が分かるダミー値にしてください。"
+      placeholder: |
+        検出されてほしかった行の例（ダミー化済み）:
+        電話: 090-XXXX-XXXX
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: 試したコマンドと設定
+      description: "`min_confidence` や `high_recall` の設定も記載してください。"
+      placeholder: |
+        jp-pii-detect scan --high-recall .
+        min_confidence = "medium"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待する動作
+      placeholder: この行が指定した種別として検出されてほしい。
+    validations:
+      required: true

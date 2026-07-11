@@ -233,7 +233,7 @@ func splitSourceStatements(line string) []sourceSegment {
 			}
 			continue
 		}
-		if c == '"' || c == '\'' || c == '`' {
+		if c == '`' || (c == '"' || c == '\'') && quoteStartsAt(line, i) {
 			quote = c
 			continue
 		}
@@ -249,6 +249,64 @@ func splitSourceStatements(line string) []sourceSegment {
 		out = append(out, sourceSegment{start: start, end: len(line)})
 	}
 	return out
+}
+
+// quoteStartsAt は line[i]（ダブルクォート・シングルクォートのいずれか）を
+// 文字列リテラルの開始とみなすべきかを返す。バッククォートは JS/TS の
+// tagged template literal（sql`...` 等）で識別子に直結できるため、呼び出し側で
+// 常に文字列リテラルの開始として扱う。
+// 素朴な実装（#39 まで）はクォート文字が出た時点で無条件に
+// クォート開始とみなしていたため、コメント中の英語の省略形（don't 等）の
+// アポストロフィが「文字列開始」と誤認され、以降の行末までが（閉じクォートが
+// 現れるまで）丸ごと引用中として扱われて文脈抽出が失われていた（#54）。
+//
+// 識別子の内部（直前が英数字・_）にあるクォート文字は開始とみなさない。
+// 行頭・空白・区切り記号（`([{,:;=+-*/<>!&|~^?%` 等）の直後、または
+// Python の f"..." / r'...' / rb"..." のような 1〜2 文字の文字列プレフィックス
+// （さらにその直前が区切り記号）の直後のみ、クォート開始として扱う。
+func quoteStartsAt(s string, i int) bool {
+	if i == 0 {
+		return true
+	}
+	if isQuoteBoundaryByte(s[i-1]) {
+		return true
+	}
+	// f"..." / r'...' / rb"..." 等、1〜2 文字の文字列プレフィックス直後の
+	// クォートは、プレフィックスがさらに区切り記号（または行頭）から
+	// 始まっている場合のみ開始とみなす。
+	prefixLen := 0
+	j := i - 1
+	for j >= 0 && prefixLen < 2 && isStringPrefixByte(s[j]) {
+		prefixLen++
+		j--
+	}
+	if prefixLen == 0 {
+		return false
+	}
+	if j < 0 {
+		return true
+	}
+	return isQuoteBoundaryByte(s[j])
+}
+
+// isQuoteBoundaryByte は、直後にクォート文字が来たときそれを文字列リテラルの
+// 開始とみなしてよい区切りバイト（空白・演算子・括弧等）かを返す。
+func isQuoteBoundaryByte(c byte) bool {
+	switch c {
+	case ' ', '\t', '(', '[', '{', ',', ':', ';', '=', '+', '-', '*', '/', '<', '>', '!', '&', '|', '~', '^', '?', '%':
+		return true
+	}
+	return false
+}
+
+// isStringPrefixByte は Python の f/r/b/u 等、文字列リテラルの接頭辞として
+// 使われる英字かを返す（大文字小文字を区別しない）。
+func isStringPrefixByte(c byte) bool {
+	switch c {
+	case 'f', 'F', 'r', 'R', 'b', 'B', 'u', 'U':
+		return true
+	}
+	return false
 }
 
 func statementContextFromSegment(line string, start, end int) (statementContext, bool) {
@@ -322,7 +380,7 @@ func indexUnquotedByte(s string, match func(i int) bool) int {
 			}
 			continue
 		}
-		if c == '"' || c == '\'' || c == '`' {
+		if c == '`' || (c == '"' || c == '\'') && quoteStartsAt(s, i) {
 			quote = c
 			continue
 		}

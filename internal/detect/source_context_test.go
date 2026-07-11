@@ -110,6 +110,16 @@ func TestSplitSourceStatementsKeepsBacktickStrings(t *testing.T) {
 			want: []string{"q := `SELECT a; SELECT b`"},
 		},
 		{
+			name: "comma and semicolon inside tagged template literal",
+			line: "query = sql`SELECT a, b; SELECT c`, next = 2",
+			want: []string{"query = sql`SELECT a, b; SELECT c`", " next = 2"},
+		},
+		{
+			name: "member expression tagged template literal",
+			line: "component = styled.div`color:red; margin:0, auto`, next = 2",
+			want: []string{"component = styled.div`color:red; margin:0, auto`", " next = 2"},
+		},
+		{
 			name: "real comma between statements still splits",
 			line: "a := `x`, b := `y`",
 			want: []string{"a := `x`", " b := `y`"},
@@ -144,6 +154,15 @@ func TestSourceLineContextsSkipUnknownFiles(t *testing.T) {
 	}
 }
 
+// JS/TS の tagged template literal は開始バッククォートが識別子に直結する。
+// 内部のカンマで文脈範囲が分断されず、タグ付き文字列の後半にある値にも
+// 左辺のラベルが適用されることを統合レベルで確認する。
+func TestScanContentUsesSourceContextForTaggedTemplateLiteral(t *testing.T) {
+	d := newDetector(t, "")
+	content := "const bankAccountNo = sql`SELECT value=0, account=1234567`"
+	assertRules(t, d.ScanContent("user.ts", content), "jp-bank-account")
+}
+
 func TestSourceLineContextsSkipUnknownCrossLineFiles(t *testing.T) {
 	ctxs := sourceLineContexts("memo.txt", []string{"bankAccountNo:", `"1234567"`})
 	if len(ctxs) != 2 {
@@ -151,5 +170,134 @@ func TestSourceLineContextsSkipUnknownCrossLineFiles(t *testing.T) {
 	}
 	if len(ctxs[0].Statements) != 0 || len(ctxs[1].Statements) != 0 {
 		t.Fatalf("memo.txt contexts = %#v, want no statements", ctxs)
+	}
+}
+
+// quoteStartsAt はクォート開始判定の中心ロジック（#54 で追加）。
+// prefix と quote 文字を組み立てて渡し、クォート文字の位置（= len(prefix)）を
+// 手計算せずに求めることで、境界インデックスの数え間違いを避ける。
+func TestQuoteStartsAt(t *testing.T) {
+	tests := []struct {
+		name   string
+		prefix string
+		quote  byte
+		suffix string
+		want   bool
+	}{
+		{"行頭のクォートは開始とみなす", "", '"', `abc"`, true},
+		{"空白直後のクォートは開始とみなす", `x = `, '"', `abc"`, true},
+		{"コロン直後のクォートは開始とみなす", `x:`, '"', `abc"`, true},
+		{"開き括弧直後のクォートは開始とみなす", `f(`, '"', `abc")`, true},
+		// 回帰: コメント中の英語の省略形（don't 等）のアポストロフィは、直前が
+		// 識別子内部の文字（区切り記号でも文字列プレフィックスでもない）のため
+		// クォート開始とみなさない（#54: この判定漏れで行末までクォート中と
+		// 誤認され、以降の文脈抽出が壊れていた）。
+		{"識別子内部のアポストロフィは開始とみなさない(don't)", `don`, '\'', `t forget`, false},
+		{"識別子内部のアポストロフィは開始とみなさない(it's)", `it`, '\'', `s fine`, false},
+		// "user's" の "r" は文字列プレフィックス候補の文字だが、その直前が
+		// 区切り記号ではなく識別子の続き（"use" の "e"）なので、プレフィックスとは
+		// 扱わずクォート開始としない（誤検出防止）。
+		{"識別子語尾のプレフィックス様の文字は誤認しない(user's)", `user`, '\'', `s token`, false},
+		// Python のような文字列プレフィックス（f/r/b/u、1〜2 文字）は、
+		// プレフィックスさらに直前が区切り記号（または行頭）ならクォート開始とみなす。
+		{"f-string プレフィックス", `msg = f`, '"', `account={value}"`, true},
+		{"raw string プレフィックス", `pattern = r`, '\'', `\d+'`, true},
+		{"2 文字プレフィックス(rb)", `data = rb`, '\'', `\x00'`, true},
+		{"2 文字プレフィックス(Rb) 大文字小文字混在", `data = Rb`, '\'', `\x00'`, true},
+		// 3 文字連続する疑似プレフィックス（abr）は、2 文字を超えた分の直前が
+		// 区切り記号ではないため、識別子の一部とみなしクォート開始としない。
+		{"3文字の疑似プレフィックスは識別子の一部とみなす", `data = abr`, '\'', `x00'`, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			line := tt.prefix + string(tt.quote) + tt.suffix
+			pos := len(tt.prefix)
+			if got := quoteStartsAt(line, pos); got != tt.want {
+				t.Errorf("quoteStartsAt(%q, %d) = %v, want %v", line, pos, got, tt.want)
+			}
+		})
+	}
+}
+
+// #54 の回帰ケース: コメント中の英語省略形のアポストロフィ（don't）で、
+// splitSourceStatements / indexUnquotedByte の引用符状態機械が以降の行末までを
+// 引用中と誤認し、代入演算子（:）が見つからず文脈抽出が丸ごと失われていた。
+func TestSourceLineContextsCommentApostropheRegression(t *testing.T) {
+	line := `// don't forget bank_account_order_id: 1234567`
+	ctxs := sourceLineContexts("service.go", []string{line})
+	if len(ctxs) != 1 || len(ctxs[0].Statements) != 1 {
+		t.Fatalf("contexts = %#v, want one statement (アポストロフィで文脈抽出が失われている)", ctxs)
+	}
+	stmt := ctxs[0].Statements[0]
+	if !strings.Contains(stmt.NegativeText, "id") || !strings.Contains(stmt.NegativeText, "order") {
+		t.Fatalf("NegativeText = %q, want id and order", stmt.NegativeText)
+	}
+	if got := line[stmt.Start:stmt.End]; got != "1234567" {
+		t.Fatalf("value = %q, want 1234567", got)
+	}
+}
+
+// 上と同じ回帰ケースを ScanContent（統合レベル）で確認する。#54 修正前は
+// アポストロフィ以降が「引用中」と誤認されて文脈抽出が失われ、
+// order_id ラベルにもかかわらず銀行口座番号として誤検出（FP）していた。
+func TestScanContentCommentApostropheDoesNotBreakSourceContext(t *testing.T) {
+	d := newDetector(t, "")
+	line := `// don't forget bank_account_order_id: 1234567`
+	assertRules(t, d.ScanContent("service.go", line))
+}
+
+// splitSourceStatements のカンマ・セミコロンによる文分割も、コメント中の
+// アポストロフィでクォート中と誤認されて壊れないことを確認する（#54）。
+func TestSplitSourceStatementsApostropheInCommentDoesNotSuppressSplit(t *testing.T) {
+	line := `// don't forget; log the value`
+	segs := splitSourceStatements(line)
+	got := make([]string, 0, len(segs))
+	for _, sg := range segs {
+		got = append(got, line[sg.start:sg.end])
+	}
+	want := []string{`// don't forget`, ` log the value`}
+	if len(got) != len(want) {
+		t.Fatalf("splitSourceStatements(%q) = %#v, want %#v", line, got, want)
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Fatalf("splitSourceStatements(%q) = %#v, want %#v", line, got, want)
+		}
+	}
+}
+
+// クォート種別をまたぐネストは、開いたクォートと異なる種類のクォート文字
+// （バッククォート文字列中のアポストロフィ等）で閉じてしまわないことを
+// 回帰確認する（既存の状態機械の性質。#54 の修正でも壊さないことを保証する）。
+func TestSplitSourceStatementsApostropheInsideBacktickStringDoesNotClose(t *testing.T) {
+	line := "config := `it's fine, 30`, next := `y`"
+	segs := splitSourceStatements(line)
+	got := make([]string, 0, len(segs))
+	for _, sg := range segs {
+		got = append(got, line[sg.start:sg.end])
+	}
+	want := []string{"config := `it's fine, 30`", " next := `y`"}
+	if len(got) != len(want) {
+		t.Fatalf("splitSourceStatements(%q) = %#v, want %#v", line, got, want)
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Fatalf("splitSourceStatements(%q) = %#v, want %#v", line, got, want)
+		}
+	}
+}
+
+// エスケープされたクォートに続くアポストロフィ的な文字でも、既存の
+// エスケープ処理（quote != 0 のときのみ有効）が優先され、意図しないクォート
+// 終了が起きないことを確認する。
+func TestFindSourceAssignmentOperatorEscapedQuoteThenApostrophe(t *testing.T) {
+	segment := `bankAccountNo = "it\'s 1234567"`
+	pos, width, ok := findSourceAssignmentOperator(segment)
+	if !ok {
+		t.Fatalf("findSourceAssignmentOperator(%q) ok = false, want true", segment)
+	}
+	wantPos := strings.IndexByte(segment, '=')
+	if pos != wantPos || width != 1 {
+		t.Fatalf("findSourceAssignmentOperator(%q) = (%d, %d), want (%d, 1)", segment, pos, width, wantPos)
 	}
 }

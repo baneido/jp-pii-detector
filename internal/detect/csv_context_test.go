@@ -391,12 +391,14 @@ func TestCSVNameColumnDisabledByDefault(t *testing.T) {
 	assertRules(t, fs, "jp-postal-code")
 }
 
-// フリガナ（カタカナ）列は埋め込み姓名辞書が漢字ベースのため対象外
-// （ValidCrossLineName の辞書照合で棄却される。ドキュメントに明記した既知の限界）。
-func TestCSVNameColumnFuriganaIsOutOfScope(t *testing.T) {
+// フリガナ（カタカナ）列は、#63 実装当初は姓名辞書が漢字ベースだったため対象外
+// だったが、#58（カナ・ローマ字氏名対応）でカタカナ読みが姓名辞書に追加された
+// ため、ValidCrossLineName がカタカナのフルネームも通し、高再現率モードで
+// person-name-structured として検出されるようになった。
+func TestCSVNameColumnFuriganaIsDetectedViaKatakanaDictionary(t *testing.T) {
 	d := newDetector(t, highRecallTOML)
 	fs := d.ScanContent("data.csv", "フリガナ,郵便番号\nヤマダタロウ,100-0001\n")
-	assertRules(t, fs, "jp-postal-code")
+	assertRules(t, fs, "person-name-structured", "jp-postal-code")
 }
 
 // ヘッダなし CSV では氏名列も検出しない（安全側）。

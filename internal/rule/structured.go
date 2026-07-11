@@ -31,9 +31,9 @@ var (
 	// ラベルそのものと完全一致するかを判定する（列全体をアンカーし、
 	// 部分一致は誤検出が増えるため許可しない）。CrossLineNameLabelRe と違い
 	// 区切り記号（:/=）は伴わない（ヘッダセルはラベル語そのものなため）。
-	// personNameLabelJP は「氏名カナ」等カナ接尾辞も許容するが、埋め込み
-	// 姓名辞書は漢字ベースのため、フリガナ列は ValidCrossLineName が値を
-	// 通さず自然に対象外になる（意図した挙動）。
+	// personNameLabelJP は「氏名カナ」等カナ接尾辞も許容する。#58 で姓名辞書に
+	// カタカナ読みが追加されたため、フリガナ列（カタカナのフルネーム）も
+	// ValidCrossLineName を通過して検出されるようになった。
 	CSVNameHeaderRe = regexp.MustCompile(
 		`^(?:` + personNameLabelJP + `|` + personNameLabelASCIIStrong + `)$`,
 	)

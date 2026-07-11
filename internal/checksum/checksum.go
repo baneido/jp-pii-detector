@@ -11,6 +11,42 @@ func AllSame(digits string) bool {
 	return strings.Count(digits, digits[:1]) == len(digits)
 }
 
+// IsZeroPaddedSequential は「先頭ゼロ埋め＋末尾が昇順連番」または「全体が
+// 公差 1 の昇順・降順の等差数列」である、明らかなダミー値らしい数字列かを
+// 返す（0000001 / 0000123 / 1234567 / 9876543210 等）。
+// マイナンバー・運転免許証番号の Validate から利用する（用途ごとの意味づけは
+// 呼び出し側のコメントを参照）。
+func IsZeroPaddedSequential(digits string) bool {
+	if len(digits) < 2 || !numeric(digits) {
+		return false
+	}
+	i := 0
+	for i < len(digits)-1 && digits[i] == '0' {
+		i++
+	}
+	if i > 0 && isSequentialRun(digits[i:], true) {
+		return true
+	}
+	return isSequentialRun(digits, true) || isSequentialRun(digits, false)
+}
+
+// isSequentialRun は digits が公差 1 の等差数列（ascending なら昇順、そうで
+// なければ降順）かどうかを返す。1 桁以下は常に true（呼び出し側で長さ制約済み）。
+func isSequentialRun(digits string, ascending bool) bool {
+	for i := 1; i < len(digits); i++ {
+		prev := int(digits[i-1] - '0')
+		cur := int(digits[i] - '0')
+		if ascending {
+			if cur != prev+1 {
+				return false
+			}
+		} else if cur != prev-1 {
+			return false
+		}
+	}
+	return true
+}
+
 // MyNumber は個人番号（マイナンバー）12 桁の検査用数字を検証する。
 // アルゴリズムは総務省令（平成 26 年総務省令第 85 号）第 5 条による:
 //
@@ -76,7 +112,10 @@ func brandOK(d string) bool {
 	p2 := atoi(d[:2])
 	switch {
 	case d[0] == '4': // Visa
-		return n == 13 || n == 16 || n == 19
+		// 13 桁の旧 Visa 形式は現在ほぼ廃止されており、稀に現存する
+		// 13 桁 Visa の検出漏れより、45/49 始まりの JAN コード等の
+		// 13 桁数字列の誤検出抑制を優先する（docs/detection-methods.md 参照）。
+		return n == 16 || n == 19
 	case p2 >= 51 && p2 <= 55: // Mastercard
 		return n == 16
 	case atoi(d[:4]) >= 2221 && atoi(d[:4]) <= 2720: // Mastercard (2-series)

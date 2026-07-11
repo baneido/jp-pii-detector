@@ -77,6 +77,9 @@ func luhnComplete(prefix string) string {
 	panic("unreachable")
 }
 
+// TestCreditCard は「フォーマット妥当性」（Luhn + ブランドプレフィックス +
+// 桁数）のみを検証する。決済処理業者が公開するテスト用 PAN も、実在番号と
+// 値だけでは安全に区別できないため検出対象とする。
 func TestCreditCard(t *testing.T) {
 	valid := []string{
 		"4111111111111111",                 // Visa 16 桁テスト番号
@@ -85,7 +88,7 @@ func TestCreditCard(t *testing.T) {
 		"378282246310005",                  // Amex テスト番号
 		"30569309025904",                   // Diners 14 桁テスト番号
 		"6011111111111117",                 // Discover テスト番号
-		luhnComplete("422222222222"),       // Visa 13 桁
+		luhnComplete("400000123456789"),    // Visa 16 桁（合成番号。旧 13 桁形式は非対応）
 		luhnComplete("422222222222222222"), // Visa 19 桁
 		luhnComplete("222100000000000"),    // Mastercard 2-series 下限
 		luhnComplete("272099999999999"),    // Mastercard 2-series 上限
@@ -94,6 +97,7 @@ func TestCreditCard(t *testing.T) {
 		luhnComplete("650000000000000"),    // Discover 65
 		luhnComplete("644000000000000"),    // Discover 644
 		luhnComplete("3000000000000"),      // Diners 300
+		luhnComplete("34000000000000"),     // Amex 15 桁（合成番号）
 	}
 	for _, v := range valid {
 		if !CreditCard(v) {
@@ -105,7 +109,8 @@ func TestCreditCard(t *testing.T) {
 		"9111111111111111",              // 未知のプレフィックス
 		"41111111",                      // 桁数不足
 		"1234567890123456",              // プレフィックス不正
-		luhnComplete("41111111111111"),  // Visa 15 桁（13/16/19 のみ）
+		luhnComplete("422222222222"),    // Visa 13 桁は廃止済みで非対応（16/19 のみ）
+		luhnComplete("41111111111111"),  // Visa 15 桁（16/19 のみ）
 		luhnComplete("55555555555544"),  // Mastercard 15 桁（16 のみ）
 		luhnComplete("222000000000000"), // 2-series 範囲外（2220）
 		luhnComplete("352700000000000"), // JCB 範囲外（3527）
@@ -115,6 +120,37 @@ func TestCreditCard(t *testing.T) {
 	for _, v := range invalid {
 		if CreditCard(v) {
 			t.Errorf("CreditCard(%q) = true, want false", v)
+		}
+	}
+}
+
+func TestIsZeroPaddedSequential(t *testing.T) {
+	sequential := []string{
+		"0000001",    // 先頭ゼロ埋め＋末尾昇順（銀行口座 7 桁）
+		"0000123",    // 先頭ゼロ埋め＋末尾昇順（3 桁分）
+		"00000000",   // 全桁ゼロ（ゼロ埋め branch でも捕捉される）
+		"1234567",    // 全体が昇順の等差数列（7 桁）
+		"01234567",   // 全体が昇順の等差数列（8 桁、先頭ゼロ含む）
+		"9876543210", // 全体が降順の等差数列
+		"87654321",   // 全体が降順の等差数列（8 桁）
+		"7654321",    // 全体が降順の等差数列（先頭ゼロなし・7 桁）
+	}
+	for _, v := range sequential {
+		if !IsZeroPaddedSequential(v) {
+			t.Errorf("IsZeroPaddedSequential(%q) = false, want true", v)
+		}
+	}
+	notSequential := []string{
+		"1234567891",   // マイナンバー等でありうる非連番値
+		"305012345678", // 運転免許証番号の実在しうる例（先頭が公安委員会コード）
+		"123456789018", // 検査用数字を含むため末尾で連番が崩れる（マイナンバーの正例）
+		"",
+		"1",
+		"12a4567",
+	}
+	for _, v := range notSequential {
+		if IsZeroPaddedSequential(v) {
+			t.Errorf("IsZeroPaddedSequential(%q) = true, want false", v)
 		}
 	}
 }

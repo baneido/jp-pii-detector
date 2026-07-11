@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -18,6 +19,10 @@ const (
 	testOS      = "linux"
 	testArch    = "amd64"
 	testAsset   = "jp-pii-detect_linux_amd64.tar.gz"
+
+	// docsVersion は README / docs が案内する現行リリース版。README のバージョン表記と
+	// 一致させる（更新時はこの定数だけを直せば済むよう、期待文字列はここから組み立てる）。
+	docsVersion = "v0.3.6"
 )
 
 func repoRoot(t *testing.T) string {
@@ -494,8 +499,8 @@ func TestReadmeDocumentsMiseInstall(t *testing.T) {
 	text := string(data)
 	for _, want := range []string{
 		"### Option 2. mise",
-		"mise use -g github:baneido/jp-pii-detector@v0.1.8",
-		`"github:baneido/jp-pii-detector" = "v0.1.8"`,
+		"mise use -g github:baneido/jp-pii-detector@" + docsVersion,
+		`"github:baneido/jp-pii-detector" = "` + docsVersion + `"`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("README should document mise installation; missing %q", want)
@@ -512,8 +517,202 @@ func TestReadmeDocumentsTagPinnedInstaller(t *testing.T) {
 	if strings.Contains(text, "main/scripts/install.sh | sh") {
 		t.Fatalf("README should not recommend executing the mutable main installer URL")
 	}
-	if !strings.Contains(text, "v0.1.8/scripts/install.sh") || !strings.Contains(text, "JP_PII_DETECT_VERSION=v0.1.8") {
+	if !strings.Contains(text, docsVersion+"/scripts/install.sh") || !strings.Contains(text, "JP_PII_DETECT_VERSION="+docsVersion) {
 		t.Fatalf("README should show a tag-pinned installer URL and matching binary version")
+	}
+}
+
+// TestDocsVersionReferencesMatchDocsVersion は README / README.en / docs/integrations.md /
+// docs/comparison.md が案内するリリース版が docsVersion 定数と一致していることを検証する
+// （バージョン表記の陳腐化を防ぐオフライン検査。ネットワーク不要）。とくに comparison.md は
+// gitleaks の rev（v8.18.4 等）のようなサードパーティ版数を含むため、単純な全置換はできない。
+// そこで自プロジェクトを指すマーカーが同一行または直前 2 行以内にある行だけを対象にする
+// （pre-commit の rev: のようにマーカーと vX.Y.Z が別行になるケースも拾う）。
+func TestDocsVersionReferencesMatchDocsVersion(t *testing.T) {
+	verRe := regexp.MustCompile(`\bv\d+\.\d+\.\d+\b`)
+	// これらのいずれかが近傍にある行だけを検査対象とし、他ツールの rev 指定などへの誤爆を避ける。
+	// このマーカー一覧は release.yml の docs ジョブ（バージョン自動更新の置換ロジック）と
+	// 同期している必要がある。片方だけ変更すると、自動 PR の置換対象と CI の検査対象が
+	// 食い違うので、両方を必ず一緒に更新すること。
+	markers := []string{
+		"jp-pii-detector",
+		"jp-pii-detect",
+		"JP_PII_DETECT_VERSION",
+		"ghcr.io/baneido",
+	}
+	hasMarker := func(line string) bool {
+		for _, m := range markers {
+			if strings.Contains(line, m) {
+				return true
+			}
+		}
+		return false
+	}
+	// README.en.md は未整備のことがあるが、勝手に対象から外さない。存在しなければ
+	// その subtest だけを t.Fatalf で落とす（最終検証は統括側で行う）。
+	for _, rel := range []string{"README.md", "README.en.md", filepath.Join("docs", "integrations.md"), filepath.Join("docs", "comparison.md")} {
+		t.Run(rel, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join(repoRoot(t), rel))
+			if err != nil {
+				t.Fatalf("%s を読み込めません: %v", rel, err)
+			}
+			lines := strings.Split(string(data), "\n")
+			for i, line := range lines {
+				// 同一行または直前 2 行以内にマーカーがあれば検査対象（スライディングウィンドウ）。
+				inScope := false
+				for j := i; j >= 0 && j >= i-2; j-- {
+					if hasMarker(lines[j]) {
+						inScope = true
+						break
+					}
+				}
+				if !inScope {
+					continue
+				}
+				for _, m := range verRe.FindAllString(line, -1) {
+					if m != docsVersion {
+						t.Errorf("%s:%d のバージョン表記 %q は docsVersion %q と一致しません", rel, i+1, m, docsVersion)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestDockerfileBuildsCrossCompiledScannerImage(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		// ビルダーはホスト側で動かし Go でクロスコンパイルする（ビルドに QEMU 不要）
+		"FROM --platform=$BUILDPLATFORM golang:",
+		"CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build",
+		"-X main.version=${VERSION}",
+		// CI ジョブコンテナとして使えるよう git / ssh / CA 証明書を同梱する
+		"apk add --no-cache ca-certificates git openssh-client",
+		`ENTRYPOINT ["jp-pii-detect"]`,
+		`CMD ["scan", "."]`,
+		// GHCR のパッケージをリポジトリに紐付ける
+		"org.opencontainers.image.source",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("Dockerfile missing %q:\n%s", want, text)
+		}
+	}
+	// 実行イメージにソースや Go ツールチェーンを残さない（マルチステージ必須）。
+	if !strings.Contains(text, "COPY --from=build") {
+		t.Fatalf("Dockerfile should copy the binary from a build stage:\n%s", text)
+	}
+}
+
+func TestDockerignoreExcludesSecretsAndLocalArtifacts(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), ".dockerignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		".git",
+		// 実在しうる PII を含むローカルフィクスチャをイメージに持ち込まない
+		"pii-fixtures.json",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf(".dockerignore missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestReleaseWorkflowPublishesMultiArchDockerImage(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"packages: write",
+		"ghcr.io/baneido/jp-pii-detector",
+		"--platform linux/amd64,linux/arm64",
+		`--build-arg "VERSION=${TAG}"`,
+		"docker buildx build",
+		"--push",
+		// QEMU 登録イメージは digest でピン留めする（サプライチェーン対策）
+		"tonistiigi/binfmt:qemu-",
+		"@sha256:",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("release workflow docker job missing %q:\n%s", want, text)
+		}
+	}
+	// リリースアセット公開後にのみ push する。
+	dockerJob := strings.Index(text, "  docker:")
+	if dockerJob == -1 || !strings.Contains(text[dockerJob:], "needs: release") {
+		t.Fatalf("docker job should depend on the release job:\n%s", text)
+	}
+}
+
+func TestCIWorkflowSmokeTestsDockerImage(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"docker build -t jp-pii-detect:ci .",
+		"docker run --rm jp-pii-detect:ci version",
+		// dogfooding をコンテナ経由でも通す
+		"jp-pii-detect:ci scan --format github /scan",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("ci workflow should smoke-test the Docker image; missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestReadmeDocumentsContainerImageAndIntegrations(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"ghcr.io/baneido/jp-pii-detector",
+		"docs/integrations.md",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("README missing %q", want)
+		}
+	}
+}
+
+func TestIntegrationsDocCoversCommonCIAndHookManagers(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "integrations.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"ghcr.io/baneido/jp-pii-detector",
+		"GitLab CI",
+		"CircleCI",
+		"Bitbucket Pipelines",
+		"Jenkins",
+		"lefthook",
+		"husky",
+		"mise",
+		"Dev Containers",
+		// GitLab はイメージの ENTRYPOINT を無効化しないと script が動かない
+		`entrypoint: [""]`,
+		// SARIF の Code Scanning 取り込み例
+		"upload-sarif",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("docs/integrations.md missing %q", want)
+		}
+	}
+	if strings.Contains(text, "main/scripts/install.sh | sh") {
+		t.Fatalf("docs/integrations.md should not recommend executing the mutable main installer URL")
 	}
 }
 
