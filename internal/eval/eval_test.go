@@ -18,6 +18,17 @@ var update = flag.Bool("update", false, "docs/accuracy.md を再生成する")
 // README の検出精度バッジと一致させること（TestReadmeBadges が検証する）。
 // ルールやデータセットを変更して値が動いたら、ここを更新したうえで
 // `-update` で README のバッジと docs/accuracy.md を再生成する。
+//
+// Issue #61（銀行名辞書による jp-bank-account の文脈強化・jp-yucho-account 新設）:
+//   - jp-bank-account は Validate/Pattern を変えていないが、銀行名辞書ヒットで
+//     新たに RequireContext を満たすケースが増えるため、実測 F1（特に recall）が
+//     動く可能性が高い。$JP_PII_FIXTURES を用意できる環境で
+//     `go test ./internal/eval -update` を実行し、この値と README バッジ・
+//     docs/accuracy.md を実測値に合わせて更新すること。
+//   - jp-yucho-account は新規ルールのため、評価データセット（リポジトリ外管理）に
+//     正例・負例ケースを追加してから wantF1 に登録する必要がある。ケースが
+//     ない状態で登録すると「評価結果に存在しない」で CI が落ちるため、
+//     ここには意図的にまだ追加していない。
 var wantF1 = map[string]float64{
 	"jp-my-number":        1.00,
 	"jp-phone-number":     1.00,

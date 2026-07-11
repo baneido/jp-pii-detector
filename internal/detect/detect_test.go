@@ -2016,6 +2016,112 @@ func TestScanContentRejectsCrossLineNegativeContextAcrossBlankLine(t *testing.T)
 	assertRules(t, d.ScanContent("f.txt", "口座番号: "+bankAccount+"\n\n円"))
 }
 
+// 実在の銀行名（辞書照合）は、既存の 8 語 Context が無い典型的な記載形式
+// （銀行名＋支店＋普通/当座）でも jp-bank-account を発火させる。値は
+// 辞書収録の銀行名（実在の固有名詞）とダミーの 7 桁を組み合わせただけで、
+// 実在しうる口座番号ではないため外部フィクスチャなしでテストできる
+// （internal/dict/names_test.go と同じ方針）。
+func TestBankNameContextEnablesDetection(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"銀行名＋支店＋普通（既存 Context 語なし）", "三菱UFJ銀行 渋谷支店 普通 1234567", []string{"jp-bank-account"}},
+		{"銀行名が行頭でなくても検出", "口座は みずほ銀行渋谷支店 普通預金 7654321 です", []string{"jp-bank-account"}},
+		{"助詞が銀行名の直前に続いても検出", "取引銀行はみずほ銀行本店です 1234567", []string{"jp-bank-account"}},
+		{"熟語が信用金庫名の直前に続いても検出", "取引先は京都信用金庫の支店です 2345678", []string{"jp-bank-account"}},
+		{"地の文が英字混じり銀行名の直前に続いても検出", "先方の三菱UFJ銀行本店営業部 3456789", []string{"jp-bank-account"}},
+		{"辞書未収録の架空銀行名は昇格しない", "架空銀行 渋谷支店 普通 1234567", nil},
+		{"支店・普通単体はいまだに Context ではない", "支店 普通 1234567", nil},
+		{"銀行名が 40 ルーン窓の外だと届かない", "みずほ銀行" + strings.Repeat("あ", 40) + "1234567", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// 銀行名の辞書照合は RequireContext の前提であり信頼度昇格の根拠にはならない
+// （TestContextRequiredConfidenceNotPromoted と同じ不変条件）ため、Base の
+// medium のまま報告される。
+func TestBankNameContextDoesNotPromoteConfidence(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanLine("f.txt", 1, "三菱UFJ銀行 渋谷支店 普通 1234567")
+	assertRules(t, fs, "jp-bank-account")
+	if fs[0].Confidence != rule.Medium {
+		t.Fatalf("confidence = %v, want medium", fs[0].Confidence)
+	}
+}
+
+// 銀行名の辞書照合を追加しても、既存の金額・数量ネガティブコンテキストは
+// 引き続き検出を抑制する。
+func TestBankNameContextStillRejectsNegativeContext(t *testing.T) {
+	d := newDetector(t, "")
+	assertRules(t, d.ScanLine("f.txt", 1, "みずほ銀行の株価は1234567円です"))
+	assertRules(t, d.ScanLine("f.txt", 1, "管理番号1234567（みずほ銀行の資料）"))
+}
+
+// ゆうちょ銀行の記号番号（記号5桁・先頭は必ず1、番号6〜8桁をハイフンで相関）。
+// 値はダミーの数字列と辞書収録の「ゆうちょ銀行」表記のみを使い、外部フィクスチャ
+// なしでテストできる。
+func TestYuchoAccountRule(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"記号番号＋ゆうちょ表記", "ゆうちょ銀行 記号12340-7654321", []string{"jp-yucho-account"}},
+		{"地の文に埋め込まれたゆうちょ銀行名", "取引銀行はゆうちょ銀行本店です 12340-7654321", []string{"jp-yucho-account"}},
+		{"記号番号＋記号ラベル", "記号12345-1234567 ゆうちょ口座", []string{"jp-yucho-account"}},
+		{"記号番号＋日本郵政系文脈", "日本郵政 12345-1234567", []string{"jp-yucho-account"}},
+		{"通常銀行名はゆうちょ文脈にしない", "三菱UFJ銀行 12345-1234567", []string{"jp-bank-account"}},
+		{"コンテキストなしは検出しない", "12345-1234567", nil},
+		{"記号が1始まりでない", "記号22345-1234567 ゆうちょ", nil},
+		{"記号が全桁同一のダミー値", "記号11111-111111 ゆうちょ", nil},
+		{"番号が全桁同一のダミー値", "記号12345-9999999 ゆうちょ", nil},
+		{"金額の負コンテキストで抑制", "ゆうちょ記号12345-1234567円", nil},
+		{"長い数字列の一部は対象外", "8" + "12345-1234567" + " ゆうちょ", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// jp-yucho-account が共有する銀行名 ContextPattern も、空白なしの地の文から
+// 「ゆうちょ銀行」だけを回収する。通常 Context にも「ゆうちょ」があるため、
+// ContextPattern 自体の回帰を直接検証する。
+func TestYuchoAccountContextPatternFindsEmbeddedBankName(t *testing.T) {
+	var patterns []rule.ContextPattern
+	for _, r := range rule.Builtin() {
+		if r.ID == "jp-yucho-account" {
+			patterns = r.ContextPatterns
+			break
+		}
+	}
+	got := matchContextPatterns("取引銀行はゆうちょ銀行本店です", patterns)
+	if len(got) != 1 || got[0] != "ゆうちょ銀行" {
+		t.Fatalf("matching contexts = %q, want [ゆうちょ銀行]", got)
+	}
+}
+
+// jp-yucho-account の RequireContext パターンも Base の High のまま報告される
+// （RequireContext は昇格の根拠にならない不変条件）。
+func TestYuchoAccountConfidenceIsBaseHigh(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanLine("f.txt", 1, "ゆうちょ銀行 記号12340-7654321")
+	assertRules(t, fs, "jp-yucho-account")
+	if fs[0].Confidence != rule.High {
+		t.Fatalf("confidence = %v, want high", fs[0].Confidence)
+	}
+	if fs[0].Match != "12340-7654321" {
+		t.Fatalf("match = %q, want 12340-7654321", fs[0].Match)
+	}
+}
+
 func TestScanContentUsesSourceContext(t *testing.T) {
 	d := newDetector(t, "")
 	assertRules(t, d.ScanContent("user.ts", `const bankAccountNo = "1234567"`), "jp-bank-account")

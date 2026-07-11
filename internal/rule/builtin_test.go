@@ -380,6 +380,33 @@ func TestValidBirthdate(t *testing.T) {
 	}
 }
 
+// validYuchoAccount はゆうちょ銀行の記号（5 桁・先頭は必ず "1"）・番号
+// （6〜8 桁）がハイフンで相関した表記かを検証する。
+func TestValidYuchoAccount(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"有効な記号番号（番号6桁）", "12345-123456", true},
+		{"有効な記号番号（番号8桁）", "10090-12345671", true},
+		{"記号の先頭が1以外", "22345-1234567", false},
+		{"記号が5桁でない", "1234-1234567", false},
+		{"番号が6桁未満", "12345-12345", false},
+		{"番号が8桁超", "12345-123456789", false},
+		{"記号が全桁同一", "11111-111111", false},
+		{"番号が全桁同一", "12345-999999", false},
+		{"ハイフンなし", "123451234567", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := validYuchoAccount(tt.in); got != tt.want {
+				t.Errorf("validYuchoAccount(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 // stripSeparators はハイフン・半角スペース・ドット・丸括弧を除去し、
 // その他の文字（'+' を含む）は保持する。ドット・丸括弧は issue #46 で
 // 括弧市外局番（03(1234)5678）・ドット区切り携帯（090.1234.5678）向けに

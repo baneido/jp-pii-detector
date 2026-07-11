@@ -451,7 +451,13 @@ internal/
   `RequireContextWindow` で肯定語を近接必須にし、金額、数量、連番 ID と衝突しやすい場合は
   `NegativeContext` を設定します。`id`、`version`、`count` などコード特有のノイズは、
   通常テキストにも効く `NegativeContext` へ安易に追加せず、source context 側の
-  コード限定 `NegativeText` として扱います。
+  コード限定 `NegativeText` として扱います。数百〜千語規模の辞書（固有名詞等）を
+  文脈シグナルにしたい場合は `Context` に語をすべて足さず、`ContextPattern`
+  （`Rule.ContextPatterns`）で「安価な `Literals` ゲート → 正規表現で候補切り出し
+  → 辞書 `Validate`」の専用経路にします（`jp-bank-account` の銀行名辞書照合を参照）。
+  日本語の連続文を候補の前方に取り込みうる場合は `ValidateSuffixes` を有効にし、
+  辞書に一致する最長の接尾部分を回収します。
+  `Context` の線形走査（`containsWord`）に大きな辞書を混ぜるとホットパスが劣化します。
 - **Prefilter**: パターンが特定の文字種（数字、`@`、日本語）なしにマッチし得ない
   場合は `Prefilter` を設定します。該当文字を含まない行の走査が丸ごと省けます。
   迷ったら未設定（常に走査）が安全です。
@@ -657,6 +663,35 @@ $ go run ./internal/dict/gen -phone \
 必要なら `wantF1` を更新のうえ `-update` で README バッジと `docs/accuracy.md` を
 再生成してください（区切りなし固定電話 10 桁の正例・未割当プレフィックスの負例を
 評価データセットに追加した場合は特に必要です）。
+
+銀行名（[`internal/dict/bank_names.txt`](../internal/dict/bank_names.txt)、
+`dict.IsBankName` が参照）は、全国銀行協会（Zengin）加盟金融機関のうち著名な
+銀行・信用金庫・労働金庫を**手作業で収録した代表サブセット**（約 110 件）です。
+zengin-code 等が公開する公式マスタ（約 1,100 件）そのものではありません。
+`jp-bank-account` ルールは、この辞書と `internal/rule/builtin.go` の
+`bankNameCandidateRe`（`(候補)(銀行|信用金庫|信用組合|信金|信組|労働金庫|ろうきん|農協)`
+のアンカー正規表現）で候補を切り出し、候補の接尾部分を長い順に
+`dict.IsBankName` で O(1) 検証した結果を
+`rule.ContextPattern` 経由の文脈シグナルとして使います（銀行名 1,000 語超を
+`Context` の線形走査に混ぜないための専用経路。`internal/detect/context.go` の
+`matchContextPatterns` を参照）。支店辞書（全国支店で数百 KB〜数 MB 規模になりうる）は
+スコープ外として別 Issue に切り出しています。
+
+実データ（zengin-code 等）で辞書を更新・拡張する場合は、ライセンス（元データ提供元
+への帰属を含む）と継続性をメンテナが確認・サインオフしてから取り込んでください
+（postal_codes.bitset が公式 KEN_ALL を出典にしているのと同水準の確認が必要）。
+`internal/dict/bank_names.txt` はテキストファイルを直接編集し、
+`go test ./internal/dict ./internal/detect ./internal/eval` で検証します
+（`internal/dict/postal_codes.bitset` のような自動生成パイプライン・定期更新
+ワークフローはまだありません）。
+
+ゆうちょ銀行の記号番号（`jp-yucho-account`）は記号（5 桁・先頭は必ず "1"）＋
+番号（6〜8 桁）をハイフンで相関させた表記（例: `12345-1234567`）だけを対象にして
+います。記号 4 桁目に意味を持つチェックディジット式が存在するとされますが、公開
+情報から具体式を確認できなかったため未実装です（要追加調査）。新規ルールのため
+評価データセット（リポジトリ外管理）に正例・負例ケースがまだなく、`wantF1` にも
+未登録です。追加する場合は `internal/eval/eval_test.go` の該当コメント（Issue #61）
+を参照してください。
 
 新ルールは `jp-pii-detect rules` に自動で表示されます。
 
