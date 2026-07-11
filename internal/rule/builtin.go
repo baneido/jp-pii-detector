@@ -57,9 +57,40 @@ func ag(core string) *regexp.Regexp {
 	return regexp.MustCompile(`(?:^|[^0-9A-Za-z])(` + core + `)(?:[^0-9A-Za-z]|$)`)
 }
 
+// rejectSeparatedDigitGroup は、候補の直後に separators のいずれかと指定桁数の
+// 数字グループが続く場合だけ棄却する ValidateLine を返す。共有境界ガードを
+// 厳しくすると、独立した別番号や年が隣接しただけでも全数値ルールが偽陰性に
+// なるため、長い区切り数字トークンの部分一致が問題になる新規パターンにだけ使う。
+func rejectSeparatedDigitGroup(separators string, widths ...int) func(string, int, int) bool {
+	return func(line string, _, end int) bool {
+		if end >= len(line) || !strings.ContainsRune(separators, rune(line[end])) {
+			return true
+		}
+		i := end + 1
+		start := i
+		for i < len(line) && line[i] >= '0' && line[i] <= '9' {
+			i++
+		}
+		width := i - start
+		for _, rejected := range widths {
+			if width == rejected {
+				return false
+			}
+		}
+		return true
+	}
+}
+
+// stripSeparators は番号表記の区切り文字（ハイフン・半角スペース・ドット・
+// 丸括弧）を除去する。マイナンバー・クレジットカードの呼び出しはこれらの
+// 区切り文字を元々捕捉しない（正規表現側にハイフン・空白しか含まない）ため、
+// ドット・丸括弧の追加は無効化に影響しない。電話番号（括弧市外局番・
+// ドット区切り携帯）と運転免許（ハイフン区切り 4-4-4）の新パターンが
+// この拡張に依存する。
 func stripSeparators(s string) string {
 	return strings.Map(func(r rune) rune {
-		if r == '-' || r == ' ' {
+		switch r {
+		case '-', ' ', '.', '(', ')':
 			return -1
 		}
 		return r
@@ -373,6 +404,25 @@ func validRomajiFullName(v string) bool {
 		(dict.IsRomajiGivenName(a) && dict.IsRomajiSurname(b))
 }
 
+// bankNameSuffixes は銀行名の業態サフィックス（この語の直前に実在する金融機関名が
+// 続く場合のみ、bankNameCandidateRe が候補として切り出す）。
+var bankNameSuffixes = []string{"銀行", "信用金庫", "信用組合", "信金", "信組", "労働金庫", "ろうきん", "農協"}
+
+// bankNameCandidateRe は「(金融機関名候補)(業態サフィックス)」の形を切り出す
+// アンカー正規表現。キャプチャグループ 1 はサフィックスを含む候補で、
+// ContextPattern.ValidateSuffixes が辞書に一致する最長の接尾部分を検証する。
+// これにより、銀行名の直前に助詞や熟語が空白なしで続く日本語文でも、
+// 完全な金融機関名（例: "三菱UFJ銀行"）だけを回収できる。
+// 数百〜千語規模の辞書を Context の線形走査に混ぜないための専用経路
+// （internal/detect の ContextPattern・bankNameSuffixes の Literals ゲートを参照）。
+var bankNameCandidateRe = regexp.MustCompile(
+	`([` + kanji + hiragana + katakana + `A-Za-z]{1,12}(?:銀行|信用金庫|信用組合|信金|信組|労働金庫|ろうきん|農協))`,
+)
+
+func isYuchoBankName(s string) bool {
+	return s == "ゆうちょ銀行"
+}
+
 // validStrictFullName は姓+名の分割（dict.FullNameSplit）が成立し、かつ名側の
 // 成分が 2 文字以上であることを要求する、姓名辞書検証のうち最も厳しい検証。
 // 単独の姓・名一致（渋谷・大和・本田のような地名・企業名と同形の姓を含む）は
@@ -435,7 +485,13 @@ func Builtin() []Rule {
 				{Re: dgNoAlnumHyphen(`\d{12}`), Base: Medium},
 				// 前後にハイフンが続く場合はクレジットカード等の
 				// 4-4-4-4 グループの一部とみなして除外する。
-				{Re: regexp.MustCompile(`(?:^|[^0-9A-Za-z-])(\d{4}-\d{4}-\d{4})(?:[^0-9A-Za-z-]|$)`), Base: Medium},
+				{Re: dgNoAlnumHyphen(`\d{4}-\d{4}-\d{4}`), Base: Medium},
+				// 空白区切り（4-4-4 / 6-6）。stripSeparators は元々半角スペースを
+				// 除去するため Validate 側の変更は不要。
+				{Re: dgNoAlnumHyphen(`\d{4} \d{4} \d{4}`), Base: Medium,
+					ValidateLine: rejectSeparatedDigitGroup(" ", 4)},
+				{Re: dgNoAlnumHyphen(`\d{6} \d{6}`), Base: Medium,
+					ValidateLine: rejectSeparatedDigitGroup(" ", 6)},
 			},
 		},
 		{
@@ -452,10 +508,18 @@ func Builtin() []Rule {
 			Patterns: []Pattern{
 				// 区切りあり携帯・IP 電話（060/070/080/090/050）
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0-\d{4}-\d{4}`), Base: High, IgnoreNegativeContext: true},
+				// 空白・ドット区切り携帯・IP 電話
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0[ .]\d{4}[ .]\d{4}`), Base: Medium,
+					ValidateLine: rejectSeparatedDigitGroup(" .", 1)},
 				// 区切りなし携帯・IP 電話
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0\d{8}`), Base: Medium, IgnoreNegativeContext: true},
-				// 区切りあり固定電話（市外局番 2〜5 桁）
-				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}-\d{1,4}-\d{4}`), Base: Medium, IgnoreNegativeContext: true},
+				// 区切りあり固定電話（市外局番 2〜5 桁）。末尾は 3〜4 桁を許容し、
+				// フリーダイヤル・ナビダイヤル等の末尾 3 桁表記も拾う。
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}-\d{1,4}-\d{3,4}`), Base: Medium, IgnoreNegativeContext: true},
+				// 括弧市外局番（市外局番の直後に市内局番を括弧書き、または
+				// 市外局番全体を括弧で囲む表記）。
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}\(\d{1,4}\)\d{4}`), Base: Medium},
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`\(0\d{1,4}\)\s?\d{1,4}-?\d{4}`), Base: Medium},
 				// 区切りなし固定電話（10 桁）。裸の \d{10} は型番・伝票番号等との
 				// 衝突が非常に多く単独では出せないため、コンテキストキーワード必須
 				// （RequireContext）にした上で validPhone が市外局番辞書
@@ -605,6 +669,9 @@ func Builtin() []Rule {
 			Validate:             validDriversLicense,
 			Patterns: []Pattern{
 				{Re: dg(`\d{12}`), Base: High, RequireContext: true},
+				// ハイフン区切り（4-4-4）。dgNoAlnumHyphen で UUID 等のハイフン区切り
+				// トークンの内部を除外する（dg ではなく my-number と同じ境界ガード）。
+				{Re: dgNoAlnumHyphen(`\d{4}-\d{4}-\d{4}`), Base: High, RequireContext: true},
 			},
 		},
 		{
@@ -615,7 +682,9 @@ func Builtin() []Rule {
 			NegativeContext: digitRuleUnitAdjacentNegativeContext,
 			Validate:        validPassport,
 			Patterns: []Pattern{
-				{Re: ag(`[A-Z]{2}\d{7}`), Base: High, RequireContext: true},
+				// 英字 2 桁と数字 7 桁の間の半角スペースは任意（例: "AB 1234567"）。
+				{Re: ag(`[A-Z]{2} ?\d{7}`), Base: High, RequireContext: true,
+					ValidateLine: rejectSeparatedDigitGroup(" ", 1)},
 			},
 		},
 		{
@@ -626,7 +695,10 @@ func Builtin() []Rule {
 			NegativeContext:      digitRuleNegativeContext,
 			RequireContextWindow: digitRuleRequireContextWindow,
 			Patterns: []Pattern{
-				{Re: dg(`\d{4}-?\d{6}`), Base: High, RequireContext: true},
+				// ハイフン・半角スペースいずれの区切りも許容する（Validate なしのため
+				// 区切り文字の除去は不要）。
+				{Re: dg(`\d{4}[- ]?\d{6}`), Base: High, RequireContext: true,
+					ValidateLine: rejectSeparatedDigitGroup(" ", 1)},
 			},
 		},
 		{
@@ -644,15 +716,50 @@ func Builtin() []Rule {
 			},
 		},
 		{
-			ID:                   "jp-bank-account",
-			Description:          "銀行口座番号",
-			Prefilter:            PrefilterDigit,
-			Context:              []string{"口座", "普通預金", "当座預金", "支店番号", "account number", "account_no", "bank account", "kouza"},
+			ID:          "jp-bank-account",
+			Description: "銀行口座番号",
+			Prefilter:   PrefilterDigit,
+			Context:     []string{"口座", "普通預金", "当座預金", "支店番号", "account number", "account_no", "bank account", "kouza"},
+			// 実在の銀行・信用金庫・労働金庫名（"三菱UFJ銀行" 等）を辞書照合で
+			// 検証し、既存の 8 語 Context だけでは拾えない「銀行名＋支店＋
+			// 普通/当座」のような典型的な記載形式（例: [銀行名] 渋谷支店
+			// 普通 [7桁の口座番号]）を検出可能にする。1,100 語規模の辞書を
+			// Context の線形走査に混ぜないため、bankNameSuffixes の安価な
+			// リテラルゲートを通過した行だけ bankNameCandidateRe を評価する
+			// （詳細は internal/dict/bank_names.go・docs/development.md）。
+			// 注: このコメント自体が dogfooding で自己検出されないよう、
+			// 具体的な銀行名・口座番号の実値は書かない。
+			ContextPatterns: []ContextPattern{
+				{Re: bankNameCandidateRe, Validate: dict.IsBankName, ValidateSuffixes: true, Literals: bankNameSuffixes},
+			},
 			NegativeContext:      digitRuleNegativeContext,
 			RequireContextWindow: digitRuleRequireContextWindow,
 			Validate:             validBankAccount,
 			Patterns: []Pattern{
 				{Re: dg(`\d{7}`), Base: Medium, RequireContext: true},
+			},
+		},
+		{
+			ID:          "jp-yucho-account",
+			Description: "ゆうちょ銀行 記号番号",
+			Prefilter:   PrefilterDigit,
+			Context:     []string{"ゆうちょ", "郵便貯金", "記号", "日本郵政", "郵便局", "yucho", "japan post", "japan post bank"},
+			// 銀行名候補の専用経路は「ゆうちょ銀行」表記だけを文脈として使う。
+			// 任意の銀行名は通常の銀行口座ルール（jp-bank-account）側の文脈で扱う。
+			ContextPatterns: []ContextPattern{
+				{Re: bankNameCandidateRe, Validate: isYuchoBankName, ValidateSuffixes: true, Literals: bankNameSuffixes},
+			},
+			NegativeContext:      digitRuleNegativeContext,
+			RequireContextWindow: digitRuleRequireContextWindow,
+			Validate:             validYuchoAccount,
+			Patterns: []Pattern{
+				// 記号（5 桁、先頭は必ず "1"）＋番号（6〜8 桁）をハイフンで
+				// 相関させた表記（例: [5桁の記号]-[6〜8桁の番号]）。記号・番号の
+				// ラベルが別々に書かれる形式（記号: … 番号: …）は将来の拡張対象
+				// とし、誤検出リスクを抑えるためこの表記に限定する。チェック
+				// ディジットの具体式は未確認のため（要追加調査）、全桁同一の
+				// ダミー値のみ Validate で棄却する。
+				{Re: dgNoAlnumHyphen(`1\d{4}-\d{6,8}`), Base: High, RequireContext: true},
 			},
 		},
 		{
@@ -956,7 +1063,12 @@ func validMyNumber(m string) bool {
 // 実装は採用せず、先頭桁（公安委員会コードは 10 以上 = 先頭桁が 0 でない）と、
 // 全桁同一・ゼロ埋め連番のみを見る。
 func validDriversLicense(m string) bool {
-	return m != "" && m[0] != '0' && !checksum.AllSame(m) && !checksum.IsZeroPaddedSequential(m)
+	// ハイフン区切り（4-4-4）はセパレータを除去してから判定する（区切り文字は
+	// チェックディジットではないため、AllSame 判定がハイフンに惑わされて
+	// "0000-0000-0000" のようなプレースホルダを通過させないようにする）。連続
+	// 12 桁は元々区切りを含まないため stripSeparators は無害（no-op）。
+	d := stripSeparators(m)
+	return d != "" && d[0] != '0' && !checksum.AllSame(d) && !checksum.IsZeroPaddedSequential(d)
 }
 
 // validBankAccount は銀行口座番号（7 桁）の全桁同一のダミー値を棄却する。
@@ -1033,6 +1145,19 @@ func validPhone(m string) bool {
 		return d[1] >= '5' && d[1] <= '9' && d[2] == '0'
 	}
 	return false
+}
+
+// validYuchoAccount はゆうちょ銀行の記号（5 桁・先頭は必ず "1"）・番号
+// （6〜8 桁）がハイフンで相関した表記かを検証する。記号 4 桁目に意味を持つ
+// チェックディジット式が存在するとされるが、公開情報からは具体式を確認できな
+// かったため（要追加調査）実装していない。全桁同一のダミー値（"11111-111111"
+// 等）だけを明白な非 PII として棄却する。
+func validYuchoAccount(m string) bool {
+	symbol, number, ok := strings.Cut(m, "-")
+	if !ok || len(symbol) != 5 || symbol[0] != '1' || len(number) < 6 || len(number) > 8 {
+		return false
+	}
+	return !checksum.AllSame(symbol) && !checksum.AllSame(number)
 }
 
 // birthdateRe は jp-birthdate の区切りあり捕捉値（西暦 4 桁 or 和暦元号＋年・月・日）

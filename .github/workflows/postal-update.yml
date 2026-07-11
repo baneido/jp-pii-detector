@@ -132,11 +132,12 @@ jobs:
           rm -f utf_ken_all.zip jigyosyo.zip
           ./jp-pii-detect scan --format github .
 
-      # フィクスチャが取れていれば、バッジ・docs/accuracy.md を実測で再生成して PR に含める。
-      # F1 が wantF1 から外れた場合は上の go test が失敗しており、ここには到達しない。
+      # フィクスチャが取れていれば、バッジ・docs/accuracy.md・docs/accuracy.json
+      # （ゴールデンファイル）を実測で再生成して PR に含める。実測値が docs/accuracy.json
+      # から外れた場合は上の go test（TestAccuracy）が失敗しており、ここには到達しない。
       - name: Regenerate accuracy docs and badges
         if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
-        run: go test ./internal/eval -update
+        run: go test ./internal/eval -run 'TestGenerateDoc|TestReadmeBadges' -update
 
       - name: Open PR if the data changed
         env:
@@ -152,8 +153,9 @@ jobs:
           git config user.name "jp-pii-detect-bot"
           git config user.email "contact@baneido.com" # jp-pii-detector:ignore bot の連絡先
           git checkout -b "$POSTAL_BRANCH"
-          # ビットセット・市区町村名辞書と、再生成された精度ドキュメント・バッジ（あれば）を含める。
-          git add internal/dict/postal_codes.bitset internal/dict/municipalities.txt docs/accuracy.md README.md
+          # ビットセット・市区町村名辞書と、再生成された精度ドキュメント・
+          # ゴールデンファイル・バッジ（あれば）を含める。
+          git add internal/dict/postal_codes.bitset internal/dict/municipalities.txt docs/accuracy.md docs/accuracy.json README.md
           git commit -m "chore(dict): 郵便番号・市区町村データを更新（${today}）"
           # 同一リポジトリへの push。認証情報は URL に都度埋め、作業ツリーには残さない。
           git push -f \

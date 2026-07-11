@@ -240,6 +240,9 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 	}
 	if d.crossLineName != nil {
 		candidates = append(candidates, d.scanCrossLineNames(file, lines)...)
+		if sourceKindForPath(file) == sourceKindCSV {
+			candidates = append(candidates, d.scanCSVNameColumns(file, lines)...)
+		}
 	}
 
 	// 隣接行の負コンテキスト（金額・数量・連番 ID 等）で抑制される候補は、
@@ -850,16 +853,24 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 		// 見る。Base 信頼度の昇格判定には promotionWindow を渡すが、これは常に
 		// 呼び出し側で 0 以下なら defaultPromotionContextWindow に解決してから
 		// 渡す（issue #68 段階1(b)。無制限昇格による FP 増幅を防ぐ）ため、ここでは
-		// 単純に window>0 かどうかだけを見ればよい。
+		// 単純に window>0 かどうかだけを見ればよい。ContextPatterns（銀行名辞書等の
+		// アンカー正規表現＋辞書検証経路）も同じ探索対象文字列 hay に対して評価する。
 		ctxForMatch := func(start, end int, window int) []string {
-			var kws []string
+			var hay string
 			if window > 0 {
-				kws = d.matchingContexts(contextWindow(norm, start, end, window, &normRunes), r.Context)
+				hay = contextWindow(norm, start, end, window, &normRunes)
 			} else {
-				kws = d.matchingContexts(norm, r.Context)
+				hay = norm
+			}
+			kws := d.matchingContexts(hay, r.Context)
+			if len(r.ContextPatterns) > 0 {
+				kws = append(kws, matchContextPatterns(hay, r.ContextPatterns)...)
 			}
 			if st := lineCtx.statementFor(start, end); st != nil && st.PositiveText != "" {
 				kws = append(kws, d.matchingContexts(st.PositiveText, r.Context)...)
+				if len(r.ContextPatterns) > 0 {
+					kws = append(kws, matchContextPatterns(st.PositiveText, r.ContextPatterns)...)
+				}
 			}
 			return kws
 		}
@@ -928,6 +939,12 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 				}
 				if p.Validate != nil {
 					if !p.Validate(entity) {
+						continue
+					}
+					reason.Validated = true
+				}
+				if p.ValidateLine != nil {
+					if !p.ValidateLine(norm, start, end) {
 						continue
 					}
 					reason.Validated = true

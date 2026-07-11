@@ -77,6 +77,79 @@ func TestMyNumberRule(t *testing.T) {
 	}
 }
 
+// TestMyNumberSeparatorVariants は issue #46 で追加した空白区切り（4-4-4 /
+// 6-6）のマイナンバー表記をカバーする。検査用数字は checksum_test.go の
+// genMyNumber("12345678901") と同じ既知値（123456789018）を使う。
+func TestMyNumberSeparatorVariants(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+		conf       rule.Confidence
+	}{
+		{"空白区切り4-4-4 コンテキストあり", "マイナンバー: 1234 5678 9018", []string{"jp-my-number"}, rule.High},
+		{"空白区切り4-4-4 コンテキストなし", "value = 1234 5678 9018", []string{"jp-my-number"}, rule.Medium},
+		{"空白区切り6-6 コンテキストあり", "個人番号: 123456 789018", []string{"jp-my-number"}, rule.High},
+		{"空白区切り4-4-4 検査用数字不一致", "value = 1234 5678 9012", nil, 0},
+		{"空白区切り4-4-4 の末尾に数字が続く場合は対象外", "マイナンバー: 1234 5678 90189", nil, 0},
+		{"4-4-4 でない空白区切りは対象外（5-3-4）", "マイナンバー: 12345 678 9018", nil, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, tt.want...)
+			if len(fs) == 1 && fs[0].Confidence != tt.conf {
+				t.Errorf("confidence = %v, want %v", fs[0].Confidence, tt.conf)
+			}
+		})
+	}
+}
+
+func TestNumericSeparatorVariantsRejectLongTokenPrefixes(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+	}{
+		{"空白区切りマイナンバーの直後にさらに空白数字が続く", "マイナンバー: 1234 5678 9018 0000"},
+		{"空白区切り基礎年金番号の直後にさらに空白数字が続く", "基礎年金番号: 1234 567890 1"},
+		{"空白区切りパスポート番号の直後にさらに空白数字が続く", "パスポート番号: AB 1234567 8"},
+		{"ドット区切り電話番号の直後にさらにドット数字が続く", "電話番号: 090.1234.5678.9"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line))
+		})
+	}
+}
+
+// TestNumericBoundariesAllowAdjacentIndependentValues は、区切り文字 1 個の外側に
+// 別の数字があるだけで既存の数値ルールを棄却しないことを確認する。長い同一
+// トークンの部分一致は上のテストで個別に防ぎつつ、ログ・CSV・フォームで普通に
+// 現れる複数値の隣接を許容する。
+func TestNumericBoundariesAllowAdjacentIndependentValues(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"電話番号の後ろに年", "TEL: 03-1234-5678 2024年度", []string{"jp-phone-number"}},
+		{"年の後ろに電話番号", "更新日2024 03-1234-5678", []string{"jp-phone-number"}},
+		{"電話番号2件", "TEL:03-1234-5678 03-1234-5679", []string{"jp-phone-number", "jp-phone-number"}},
+		{"郵便番号と電話番号", "郵便番号: 100-0001 090-1234-5678", []string{"jp-postal-code", "jp-phone-number"}},
+		{"口座番号と別数字", "口座番号: 1234567 8888", []string{"jp-bank-account"}},
+		{"保険者番号と別数字", "保険者番号: 12345678 9999", []string{"jp-health-insurance"}},
+		{"運転免許証番号と別数字", "免許証番号: 305012345678 8888", []string{"jp-drivers-license"}},
+		{"基礎年金番号（ハイフン）と別数字", "基礎年金番号: 1234-567890 8888", []string{"jp-pension-number"}},
+		{"基礎年金番号（連続）と別数字", "基礎年金番号: 1234567890 8888", []string{"jp-pension-number"}},
+		{"パスポート番号と別数字", "パスポート番号: AB1234567 8888", []string{"jp-passport"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
 func TestNumericEntitiesInsideASCIIIdentifiersExcluded(t *testing.T) {
 	d := newDetector(t, "")
 	tests := []struct {
@@ -215,6 +288,48 @@ func TestPhoneSepAllowsAreaCodeMissingFromSeedDictionary(t *testing.T) {
 	assertRules(t, d.ScanLine("f.txt", 1, "電話番号：04992-2-1234"), "jp-phone-number")
 }
 
+// TestPhoneNumberSeparatorVariants は issue #46 で追加した区切り表記ゆれ
+// （区切りなし固定電話・空白/ドット区切り携帯・括弧市外局番・フリーダイヤル）を
+// カバーする。既存 4 パターン（区切りあり携帯・区切りなし携帯・区切りあり固定・
+// +81 国際表記）が壊れていないことも回帰として明記する。
+func TestPhoneNumberSeparatorVariants(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+		conf       rule.Confidence
+	}{
+		// ---- 既存パターンの回帰（挙動が変わらないことの確認）----
+		{"回帰: 区切りあり携帯", "TEL: 090-1234-5678", []string{"jp-phone-number"}, rule.High},
+		{"回帰: 区切りなし携帯コンテキストなし", "09012345678", []string{"jp-phone-number"}, rule.Medium},
+		{"回帰: 区切りあり固定電話（末尾4桁）", "TEL: 03-1234-5678", []string{"jp-phone-number"}, rule.High},
+		{"回帰: 国際表記 +81", "+81-90-1234-5678", []string{"jp-phone-number"}, rule.High},
+		// ---- 新規: 区切りなし固定電話（RequireContext 必須）----
+		{"区切りなし固定電話 コンテキストあり", "電話番号: 0312345678", []string{"jp-phone-number"}, rule.Medium},
+		{"区切りなし固定電話 コンテキストなし", "id: 0312345678", nil, 0},
+		{"区切りなし固定電話 直後に数字が続く場合は対象外（11桁の先頭10桁部分ではない）", "電話番号: 03123456789", nil, 0},
+		{"区切りなし固定電話 直前に数字が続く場合は対象外（11桁の末尾10桁部分ではない）", "電話番号: 10312345678", nil, 0},
+		// ---- 新規: 空白・ドット区切り携帯 ----
+		{"空白区切り携帯 コンテキストあり", "携帯 090 1234 5678", []string{"jp-phone-number"}, rule.High},
+		{"ドット区切り携帯 コンテキストなし", "090.1234.5678", []string{"jp-phone-number"}, rule.Medium},
+		{"携帯プレフィックスでない空白区切りは対象外", "030 1234 5678", nil, 0},
+		// ---- 新規: 括弧市外局番 ----
+		{"括弧書き市内局番", "電話: 03(1234)5678", []string{"jp-phone-number"}, rule.High},
+		{"括弧書き市外局番全体", "電話: (03) 1234-5678", []string{"jp-phone-number"}, rule.High},
+		// ---- 新規: フリーダイヤル等の末尾3桁 ----
+		{"フリーダイヤル（末尾3桁）", "TEL: 0120-234-567", []string{"jp-phone-number"}, rule.High},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, tt.want...)
+			if len(fs) == 1 && fs[0].Confidence != tt.conf {
+				t.Errorf("confidence = %v, want %v", fs[0].Confidence, tt.conf)
+			}
+		})
+	}
+}
+
 func TestPostalAndAddress(t *testing.T) {
 	piifixtures.Require(t)
 	d := newDetector(t, "")
@@ -305,6 +420,78 @@ func TestContextRequiredRules(t *testing.T) {
 		{"在留カード", "在留カード番号 " + piifixtures.MustGet(t, "detect.residence_card"), []string{"jp-residence-card"}},
 		{"銀行口座", "口座番号: " + piifixtures.MustGet(t, "detect.bank_account"), []string{"jp-bank-account"}},
 		{"保険者番号", "保険者番号: " + piifixtures.MustGet(t, "detect.health_insurance"), []string{"jp-health-insurance"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestDriversLicenseHyphenVariant は issue #46 で追加したハイフン区切り
+// （4-4-4）の運転免許証番号をカバーする。プレースホルダ（全桁同一・先頭0）が
+// 新パターンでも棄却されること、ハイフン区切りトークンの内部を切り出さない
+// ことを回帰として明記する。
+func TestDriversLicenseHyphenVariant(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+		conf       rule.Confidence
+	}{
+		{"ハイフン区切り コンテキストあり", "免許証番号: 3050-1234-5678", []string{"jp-drivers-license"}, rule.High},
+		{"ハイフン区切り コンテキストなし", "id: 3050-1234-5678", nil, 0},
+		{"回帰: 連続12桁は変わらない", "免許証番号: 305012345678", []string{"jp-drivers-license"}, rule.High},
+		{"プレースホルダ（全桁同一）はハイフン区切りでも棄却", "免許証番号: 0000-0000-0000", nil, 0},
+		{"プレースホルダ（全桁同一・非ゼロ）はハイフン区切りでも棄却", "免許証番号: 1111-1111-1111", nil, 0},
+		{"先頭が0の場合はハイフン区切りでも棄却", "免許証番号: 0501-2345-6789", nil, 0},
+		{"ハイフン区切りトークンの内部は対象外", "免許証番号: token-3050-1234-5678-suffix", nil, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, tt.want...)
+			if len(fs) == 1 && fs[0].Confidence != tt.conf {
+				t.Errorf("confidence = %v, want %v", fs[0].Confidence, tt.conf)
+			}
+		})
+	}
+}
+
+// TestPassportSpaceVariant は issue #46 で追加した英字・数字間の半角スペース
+// 任意表記（AB 1234567）をカバーする。
+func TestPassportSpaceVariant(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"空白区切り コンテキストあり", "パスポート番号: AB 1234567", []string{"jp-passport"}},
+		{"回帰: 区切りなしは変わらない", "パスポート番号: AB1234567", []string{"jp-passport"}},
+		{"空白区切り コンテキストなし", "AB 1234567", nil},
+		{"英字トークンの内部は対象外", "パスポート番号: XAB 1234567", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestPensionNumberSpaceVariant は issue #46 で追加した半角スペース区切り
+// （4-6）の基礎年金番号をカバーする。ハイフン区切り・区切りなしの既存挙動が
+// 変わらないことも回帰として明記する。
+func TestPensionNumberSpaceVariant(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"空白区切り", "基礎年金番号: 1234 567890", []string{"jp-pension-number"}},
+		{"回帰: ハイフン区切りは変わらない", "基礎年金番号: 1234-567890", []string{"jp-pension-number"}},
+		{"回帰: 区切りなしは変わらない", "基礎年金番号: 1234567890", []string{"jp-pension-number"}},
+		{"コンテキストなし", "1234 567890", nil},
+		{"より長い数字列の一部は対象外", "基礎年金番号: 12345678901", nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1827,6 +2014,112 @@ func TestScanContentRejectsCrossLineNegativeContextAcrossBlankLine(t *testing.T)
 	d := newDetector(t, "")
 	bankAccount := "1234567"
 	assertRules(t, d.ScanContent("f.txt", "口座番号: "+bankAccount+"\n\n円"))
+}
+
+// 実在の銀行名（辞書照合）は、既存の 8 語 Context が無い典型的な記載形式
+// （銀行名＋支店＋普通/当座）でも jp-bank-account を発火させる。値は
+// 辞書収録の銀行名（実在の固有名詞）とダミーの 7 桁を組み合わせただけで、
+// 実在しうる口座番号ではないため外部フィクスチャなしでテストできる
+// （internal/dict/names_test.go と同じ方針）。
+func TestBankNameContextEnablesDetection(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"銀行名＋支店＋普通（既存 Context 語なし）", "三菱UFJ銀行 渋谷支店 普通 1234567", []string{"jp-bank-account"}},
+		{"銀行名が行頭でなくても検出", "口座は みずほ銀行渋谷支店 普通預金 7654321 です", []string{"jp-bank-account"}},
+		{"助詞が銀行名の直前に続いても検出", "取引銀行はみずほ銀行本店です 1234567", []string{"jp-bank-account"}},
+		{"熟語が信用金庫名の直前に続いても検出", "取引先は京都信用金庫の支店です 2345678", []string{"jp-bank-account"}},
+		{"地の文が英字混じり銀行名の直前に続いても検出", "先方の三菱UFJ銀行本店営業部 3456789", []string{"jp-bank-account"}},
+		{"辞書未収録の架空銀行名は昇格しない", "架空銀行 渋谷支店 普通 1234567", nil},
+		{"支店・普通単体はいまだに Context ではない", "支店 普通 1234567", nil},
+		{"銀行名が 40 ルーン窓の外だと届かない", "みずほ銀行" + strings.Repeat("あ", 40) + "1234567", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// 銀行名の辞書照合は RequireContext の前提であり信頼度昇格の根拠にはならない
+// （TestContextRequiredConfidenceNotPromoted と同じ不変条件）ため、Base の
+// medium のまま報告される。
+func TestBankNameContextDoesNotPromoteConfidence(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanLine("f.txt", 1, "三菱UFJ銀行 渋谷支店 普通 1234567")
+	assertRules(t, fs, "jp-bank-account")
+	if fs[0].Confidence != rule.Medium {
+		t.Fatalf("confidence = %v, want medium", fs[0].Confidence)
+	}
+}
+
+// 銀行名の辞書照合を追加しても、既存の金額・数量ネガティブコンテキストは
+// 引き続き検出を抑制する。
+func TestBankNameContextStillRejectsNegativeContext(t *testing.T) {
+	d := newDetector(t, "")
+	assertRules(t, d.ScanLine("f.txt", 1, "みずほ銀行の株価は1234567円です"))
+	assertRules(t, d.ScanLine("f.txt", 1, "管理番号1234567（みずほ銀行の資料）"))
+}
+
+// ゆうちょ銀行の記号番号（記号5桁・先頭は必ず1、番号6〜8桁をハイフンで相関）。
+// 値はダミーの数字列と辞書収録の「ゆうちょ銀行」表記のみを使い、外部フィクスチャ
+// なしでテストできる。
+func TestYuchoAccountRule(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"記号番号＋ゆうちょ表記", "ゆうちょ銀行 記号12340-7654321", []string{"jp-yucho-account"}},
+		{"地の文に埋め込まれたゆうちょ銀行名", "取引銀行はゆうちょ銀行本店です 12340-7654321", []string{"jp-yucho-account"}},
+		{"記号番号＋記号ラベル", "記号12345-1234567 ゆうちょ口座", []string{"jp-yucho-account"}},
+		{"記号番号＋日本郵政系文脈", "日本郵政 12345-1234567", []string{"jp-yucho-account"}},
+		{"通常銀行名はゆうちょ文脈にしない", "三菱UFJ銀行 12345-1234567", []string{"jp-bank-account"}},
+		{"コンテキストなしは検出しない", "12345-1234567", nil},
+		{"記号が1始まりでない", "記号22345-1234567 ゆうちょ", nil},
+		{"記号が全桁同一のダミー値", "記号11111-111111 ゆうちょ", nil},
+		{"番号が全桁同一のダミー値", "記号12345-9999999 ゆうちょ", nil},
+		{"金額の負コンテキストで抑制", "ゆうちょ記号12345-1234567円", nil},
+		{"長い数字列の一部は対象外", "8" + "12345-1234567" + " ゆうちょ", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// jp-yucho-account が共有する銀行名 ContextPattern も、空白なしの地の文から
+// 「ゆうちょ銀行」だけを回収する。通常 Context にも「ゆうちょ」があるため、
+// ContextPattern 自体の回帰を直接検証する。
+func TestYuchoAccountContextPatternFindsEmbeddedBankName(t *testing.T) {
+	var patterns []rule.ContextPattern
+	for _, r := range rule.Builtin() {
+		if r.ID == "jp-yucho-account" {
+			patterns = r.ContextPatterns
+			break
+		}
+	}
+	got := matchContextPatterns("取引銀行はゆうちょ銀行本店です", patterns)
+	if len(got) != 1 || got[0] != "ゆうちょ銀行" {
+		t.Fatalf("matching contexts = %q, want [ゆうちょ銀行]", got)
+	}
+}
+
+// jp-yucho-account の RequireContext パターンも Base の High のまま報告される
+// （RequireContext は昇格の根拠にならない不変条件）。
+func TestYuchoAccountConfidenceIsBaseHigh(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanLine("f.txt", 1, "ゆうちょ銀行 記号12340-7654321")
+	assertRules(t, fs, "jp-yucho-account")
+	if fs[0].Confidence != rule.High {
+		t.Fatalf("confidence = %v, want high", fs[0].Confidence)
+	}
+	if fs[0].Match != "12340-7654321" {
+		t.Fatalf("match = %q, want 12340-7654321", fs[0].Match)
+	}
 }
 
 func TestScanContentUsesSourceContext(t *testing.T) {

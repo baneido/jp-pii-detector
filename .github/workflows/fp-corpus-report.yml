@@ -8,7 +8,7 @@ name: fp-corpus-report
 # 長期間・大規模に精査されている著名 OSS（標準ライブラリ・ビルドツール等）をコーパスとして
 # 定期スキャンし、findings/MLoC をトレンド指標として記録する（現時点では CI ゲートにはしない）。
 #
-# ci.yml の test job（wantF1・README バッジ・ドッグフードのゲート）とは完全に独立しており、
+# ci.yml の test job（精度ゴールデン・README バッジ・ドッグフードのゲート）とは完全に独立しており、
 # このワークフローの成否は PR CI に一切影響しない（postal-update.yml と同様の分離方針）。
 #
 # 初期運用は workflow_dispatch のみ。数回分の手動実行でノイズ（コーパスの dead link・

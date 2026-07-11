@@ -72,6 +72,31 @@ func TestValidPhoneAreaCodeDictionaryOnlyAppliesToNoSep(t *testing.T) {
 	}
 }
 
+// TestValidPhoneSeparatorVariants は issue #46 で stripSeparators に追加した
+// ドット・丸括弧の除去が validPhone に反映されることを検証する
+// （フィクスチャ非依存・意図的な形式値のみのため inline）。区切りあり表記は
+// 市外局番辞書ゲートを経ないため、seed 辞書が未完成でも成立する。
+func TestValidPhoneSeparatorVariants(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"ドット区切り携帯", "090.1234.5678", true},
+		{"括弧市内局番", "03(1234)5678", true},
+		{"括弧市外局番全体（空白・ハイフン混在）", "(03) 1234-5678", true},
+		{"フリーダイヤル（末尾3桁）", "0120-234-567", true},
+		{"括弧を除去しても桁数が不足する場合は無効", "0(1234)56", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := validPhone(tt.in); got != tt.want {
+				t.Errorf("validPhone(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 // validEmail は予約済みドメイン（RFC 2606/6761）・未登録 TLD・ローカル部の
 // 不正なドット配置などのダミー値を除外する。
 func TestValidEmail(t *testing.T) {
@@ -355,8 +380,37 @@ func TestValidBirthdate(t *testing.T) {
 	}
 }
 
-// stripSeparators はハイフンと半角スペースのみを除去し、その他の文字
-// （'+' を含む）は保持する。
+// validYuchoAccount はゆうちょ銀行の記号（5 桁・先頭は必ず "1"）・番号
+// （6〜8 桁）がハイフンで相関した表記かを検証する。
+func TestValidYuchoAccount(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"有効な記号番号（番号6桁）", "12345-123456", true},
+		{"有効な記号番号（番号8桁）", "10090-12345671", true},
+		{"記号の先頭が1以外", "22345-1234567", false},
+		{"記号が5桁でない", "1234-1234567", false},
+		{"番号が6桁未満", "12345-12345", false},
+		{"番号が8桁超", "12345-123456789", false},
+		{"記号が全桁同一", "11111-111111", false},
+		{"番号が全桁同一", "12345-999999", false},
+		{"ハイフンなし", "123451234567", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := validYuchoAccount(tt.in); got != tt.want {
+				t.Errorf("validYuchoAccount(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// stripSeparators はハイフン・半角スペース・ドット・丸括弧を除去し、
+// その他の文字（'+' を含む）は保持する。ドット・丸括弧は issue #46 で
+// 括弧市外局番（03(1234)5678）・ドット区切り携帯（090.1234.5678）向けに
+// 追加した。
 func TestStripSeparators(t *testing.T) {
 	tests := []struct {
 		in, want string
@@ -367,6 +421,9 @@ func TestStripSeparators(t *testing.T) {
 		{"AB12345678CD", "AB12345678CD"},
 		{"", ""},
 		{"- -", ""},
+		{"090.1234.5678", "09012345678"},
+		{"03(1234)5678", "0312345678"},
+		{"(03) 1234-5678", "0312345678"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.in, func(t *testing.T) {

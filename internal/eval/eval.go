@@ -201,7 +201,7 @@ func EvaluateCasesStratifiedWithOptions(cases []Case, opts Options) (Stratified,
 			findingCounts[f.RuleID]++
 		}
 		// 期待・検出の和集合でルールごとに TP/FP/FN を加算する（行レベル、
-		// wantF1 の算出に使う既存の集計で、互換のため定義は変更しない）。
+		// low プロファイルのゴールデン値に使う既存の集計で、互換のため定義は変更しない）。
 		// ケース単位のタグ・種別バケツにも同じ加算結果をまとめて足し、ケース内で
 		// 複数ルールの期待・検出があれば層別スコアへ合算する。
 		var caseScore Score

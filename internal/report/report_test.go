@@ -50,7 +50,7 @@ func TestTextMasksByDefault(t *testing.T) {
 	piifixtures.Require(t)
 	phone := piifixtures.MustGet(t, "report.phone_match")
 	var buf bytes.Buffer
-	Text(&buf, sample(phone), false)
+	Text(&buf, sample(phone), false, false)
 	out := buf.String()
 	if strings.Contains(out, phone) {
 		t.Error("output should be masked")
@@ -65,9 +65,54 @@ func TestTextMasksByDefault(t *testing.T) {
 
 func TestTextNoFindingsNoSummary(t *testing.T) {
 	var buf bytes.Buffer
-	Text(&buf, nil, false)
+	Text(&buf, nil, false, false)
 	if buf.Len() != 0 {
 		t.Errorf("expected empty output, got %q", buf.String())
+	}
+}
+
+// TestTextExplainIncludesReason は --explain 相当の explain=true 指定で、
+// text 出力にも検出理由（コンテキスト昇格・検証有無等）が付与されることを確認する。
+// explain=false（既定）では従来どおり理由行が出ないことも併せて確認する。
+// フィクスチャ不要（実在しうる PII 形式を含まない合成データのため）。
+func TestTextExplainIncludesReason(t *testing.T) {
+	fs := []detect.Finding{{
+		RuleID:      "jp-phone-number",
+		Description: "電話番号",
+		File:        "users.csv",
+		Line:        4,
+		Column:      6,
+		Match:       "ABCDEFGHIJK",
+		Confidence:  rule.High,
+		Reason: detect.DetectReason{
+			BaseConfidence:  "medium",
+			FinalConfidence: "high",
+			ContextKeywords: []string{"tel"},
+			ContextPromoted: true,
+			Validated:       true,
+		},
+	}}
+
+	var withExplain bytes.Buffer
+	Text(&withExplain, fs, false, true)
+	out := withExplain.String()
+	if !strings.Contains(out, "理由:") {
+		t.Fatalf("--explain 相当の text 出力に理由が無い: %s", out)
+	}
+	if !strings.Contains(out, "基準信頼度=medium") || !strings.Contains(out, "最終信頼度=high") {
+		t.Errorf("信頼度の遷移が理由に含まれない: %s", out)
+	}
+	if !strings.Contains(out, "コンテキスト昇格=true") || !strings.Contains(out, "キーワード=tel") {
+		t.Errorf("コンテキスト情報が理由に含まれない: %s", out)
+	}
+	if strings.Contains(out, fs[0].Match) {
+		t.Error("--explain でも検出値はマスクされたままであるべき")
+	}
+
+	var withoutExplain bytes.Buffer
+	Text(&withoutExplain, fs, false, false)
+	if strings.Contains(withoutExplain.String(), "理由:") {
+		t.Errorf("explain=false では理由行を出すべきではない: %s", withoutExplain.String())
 	}
 }
 
@@ -76,7 +121,7 @@ func TestTextNoFindingsNoSummary(t *testing.T) {
 func TestTextIncludesBaselineHint(t *testing.T) {
 	findings := []detect.Finding{{RuleID: "jp-phone-number", File: "users.csv", Line: 4, Column: 6, Match: "dummy-value-1"}}
 	var buf bytes.Buffer
-	Text(&buf, findings, false)
+	Text(&buf, findings, false, false)
 	out := buf.String()
 	if !strings.Contains(out, "--update-baseline") {
 		t.Errorf("missing baseline remediation hint: %s", out)
@@ -287,5 +332,150 @@ func TestSARIF(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), phone) {
 		t.Error("SARIF output should be masked")
+	}
+}
+
+type sarifDoc struct {
+	Runs []struct {
+		Results []struct {
+			RuleID    string `json:"ruleId"`
+			Locations []struct {
+				PhysicalLocation struct {
+					Region struct {
+						StartLine   int `json:"startLine"`
+						StartColumn int `json:"startColumn"`
+						EndLine     int `json:"endLine"`
+						EndColumn   int `json:"endColumn"`
+					} `json:"region"`
+				} `json:"physicalLocation"`
+			} `json:"locations"`
+			PartialFingerprints map[string]string `json:"partialFingerprints"`
+		} `json:"results"`
+	} `json:"runs"`
+}
+
+// TestSARIFRegionEndpoints は region に endLine/endColumn が付与され、
+// SARIF 仕様どおり endColumn がマッチ終端の次カラム（排他境界）になることを、
+// ASCII とマルチバイト（ルーン数 != バイト数）の双方で確認する。
+// フィクスチャ不要（実在しうる PII 形式を含まない合成データのため）。
+func TestSARIFRegionEndpoints(t *testing.T) {
+	findings := []detect.Finding{
+		{RuleID: "test-rule", Description: "test", File: "a.txt", Line: 3, Column: 5, Match: "ABCDE", Confidence: rule.High},
+		// マルチバイト: ルーン数(4) != バイト数のケース（jp-pii-detector:ignore 対象外の合成語）。
+		{RuleID: "test-rule", Description: "test", File: "a.txt", Line: 7, Column: 2, Match: "検出値ノ", Confidence: rule.High},
+	}
+	var buf bytes.Buffer
+	if err := SARIF(&buf, findings, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	var doc sarifDoc
+	if err := json.Unmarshal(buf.Bytes(), &doc); err != nil {
+		t.Fatalf("invalid SARIF JSON: %v\n%s", err, buf.String())
+	}
+	results := doc.Runs[0].Results
+	if len(results) != 2 {
+		t.Fatalf("results = %d, want 2", len(results))
+	}
+	r0 := results[0].Locations[0].PhysicalLocation.Region
+	if r0.StartLine != 3 || r0.StartColumn != 5 || r0.EndLine != 3 || r0.EndColumn != 10 {
+		t.Errorf("ASCII region = %+v, want start=3:5 end=3:10 (5 runes)", r0)
+	}
+	r1 := results[1].Locations[0].PhysicalLocation.Region
+	if r1.StartLine != 7 || r1.StartColumn != 2 || r1.EndLine != 7 || r1.EndColumn != 6 {
+		t.Errorf("multi-byte region = %+v, want start=7:2 end=7:6 (4 runes)", r1)
+	}
+}
+
+// TestSARIFPartialFingerprints は partialFingerprints が付与され、生の Match 値や
+// 行・カラムを使わずにルール ID・ファイル・ファイル内出現順で安定することを確認する。
+func TestSARIFPartialFingerprints(t *testing.T) {
+	base := detect.Finding{RuleID: "test-rule", Description: "test", File: "a.txt", Line: 3, Column: 1, Match: "ABCDE", Confidence: rule.High}
+	sameLocationDifferentValue := base
+	sameLocationDifferentValue.Match = "VWXYZ"
+
+	var buf1, buf2 bytes.Buffer
+	if err := SARIF(&buf1, []detect.Finding{base}, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := SARIF(&buf2, []detect.Finding{sameLocationDifferentValue}, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	var doc1, doc2 sarifDoc
+	if err := json.Unmarshal(buf1.Bytes(), &doc1); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(buf2.Bytes(), &doc2); err != nil {
+		t.Fatal(err)
+	}
+	fp1 := doc1.Runs[0].Results[0].PartialFingerprints["primaryLocationLineHash"]
+	fp2 := doc2.Runs[0].Results[0].PartialFingerprints["primaryLocationLineHash"]
+	if fp1 == "" {
+		t.Fatal("partialFingerprints が空")
+	}
+	if fp1 != fp2 {
+		t.Errorf("検出値だけが変わってもフィンガープリントは同じであるべき: %s != %s", fp1, fp2)
+	}
+
+	// 周辺行の増減で位置だけが変わっても同じフィンガープリントになる。
+	moved := base
+	moved.Line += 10
+	moved.Column += 3
+	var movedBuf bytes.Buffer
+	if err := SARIF(&movedBuf, []detect.Finding{moved}, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	var movedDoc sarifDoc
+	if err := json.Unmarshal(movedBuf.Bytes(), &movedDoc); err != nil {
+		t.Fatal(err)
+	}
+	fpMoved := movedDoc.Runs[0].Results[0].PartialFingerprints["primaryLocationLineHash"]
+	if fpMoved != fp1 {
+		t.Errorf("位置だけが変わってもフィンガープリントは同じであるべき: %s != %s", fpMoved, fp1)
+	}
+
+	// 同一ルール・同一ファイルの別出現は、位置に依存しない出現順で区別する。
+	secondOccurrence := sameLocationDifferentValue
+	secondOccurrence.Line = 20
+	secondOccurrence.Column = 4
+	dup := []detect.Finding{base, secondOccurrence}
+	var dupBuf bytes.Buffer
+	if err := SARIF(&dupBuf, dup, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	var dupDoc sarifDoc
+	if err := json.Unmarshal(dupBuf.Bytes(), &dupDoc); err != nil {
+		t.Fatal(err)
+	}
+	fpA := dupDoc.Runs[0].Results[0].PartialFingerprints["primaryLocationLineHash"]
+	fpB := dupDoc.Runs[0].Results[1].PartialFingerprints["primaryLocationLineHash"]
+	if fpA == fpB {
+		t.Errorf("同一ファイルの別出現は異なるフィンガープリントになるべき: %s == %s", fpA, fpB)
+	}
+	if fpA != fp1 {
+		t.Errorf("ファイル内 1 件目のフィンガープリントは単独時と一致するべき: %s != %s", fpA, fp1)
+	}
+}
+
+// TestGitHubLevelByConfidence は信頼度で workflow command が
+// error（high）/warning（medium）/notice（low）に分かれることを確認する。
+// 以前は信頼度に関わらず常に ::error だったため、min_confidence を下げて
+// 可視化した medium/low 検出まで一律「エラー」表示になっていた。
+// フィクスチャ不要（実在しうる PII 形式を含まない合成データのため）。
+func TestGitHubLevelByConfidence(t *testing.T) {
+	tests := []struct {
+		conf rule.Confidence
+		want string
+	}{
+		{rule.High, "::error "},
+		{rule.Medium, "::warning "},
+		{rule.Low, "::notice "},
+	}
+	for _, tt := range tests {
+		f := detect.Finding{RuleID: "test-rule", Description: "test", File: "a.txt", Line: 1, Column: 1, Match: "ABCDE", Confidence: tt.conf}
+		var buf bytes.Buffer
+		GitHub(&buf, []detect.Finding{f}, true)
+		if !strings.HasPrefix(buf.String(), tt.want) {
+			t.Errorf("confidence=%s: out = %q, want prefix %q", tt.conf, buf.String(), tt.want)
+		}
 	}
 }
