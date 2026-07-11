@@ -3,6 +3,7 @@ package source
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"io/fs"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"unicode/utf16"
 
 	"github.com/baneido/jp-pii-detector/internal/config"
 	"github.com/baneido/jp-pii-detector/internal/detect"
@@ -157,6 +159,10 @@ func scanFiles(d *detect.Detector, files []string) ([]detect.Finding, []error) {
 					errs[i] = fmt.Errorf("read %s: %w", path, err)
 					continue
 				}
+				if text, ok := decodeUTF16(data); ok {
+					results[i] = d.ScanContent(filepath.ToSlash(path), text)
+					continue
+				}
 				if isBinary(data) {
 					continue
 				}
@@ -186,4 +192,70 @@ func scanFiles(d *detect.Detector, files []string) ([]detect.Finding, []error) {
 func isBinary(data []byte) bool {
 	n := min(len(data), 8192)
 	return bytes.IndexByte(data[:n], 0) >= 0
+}
+
+// decodeUTF16 は UTF-16 の BOM（FF FE = リトルエンディアン、FE FF =
+// ビッグエンディアン）を検出したときだけ UTF-8 へデコードする。BOM が無い
+// 場合は ok=false を返し、呼び出し側は従来どおり isBinary 判定へ委ねる
+// （UTF-16 は半角文字が 1 バイト置きに NUL を挟むため、BOM チェックより先に
+// isBinary を通すと確実にバイナリ扱いされ完全に検出漏れになる。この関数を
+// isBinary より前に呼ぶことでそれを避ける）。
+//
+// 奇数バイト長（BOM を除いた本体が 2 バイト単位にならない）や不正な
+// サロゲートペアは ok=false を返し、呼び出し側は従来どおりのバイナリ判定
+// （isBinary）にフォールバックする。
+//
+// 注意（呼び出し側・ドキュメントで明記が必要な既知の制約）:
+//   - デコード後の Finding の行・列はルーン単位で正しいが、デコード後の
+//     文字列上の位置であり、元ファイルの UTF-16 バイトオフセットとは
+//     対応しない。
+//   - git diff は UTF-16 ファイルをバイナリ扱いするため、この関数は
+//     フルスキャン（ScanPaths）経由でのみ効き、--staged/--diff の
+//     差分走査では UTF-16 ファイルはそもそも対象にならない。
+func decodeUTF16(data []byte) (string, bool) {
+	var order binary.ByteOrder
+	switch {
+	case len(data) >= 2 && data[0] == 0xFF && data[1] == 0xFE:
+		order = binary.LittleEndian
+	case len(data) >= 2 && data[0] == 0xFE && data[1] == 0xFF:
+		order = binary.BigEndian
+	default:
+		return "", false
+	}
+	body := data[2:]
+	if len(body)%2 != 0 {
+		return "", false
+	}
+	units := make([]uint16, len(body)/2)
+	for i := range units {
+		units[i] = order.Uint16(body[i*2:])
+	}
+	if !validUTF16Surrogates(units) {
+		return "", false
+	}
+	return string(utf16.Decode(units)), true
+}
+
+// validUTF16Surrogates は units が正しいサロゲートペアの並びかを検証する。
+// utf16.Decode は不正なサロゲートを黙って置換文字（U+FFFD）に変換するため、
+// 事前にここで検証し、不正な入力はデコード失敗としてバイナリ判定へ
+// フォールバックさせる（置換文字での化けを防ぐ）。
+func validUTF16Surrogates(units []uint16) bool {
+	for i := 0; i < len(units); i++ {
+		u := units[i]
+		switch {
+		case u >= 0xD800 && u <= 0xDBFF: // 上位サロゲート
+			if i+1 >= len(units) {
+				return false
+			}
+			next := units[i+1]
+			if next < 0xDC00 || next > 0xDFFF {
+				return false
+			}
+			i++ // ペアを消費
+		case u >= 0xDC00 && u <= 0xDFFF: // 対応する上位サロゲートの無い下位サロゲート
+			return false
+		}
+	}
+	return true
 }

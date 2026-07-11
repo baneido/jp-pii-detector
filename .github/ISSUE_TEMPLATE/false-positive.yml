@@ -1,0 +1,55 @@
+name: 誤検出の報告（False positive）
+description: PII ではないものを検出してしまう問題を報告します
+title: "[FP] "
+labels: ["false-positive"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        誤検出（本来 PII ではない値を検出してしまう）の報告ありがとうございます。
+        誤検出・見逃しの報告は、この検出器の精度改善に最も役立ちます。
+
+        ⚠️ **実在する PII は絶対に貼らないでください。** 再現用テキストは必ずマスク／
+        ダミー化してください（例: `090-XXXX-XXXX`）。
+  - type: input
+    id: rule-id
+    attributes:
+      label: ルール ID
+      description: "`jp-pii-detect rules` で一覧を確認できます。分かる範囲で記入してください。"
+      placeholder: "例: jp-phone-number"
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: jp-pii-detect のバージョン
+      description: "`jp-pii-detect version` の出力"
+      placeholder: "例: v0.3.6"
+    validations:
+      required: true
+  - type: textarea
+    id: repro-text
+    attributes:
+      label: 再現テキスト（必ずマスク／ダミー化）
+      description: "⚠️ 実データをそのまま貼らないでください。値は必ずダミー化してください。"
+      placeholder: |
+        誤って検出された行の例（ダミー化済み）:
+        order_id: 1234567
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: 実行したコマンド
+      placeholder: "例: jp-pii-detect scan ."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待する動作
+      description: この値が検出されるべきでない理由も書いてください。
+      placeholder: "この値は連番の注文 ID であり、PII ではないため検出されないでほしい。"
+    validations:
+      required: true

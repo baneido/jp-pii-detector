@@ -183,6 +183,7 @@ func TestSpanlessPositiveCountCountsWantAndSpanRulePairsWithoutASpan(t *testing.
 	}
 }
 
+<<<<<<< HEAD
 func TestDatasetQualityProblemsDetectsUnknownIDsAndDuplicatesWithoutLeakingContent(t *testing.T) {
 	cases := []Case{
 		{Line: "private value", Want: []string{"known"}},
@@ -212,6 +213,8 @@ func TestSpanlessPositiveRatchetOnlyRejectsIncrease(t *testing.T) {
 	}
 }
 
+=======
+>>>>>>> origin/main
 func containsAll(s string, substrs ...string) bool {
 	for _, sub := range substrs {
 		if !strings.Contains(s, sub) {

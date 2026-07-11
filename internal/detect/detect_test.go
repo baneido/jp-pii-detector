@@ -3,6 +3,7 @@ package detect
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/baneido/jp-pii-detector/internal/config"
 	"github.com/baneido/jp-pii-detector/internal/piifixtures"
@@ -61,6 +62,7 @@ func TestMyNumberRule(t *testing.T) {
 		{"コンテキストあり区切りあり", "マイナンバー: " + mynumSep, []string{"jp-my-number"}, rule.High},
 		{"コンテキストなし", "value = " + mynum, []string{"jp-my-number"}, rule.Medium},
 		{"全角数字", "個人番号：" + mynumWide, []string{"jp-my-number"}, rule.High},
+		{"日付風prefixの検査用数字一致値", "個人番号: 199001230000", []string{"jp-my-number"}, rule.High},
 		{"検査用数字不一致", "value = 123456789012", nil, 0},
 		{"より長い数字列の一部は対象外", "id = 9" + mynum, nil, 0},
 	}
@@ -71,6 +73,79 @@ func TestMyNumberRule(t *testing.T) {
 			if len(fs) == 1 && fs[0].Confidence != tt.conf {
 				t.Errorf("confidence = %v, want %v", fs[0].Confidence, tt.conf)
 			}
+		})
+	}
+}
+
+// TestMyNumberSeparatorVariants は issue #46 で追加した空白区切り（4-4-4 /
+// 6-6）のマイナンバー表記をカバーする。検査用数字は checksum_test.go の
+// genMyNumber("12345678901") と同じ既知値（123456789018）を使う。
+func TestMyNumberSeparatorVariants(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+		conf       rule.Confidence
+	}{
+		{"空白区切り4-4-4 コンテキストあり", "マイナンバー: 1234 5678 9018", []string{"jp-my-number"}, rule.High},
+		{"空白区切り4-4-4 コンテキストなし", "value = 1234 5678 9018", []string{"jp-my-number"}, rule.Medium},
+		{"空白区切り6-6 コンテキストあり", "個人番号: 123456 789018", []string{"jp-my-number"}, rule.High},
+		{"空白区切り4-4-4 検査用数字不一致", "value = 1234 5678 9012", nil, 0},
+		{"空白区切り4-4-4 の末尾に数字が続く場合は対象外", "マイナンバー: 1234 5678 90189", nil, 0},
+		{"4-4-4 でない空白区切りは対象外（5-3-4）", "マイナンバー: 12345 678 9018", nil, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, tt.want...)
+			if len(fs) == 1 && fs[0].Confidence != tt.conf {
+				t.Errorf("confidence = %v, want %v", fs[0].Confidence, tt.conf)
+			}
+		})
+	}
+}
+
+func TestNumericSeparatorVariantsRejectLongTokenPrefixes(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+	}{
+		{"空白区切りマイナンバーの直後にさらに空白数字が続く", "マイナンバー: 1234 5678 9018 0000"},
+		{"空白区切り基礎年金番号の直後にさらに空白数字が続く", "基礎年金番号: 1234 567890 1"},
+		{"空白区切りパスポート番号の直後にさらに空白数字が続く", "パスポート番号: AB 1234567 8"},
+		{"ドット区切り電話番号の直後にさらにドット数字が続く", "電話番号: 090.1234.5678.9"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line))
+		})
+	}
+}
+
+// TestNumericBoundariesAllowAdjacentIndependentValues は、区切り文字 1 個の外側に
+// 別の数字があるだけで既存の数値ルールを棄却しないことを確認する。長い同一
+// トークンの部分一致は上のテストで個別に防ぎつつ、ログ・CSV・フォームで普通に
+// 現れる複数値の隣接を許容する。
+func TestNumericBoundariesAllowAdjacentIndependentValues(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"電話番号の後ろに年", "TEL: 03-1234-5678 2024年度", []string{"jp-phone-number"}},
+		{"年の後ろに電話番号", "更新日2024 03-1234-5678", []string{"jp-phone-number"}},
+		{"電話番号2件", "TEL:03-1234-5678 03-1234-5679", []string{"jp-phone-number", "jp-phone-number"}},
+		{"郵便番号と電話番号", "郵便番号: 100-0001 090-1234-5678", []string{"jp-postal-code", "jp-phone-number"}},
+		{"口座番号と別数字", "口座番号: 1234567 8888", []string{"jp-bank-account"}},
+		{"保険者番号と別数字", "保険者番号: 12345678 9999", []string{"jp-health-insurance"}},
+		{"運転免許証番号と別数字", "免許証番号: 305012345678 8888", []string{"jp-drivers-license"}},
+		{"基礎年金番号（ハイフン）と別数字", "基礎年金番号: 1234-567890 8888", []string{"jp-pension-number"}},
+		{"基礎年金番号（連続）と別数字", "基礎年金番号: 1234567890 8888", []string{"jp-pension-number"}},
+		{"パスポート番号と別数字", "パスポート番号: AB1234567 8888", []string{"jp-passport"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
 		})
 	}
 }
@@ -125,6 +200,7 @@ func TestPhoneNumberAdjacentToASCIILeftLabelIsDetected(t *testing.T) {
 func TestPhoneRule(t *testing.T) {
 	piifixtures.Require(t)
 	d := newDetector(t, "")
+	fixedNoSep := strings.ReplaceAll(piifixtures.MustGet(t, "detect.phone_fixed_tokyo"), "-", "")
 	tests := []struct {
 		name, line string
 		want       []string
@@ -132,6 +208,11 @@ func TestPhoneRule(t *testing.T) {
 		{"携帯区切りあり", "TEL: " + piifixtures.MustGet(t, "detect.phone_mobile_sep"), []string{"jp-phone-number"}},
 		{"携帯区切りなしコンテキストあり", "携帯 " + piifixtures.MustGet(t, "detect.phone_mobile_nosep"), []string{"jp-phone-number"}},
 		{"固定電話区切りあり", "本社: " + piifixtures.MustGet(t, "detect.phone_fixed_tokyo"), []string{"jp-phone-number"}},
+		{"固定電話区切りあり seed 辞書未収録", "電話: 04992-2-1234", []string{"jp-phone-number"}},
+		// P10（#56）: 固定電話・区切りなし 10 桁。市外局番辞書（dict.ValidAreaCode）による
+		// validPhone 拡張と新パターンで新たに検出可能になった。RequireContext のため
+		// コンテキストキーワードが必須。
+		{"固定電話区切りなしコンテキストあり", "電話番号：" + fixedNoSep, []string{"jp-phone-number"}},
 		{"国際表記", piifixtures.MustGet(t, "detect.phone_intl_mobile"), []string{"jp-phone-number"}},
 		{"IP電話", piifixtures.MustGet(t, "detect.phone_ip"), []string{"jp-phone-number"}},
 		{"全角と長音記号", "電話番号：" + piifixtures.MustGet(t, "detect.phone_mobile_fullwidth_longvowel"), []string{"jp-phone-number"}},
@@ -152,6 +233,100 @@ func TestPhoneNoSepWithoutContextIsMedium(t *testing.T) {
 	assertRules(t, fs, "jp-phone-number")
 	if fs[0].Confidence != rule.Medium {
 		t.Errorf("confidence = %v, want medium", fs[0].Confidence)
+	}
+}
+
+// P10（#56）: 固定電話・区切りなし 10 桁パターンは RequireContext のため、
+// コンテキストキーワードがなければ市外局番として実在するプレフィックスでも
+// 検出しない。新規 fixture キーは作らず、既存の区切りあり固定電話から同じ番号の
+// 区切りなし表記を組み立てる。
+func TestPhoneLandlineNoSepRequiresContext(t *testing.T) {
+	piifixtures.Require(t)
+	d := newDetector(t, "")
+	fixedNoSep := strings.ReplaceAll(piifixtures.MustGet(t, "detect.phone_fixed_tokyo"), "-", "")
+	assertRules(t, d.ScanLine("f.txt", 1, fixedNoSep))
+	assertRules(t, d.ScanLine("f.txt", 1, "電話番号："+fixedNoSep), "jp-phone-number")
+}
+
+// P10（#56）: 新規の区切りなし固定電話だけに負文脈を適用し、既存の電話番号
+// パターンは近傍に伝票番号等があっても従来どおり検出する。
+func TestPhoneNegativeContextOnlyAppliesToLandlineNoSep(t *testing.T) {
+	piifixtures.Require(t)
+	d := newDetector(t, "")
+	fixedSep := piifixtures.MustGet(t, "detect.phone_fixed_tokyo")
+	fixedNoSep := strings.ReplaceAll(fixedSep, "-", "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"区切りあり携帯", "伝票番号:0001 " + piifixtures.MustGet(t, "detect.phone_mobile_sep"), []string{"jp-phone-number"}},
+		{"区切りなし携帯", "伝票番号:0001 " + piifixtures.MustGet(t, "detect.phone_mobile_nosep"), []string{"jp-phone-number"}},
+		{"区切りあり固定電話", "伝票番号:0001 " + fixedSep, []string{"jp-phone-number"}},
+		{"IP 電話", "伝票番号:0001 " + piifixtures.MustGet(t, "detect.phone_ip"), []string{"jp-phone-number"}},
+		{"国際表記", "伝票番号:0001 " + piifixtures.MustGet(t, "detect.phone_intl_mobile"), []string{"jp-phone-number"}},
+		{"区切りなし固定電話", "電話番号: " + fixedNoSep + " 伝票番号", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// ScanContent の隣接行負文脈フィルタでも、既存パターンの除外指定が維持される。
+func TestPhoneExistingPatternIgnoresAdjacentLineNegativeContext(t *testing.T) {
+	piifixtures.Require(t)
+	d := newDetector(t, "")
+	content := piifixtures.MustGet(t, "detect.phone_mobile_sep") + "\n伝票番号"
+	assertRules(t, d.ScanContent("f.txt", content), "jp-phone-number")
+}
+
+// P10（#56）: 区切りあり固定電話は area_codes.txt の seed 辞書が未完成でも
+// 取りこぼさない。
+func TestPhoneSepAllowsAreaCodeMissingFromSeedDictionary(t *testing.T) {
+	d := newDetector(t, "")
+	assertRules(t, d.ScanLine("f.txt", 1, "電話番号：04992-2-1234"), "jp-phone-number")
+}
+
+// TestPhoneNumberSeparatorVariants は issue #46 で追加した区切り表記ゆれ
+// （区切りなし固定電話・空白/ドット区切り携帯・括弧市外局番・フリーダイヤル）を
+// カバーする。既存 4 パターン（区切りあり携帯・区切りなし携帯・区切りあり固定・
+// +81 国際表記）が壊れていないことも回帰として明記する。
+func TestPhoneNumberSeparatorVariants(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+		conf       rule.Confidence
+	}{
+		// ---- 既存パターンの回帰（挙動が変わらないことの確認）----
+		{"回帰: 区切りあり携帯", "TEL: 090-1234-5678", []string{"jp-phone-number"}, rule.High},
+		{"回帰: 区切りなし携帯コンテキストなし", "09012345678", []string{"jp-phone-number"}, rule.Medium},
+		{"回帰: 区切りあり固定電話（末尾4桁）", "TEL: 03-1234-5678", []string{"jp-phone-number"}, rule.High},
+		{"回帰: 国際表記 +81", "+81-90-1234-5678", []string{"jp-phone-number"}, rule.High},
+		// ---- 新規: 区切りなし固定電話（RequireContext 必須）----
+		{"区切りなし固定電話 コンテキストあり", "電話番号: 0312345678", []string{"jp-phone-number"}, rule.Medium},
+		{"区切りなし固定電話 コンテキストなし", "id: 0312345678", nil, 0},
+		{"区切りなし固定電話 直後に数字が続く場合は対象外（11桁の先頭10桁部分ではない）", "電話番号: 03123456789", nil, 0},
+		{"区切りなし固定電話 直前に数字が続く場合は対象外（11桁の末尾10桁部分ではない）", "電話番号: 10312345678", nil, 0},
+		// ---- 新規: 空白・ドット区切り携帯 ----
+		{"空白区切り携帯 コンテキストあり", "携帯 090 1234 5678", []string{"jp-phone-number"}, rule.High},
+		{"ドット区切り携帯 コンテキストなし", "090.1234.5678", []string{"jp-phone-number"}, rule.Medium},
+		{"携帯プレフィックスでない空白区切りは対象外", "030 1234 5678", nil, 0},
+		// ---- 新規: 括弧市外局番 ----
+		{"括弧書き市内局番", "電話: 03(1234)5678", []string{"jp-phone-number"}, rule.High},
+		{"括弧書き市外局番全体", "電話: (03) 1234-5678", []string{"jp-phone-number"}, rule.High},
+		// ---- 新規: フリーダイヤル等の末尾3桁 ----
+		{"フリーダイヤル（末尾3桁）", "TEL: 0120-234-567", []string{"jp-phone-number"}, rule.High},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, tt.want...)
+			if len(fs) == 1 && fs[0].Confidence != tt.conf {
+				t.Errorf("confidence = %v, want %v", fs[0].Confidence, tt.conf)
+			}
+		})
 	}
 }
 
@@ -245,6 +420,78 @@ func TestContextRequiredRules(t *testing.T) {
 		{"在留カード", "在留カード番号 " + piifixtures.MustGet(t, "detect.residence_card"), []string{"jp-residence-card"}},
 		{"銀行口座", "口座番号: " + piifixtures.MustGet(t, "detect.bank_account"), []string{"jp-bank-account"}},
 		{"保険者番号", "保険者番号: " + piifixtures.MustGet(t, "detect.health_insurance"), []string{"jp-health-insurance"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestDriversLicenseHyphenVariant は issue #46 で追加したハイフン区切り
+// （4-4-4）の運転免許証番号をカバーする。プレースホルダ（全桁同一・先頭0）が
+// 新パターンでも棄却されること、ハイフン区切りトークンの内部を切り出さない
+// ことを回帰として明記する。
+func TestDriversLicenseHyphenVariant(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+		conf       rule.Confidence
+	}{
+		{"ハイフン区切り コンテキストあり", "免許証番号: 3050-1234-5678", []string{"jp-drivers-license"}, rule.High},
+		{"ハイフン区切り コンテキストなし", "id: 3050-1234-5678", nil, 0},
+		{"回帰: 連続12桁は変わらない", "免許証番号: 305012345678", []string{"jp-drivers-license"}, rule.High},
+		{"プレースホルダ（全桁同一）はハイフン区切りでも棄却", "免許証番号: 0000-0000-0000", nil, 0},
+		{"プレースホルダ（全桁同一・非ゼロ）はハイフン区切りでも棄却", "免許証番号: 1111-1111-1111", nil, 0},
+		{"先頭が0の場合はハイフン区切りでも棄却", "免許証番号: 0501-2345-6789", nil, 0},
+		{"ハイフン区切りトークンの内部は対象外", "免許証番号: token-3050-1234-5678-suffix", nil, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, tt.want...)
+			if len(fs) == 1 && fs[0].Confidence != tt.conf {
+				t.Errorf("confidence = %v, want %v", fs[0].Confidence, tt.conf)
+			}
+		})
+	}
+}
+
+// TestPassportSpaceVariant は issue #46 で追加した英字・数字間の半角スペース
+// 任意表記（AB 1234567）をカバーする。
+func TestPassportSpaceVariant(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"空白区切り コンテキストあり", "パスポート番号: AB 1234567", []string{"jp-passport"}},
+		{"回帰: 区切りなしは変わらない", "パスポート番号: AB1234567", []string{"jp-passport"}},
+		{"空白区切り コンテキストなし", "AB 1234567", nil},
+		{"英字トークンの内部は対象外", "パスポート番号: XAB 1234567", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestPensionNumberSpaceVariant は issue #46 で追加した半角スペース区切り
+// （4-6）の基礎年金番号をカバーする。ハイフン区切り・区切りなしの既存挙動が
+// 変わらないことも回帰として明記する。
+func TestPensionNumberSpaceVariant(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"空白区切り", "基礎年金番号: 1234 567890", []string{"jp-pension-number"}},
+		{"回帰: ハイフン区切りは変わらない", "基礎年金番号: 1234-567890", []string{"jp-pension-number"}},
+		{"回帰: 区切りなしは変わらない", "基礎年金番号: 1234567890", []string{"jp-pension-number"}},
+		{"コンテキストなし", "1234 567890", nil},
+		{"より長い数字列の一部は対象外", "基礎年金番号: 12345678901", nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1397,13 +1644,16 @@ func TestPromotionRequiresNearbyContext(t *testing.T) {
 	}
 }
 
+// マーカー付き番地（丁目/番/号）パターンには Validate が無い。マーカーなし
+// ダッシュ連結パターンには日付誤検出対策の Validate（notCalendarDateBanchi）が
+// あるため、区別できるよう固定のマーカー付き住所を使う（#55 でパターンが
+// 2 つに分かれたため、実在するフィクスチャの表記に依存しないようにした）。
 func TestReasonNotValidatedWhenNoValidator(t *testing.T) {
-	piifixtures.Require(t)
 	d := newDetector(t, "")
-	fs := d.ScanLine("f.txt", 1, "住所: "+piifixtures.MustGet(t, "detect.address_shibuya"))
+	fs := d.ScanLine("f.txt", 1, "住所: 東京都渋谷区道玄坂2丁目10番7号")
 	assertRules(t, fs, "jp-address")
 	if fs[0].Reason.Validated {
-		t.Fatalf("validated = true, want false (jp-address has no validator)")
+		t.Fatalf("validated = true, want false (jp-address marker pattern has no validator)")
 	}
 }
 
@@ -1423,6 +1673,119 @@ func TestReasonRecordsRequiredNearbyContext(t *testing.T) {
 		t.Fatalf("context keywords = %v, want first keyword 口座", reason.ContextKeywords)
 	}
 }
+
+// High 昇格判定（RequireContext ではない Base<High パターン）は #54 以前は
+// 行全体を無制限に探索していたため、minified JSON や長い 1 行ではラベルが
+// 1 つあるだけで行内の全マッチが昇格してしまっていた（P12 #54 (a)）。
+// 昇格は defaultPromotionContextWindow（既定 40 ルーン）の窓に限定される。
+// 昇格対象は Base<High かつ RequireContext ではないパターンを持ち、かつ
+// Context を設定している 3 ルール（jp-my-number・jp-phone-number・
+// jp-address-high-recall）に限られる（他のルールは RequireContext か、
+// Context 未設定のため昇格判定自体が働かない。#54 issue 記載の確認済み事項）。
+func TestPromotionContextWindowBoundary(t *testing.T) {
+	tests := []struct {
+		name       string
+		toml       string
+		label      string
+		value      string
+		wantRuleID string
+	}{
+		{name: "jp-my-number", label: "個人番号", value: "123456789018", wantRuleID: "jp-my-number"},
+		{name: "jp-phone-number", label: "電話", value: "09012345678", wantRuleID: "jp-phone-number"},
+		{
+			name: "jp-address-high-recall",
+			toml: "[rules]\nhigh_recall = true\n",
+			// 都道府県を含まない住所（jp-address ではなく high-recall 版のみが
+			// マッチする。jp-address の方は常に Base: High で昇格判定を経由しない）。
+			label:      "住所",
+			value:      "渋谷区道玄坂1-2-3",
+			wantRuleID: "jp-address-high-recall",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := newDetector(t, tt.toml)
+			labelRunes := utf8.RuneCountInString(tt.label)
+			// inN: ラベル終端がちょうど窓の起点に来る境界（内側）。
+			// outN: そのすぐ外側（1 ルーンだけ超える）。
+			inN := defaultPromotionContextWindow - labelRunes
+			outN := inN + 1
+			mk := func(n int) string {
+				return tt.label + strings.Repeat(" ", n) + tt.value
+			}
+
+			inFs := d.ScanLine("f.txt", 1, mk(inN))
+			assertRules(t, inFs, tt.wantRuleID)
+			if inFs[0].Confidence != rule.High || !inFs[0].Reason.ContextPromoted {
+				t.Fatalf("filler=%d(窓内): confidence=%v promoted=%v, want high/promoted",
+					inN, inFs[0].Confidence, inFs[0].Reason.ContextPromoted)
+			}
+
+			outFs := d.ScanLine("f.txt", 1, mk(outN))
+			assertRules(t, outFs, tt.wantRuleID)
+			if outFs[0].Confidence == rule.High || outFs[0].Reason.ContextPromoted {
+				t.Fatalf("filler=%d(窓外): confidence=%v promoted=%v, want base confidence / not promoted",
+					outN, outFs[0].Confidence, outFs[0].Reason.ContextPromoted)
+			}
+		})
+	}
+}
+
+// jp-postal-code は #54 以前 RequireContextWindow 未設定（行全体探索）だったため、
+// 「品番 150-0002 は廃番。郵便での返送は不可。」のように離れた場所の「郵便」の
+// 部分一致だけで Medium 成立していた（P12 #54 (b)）。他の digit 系 RequireContext
+// ルール（jp-bank-account 等）と同じ 40 ルーン窓を追加したことを確認する。
+func TestPostalCodeRequireContextWindowBoundary(t *testing.T) {
+	d := newDetector(t, "")
+	postal := "150-0043" // 渋谷区道玄坂（実在の郵便番号）
+
+	tests := []struct {
+		name      string
+		label     string
+		wantFound bool
+	}{
+		{"近傍の郵便番号は検出する", "郵便番号", true},
+		{"近傍の郵便だけでも検出する", "郵便", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			labelRunes := utf8.RuneCountInString(tt.label)
+			inN := digitRuleRequireContextWindowForTest - labelRunes
+			line := tt.label + strings.Repeat(" ", inN) + postal
+			fs := d.ScanLine("f.txt", 1, line)
+			if tt.wantFound {
+				assertRules(t, fs, "jp-postal-code")
+			} else {
+				assertRules(t, fs)
+			}
+		})
+	}
+
+	// 離れた場所（窓の外）の「郵便番号」「郵便」はどちらも検出しない
+	// （#54 で報告された実例の一般形）。
+	far := []struct {
+		name  string
+		label string
+	}{
+		{"離れた場所の郵便番号は検出しない", "郵便番号"},
+		{"離れた場所の郵便だけでは検出しない", "郵便"},
+	}
+	for _, tt := range far {
+		t.Run(tt.name, func(t *testing.T) {
+			labelRunes := utf8.RuneCountInString(tt.label)
+			outN := digitRuleRequireContextWindowForTest - labelRunes + 1
+			line := tt.label + strings.Repeat(" ", outN) + postal
+			assertRules(t, d.ScanLine("f.txt", 1, line))
+		})
+	}
+}
+
+// digitRuleRequireContextWindowForTest は jp-postal-code の RequireContextWindow
+// （internal/rule 側の非公開定数 digitRuleRequireContextWindow）と同じ値。
+// パッケージが異なり参照できないため、テスト側で値を複製する
+// （internal/rule.digitRuleRequireContextWindow と乖離しないよう
+// TestReasonRecordsRequiredNearbyContext が 40 を別途アサートしている）。
+const digitRuleRequireContextWindowForTest = 40
 
 func TestMinConfidenceHigh(t *testing.T) {
 	piifixtures.Require(t)
@@ -1651,6 +2014,112 @@ func TestScanContentRejectsCrossLineNegativeContextAcrossBlankLine(t *testing.T)
 	d := newDetector(t, "")
 	bankAccount := "1234567"
 	assertRules(t, d.ScanContent("f.txt", "口座番号: "+bankAccount+"\n\n円"))
+}
+
+// 実在の銀行名（辞書照合）は、既存の 8 語 Context が無い典型的な記載形式
+// （銀行名＋支店＋普通/当座）でも jp-bank-account を発火させる。値は
+// 辞書収録の銀行名（実在の固有名詞）とダミーの 7 桁を組み合わせただけで、
+// 実在しうる口座番号ではないため外部フィクスチャなしでテストできる
+// （internal/dict/names_test.go と同じ方針）。
+func TestBankNameContextEnablesDetection(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"銀行名＋支店＋普通（既存 Context 語なし）", "三菱UFJ銀行 渋谷支店 普通 1234567", []string{"jp-bank-account"}},
+		{"銀行名が行頭でなくても検出", "口座は みずほ銀行渋谷支店 普通預金 7654321 です", []string{"jp-bank-account"}},
+		{"助詞が銀行名の直前に続いても検出", "取引銀行はみずほ銀行本店です 1234567", []string{"jp-bank-account"}},
+		{"熟語が信用金庫名の直前に続いても検出", "取引先は京都信用金庫の支店です 2345678", []string{"jp-bank-account"}},
+		{"地の文が英字混じり銀行名の直前に続いても検出", "先方の三菱UFJ銀行本店営業部 3456789", []string{"jp-bank-account"}},
+		{"辞書未収録の架空銀行名は昇格しない", "架空銀行 渋谷支店 普通 1234567", nil},
+		{"支店・普通単体はいまだに Context ではない", "支店 普通 1234567", nil},
+		{"銀行名が 40 ルーン窓の外だと届かない", "みずほ銀行" + strings.Repeat("あ", 40) + "1234567", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// 銀行名の辞書照合は RequireContext の前提であり信頼度昇格の根拠にはならない
+// （TestContextRequiredConfidenceNotPromoted と同じ不変条件）ため、Base の
+// medium のまま報告される。
+func TestBankNameContextDoesNotPromoteConfidence(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanLine("f.txt", 1, "三菱UFJ銀行 渋谷支店 普通 1234567")
+	assertRules(t, fs, "jp-bank-account")
+	if fs[0].Confidence != rule.Medium {
+		t.Fatalf("confidence = %v, want medium", fs[0].Confidence)
+	}
+}
+
+// 銀行名の辞書照合を追加しても、既存の金額・数量ネガティブコンテキストは
+// 引き続き検出を抑制する。
+func TestBankNameContextStillRejectsNegativeContext(t *testing.T) {
+	d := newDetector(t, "")
+	assertRules(t, d.ScanLine("f.txt", 1, "みずほ銀行の株価は1234567円です"))
+	assertRules(t, d.ScanLine("f.txt", 1, "管理番号1234567（みずほ銀行の資料）"))
+}
+
+// ゆうちょ銀行の記号番号（記号5桁・先頭は必ず1、番号6〜8桁をハイフンで相関）。
+// 値はダミーの数字列と辞書収録の「ゆうちょ銀行」表記のみを使い、外部フィクスチャ
+// なしでテストできる。
+func TestYuchoAccountRule(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"記号番号＋ゆうちょ表記", "ゆうちょ銀行 記号12340-7654321", []string{"jp-yucho-account"}},
+		{"地の文に埋め込まれたゆうちょ銀行名", "取引銀行はゆうちょ銀行本店です 12340-7654321", []string{"jp-yucho-account"}},
+		{"記号番号＋記号ラベル", "記号12345-1234567 ゆうちょ口座", []string{"jp-yucho-account"}},
+		{"記号番号＋日本郵政系文脈", "日本郵政 12345-1234567", []string{"jp-yucho-account"}},
+		{"通常銀行名はゆうちょ文脈にしない", "三菱UFJ銀行 12345-1234567", []string{"jp-bank-account"}},
+		{"コンテキストなしは検出しない", "12345-1234567", nil},
+		{"記号が1始まりでない", "記号22345-1234567 ゆうちょ", nil},
+		{"記号が全桁同一のダミー値", "記号11111-111111 ゆうちょ", nil},
+		{"番号が全桁同一のダミー値", "記号12345-9999999 ゆうちょ", nil},
+		{"金額の負コンテキストで抑制", "ゆうちょ記号12345-1234567円", nil},
+		{"長い数字列の一部は対象外", "8" + "12345-1234567" + " ゆうちょ", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// jp-yucho-account が共有する銀行名 ContextPattern も、空白なしの地の文から
+// 「ゆうちょ銀行」だけを回収する。通常 Context にも「ゆうちょ」があるため、
+// ContextPattern 自体の回帰を直接検証する。
+func TestYuchoAccountContextPatternFindsEmbeddedBankName(t *testing.T) {
+	var patterns []rule.ContextPattern
+	for _, r := range rule.Builtin() {
+		if r.ID == "jp-yucho-account" {
+			patterns = r.ContextPatterns
+			break
+		}
+	}
+	got := matchContextPatterns("取引銀行はゆうちょ銀行本店です", patterns)
+	if len(got) != 1 || got[0] != "ゆうちょ銀行" {
+		t.Fatalf("matching contexts = %q, want [ゆうちょ銀行]", got)
+	}
+}
+
+// jp-yucho-account の RequireContext パターンも Base の High のまま報告される
+// （RequireContext は昇格の根拠にならない不変条件）。
+func TestYuchoAccountConfidenceIsBaseHigh(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanLine("f.txt", 1, "ゆうちょ銀行 記号12340-7654321")
+	assertRules(t, fs, "jp-yucho-account")
+	if fs[0].Confidence != rule.High {
+		t.Fatalf("confidence = %v, want high", fs[0].Confidence)
+	}
+	if fs[0].Match != "12340-7654321" {
+		t.Fatalf("match = %q, want 12340-7654321", fs[0].Match)
+	}
 }
 
 func TestScanContentUsesSourceContext(t *testing.T) {
@@ -1976,6 +2445,11 @@ func TestAddressBanchiChain(t *testing.T) {
 		{"丁目番号の連鎖", "住所: 東京都渋谷区道玄坂2丁目10番7号", "東京都渋谷区道玄坂2丁目10番7号"},
 		{"丁目とダッシュ", "住所: 大阪府大阪市北区梅田1丁目2-3", "大阪府大阪市北区梅田1丁目2-3"},
 		{"ダッシュ連結3組", "住所: 東京都千代田区丸の内2-1-5", "東京都千代田区丸の内2-1-5"},
+		// マーカーなしダッシュ連結は市区町村との間に助詞（で・に・は・を）以外の
+		// ひらがな・漢字を挟んでもよい（「霞が関」の「が」・「小島町」は町名自体が
+		// マーカー、いずれも助詞を含まない）。#55: banchiDash + notCalendarDateBanchi。
+		{"ダッシュ連結（助詞以外のひらがなを挟む）", "住所: 東京都千代田区霞が関3-2-1", "東京都千代田区霞が関3-2-1"},
+		{"ダッシュ連結（町名がそのままマーカー）", "住所: 神奈川県川崎市川崎区小島町2-10-7", "神奈川県川崎市川崎区小島町2-10-7"},
 		{"番地の号", "住所: 神奈川県横浜市西区みなとみらい10番地の7", "神奈川県横浜市西区みなとみらい10番地の7"},
 		{"番直後の号", "住所: 大阪府大阪市北区梅田10番7号", "大阪府大阪市北区梅田10番7号"},
 		{"丁目のみ", "住所: 東京都渋谷区道玄坂2丁目", "東京都渋谷区道玄坂2丁目"},
@@ -1984,6 +2458,88 @@ func TestAddressBanchiChain(t *testing.T) {
 		{"号の後の部屋番号は含めない", "住所: 東京都渋谷区道玄坂2丁目10番7号101", "東京都渋谷区道玄坂2丁目10番7号"},
 		{"号の後の電話番号は含めない", "住所: 大阪府大阪市北区梅田1丁目2番3号09012345678", "大阪府大阪市北区梅田1丁目2番3号"},
 		{"丁目の後の階数は含めない", "住所: 東京都渋谷区道玄坂2丁目10階", "東京都渋谷区道玄坂2丁目"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			var got string
+			for _, f := range fs {
+				if f.RuleID == "jp-address" {
+					got = f.Match
+				}
+			}
+			if got != tt.want {
+				t.Errorf("ScanLine(%q) jp-address = %q, want %q", tt.line, got, tt.want)
+			}
+		})
+	}
+}
+
+// マーカー（丁目/番/号）のないダッシュ連結番地は、市区町村直後の助詞
+// 「で・に・は・を」を挟んだスコア表記・ISO 日付を番地と誤認しない（#55）。
+// 助詞が市区町村に直結していない（間に別の語がある）場合は本スライスの対象外。
+func TestAddressDashOnlyExcludesParticleGap(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct{ name, line string }{
+		{"スコア表記（で）", "東京都調布市で行われた試合に3-2で勝利"},
+		{"ISO日付（で）", "東京都渋谷区で2025-07-02に開催"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line))
+		})
+	}
+}
+
+// 市区町村に助詞なしで直結する末尾ダッシュ番地は、3 成分かつ先頭が妥当な西暦
+// （1900〜2100）で実在する暦日のときだけ棄却する（notCalendarDateBanchi）。
+// 2 成分（大字直番地型）、存在しない日付、年として妥当でない先頭成分（実住所の
+// 番地）は棄却しない（#55）。
+func TestAddressDashOnlyValidateRejectsOnlyRealCalendarDates(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line, want string
+	}{
+		{"実在するISO日付（助詞なし直結）は棄却", "住所: 東京都渋谷区2025-07-02に開催", ""},
+		{"2成分は棄却しない（大字直番地）", "住所: 東京都渋谷区大字直番地1993-1", "東京都渋谷区大字直番地1993-1"},
+		{"存在しない日付（13月）は番地として許可", "住所: 東京都渋谷区2025-13-40に開催", "東京都渋谷区2025-13-40"},
+		{"存在しない日付（2月30日）は番地として許可", "住所: 東京都渋谷区2025-02-30に開催", "東京都渋谷区2025-02-30"},
+		{"年の範囲外（1900未満）は番地として許可", "住所: 東京都渋谷区1899-01-01に開催", "東京都渋谷区1899-01-01"},
+		{"年として妥当でない先頭成分は許可（実住所）", "住所: 東京都千代田区霞が関3-2-1", "東京都千代田区霞が関3-2-1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			var got string
+			for _, f := range fs {
+				if f.RuleID == "jp-address" {
+					got = f.Match
+				}
+			}
+			if got != tt.want {
+				t.Errorf("ScanLine(%q) jp-address = %q, want %q", tt.line, got, tt.want)
+			}
+		})
+	}
+}
+
+// 高再現率住所ルールは、学区のように市区町村ではない語（通学区）を municipality
+// と誤認した検出を辞書照合（dict.MunicipalitySuffixMatch）で棄却する。実在する
+// 市区町村を含む住所は従来どおり検出する（#55）。
+func TestHighRecallAddressRejectsUnknownMunicipality(t *testing.T) {
+	d := newDetector(t, highRecallTOML)
+	assertRules(t, d.ScanLine("f.txt", 1, "通学区域は3丁目まで"))
+	assertRules(t, d.ScanLine("f.txt", 1, "住所: 通学区域は3丁目まで"))
+	assertRules(t, d.ScanLine("f.txt", 1, "勤務地: 渋谷区渋谷2-1-1"), "jp-address-high-recall")
+}
+
+// 漢数字番地（神南一丁目十九番十一号 等）。ASCII 数字を含まない行でも
+// PrefilterCJK + 都道府県リテラルで検出する。ダッシュ形は持たない（#55）。
+func TestAddressKanjiNumeralBanchi(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct{ name, line, want string }{
+		{"丁目番号の連鎖（漢数字）", "住所: 東京都渋谷区神南一丁目十九番十一号", "東京都渋谷区神南一丁目十九番十一号"},
+		{"丁目のみ（漢数字）", "住所: 東京都渋谷区神南三丁目", "東京都渋谷区神南三丁目"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

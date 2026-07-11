@@ -99,6 +99,9 @@ type Finding struct {
 	// 対象外にする。jp-birthdate のようにラベル埋め込み正規表現でクロスライン
 	// 検出するルールには、この越境情報を理由とした一律抑制を適用しない。
 	matchStart, matchEnd int
+	// ignoreNegativeContext はマッチしたパターンが Rule.NegativeContext の
+	// 適用対象外であることを表す。隣接行の負文脈フィルタにも引き継ぐ。
+	ignoreNegativeContext bool
 }
 
 // DetectReason は検出の根拠を表す。生の PII は含めない。
@@ -237,6 +240,9 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 	}
 	if d.crossLineName != nil {
 		candidates = append(candidates, d.scanCrossLineNames(file, lines)...)
+		if sourceKindForPath(file) == sourceKindCSV {
+			candidates = append(candidates, d.scanCSVNameColumns(file, lines)...)
+		}
 	}
 
 	// 隣接行の負コンテキスト（金額・数量・連番 ID 等）で抑制される候補は、
@@ -727,7 +733,7 @@ func (d *Detector) scanAdjacentLinesDiff(file string, firstLineNo int, first str
 }
 
 func (d *Detector) hasSourceNegativeForFinding(f Finding, line string, lineCtx lineContext) bool {
-	if len(lineCtx.Statements) == 0 || !d.ruleHasNegativeContext(f.RuleID) {
+	if f.ignoreNegativeContext || len(lineCtx.Statements) == 0 || !d.ruleHasNegativeContext(f.RuleID) {
 		return false
 	}
 	norm := normalize.Line(line)
@@ -847,16 +853,24 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 		// 見る。Base 信頼度の昇格判定には promotionWindow を渡すが、これは常に
 		// 呼び出し側で 0 以下なら defaultPromotionContextWindow に解決してから
 		// 渡す（issue #68 段階1(b)。無制限昇格による FP 増幅を防ぐ）ため、ここでは
-		// 単純に window>0 かどうかだけを見ればよい。
+		// 単純に window>0 かどうかだけを見ればよい。ContextPatterns（銀行名辞書等の
+		// アンカー正規表現＋辞書検証経路）も同じ探索対象文字列 hay に対して評価する。
 		ctxForMatch := func(start, end int, window int) []string {
-			var kws []string
+			var hay string
 			if window > 0 {
-				kws = d.matchingContexts(contextWindow(norm, start, end, window, &normRunes), r.Context)
+				hay = contextWindow(norm, start, end, window, &normRunes)
 			} else {
-				kws = d.matchingContexts(norm, r.Context)
+				hay = norm
+			}
+			kws := d.matchingContexts(hay, r.Context)
+			if len(r.ContextPatterns) > 0 {
+				kws = append(kws, matchContextPatterns(hay, r.ContextPatterns)...)
 			}
 			if st := lineCtx.statementFor(start, end); st != nil && st.PositiveText != "" {
 				kws = append(kws, d.matchingContexts(st.PositiveText, r.Context)...)
+				if len(r.ContextPatterns) > 0 {
+					kws = append(kws, matchContextPatterns(st.PositiveText, r.ContextPatterns)...)
+				}
 			}
 			return kws
 		}
@@ -914,7 +928,7 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 					}
 					reason.ContextKeywords = kws
 				}
-				if hasNegativeNear(start, end) {
+				if !p.IgnoreNegativeContext && hasNegativeNear(start, end) {
 					continue
 				}
 				if r.Validate != nil {
@@ -925,6 +939,12 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 				}
 				if p.Validate != nil {
 					if !p.Validate(entity) {
+						continue
+					}
+					reason.Validated = true
+				}
+				if p.ValidateLine != nil {
+					if !p.ValidateLine(norm, start, end) {
 						continue
 					}
 					reason.Validated = true
@@ -948,6 +968,7 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 					if len(kws) > 0 {
 						reason.ContextKeywords = kws
 						reason.ContextPromoted = true
+						reason.ContextWindow = window
 						conf = rule.High
 					}
 				}
@@ -967,18 +988,19 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 					origRunes = []rune(line)
 				}
 				found = append(found, Finding{
-					RuleID:      r.ID,
-					Description: r.Description,
-					File:        file,
-					Line:        lineNo,
-					Column:      rs + 1,
-					Match:       string(origRunes[rs:re]),
-					Confidence:  conf,
-					Reason:      reason,
-					start:       rs,
-					matchStart:  mrs,
-					matchEnd:    mre,
-					end:         re,
+					RuleID:                r.ID,
+					Description:           r.Description,
+					File:                  file,
+					Line:                  lineNo,
+					Column:                rs + 1,
+					Match:                 string(origRunes[rs:re]),
+					Confidence:            conf,
+					Reason:                reason,
+					start:                 rs,
+					end:                   re,
+					matchStart:            mrs,
+					matchEnd:              mre,
+					ignoreNegativeContext: p.IgnoreNegativeContext,
 				})
 			}
 		}

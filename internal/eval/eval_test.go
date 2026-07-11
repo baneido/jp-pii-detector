@@ -23,9 +23,10 @@ const (
 	accuracyJSONPath = "../../docs/accuracy.json"
 )
 
-// wantF1Medium は CLI 既定の min_confidence=medium での期待 F1（low ゴールデンと同じ
-// 評価データセットに対する実測値）。低評価データセットに対する既定プロファイル
-// （--high-recall 無効）の体感精度をバッジ計測と別に可視化するためのゴールデン値。
+// wantF1Medium は CLI 既定の min_confidence=medium での期待 F1（low プロファイル
+// と同じ評価データセットに対する実測値）。低プロファイル（README バッジ・
+// docs/accuracy.json のゴールデン値）に対する既定プロファイル（--high-recall
+// 無効）の体感精度を、バッジ計測と別に可視化するためのゴールデン値。
 //
 // person-name（internal/rule/builtin.go）は、辞書検証済みマッチ（強ラベル+
 // 姓名辞書一致等の twin パターン）が Base: Medium で報告されるため、既定設定
@@ -35,10 +36,10 @@ const (
 // パターンでも検出できるため、medium プロファイルの F1 は low と同じ 1.00。
 // 辞書や評価ケースの変更でこの関係が動いた場合は、実測値に合わせて更新する。
 //
-// 他の 13 ルールは、low プロファイルで TP になっている検出のパターン
-// Base がいずれも Medium 以上（RequireContext のパターンは昇格せず Base の
-// まま、それ以外は Context 一致で High へ昇格）であるため、medium 閾値でも
-// 除外されず low と同じ検出集合になる。
+// 他の 13 ルールは、低プロファイルで TP になっている検出のパターン Base が
+// いずれも Medium 以上（RequireContext のパターンは昇格せず Base のまま、
+// それ以外は Context 一致で High へ昇格）であるため、medium 閾値でも除外され
+// ず low と同じ検出集合になる（docs/accuracy.json の low 値と同値）。
 var wantF1Medium = map[string]float64{
 	"jp-my-number":        1.00,
 	"jp-phone-number":     1.00,
@@ -56,10 +57,21 @@ var wantF1Medium = map[string]float64{
 	"jp-birthdate":        1.00,
 }
 
-// TestAccuracy は実測結果がコミット済みの docs/accuracy.json（ゴールデンファイル）
-// と完全一致することを検証する（CI の回帰ガード）。ルールやデータセットを変更して
-// 数値が動いたら、`go test ./internal/eval -run 'TestGenerateDoc|TestReadmeBadges' -update`
-// で docs/accuracy.md・docs/accuracy.json・README.md をまとめて再生成してコミットする。
+// TestAccuracy は CI の回帰ガード。low プロファイル（README バッジ・
+// docs/accuracy.md の根拠）は、実測結果がコミット済みの docs/accuracy.json
+// （ゴールデンファイル）と完全一致することを検証する。ルールやデータセットを
+// 変更して数値が動いたら、
+// `go test ./internal/eval -run 'TestGenerateDoc|TestReadmeBadges' -update`
+// で docs/accuracy.md・docs/accuracy.json・README.md をまとめて再生成して
+// コミットする。
+//
+// あわせて medium / high-recall プロファイルを並行評価し、既定設定で沈黙する
+// 検出（person-name 等）を公式数値として可視化する（issue #43）。medium
+// プロファイルは wantF1Medium で許容誤差付きにゲートする。high-recall
+// プロファイルは対応する評価データセットのケース（jp-address-high-recall /
+// person-name-high-recall / person-name-structured）がまだ無いため、当面は
+// 計測・ログ出力のみでゲートしない（データセットにケースが揃ってから
+// wantF1HighRecall を追加してゲート化する）。
 func TestAccuracy(t *testing.T) {
 	piifixtures.Require(t)
 	results, err := Evaluate()
@@ -70,7 +82,7 @@ func TestAccuracy(t *testing.T) {
 	if !ok {
 		t.Fatal("評価データセットを取得できません")
 	}
-	got := BuildGoldenForCases(results, cases)
+	got := BuildGolden(results, SpanlessPositiveCount(cases))
 
 	want, err := LoadGolden(accuracyJSONPath)
 	if err != nil {
@@ -82,45 +94,48 @@ func TestAccuracy(t *testing.T) {
 		t.Error(msg)
 	}
 
-	// issue #43 で追加した補助プロファイルは従来どおり計測する。low の公式値だけが
-	// README・accuracy.md・accuracy.json の単一ゴールデンである。
-	t.Run("medium", func(t *testing.T) {
-		checkProfileF1(t, Options{MinConfidence: "medium"}, wantF1Medium)
-	})
-	t.Run("high-recall", func(t *testing.T) {
-		results, err := EvaluateWithOptions(Options{MinConfidence: "low", HighRecall: true})
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, r := range results {
-			t.Logf("%-24s F1=%.3f P=%.3f R=%.3f TP=%d FP=%d FN=%d",
-				r.RuleID, r.F1, r.Precision, r.Recall, r.TP, r.FP, r.FN)
-		}
-	})
-}
+	profiles := []struct {
+		name string
+		opts Options
+		want map[string]float64 // nil/空なら計測・ログのみ（ゲートしない）
+	}{
+		{name: "medium", opts: Options{MinConfidence: "medium"}, want: wantF1Medium},
+		{name: "high-recall", opts: Options{MinConfidence: "low", HighRecall: true}, want: nil},
+	}
 
-func checkProfileF1(t *testing.T, opts Options, want map[string]float64) {
-	t.Helper()
-	results, err := EvaluateWithOptions(opts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	seen := map[string]bool{}
-	for _, r := range results {
-		seen[r.RuleID] = true
-		wantF1, ok := want[r.RuleID]
-		if !ok {
-			t.Errorf("ルール %q の期待 F1 が補助プロファイルに未登録", r.RuleID)
-			continue
-		}
-		if math.Abs(r.F1-wantF1) > 0.005 {
-			t.Errorf("%s: F1 = %.3f, want %.2f", r.RuleID, r.F1, wantF1)
-		}
-	}
-	for id := range want {
-		if !seen[id] {
-			t.Errorf("ルール %q が補助プロファイルの評価結果に存在しない", id)
-		}
+	for _, p := range profiles {
+		t.Run(p.name, func(t *testing.T) {
+			results, err := EvaluateWithOptions(p.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(p.want) == 0 {
+				for _, r := range results {
+					t.Logf("%-24s F1=%.3f P=%.3f R=%.3f TP=%d FP=%d FN=%d",
+						r.RuleID, r.F1, r.Precision, r.Recall, r.TP, r.FP, r.FN)
+				}
+				return
+			}
+			seen := map[string]bool{}
+			for _, r := range results {
+				seen[r.RuleID] = true
+				want, ok := p.want[r.RuleID]
+				if !ok {
+					t.Errorf("ルール %q の期待 F1 が未登録（プロファイル %s の want map に追加してください）",
+						r.RuleID, p.name)
+					continue
+				}
+				if math.Abs(r.F1-want) > 0.005 {
+					t.Errorf("%s [%s]: F1 = %.3f, want %.2f（wantF1Medium・docs/accuracy.md を更新してください）",
+						r.RuleID, p.name, r.F1, want)
+				}
+			}
+			for id := range p.want {
+				if !seen[id] {
+					t.Errorf("ルール %q がプロファイル %s の評価結果に存在しない", id, p.name)
+				}
+			}
+		})
 	}
 }
 
@@ -878,7 +893,7 @@ func TestGenerateDoc(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	golden := BuildGoldenForCases(results, cases)
+	golden := BuildGolden(results, SpanlessPositiveCount(cases))
 	if err := SaveGolden(accuracyJSONPath, golden); err != nil {
 		t.Fatal(err)
 	}

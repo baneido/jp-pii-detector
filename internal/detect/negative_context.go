@@ -16,7 +16,7 @@ const negativeContextWindowRunes = 20
 // スキップしないと、口座番号の直後に空行を挟んだ先に金額の単位（円）が
 // 続くようなケースで、負コンテキストによる抑制を取りこぼす。
 func (d *Detector) hasCrossLineNegativeContext(f Finding, lines []string, lineContexts []lineContext, lineIdx int) bool {
-	if lineIdx < 0 || lineIdx >= len(lines) {
+	if f.ignoreNegativeContext || lineIdx < 0 || lineIdx >= len(lines) {
 		return false
 	}
 	var negCtx, posCtx []string
