@@ -1,6 +1,7 @@
 package detect
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -135,22 +136,143 @@ func TestSplitCSVLineRejectsMalformedQuotes(t *testing.T) {
 	}
 }
 
-// 不正な引用符を含むレコード以降は列境界を信頼せず、後続行にも列文脈を
-// 付与しない。malformed CSV による誤検出を安全側に倒す回帰テスト。
-func TestCSVColumnContextStopsAfterMalformedQuotes(t *testing.T) {
+// 不正な引用符を含むレコード自身には列文脈を付与しない（列境界を信頼できない
+// ため）が、そのレコードが同じ物理行内で閉じていれば、次の物理行からは
+// 列コンテキストの付与を再開する。以前は「以降ファイル全体」を失っていたが、
+// 1 レコードの構文エラーでファイル全体の検出漏れを招くのは過剰に安全側
+// だったため、レコード境界での復帰に改めた（下のフィールド内改行
+// （embedded newline）系のテスト群と対になる回帰テスト）。
+func TestCSVColumnContextResumesAfterMalformedQuoteRecord(t *testing.T) {
 	lines := []string{
 		"備考,口座番号",
-		`"社内"junk,1234567`,
+		`"社内"junk,1234567`, // 閉じ引用符の後に区切り文字以外が続く構文エラー
 		"社内,7654321",
 	}
 	contexts := csvLineContexts("data.csv", lines)
 	if len(contexts) != len(lines) {
 		t.Fatalf("contexts = %d 行, want %d", len(contexts), len(lines))
 	}
-	for i := 1; i < len(contexts); i++ {
+	if len(contexts[1].Statements) != 0 {
+		t.Errorf("line 2（構文エラーの行）statements = %+v, want none", contexts[1].Statements)
+	}
+	if len(contexts[2].Statements) == 0 {
+		t.Fatalf("line 3（レコードが閉じた次の行）に列文脈が付与されていない: %+v", contexts[2])
+	}
+}
+
+// 引用符で囲まれたセル内にフィールド内改行がある（RFC 4180 上は正当な）
+// レコードでも、レコード自身が占める物理行には列境界を信頼できないため
+// 列コンテキストを付与しないが、レコードが閉じた次の物理行からは付与を
+// 再開する。2 物理行にまたがるケース。
+func TestCSVColumnContextResumesAfterTwoLineEmbeddedNewlineRecord(t *testing.T) {
+	lines := []string{
+		"郵便番号,口座番号",
+		"100-0001,1234567",
+		`"社内メモ`,
+		`続き",7654321`,
+		"100-0001,7654321",
+	}
+	contexts := csvLineContexts("data.csv", lines)
+	if len(contexts) != len(lines) {
+		t.Fatalf("contexts = %d 行, want %d", len(contexts), len(lines))
+	}
+	for _, i := range []int{2, 3} {
 		if len(contexts[i].Statements) != 0 {
-			t.Errorf("line %d statements = %+v, want none", i+1, contexts[i].Statements)
+			t.Errorf("line %d（複数行レコード自身）statements = %+v, want none", i+1, contexts[i].Statements)
 		}
+	}
+	if len(contexts[4].Statements) == 0 {
+		t.Fatalf("line 5（レコードが閉じた次の行）に列文脈が付与されていない: %+v", contexts[4])
+	}
+
+	d := newDetector(t, "")
+	fs := d.ScanContent("data.csv", strings.Join(lines, "\n")+"\n")
+	gotPostal, gotBank := false, false
+	for _, f := range fs {
+		if f.RuleID == "jp-postal-code" && f.Line == 5 {
+			gotPostal = true
+		}
+		if f.RuleID == "jp-bank-account" && f.Line == 5 {
+			gotBank = true
+		}
+	}
+	if !gotPostal || !gotBank {
+		t.Errorf("line 5 の郵便番号・口座番号が検出されない: %+v", fs)
+	}
+}
+
+// "" でエスケープされた引用符を含みつつ、3 物理行にまたがるフィールド内改行の
+// ケース。エスケープされた引用符はトグルせず、レコードは 3 行目の閉じ引用符で
+// 閉じる。
+func TestCSVColumnContextResumesAfterThreeLineEmbeddedNewlineRecordWithEscapedQuote(t *testing.T) {
+	lines := []string{
+		"郵便番号,口座番号",
+		"100-0001,1234567",
+		`"社内""メモ`,
+		"続き",
+		`続き2",7654321`,
+		"100-0001,7654321",
+	}
+	contexts := csvLineContexts("data.csv", lines)
+	if len(contexts) != len(lines) {
+		t.Fatalf("contexts = %d 行, want %d", len(contexts), len(lines))
+	}
+	for _, i := range []int{2, 3, 4} {
+		if len(contexts[i].Statements) != 0 {
+			t.Errorf("line %d（複数行レコード自身）statements = %+v, want none", i+1, contexts[i].Statements)
+		}
+	}
+	if len(contexts[5].Statements) == 0 {
+		t.Fatalf("line 6（レコードが閉じた次の行）に列文脈が付与されていない: %+v", contexts[5])
+	}
+}
+
+// フィールド内改行の引用符が EOF まで閉じない場合は、レコード境界を復帰
+// できないため、従来どおりそれ以降の行にも列コンテキストを付与しない
+// （安全側のまま維持される既存挙動の回帰テスト）。
+func TestCSVColumnContextUnterminatedToEOFStillLosesRemainder(t *testing.T) {
+	lines := []string{
+		"郵便番号,口座番号",
+		"100-0001,1234567",
+		`"社内メモ`,
+		"100-0001,7654321",
+	}
+	contexts := csvLineContexts("data.csv", lines)
+	for i := 2; i < len(contexts); i++ {
+		if len(contexts[i].Statements) != 0 {
+			t.Errorf("line %d statements = %+v, want none (unterminated to EOF)", i+1, contexts[i].Statements)
+		}
+	}
+
+	d := newDetector(t, "")
+	fs := d.ScanContent("data.csv", strings.Join(lines, "\n")+"\n")
+	for _, f := range fs {
+		if f.Line == 4 {
+			t.Errorf("unterminated レコード以降は検出されないはず: %+v", f)
+		}
+	}
+}
+
+// TSV でも同じレコード境界の復帰ロジックが働くこと。
+func TestCSVColumnContextResumesAfterEmbeddedNewlineRecordTSV(t *testing.T) {
+	d := newDetector(t, "")
+	content := "郵便番号\t口座番号\n" +
+		"100-0001\t1234567\n" +
+		"\"社内メモ\n" +
+		"続き\"\t7654321\n" +
+		"100-0001\t7654321\n"
+	fs := d.ScanContent("data.tsv", content)
+	gotPostal, gotBank := false, false
+	for _, f := range fs {
+		if f.RuleID == "jp-postal-code" && f.Line == 5 {
+			gotPostal = true
+		}
+		if f.RuleID == "jp-bank-account" && f.Line == 5 {
+			gotBank = true
+		}
+	}
+	if !gotPostal || !gotBank {
+		t.Errorf("line 5 の郵便番号・口座番号が検出されない: %+v", fs)
 	}
 }
 

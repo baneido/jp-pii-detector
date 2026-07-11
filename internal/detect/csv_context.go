@@ -43,8 +43,10 @@ type csvField struct {
 // 引用符の構文が不正なレコードは terminated=false を返す。
 // この関数は 1 行だけを見るため、そのようなレコード（複数物理行にまたがる
 // 1 論理行）を正しく再構成することはできない。呼び出し側は terminated=false
-// を検出したら、それ以降のレコードへの列コンテキスト付与を打ち切り、
-// 列がずれた誤帰属を避ける。
+// を検出したら、csvUnterminatedRecordEnd でレコードが占める物理行を
+// 特定してその範囲には列コンテキストを付与せず、レコードが閉じた次の
+// 物理行から付与を再開する（列がずれた誤帰属を避けつつ、1 レコードだけの
+// ためにファイル全体の文脈を失わないようにする）。
 func splitCSVLine(line string, delim byte) (fields []csvField, terminated bool) {
 	i, n := 0, len(line)
 	afterDelimiter := false
@@ -105,6 +107,42 @@ func splitCSVLine(line string, delim byte) (fields []csvField, terminated bool) 
 		afterDelimiter = true
 	}
 	return fields, true
+}
+
+// csvUnterminatedRecordEnd は、splitCSVLine が terminated=false を返した
+// データ行（lines[start]）から始まるレコードが、フィールド内改行を挟んで
+// 何物理行にまたがるかを RFC 4180 の引用符トグル（"" はエスケープされた
+// 引用符 1 個）だけで追跡する。splitCSVLine のようなフィールド構文の妥当性
+// 検証（閉じ引用符後は区切り文字のみ等）は行わず、「引用符の中か外か」だけを
+// 見るため、閉じ引用符の後に不正な文字が続く（構文エラーの）行でも、その物理行
+// 内で引用符が偶数個であれば 1 行だけのレコードとして扱える。
+// closed=true のとき、そのレコードは lines[start:next] の物理行を占め
+// （呼び出し側はこの範囲に列コンテキストを付与しない）、next からは列の
+// ずれがないことが保証されるため付与を再開できる。EOF まで引用符が閉じない
+// 場合は closed=false（next==len(lines)）を返し、呼び出し側は従来どおり
+// それ以降の付与を打ち切る。
+func csvUnterminatedRecordEnd(lines []string, start int) (next int, closed bool) {
+	inQuotes := false
+	for i := start; i < len(lines); i++ {
+		line := normalize.Line(lines[i])
+		j, n := 0, len(line)
+		for j < n {
+			if line[j] == '"' {
+				if inQuotes && j+1 < n && line[j+1] == '"' {
+					j += 2 // エスケープされた引用符（トグルしない）
+					continue
+				}
+				inQuotes = !inQuotes
+				j++
+				continue
+			}
+			j++
+		}
+		if !inQuotes {
+			return i + 1, true
+		}
+	}
+	return len(lines), false
 }
 
 // looksLikeCSVHeader は 1 行目がヘッダ行らしいかのヒューリスティック。
@@ -235,9 +273,17 @@ func csvLineContexts(file string, lines []string) []lineContext {
 		norm := normalize.Line(lines[i])
 		fields, terminated := splitCSVLine(norm, delim)
 		if !terminated {
-			// フィールド内改行で以降のレコード境界がずれる可能性があるため、
-			// このレコード以降は列コンテキストの付与を打ち切る（安全側）。
-			break
+			// フィールド内改行（またはレコード内の構文エラー）でこの行の列は
+			// 信頼できないため、レコードが占める物理行には列コンテキストを
+			// 付与しない。ただしレコードが閉じ次第、次の物理行からは列の
+			// ずれがないため付与を再開する（EOF まで閉じない場合のみ、
+			// 従来どおりファイル末尾まで打ち切る）。
+			next, closed := csvUnterminatedRecordEnd(lines, i)
+			if !closed {
+				break
+			}
+			i = next - 1
+			continue
 		}
 		var stmts []statementContext
 		for fi, f := range fields {
@@ -297,7 +343,14 @@ func (d *Detector) scanCSVNameColumns(file string, lines []string) []Finding {
 		norm := normalize.Line(lines[li])
 		fields, terminated := splitCSVLine(norm, delim)
 		if !terminated {
-			break
+			// csvLineContexts と同じレコード境界の追跡でスキップし、
+			// 閉じた次の物理行から氏名列の検査を再開する。
+			next, closed := csvUnterminatedRecordEnd(lines, li)
+			if !closed {
+				break
+			}
+			li = next - 1
+			continue
 		}
 		var origRunes []rune
 		for fi, f := range fields {
