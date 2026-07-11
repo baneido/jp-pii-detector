@@ -434,6 +434,14 @@ var bankNameCandidateRe = regexp.MustCompile(
 	`([` + kanji + hiragana + katakana + `A-Za-z]{1,12}(?:銀行|信用金庫|信用組合|信金|信組|労働金庫|ろうきん|農協))`,
 )
 
+// bankCodeAccountRe は「金融機関コード4桁-支店コード3桁-口座番号7桁」の
+// 構造から金融機関コードだけを候補として切り出す。候補は ValidBankCode で
+// 実在性を検証するため、単なる 4-3-7 桁のバージョン番号等は文脈にならない。
+// 支店辞書は Issue #61 のスコープ外なので、支店コードは桁構造だけを見る。
+var bankCodeAccountRe = regexp.MustCompile(
+	`(?:^|[^0-9])(\d{4})[- ]\d{3}[- ]\d{7}(?:[^0-9]|$)`,
+)
+
 func isYuchoBankName(s string) bool {
 	return s == "ゆうちょ銀行"
 }
@@ -746,12 +754,13 @@ func Builtin() []Rule {
 			// 具体的な銀行名・口座番号の実値は書かない。
 			ContextPatterns: []ContextPattern{
 				{Re: bankNameCandidateRe, Validate: dict.IsBankName, ValidateSuffixes: true, Literals: bankNameSuffixes},
+				{Re: bankCodeAccountRe, Validate: dict.ValidBankCode},
 			},
 			NegativeContext:      digitRuleNegativeContext,
 			RequireContextWindow: digitRuleRequireContextWindow,
 			Validate:             validBankAccount,
 			Patterns: []Pattern{
-				{Re: dg(`\d{7}`), Base: Medium, RequireContext: true},
+				{Re: dg(`\d{7}`), Base: Medium, RequireContext: true, ValidateLine: rejectYuchoAccountSuffix},
 			},
 		},
 		{
@@ -768,13 +777,13 @@ func Builtin() []Rule {
 			RequireContextWindow: digitRuleRequireContextWindow,
 			Validate:             validYuchoAccount,
 			Patterns: []Pattern{
-				// 記号（5 桁、先頭は必ず "1"）＋番号（6〜8 桁）をハイフンで
-				// 相関させた表記（例: [5桁の記号]-[6〜8桁の番号]）。記号・番号の
+				// 記号（5 桁、先頭は必ず "1"）＋番号（7〜8 桁、末尾は必ず
+				// "1"）をハイフンで相関させた表記。記号・番号の
 				// ラベルが別々に書かれる形式（記号: … 番号: …）は将来の拡張対象
 				// とし、誤検出リスクを抑えるためこの表記に限定する。チェック
 				// ディジットの具体式は未確認のため（要追加調査）、全桁同一の
 				// ダミー値のみ Validate で棄却する。
-				{Re: dgNoAlnumHyphen(`1\d{4}-\d{6,8}`), Base: High, RequireContext: true},
+				{Re: dgNoAlnumHyphen(`1\d{4}-\d{6,7}1`), Base: High, RequireContext: true},
 			},
 		},
 		{
@@ -1093,6 +1102,25 @@ func validBankAccount(m string) bool {
 	return !checksum.AllSame(m)
 }
 
+// rejectYuchoAccountSuffix は、通常の 7 桁口座番号パターンが
+// 「ゆうちょ記号5桁-番号7桁」の番号部分だけを拾う隣接汚染を防ぐ。
+// ゆうちょ形式全体は jp-yucho-account が専用の文脈と境界で判定する。
+func rejectYuchoAccountSuffix(line string, start, _ int) bool {
+	if start < 6 || line[start-1] != '-' {
+		return true
+	}
+	symbol := line[start-6 : start-1]
+	if symbol[0] != '1' {
+		return true
+	}
+	for i := 1; i < len(symbol); i++ {
+		if symbol[i] < '0' || symbol[i] > '9' {
+			return true
+		}
+	}
+	return false
+}
+
 // validHealthInsurance は健康保険 保険者番号・被保険者番号（8 桁）の全桁同一の
 // ダミー値を棄却する。連番も実在しうるため、それ以上のヒューリスティックは
 // 適用しない。
@@ -1163,13 +1191,14 @@ func validPhone(m string) bool {
 }
 
 // validYuchoAccount はゆうちょ銀行の記号（5 桁・先頭は必ず "1"）・番号
-// （6〜8 桁）がハイフンで相関した表記かを検証する。記号 4 桁目に意味を持つ
+// （7〜8 桁・末尾 1）がハイフンで相関した表記かを検証する。記号 4 桁目に意味を持つ
 // チェックディジット式が存在するとされるが、公開情報からは具体式を確認できな
-// かったため（要追加調査）実装していない。全桁同一のダミー値（"11111-111111"
+// かったため（要追加調査）実装していない。全桁同一のダミー値（"11111-1111111"
 // 等）だけを明白な非 PII として棄却する。
 func validYuchoAccount(m string) bool {
 	symbol, number, ok := strings.Cut(m, "-")
-	if !ok || len(symbol) != 5 || symbol[0] != '1' || len(number) < 6 || len(number) > 8 {
+	if !ok || len(symbol) != 5 || symbol[0] != '1' ||
+		(len(number) != 7 && len(number) != 8) || number[len(number)-1] != '1' {
 		return false
 	}
 	return !checksum.AllSame(symbol) && !checksum.AllSame(number)

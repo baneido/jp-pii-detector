@@ -2059,6 +2059,29 @@ func TestBankNameContextDoesNotPromoteConfidence(t *testing.T) {
 	}
 }
 
+// 実在する金融機関コードを含む 4-3-7 桁の構造は、銀行名や一般語を
+// Context に増やさず口座番号の文脈として使う。支店コードは辞書化せず、
+// 金融機関コードだけを代表サブセット辞書で検証する。
+func TestBankCodeContextEnablesDetection(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"ハイフン区切り", "0005-123-7654321", []string{"jp-bank-account"}},
+		{"空白区切り", "0009 123 7654321", []string{"jp-bank-account"}},
+		{"ゆうちょ銀行コード", "9900-123-7654321", []string{"jp-bank-account"}},
+		{"未収録コード", "9999-123-7654321", nil},
+		{"5桁コードの一部", "10005-123-7654321", nil},
+		{"コードだけでは文脈にしない", "銀行コード0005 7654321", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
 // 銀行名の辞書照合を追加しても、既存の金額・数量ネガティブコンテキストは
 // 引き続き検出を抑制する。
 func TestBankNameContextStillRejectsNegativeContext(t *testing.T) {
@@ -2067,7 +2090,7 @@ func TestBankNameContextStillRejectsNegativeContext(t *testing.T) {
 	assertRules(t, d.ScanLine("f.txt", 1, "管理番号1234567（みずほ銀行の資料）"))
 }
 
-// ゆうちょ銀行の記号番号（記号5桁・先頭は必ず1、番号6〜8桁をハイフンで相関）。
+// ゆうちょ銀行の記号番号（記号5桁・先頭は必ず1、番号7〜8桁・末尾1をハイフンで相関）。
 // 値はダミーの数字列と辞書収録の「ゆうちょ銀行」表記のみを使い、外部フィクスチャ
 // なしでテストできる。
 func TestYuchoAccountRule(t *testing.T) {
@@ -2078,21 +2101,42 @@ func TestYuchoAccountRule(t *testing.T) {
 	}{
 		{"記号番号＋ゆうちょ表記", "ゆうちょ銀行 記号12340-7654321", []string{"jp-yucho-account"}},
 		{"地の文に埋め込まれたゆうちょ銀行名", "取引銀行はゆうちょ銀行本店です 12340-7654321", []string{"jp-yucho-account"}},
-		{"記号番号＋記号ラベル", "記号12345-1234567 ゆうちょ口座", []string{"jp-yucho-account"}},
-		{"記号番号＋日本郵政系文脈", "日本郵政 12345-1234567", []string{"jp-yucho-account"}},
-		{"通常銀行名はゆうちょ文脈にしない", "三菱UFJ銀行 12345-1234567", []string{"jp-bank-account"}},
-		{"コンテキストなしは検出しない", "12345-1234567", nil},
-		{"記号が1始まりでない", "記号22345-1234567 ゆうちょ", nil},
-		{"記号が全桁同一のダミー値", "記号11111-111111 ゆうちょ", nil},
-		{"番号が全桁同一のダミー値", "記号12345-9999999 ゆうちょ", nil},
-		{"金額の負コンテキストで抑制", "ゆうちょ記号12345-1234567円", nil},
-		{"長い数字列の一部は対象外", "8" + "12345-1234567" + " ゆうちょ", nil},
+		{"記号番号＋記号ラベル", "記号12345-1234561 ゆうちょ口座", []string{"jp-yucho-account"}},
+		{"記号番号＋日本郵政系文脈", "日本郵政 12345-12345671", []string{"jp-yucho-account"}},
+		{"通常銀行名はゆうちょ文脈にも通常口座にも汚染しない", "三菱UFJ銀行 12345-1234561", nil},
+		{"コンテキストなしは検出しない", "12345-1234561", nil},
+		{"記号が1始まりでない", "記号22345-1234561 ゆうちょ", nil},
+		{"記号が全桁同一のダミー値", "記号11111-1111111 ゆうちょ", nil},
+		{"番号が全桁同一のダミー値", "記号12345-1111111 ゆうちょ", nil},
+		{"番号末尾が1以外", "記号12345-1234567 ゆうちょ", nil},
+		{"金額の負コンテキストで抑制", "ゆうちょ記号12345-1234561円", nil},
+		{"長い数字列の一部は対象外", "8" + "12345-1234561" + " ゆうちょ", nil},
+		{"英数字トークン末尾への隣接は対象外", "ゆうちょ 12345-1234561A", nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
 		})
 	}
+}
+
+// 隣接行相関でも文脈は値行にだけ適用され、ゆうちょ形式の後半を通常の
+// 7 桁口座として二重報告しない。ignore マーカーも値行単位で判定する。
+func TestYuchoAccountAdjacentLinesDoNotContaminate(t *testing.T) {
+	d := newDetector(t, "")
+
+	fs := d.ScanContent("f.txt", "ゆうちょ口座:\n12340-7654321")
+	assertRules(t, fs, "jp-yucho-account")
+	if fs[0].Line != 2 || fs[0].Match != "12340-7654321" {
+		t.Fatalf("finding = %+v, want value on line 2", fs[0])
+	}
+
+	// 通常銀行名だけでは、隣接行のゆうちょ形後半を通常口座として拾わない。
+	assertRules(t, d.ScanContent("f.txt", "三菱UFJ銀行:\n12340-7654321"))
+
+	// ラベル行のマーカーは値行を抑制せず、値行自身のマーカーは抑制する。
+	assertRules(t, d.ScanContent("f.txt", "ゆうちょ口座: // "+IgnoreMarker+"\n12340-7654321"), "jp-yucho-account")
+	assertRules(t, d.ScanContent("f.txt", "ゆうちょ口座:\n12340-7654321 // "+IgnoreMarker))
 }
 
 // jp-yucho-account が共有する銀行名 ContextPattern も、空白なしの地の文から
