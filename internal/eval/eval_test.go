@@ -82,7 +82,7 @@ func TestAccuracy(t *testing.T) {
 	if !ok {
 		t.Fatal("評価データセットを取得できません")
 	}
-	got := BuildGolden(results, SpanlessPositiveCount(cases))
+	got := BuildGoldenForCases(results, cases)
 
 	want, err := LoadGolden(accuracyJSONPath)
 	if err != nil {
@@ -893,7 +893,7 @@ func TestGenerateDoc(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	golden := BuildGolden(results, SpanlessPositiveCount(cases))
+	golden := BuildGoldenForCases(results, cases)
 	if err := SaveGolden(accuracyJSONPath, golden); err != nil {
 		t.Fatal(err)
 	}

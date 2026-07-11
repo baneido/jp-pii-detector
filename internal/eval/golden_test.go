@@ -129,6 +129,17 @@ func TestDiffGoldenIgnoresDatasetQuality(t *testing.T) {
 	}
 }
 
+func TestDiffGoldenReportsDatasetStatsMismatch(t *testing.T) {
+	results := sampleResults()
+	got := BuildGoldenForCases(results, []Case{{Line: "positive", Want: []string{"email-address"}}})
+	want := BuildGoldenForCases(results, []Case{{Line: "negative"}})
+
+	diffs := DiffGolden(got, want)
+	if len(diffs) == 0 || !strings.Contains(strings.Join(diffs, "\n"), "dataset") {
+		t.Fatalf("DiffGolden did not report dataset stats drift: %v", diffs)
+	}
+}
+
 func TestComputeDatasetStatsCountsPositiveNegativeAndSpans(t *testing.T) {
 	cases := []Case{
 		{Line: "TEL: 090-1234-5678", Want: []string{"jp-phone-number"}},
@@ -180,6 +191,35 @@ func TestSpanlessPositiveCountCountsWantAndSpanRulePairsWithoutASpan(t *testing.
 
 	if got := SpanlessPositiveCount(cases); got != 2 {
 		t.Fatalf("SpanlessPositiveCount = %d, want 2", got)
+	}
+}
+
+func TestDatasetQualityProblemsDetectsUnknownIDsAndDuplicatesWithoutLeakingContent(t *testing.T) {
+	cases := []Case{
+		{Line: "private value", Want: []string{"known"}},
+		{Line: "private value", Want: []string{"known"}},
+		{Line: "another private value", Spans: []Span{{RuleID: "typo", Start: 0, End: 1}}},
+	}
+	problems := DatasetQualityProblems(cases, map[string]bool{"known": true})
+	joined := strings.Join(problems, "\n")
+	if !containsAll(joined, "完全に重複", "未知のルール ID") {
+		t.Fatalf("problems = %v", problems)
+	}
+	if strings.Contains(joined, "private value") {
+		t.Fatalf("エラーにケース本文が漏れています: %s", joined)
+	}
+}
+
+func TestSpanlessPositiveRatchetOnlyRejectsIncrease(t *testing.T) {
+	cases := []Case{{Line: "value", Want: []string{"rule"}}}
+	if SpanlessPositiveIncreased(cases, 1) {
+		t.Fatal("同数を増加と判定しました")
+	}
+	if SpanlessPositiveIncreased(cases, 2) {
+		t.Fatal("減少を増加と判定しました")
+	}
+	if !SpanlessPositiveIncreased(cases, 0) {
+		t.Fatal("増加を検出できませんでした")
 	}
 }
 

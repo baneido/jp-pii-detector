@@ -48,6 +48,7 @@ type Golden struct {
 	MicroSpanRelaxed GoldenScore          `json:"micro_span_relaxed"`
 	MacroSpanExact   GoldenScore          `json:"macro_span_exact"`
 	MacroSpanRelaxed GoldenScore          `json:"macro_span_relaxed"`
+	Dataset          DatasetStats         `json:"dataset"`
 	DatasetQuality   GoldenDatasetQuality `json:"dataset_quality"`
 }
 
@@ -83,6 +84,14 @@ func BuildGolden(results []Result, spanlessPositiveCount int) Golden {
 			SpanlessPositiveCount: spanlessPositiveCount,
 		},
 	}
+}
+
+// BuildGoldenForCases は実測結果とケース集合から、精度と匿名データセット統計を
+// 一度に組み立てる。生成物にはケース本文や PII を含めない。
+func BuildGoldenForCases(results []Result, cases []Case) Golden {
+	g := BuildGolden(results, SpanlessPositiveCount(cases))
+	g.Dataset = ComputeDatasetStats(cases)
+	return g
 }
 
 // SaveGolden は Golden を整形済み JSON として path へ書き出す。
@@ -150,6 +159,9 @@ func DiffGolden(got, want Golden) []string {
 	diffs = append(diffs, diffScore("micro_span_relaxed", got.MicroSpanRelaxed, want.MicroSpanRelaxed)...)
 	diffs = append(diffs, diffScore("macro_span_exact", got.MacroSpanExact, want.MacroSpanExact)...)
 	diffs = append(diffs, diffScore("macro_span_relaxed", got.MacroSpanRelaxed, want.MacroSpanRelaxed)...)
+	if !equalDatasetStats(got.Dataset, want.Dataset) {
+		diffs = append(diffs, fmt.Sprintf("dataset: 実測 %+v, docs/accuracy.json は %+v", got.Dataset, want.Dataset))
+	}
 
 	sort.Strings(diffs)
 	return diffs
@@ -167,18 +179,32 @@ func diffScore(label string, got, want GoldenScore) []string {
 // RuleCaseCount はルール別の陽性ケース数（そのルールが Want または Spans に
 // 現れるケースの数）。
 type RuleCaseCount struct {
-	RuleID string
-	Cases  int
+	RuleID string `json:"rule_id"`
+	Cases  int    `json:"positive_cases"`
 }
 
 // DatasetStats は評価データセットの匿名統計。総ケース数・陽性/陰性内訳・
 // ルール別件数・スパン付与状況を、PII やケース本文を含まない件数だけで表す。
 type DatasetStats struct {
-	TotalCases         int
-	PositiveCases      int
-	NegativeCases      int
-	SpanAnnotatedCases int
-	PerRule            []RuleCaseCount
+	TotalCases         int             `json:"total_cases"`
+	PositiveCases      int             `json:"positive_cases"`
+	NegativeCases      int             `json:"negative_cases"`
+	SpanAnnotatedCases int             `json:"span_annotated_cases"`
+	PerRule            []RuleCaseCount `json:"per_rule"`
+}
+
+func equalDatasetStats(a, b DatasetStats) bool {
+	if a.TotalCases != b.TotalCases || a.PositiveCases != b.PositiveCases ||
+		a.NegativeCases != b.NegativeCases || a.SpanAnnotatedCases != b.SpanAnnotatedCases ||
+		len(a.PerRule) != len(b.PerRule) {
+		return false
+	}
+	for i := range a.PerRule {
+		if a.PerRule[i] != b.PerRule[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // ComputeDatasetStats はケース集合から DatasetStats を計算する。
@@ -240,4 +266,40 @@ func SpanlessPositiveCount(cases []Case) int {
 		}
 	}
 	return spanless
+}
+
+// DatasetQualityProblems は未知ルール ID と完全一致重複を、PII やケース本文を
+// エラーへ含めず検出する。外部 fixture 不要の単体テストからも利用できる。
+func DatasetQualityProblems(cases []Case, knownRules map[string]bool) []string {
+	var problems []string
+	seenAt := map[string]int{}
+	for i, c := range cases {
+		for _, id := range c.Want {
+			if !knownRules[id] {
+				problems = append(problems, fmt.Sprintf("dataset[%d].want に未知のルール ID %q", i, id))
+			}
+		}
+		for _, s := range c.Spans {
+			if !knownRules[s.RuleID] {
+				problems = append(problems, fmt.Sprintf("dataset[%d].spans に未知のルール ID %q", i, s.RuleID))
+			}
+		}
+		b, err := json.Marshal(c)
+		if err != nil {
+			problems = append(problems, fmt.Sprintf("dataset[%d] をシリアライズできません", i))
+			continue
+		}
+		key := string(b)
+		if first, duplicate := seenAt[key]; duplicate {
+			problems = append(problems, fmt.Sprintf("dataset[%d] は dataset[%d] と完全に重複", i, first))
+			continue
+		}
+		seenAt[key] = i
+	}
+	return problems
+}
+
+// SpanlessPositiveIncreased はスパン未付与陽性のラチェットが後退したかを返す。
+func SpanlessPositiveIncreased(cases []Case, maximum int) bool {
+	return SpanlessPositiveCount(cases) > maximum
 }
