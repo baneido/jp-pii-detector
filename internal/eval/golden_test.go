@@ -129,6 +129,17 @@ func TestDiffGoldenIgnoresDatasetQuality(t *testing.T) {
 	}
 }
 
+func TestDiffGoldenReportsDatasetStatsMismatch(t *testing.T) {
+	results := sampleResults()
+	got := BuildGoldenForCases(results, []Case{{Line: "positive", Want: []string{"email-address"}}})
+	want := BuildGoldenForCases(results, []Case{{Line: "negative"}})
+
+	diffs := DiffGolden(got, want)
+	if len(diffs) == 0 || !strings.Contains(strings.Join(diffs, "\n"), "dataset") {
+		t.Fatalf("DiffGolden did not report dataset stats drift: %v", diffs)
+	}
+}
+
 func TestComputeDatasetStatsCountsPositiveNegativeAndSpans(t *testing.T) {
 	cases := []Case{
 		{Line: "TEL: 090-1234-5678", Want: []string{"jp-phone-number"}},
@@ -183,7 +194,6 @@ func TestSpanlessPositiveCountCountsWantAndSpanRulePairsWithoutASpan(t *testing.
 	}
 }
 
-<<<<<<< HEAD
 func TestDatasetQualityProblemsDetectsUnknownIDsAndDuplicatesWithoutLeakingContent(t *testing.T) {
 	cases := []Case{
 		{Line: "private value", Want: []string{"known"}},
@@ -213,8 +223,6 @@ func TestSpanlessPositiveRatchetOnlyRejectsIncrease(t *testing.T) {
 	}
 }
 
-=======
->>>>>>> origin/main
 func containsAll(s string, substrs ...string) bool {
 	for _, sub := range substrs {
 		if !strings.Contains(s, sub) {

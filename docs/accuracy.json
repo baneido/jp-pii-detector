@@ -419,7 +419,6 @@
     "recall": 0.7142857142857143,
     "f1": 0.7142857142857143
   },
-<<<<<<< HEAD
   "dataset": {
     "total_cases": 132,
     "positive_cases": 62,
@@ -484,8 +483,6 @@
       }
     ]
   },
-=======
->>>>>>> origin/main
   "dataset_quality": {
     "spanless_positive_count": 56
   }
