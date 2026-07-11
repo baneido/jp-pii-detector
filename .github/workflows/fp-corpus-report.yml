@@ -160,25 +160,23 @@ jobs:
           echo "--- summary (anonymized) ---"
           cat "$RUNNER_TEMP/summary.json"
 
-      # 実在しうる PII を含む評価フィクスチャと同じ非公開 GCS バケット・OIDC 経路を再利用する
-      # （新たな長期認証情報は追加しない）。リポジトリ変数が未設定なら保存をスキップする
-      # （初回の workflow_dispatch 試験運用ではログ確認のみでよい）。
+      # 評価コーパスのreaderとは別のwriter主体・bucketを使う。
       - name: Authenticate to Google Cloud (OIDC / Workload Identity)
-        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
+        if: ${{ vars.JP_PII_REPORTS_PROVIDER != '' }}
         uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
-          workload_identity_provider: ${{ vars.JP_PII_FIXTURES_PROVIDER }}
-          service_account: ${{ vars.JP_PII_FIXTURES_SA }}
+          workload_identity_provider: ${{ vars.JP_PII_REPORTS_PROVIDER }}
+          service_account: ${{ vars.JP_PII_REPORTS_SA }}
       - name: Set up gcloud
-        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
+        if: ${{ vars.JP_PII_REPORTS_PROVIDER != '' }}
         uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
       - name: Upload report snapshot to GCS
-        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
+        if: ${{ vars.JP_PII_REPORTS_PROVIDER != '' }}
         env:
-          FIXTURES_BUCKET: ${{ vars.JP_PII_FIXTURES_BUCKET }}
+          REPORTS_BUCKET: ${{ vars.JP_PII_REPORTS_BUCKET }}
         run: |
           set -eu
-          prefix="gs://$FIXTURES_BUCKET/fp-corpus-report"
+          prefix="gs://$REPORTS_BUCKET/fp-corpus-report"
           run_id="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 
           # detail.json（コーパス名付き）は非公開バケットにのみ保存する。
@@ -190,5 +188,5 @@ jobs:
           gcloud storage cp "$RUNNER_TEMP/summary.md" "$prefix/${run_id}-summary.md"
           gcloud storage cp "$RUNNER_TEMP/summary.md" "$prefix/latest-summary.md"
       - name: Remove Google Cloud credentials file
-        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
+        if: ${{ always() && vars.JP_PII_REPORTS_PROVIDER != '' }}
         run: rm -f "${GOOGLE_GHA_CREDS_PATH:-}"

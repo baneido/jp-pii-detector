@@ -7,14 +7,13 @@
   <https://www.post.japanpost.jp/zipcode/dl/jigyosyo/index-zip.html>
 - 生成: `go run ./internal/dict/gen -ken-all-input ... -jigyosyo-input ... -municipalities-output ...`
 - 検証: ビットセット・市区町村名一覧のサイズ/件数・取り込み件数・`go vet`・`go test ./...`・dogfooding 済み
-- 精度: フィクスチャが設定されていれば `TestAccuracy`（`docs/accuracy.json` ゴールデンファイルとの
-  完全一致ゲート）も実行され、`docs/accuracy.md`・`docs/accuracy.json`・README バッジを実測で
-  再生成して本 PR に含めています。
+- 精度: write権限を持つ自動更新jobには非公開コーパスを渡しません。maintainerが
+  `go run ./cmd/pii-fixture eval` を明示実行して確認します。
 
 > 注: この PR は `GITHUB_TOKEN` で作成されるため、通常の CI は自動起動しません。
 > マージ前に CI を回すには、ブランチへ空コミットを push するか PR を close→reopen してください。
-> 郵便番号の増減で実測値が `docs/accuracy.json` から外れた場合はワークフロー自体が失敗するので、
-> その際は `go test ./internal/eval -run 'TestGenerateDoc|TestReadmeBadges' -update` を実測データで
-> 実行し、再生成された `docs/accuracy.md`・`docs/accuracy.json`・README.md をコミットしてください。
+> 郵便番号の増減で実測値が動いた場合は、非公開評価後に
+> `go test ./internal/eval -run 'TestGenerateDoc|TestReadmeBadges' -update` を実行し、
+> `docs/accuracy.md`・`docs/accuracy.json`・README.md を同じPRへ追加してください。
 > 市区町村名一覧の件数が 1,800〜4,000 件の範囲を外れた場合もワークフローが失敗します
 > （`internal/dict/municipalities_test.go` の `TestMunicipalitiesDictSanity` と同じ範囲）。

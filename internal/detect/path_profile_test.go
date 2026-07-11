@@ -10,10 +10,10 @@ import (
 // 拡張子違いを含めて確認し、判定が拡張子ではなくパス／ファイル名に基づくことを示す。
 func TestIsTestPathPositive(t *testing.T) {
 	paths := []string{
-		"testdata/sample.go",                  // コード系拡張子 + testdata/
-		"testdata/sample.csv",                 // データ系拡張子 + testdata/
-		"testdata/README.md",                  // ドキュメント系拡張子 + testdata/
-		"internal/foo/testdata/bar.json",      // ネストした testdata/
+		"testdata/sample.go",             // コード系拡張子 + testdata/
+		"testdata/sample.csv",            // データ系拡張子 + testdata/
+		"testdata/README.md",             // ドキュメント系拡張子 + testdata/
+		"internal/foo/testdata/bar.json", // ネストした testdata/
 		"fixtures/users.json",
 		"src/__tests__/App.test.tsx",
 		"spec/user_spec.rb",

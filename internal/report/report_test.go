@@ -8,8 +8,8 @@ import (
 
 	"github.com/baneido/jp-pii-detector/internal/baseline"
 	"github.com/baneido/jp-pii-detector/internal/detect"
-	"github.com/baneido/jp-pii-detector/internal/piifixtures"
 	"github.com/baneido/jp-pii-detector/internal/rule"
+	"github.com/baneido/jp-pii-detector/internal/testfixtures"
 )
 
 // sample は電話番号 1 件の検出結果を返す。実在しうる携帯番号形式はリポジトリに
@@ -27,9 +27,8 @@ func sample(match string) []detect.Finding {
 }
 
 func TestMask(t *testing.T) {
-	piifixtures.Require(t)
 	tests := []struct{ in, want string }{
-		{piifixtures.MustGet(t, "report.phone_for_mask"), "09*********00"}, // 090-0000-0000（13 文字: 先頭・末尾 2 文字）
+		{testfixtures.MustGet(t, "report.phone_for_mask"), "09*********00"}, // 090-0000-0000（13 文字: 先頭・末尾 2 文字）
 		{"abc", "***"},
 		{"abcdef", "a****f"},
 		{"", ""},                 // 空文字
@@ -37,7 +36,7 @@ func TestMask(t *testing.T) {
 		{"abcde", "a***e"},       // 5 文字（先頭・末尾 1 文字）
 		{"abcdefg", "a*****g"},   // 7 文字（< 8 の上限）
 		{"abcdefgh", "ab****gh"}, // 8 文字（先頭・末尾 2 文字に切替）
-		{piifixtures.MustGet(t, "report.phone_fullwidth_in"), "０９*******００"}, // 全角 11 文字: マルチバイトはルーン単位
+		{testfixtures.MustGet(t, "report.phone_fullwidth_in"), "０９*******００"}, // 全角 11 文字: マルチバイトはルーン単位
 	}
 	for _, tt := range tests {
 		if got := Mask(tt.in); got != tt.want {
@@ -47,8 +46,7 @@ func TestMask(t *testing.T) {
 }
 
 func TestTextMasksByDefault(t *testing.T) {
-	piifixtures.Require(t)
-	phone := piifixtures.MustGet(t, "report.phone_match")
+	phone := testfixtures.MustGet(t, "report.phone_match")
 	var buf bytes.Buffer
 	Text(&buf, sample(phone), false, false)
 	out := buf.String()
@@ -130,8 +128,7 @@ func TestTextIncludesBaselineHint(t *testing.T) {
 
 // confidence → SARIF level の対応（high=error, medium=warning, low=note）。
 func TestSARIFLevels(t *testing.T) {
-	piifixtures.Require(t)
-	phone := piifixtures.MustGet(t, "report.phone_match")
+	phone := testfixtures.MustGet(t, "report.phone_match")
 	fs := []detect.Finding{}
 	for _, c := range []rule.Confidence{rule.High, rule.Medium, rule.Low} {
 		f := sample(phone)[0]
@@ -166,8 +163,7 @@ func TestSARIFLevels(t *testing.T) {
 }
 
 func TestJSON(t *testing.T) {
-	piifixtures.Require(t)
-	phone := piifixtures.MustGet(t, "report.phone_match")
+	phone := testfixtures.MustGet(t, "report.phone_match")
 	var buf bytes.Buffer
 	if err := JSON(&buf, sample(phone), true, false); err != nil {
 		t.Fatal(err)
@@ -257,8 +253,7 @@ func TestJSONFingerprint(t *testing.T) {
 }
 
 func TestJSONExplainIncludesReason(t *testing.T) {
-	piifixtures.Require(t)
-	phone := piifixtures.MustGet(t, "report.phone_match")
+	phone := testfixtures.MustGet(t, "report.phone_match")
 	fs := sample(phone)
 	fs[0].Reason = detect.DetectReason{
 		BaseConfidence:  "medium",
@@ -289,9 +284,8 @@ func TestJSONExplainIncludesReason(t *testing.T) {
 }
 
 func TestGitHubEscapes(t *testing.T) {
-	piifixtures.Require(t)
 	var buf bytes.Buffer
-	fs := sample(piifixtures.MustGet(t, "report.phone_match"))
+	fs := sample(testfixtures.MustGet(t, "report.phone_match"))
 	fs[0].Description = "改行\nと%"
 	GitHub(&buf, fs, false)
 	out := buf.String()
@@ -305,9 +299,8 @@ func TestGitHubEscapes(t *testing.T) {
 
 // file= プロパティの値はプロパティ区切りの "," ":" もエスケープされる。
 func TestGitHubEscapesFileProperty(t *testing.T) {
-	piifixtures.Require(t)
 	var buf bytes.Buffer
-	fs := sample(piifixtures.MustGet(t, "report.phone_match"))
+	fs := sample(testfixtures.MustGet(t, "report.phone_match"))
 	fs[0].File = "a,b/c:d.csv"
 	GitHub(&buf, fs, false)
 	out := buf.String()
@@ -317,8 +310,7 @@ func TestGitHubEscapesFileProperty(t *testing.T) {
 }
 
 func TestSARIF(t *testing.T) {
-	piifixtures.Require(t)
-	phone := piifixtures.MustGet(t, "report.phone_match")
+	phone := testfixtures.MustGet(t, "report.phone_match")
 	var buf bytes.Buffer
 	if err := SARIF(&buf, sample(phone), rule.Builtin(), false); err != nil {
 		t.Fatal(err)

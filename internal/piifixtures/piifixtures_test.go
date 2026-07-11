@@ -15,19 +15,22 @@ func TestCaseTagsRoundTrip(t *testing.T) {
 		"strings": {},
 		"dataset": [
 			{
-				"line": "ジョブID: 202507000004",
-				"want": ["jp-my-number"],
+				"id": "positive-canary",
+				"line": "positive canary",
+				"want": ["canary-rule"],
 				"tags": ["probe-fp:mynumber-lookalike-job-id"],
 				"spans": [
-					{"rule_id": "jp-my-number", "start": 6, "end": 18, "tags": ["probe-fp"]}
+					{"rule_id": "canary-rule", "start": 0, "end": 8, "tags": ["probe-fp"]}
 				]
 			},
 			{
-				"line": "郵便番号 1000001",
+				"id": "negative-canary",
+				"line": "negative canary",
 				"want": [],
 				"tags": ["probe-fn:postal-bare-7digit-no-hyphen", "known-limitation"]
 			},
 			{
+				"id": "untagged-canary",
 				"line": "no tags here",
 				"want": []
 			}

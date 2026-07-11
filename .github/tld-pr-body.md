@@ -5,15 +5,14 @@ IANA の root zone TLD 一覧（<https://data.iana.org/TLD/tlds-alpha-by-domain.
 - 追加: __ADDED_COUNT__ 件
 - 削除: __REMOVED_COUNT__ 件
 - 検証: 取得物の非空・先頭行フォーマット・件数閾値・`go vet`・`go test ./...`・dogfooding 済み
-- 精度: フィクスチャが設定されていれば `TestAccuracy`（`docs/accuracy.json` ゴールデンファイルとの
-  完全一致ゲート）も実行され、`docs/accuracy.md`・`docs/accuracy.json`・README バッジを実測で
-  再生成して本 PR に含めています。
+- 精度: write権限を持つ自動更新jobには非公開コーパスを渡しません。maintainerが
+  `go run ./cmd/pii-fixture eval` を明示実行して確認します。
 
 > 注: この PR は `GITHUB_TOKEN` で作成されるため、通常の CI は自動起動しません。
 > マージ前に CI を回すには、ブランチへ空コミットを push するか PR を close→reopen してください。
-> TLD の増減で実測値が `docs/accuracy.json` から外れた場合はワークフロー自体が失敗するので、
-> その際は `go test ./internal/eval -run 'TestGenerateDoc|TestReadmeBadges' -update` を実測データで
-> 実行し、再生成された `docs/accuracy.md`・`docs/accuracy.json`・README.md をコミットしてください。
+> TLDの増減で実測値が動いた場合は、非公開評価後に
+> `go test ./internal/eval -run 'TestGenerateDoc|TestReadmeBadges' -update` を実行し、
+> `docs/accuracy.md`・`docs/accuracy.json`・README.md を同じPRへ追加してください。
 
 > **削除された TLD がある場合は要注意（gTLD/ccTLD の廃止は極めて稀）**: IANA 側の一時的な配信異常で
 > リストが縮退しただけの可能性もあるため、マージ前に

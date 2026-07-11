@@ -9,7 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/baneido/jp-pii-detector/internal/piifixtures"
+	"github.com/baneido/jp-pii-detector/internal/privatecorpus"
+	"github.com/baneido/jp-pii-detector/internal/testfixtures"
 )
 
 var update = flag.Bool("update", false, "docs/accuracy.md・docs/accuracy.json・README.md のバッジを再生成する")
@@ -73,16 +74,13 @@ var wantF1Medium = map[string]float64{
 // 計測・ログ出力のみでゲートしない（データセットにケースが揃ってから
 // wantF1HighRecall を追加してゲート化する）。
 func TestAccuracy(t *testing.T) {
-	piifixtures.Require(t)
+	corpus := privatecorpus.Require(t)
 	results, err := Evaluate()
 	if err != nil {
 		t.Fatal(err)
 	}
-	cases, ok := piifixtures.Dataset()
-	if !ok {
-		t.Fatal("評価データセットを取得できません")
-	}
-	got := BuildGoldenForCases(results, cases)
+	cases := corpus.Dataset
+	got := BuildGoldenForDatasetCases(results, cases, corpus.DatasetID)
 
 	want, err := LoadGolden(accuracyJSONPath)
 	if err != nil {
@@ -140,9 +138,8 @@ func TestAccuracy(t *testing.T) {
 }
 
 func TestEvaluateCasesKeepsRowMetricsForCasesWithoutSpans(t *testing.T) {
-	piifixtures.Require(t)
 	results, err := EvaluateCases([]Case{
-		{Line: "TEL: " + piifixtures.MustGet(t, "phone.mobile"), Want: []string{"jp-phone-number"}},
+		{Line: "TEL: " + testfixtures.MustGet(t, "phone.mobile"), Want: []string{"jp-phone-number"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -159,10 +156,9 @@ func TestEvaluateCasesKeepsRowMetricsForCasesWithoutSpans(t *testing.T) {
 }
 
 func TestEvaluateCasesCountsExactAndRelaxedSpans(t *testing.T) {
-	piifixtures.Require(t)
 	results, err := EvaluateCases([]Case{
 		{
-			Line: "TEL: " + piifixtures.MustGet(t, "phone.mobile"),
+			Line: "TEL: " + testfixtures.MustGet(t, "phone.mobile"),
 			Spans: []Span{{
 				RuleID: "jp-phone-number",
 				Start:  5,
@@ -171,7 +167,7 @@ func TestEvaluateCasesCountsExactAndRelaxedSpans(t *testing.T) {
 			}},
 		},
 		{
-			Line: "携帯 " + piifixtures.MustGet(t, "phone.mobile_nosep"),
+			Line: "携帯 " + testfixtures.MustGet(t, "phone.mobile_nosep"),
 			Spans: []Span{{
 				RuleID: "jp-phone-number",
 				Start:  2, // intentionally includes the preceding space
@@ -359,6 +355,7 @@ func TestEvaluateCasesRejectsExpectedCaseWithoutInput(t *testing.T) {
 
 func TestEvaluateCasesErrorsDoNotEchoInput(t *testing.T) {
 	_, err := EvaluateCases([]Case{{
+		ID:      "case-safe-id",
 		Line:    "連絡先: taro@gmail.com",
 		Content: "memo",
 	}})
@@ -367,6 +364,9 @@ func TestEvaluateCasesErrorsDoNotEchoInput(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "taro@gmail.com") {
 		t.Fatalf("error echoed input containing PII-like data: %v", err)
+	}
+	if !strings.Contains(err.Error(), "case-safe-id") {
+		t.Fatalf("error omitted safe case id: %v", err)
 	}
 }
 
@@ -565,10 +565,9 @@ func TestEvaluateCasesRejectsUnknownWantConfidence(t *testing.T) {
 }
 
 func TestSpanMacroAveragesScoredRules(t *testing.T) {
-	piifixtures.Require(t)
 	results, err := EvaluateCases([]Case{
 		{
-			Line: "TEL: " + piifixtures.MustGet(t, "phone.mobile"),
+			Line: "TEL: " + testfixtures.MustGet(t, "phone.mobile"),
 			Spans: []Span{{
 				RuleID: "jp-phone-number",
 				Start:  5,
@@ -576,7 +575,7 @@ func TestSpanMacroAveragesScoredRules(t *testing.T) {
 			}},
 		},
 		{
-			Line: "勤務地: " + piifixtures.MustGet(t, "address.shibuya_ward"),
+			Line: "勤務地: " + testfixtures.MustGet(t, "address.shibuya_ward"),
 			Spans: []Span{{
 				RuleID: "jp-address",
 				Start:  5,
@@ -721,11 +720,8 @@ func knownCaseTag(tag string) bool {
 // 緩く検査する。フェーズ1では CI を落とさない非致命的な警告（t.Logf）に留め、
 // typo によるタグの分裂に早期に気づけるようにする。
 func TestCaseTagsAreKnown(t *testing.T) {
-	piifixtures.Require(t)
-	cases, ok := piifixtures.Dataset()
-	if !ok {
-		t.Skip("データセットを取得できません")
-	}
+	corpus := privatecorpus.Require(t)
+	cases := corpus.Dataset
 	unknown := map[string]int{}
 	for _, c := range cases {
 		for _, tag := range c.Tags {
@@ -751,7 +747,7 @@ func findResult(t *testing.T, results []Result, id string) Result {
 }
 
 func TestReport(t *testing.T) {
-	piifixtures.Require(t)
+	privatecorpus.Require(t)
 	results, err := Evaluate()
 	if err != nil {
 		t.Fatal(err)
@@ -785,16 +781,13 @@ func TestGenerateDoc(t *testing.T) {
 	if !*update {
 		t.Skip("-update 指定時のみ docs/accuracy.md・docs/accuracy.json を再生成する")
 	}
-	piifixtures.Require(t)
+	corpus := privatecorpus.Require(t)
 	strat, err := EvaluateStratified()
 	if err != nil {
 		t.Fatal(err)
 	}
 	results := strat.Results
-	cases, ok := piifixtures.Dataset()
-	if !ok {
-		t.Fatal("評価データセットを取得できません")
-	}
+	cases := corpus.Dataset
 	sort.Slice(results, func(i, j int) bool {
 		if results[i].F1 == results[j].F1 {
 			return results[i].RuleID < results[j].RuleID
@@ -808,6 +801,7 @@ func TestGenerateDoc(t *testing.T) {
 	b.WriteString("適合率（precision）、再現率（recall）、F1 スコアです。`JP_PII_FIXTURES` を設定して\n")
 	b.WriteString("`go test ./internal/eval` で検証され（[eval_test.go](../internal/eval/eval_test.go)）、\n")
 	b.WriteString("`-update` で本ファイルを再生成します。\n\n")
+	fmt.Fprintf(&b, "評価コーパスID: `%s`（生データのハッシュや本文は公開しません）。\n\n", corpus.DatasetID)
 	b.WriteString("README バッジと下表の主指標は、ルール自体の検出能力を見るため `min_confidence=low`、\n")
 	b.WriteString("高再現率ルール無効の既存プロファイルで計測しています。評価ケースは単一行（`line`）に加え、\n")
 	b.WriteString("複数行入力（`content`）と diff hunk（`diff`: 追加行のみを報告）も表現できます。\n\n")
@@ -893,7 +887,7 @@ func TestGenerateDoc(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	golden := BuildGoldenForCases(results, cases)
+	golden := BuildGoldenForDatasetCases(results, cases, corpus.DatasetID)
 	if err := SaveGolden(accuracyJSONPath, golden); err != nil {
 		t.Fatal(err)
 	}

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/baneido/jp-pii-detector/internal/piifixtures"
+	"github.com/baneido/jp-pii-detector/internal/testfixtures"
 )
 
 var binPath string
@@ -47,9 +47,8 @@ func run(t *testing.T, dir string, args ...string) (string, int) {
 // 携帯電話番号は実在しうるためフィクスチャから読み込む。
 func piiDir(t *testing.T) string {
 	t.Helper()
-	piifixtures.Require(t)
 	dir := t.TempDir()
-	content := "TEL: " + piifixtures.MustGet(t, "cmd.phone_mobile_sep") + "\n"
+	content := "TEL: " + testfixtures.MustGet(t, "cmd.phone_mobile_sep") + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "users.csv"), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +61,7 @@ func TestScanExitCodes(t *testing.T) {
 	if code != 1 {
 		t.Errorf("exit = %d, want 1（検出あり）", code)
 	}
-	if strings.Contains(out, piifixtures.MustGet(t, "cmd.phone_mobile_sep")) {
+	if strings.Contains(out, testfixtures.MustGet(t, "cmd.phone_mobile_sep")) {
 		t.Errorf("output should be masked: %s", out)
 	}
 	if !strings.Contains(out, "jp-phone-number") {
@@ -87,7 +86,7 @@ func TestScanExitZero(t *testing.T) {
 func TestScanUnmask(t *testing.T) {
 	dir := piiDir(t)
 	out, _ := run(t, dir, "scan", "--unmask", ".")
-	if !strings.Contains(out, piifixtures.MustGet(t, "cmd.phone_mobile_sep")) {
+	if !strings.Contains(out, testfixtures.MustGet(t, "cmd.phone_mobile_sep")) {
 		t.Errorf("--unmask should show raw value: %s", out)
 	}
 }
@@ -184,10 +183,9 @@ func TestScanPartialErrorExitsTwoWithReport(t *testing.T) {
 }
 
 func TestMinConfidenceFlagOverride(t *testing.T) {
-	piifixtures.Require(t)
 	dir := t.TempDir()
 	// 区切りなし携帯（コンテキストなし）は medium → high 指定で報告されない。
-	content := piifixtures.MustGet(t, "cmd.phone_mobile_nosep") + "\n"
+	content := testfixtures.MustGet(t, "cmd.phone_mobile_nosep") + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +223,7 @@ func TestScanJSONExplain(t *testing.T) {
 	if !strings.Contains(out, `"reason"`) || !strings.Contains(out, `"base_confidence"`) {
 		t.Fatalf("--explain should include reason: %s", out)
 	}
-	if strings.Contains(out, piifixtures.MustGet(t, "cmd.phone_mobile_sep")) {
+	if strings.Contains(out, testfixtures.MustGet(t, "cmd.phone_mobile_sep")) {
 		t.Fatalf("--explain should not unmask match: %s", out)
 	}
 }
@@ -248,7 +246,7 @@ func TestScanTextExplain(t *testing.T) {
 	if !strings.Contains(out, "理由:") {
 		t.Fatalf("--explain should annotate text output with a reason: %s", out)
 	}
-	if strings.Contains(out, piifixtures.MustGet(t, "cmd.phone_mobile_sep")) {
+	if strings.Contains(out, testfixtures.MustGet(t, "cmd.phone_mobile_sep")) {
 		t.Fatalf("--explain should not unmask match: %s", out)
 	}
 }
@@ -258,10 +256,9 @@ func TestScanTextExplain(t *testing.T) {
 // 常に報告されるが、--fail-on high を指定すると high 未満のみの場合は exit 0
 // になる（--format github が信頼度に関わらず一律 CI を落としていた問題への対処）。
 func TestScanFailOnSeparateFromMinConfidence(t *testing.T) {
-	piifixtures.Require(t)
 	dir := t.TempDir()
 	// 区切りなし携帯（コンテキストなし）は medium 信頼度で検出される。
-	content := piifixtures.MustGet(t, "cmd.phone_mobile_nosep") + "\n"
+	content := testfixtures.MustGet(t, "cmd.phone_mobile_nosep") + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}

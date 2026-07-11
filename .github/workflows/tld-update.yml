@@ -31,7 +31,6 @@ jobs:
     permissions:
       contents: write # 作業ブランチの push に必要
       pull-requests: write # PR の作成・更新に必要
-      id-token: write # GCP Workload Identity Federation（OIDC）に必要（フィクスチャ取得）
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -42,31 +41,6 @@ jobs:
           go-version-file: go.mod
           # 生成物の再現性のためキャッシュは使わない
           cache: false
-
-      # 実在しうる PII を含む評価フィクスチャを GCS から取得する（精度ゲート用）。
-      # リポジトリ変数が未設定なら取得せず、eval は t.Skip される（後方互換）。
-      # schedule / workflow_dispatch は信頼できる実行なので TRUSTED 判定は不要。
-      - name: Authenticate to Google Cloud (OIDC / Workload Identity)
-        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
-        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
-        with:
-          workload_identity_provider: ${{ vars.JP_PII_FIXTURES_PROVIDER }}
-          service_account: ${{ vars.JP_PII_FIXTURES_SA }}
-      - name: Set up gcloud
-        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
-        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
-      - name: Download PII fixtures from GCS
-        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
-        # バケット名は env 経由で渡す（run 内に ${{ }} を直接埋めると注入リスク警告になるため）。
-        env:
-          FIXTURES_BUCKET: ${{ vars.JP_PII_FIXTURES_BUCKET }}
-        run: |
-          set -eu
-          # 後続ステップへ JP_PII_FIXTURES を渡す（runner コンテキストは env: で使えないため
-          # $RUNNER_TEMP を使い、GITHUB_ENV 経由で伝播する）。未取得時は未設定のままで eval は Skip。
-          dest="$RUNNER_TEMP/pii-fixtures.json"
-          gcloud storage cp "gs://$FIXTURES_BUCKET/pii-fixtures.json" "$dest"
-          echo "JP_PII_FIXTURES=$dest" >> "$GITHUB_ENV"
 
       - name: Download IANA TLD list
         run: |
@@ -112,17 +86,9 @@ jobs:
         run: |
           set -eu
           go vet ./...
-          # フィクスチャがあれば精度ゲート（TestAccuracy）も走る。なければ Skip。
           go test ./...
           go build ./cmd/jp-pii-detect
           ./jp-pii-detect scan --format github .
-
-      # フィクスチャが取れていれば、バッジ・docs/accuracy.md・docs/accuracy.json
-      # （ゴールデンファイル）を実測で再生成して PR に含める。実測値が docs/accuracy.json
-      # から外れた場合は上の go test（TestAccuracy）が失敗しており、ここには到達しない。
-      - name: Regenerate accuracy docs and badges
-        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
-        run: go test ./internal/eval -run 'TestGenerateDoc|TestReadmeBadges' -update
 
       - name: Open PR if the data changed
         env:
@@ -145,7 +111,7 @@ jobs:
           git config user.email "contact@baneido.com" # jp-pii-detector:ignore bot の連絡先
           git checkout -b "$TLD_BRANCH"
           # TLD リストと、再生成された精度ドキュメント・ゴールデンファイル・バッジ（あれば）を含める。
-          git add "$TLD_FILE" docs/accuracy.md docs/accuracy.json README.md
+          git add "$TLD_FILE"
           git commit -m "chore(dict): TLD リストを更新（${today}）"
           # 同一リポジトリへの push。認証情報は URL に都度埋め、作業ツリーには残さない。
           git push -f \

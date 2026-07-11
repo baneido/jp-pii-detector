@@ -9,8 +9,8 @@ import (
 	"github.com/baneido/jp-pii-detector/internal/fixturegen"
 )
 
-// TestRunWritesPiifixturesCompatibleJSON は run() が internal/piifixtures の
-// JSON スキーマ（"strings" / "dataset"）と互換な出力を書き出すことを検証する。
+// TestRunWritesPiifixturesCompatibleJSON はrun()がversion付き合成契約JSONを
+// 書き出すことを検証する。
 func TestRunWritesPiifixturesCompatibleJSON(t *testing.T) {
 	dir := t.TempDir()
 	output := filepath.Join(dir, "synthetic-cases.json")
@@ -25,15 +25,17 @@ func TestRunWritesPiifixturesCompatibleJSON(t *testing.T) {
 	}
 
 	var decoded struct {
-		Strings map[string]string `json:"strings"`
-		Dataset []struct {
+		SchemaVersion int    `json:"schema_version"`
+		DatasetID     string `json:"dataset_id"`
+		Dataset       []struct {
+			ID   string   `json:"id"`
 			Line string   `json:"line"`
 			Want []string `json:"want"`
 			Tags []string `json:"tags"`
 		} `json:"dataset"`
 	}
 	if err := json.Unmarshal(b, &decoded); err != nil {
-		t.Fatalf("output is not valid piifixtures-compatible JSON: %v", err)
+		t.Fatalf("output is not valid synthetic contract JSON: %v", err)
 	}
 	if len(decoded.Dataset) == 0 {
 		t.Fatal("decoded dataset is empty")
@@ -42,7 +44,13 @@ func TestRunWritesPiifixturesCompatibleJSON(t *testing.T) {
 		t.Fatalf("decoded dataset has %d cases, want %d (fixturegen.Generate() must be deterministic)",
 			len(decoded.Dataset), len(fixturegen.Generate()))
 	}
+	if decoded.SchemaVersion != 1 || decoded.DatasetID != "synthetic-contract-v1" {
+		t.Fatalf("unexpected dataset metadata: schema=%d id=%q", decoded.SchemaVersion, decoded.DatasetID)
+	}
 	for _, c := range decoded.Dataset {
+		if c.ID == "" {
+			t.Error("synthetic case has no stable id")
+		}
 		if len(c.Tags) == 0 {
 			t.Errorf("case %+v has no tags (should include %s)", c, fixturegen.SourceTag)
 		}

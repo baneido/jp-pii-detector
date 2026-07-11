@@ -58,6 +58,7 @@ jp-pii-detect はこれらの置き換えではなく、シークレット検出
 見るため `min_confidence=low`・高再現率ルール無効で計測しています。評価データセットに対する
 値であり、あらゆる入力での精度を保証するものではありません。ルール別の内訳は [docs/accuracy.md](docs/accuracy.md)、数値の検証・
 更新は `JP_PII_FIXTURES` を設定した `go test ./internal/eval`（CI ゲート）で行います。
+通常の `go test -race ./...` は認証不要で、非公開評価だけは `go run ./cmd/pii-fixture eval` で明示実行します。
 
 検出できる PII の種類、手法の詳細、設計判断は
 [docs/detection-methods.md](docs/detection-methods.md) を参照してください。

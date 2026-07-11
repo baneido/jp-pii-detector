@@ -27,7 +27,7 @@ import (
 //
 // 残作業（このファイルでは完結しない）:
 //   - pii-fixtures.json 側に、ここで確認した行を Case（Tags 付き）として追加し
-//     GCS へ再アップロードする（internal/piifixtures.Case.Tags は本 PR で追加
+//     GCS へ再アップロードする（internal/evalcase.Case.Tags は
 //     済み。"probe-fn:*" / "probe-fp:*" / "known-limitation" のタグ命名は
 //     下記サブテスト名の "probe-fn:" / "probe-fp:" 接頭辞に合わせてある）。
 //   - internal/eval/eval_test.go の wantF1 と README バッジ・docs/accuracy.md の
