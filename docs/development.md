@@ -572,16 +572,21 @@ PR タイトルに `[要レビュー]` を付与し、本文に削除された T
 未割当の番号は棄却されます）。インデックスのエンコーディングとサイズ定数は `internal/dict` 側で
 公開し、ジェネレータと共有します（両者が無言で乖離しないため）。
 
-同じ KEN_ALL データの都道府県名・市区町村名から、実在する市区町村名の一覧
-[`internal/dict/municipalities.txt`](../internal/dict/municipalities.txt)（1 行 1 エントリ、
-ソート・重複排除済み）も生成し `//go:embed` で取り込みます。
-`dict.MunicipalitySuffixMatch` は `jp-address-high-recall` の `Validate` に使い、
-「通学区域」のような非市区町村語の誤検出を棄却します。郡付きエントリは郡省略形、
-政令指定都市の区は市単独形も併録し、`ヶ` / `ケ` は生成・照合の両側で `ケ` に正規化します。
+同じ KEN_ALL データの record[6]（都道府県名）・record[7]（市区町村名）から、実在する
+市区町村名の一覧 [`internal/dict/municipalities.txt`](../internal/dict/municipalities.txt)
+（1 行 1 エントリ、ソート・重複排除済み）も生成し `//go:embed` で取り込みます。
+`dict.MunicipalitySuffixMatch` が jp-address-high-recall の `Validate` に使い、
+「通学区域」のような市区町村ではない語を municipality と誤認した検出を棄却します
+（既定の `jp-address` には付けません。郡・表記揺れによる FN リスクが高再現率でない
+既定ルールでは相対的に大きいためです）。郡付きエントリ（石狩郡当別町）は郡を省いた
+省略形（当別町）も、政令指定都市の区（札幌市中央区）は市単独形（札幌市）も併録し、
+`ヶ`/`ケ` の表記揺れは生成側・照合側の両方で `ケ` に正規化します
+（詳細は `internal/dict/gen/postal.go` の `addMunicipalityVariants` を参照してください）。
 
 更新は通常 [`.github/workflows/postal-update.yml`](../.github/workflows/postal-update.yml) が
-毎月 1 日に自動で行います。手動で更新する場合は次の 2 つのデータを取得し、コマンドでビットセットを
-再生成してから `go test ./internal/dict ./internal/dict/gen ./internal/detect ./internal/eval` で検証します。
+毎月 1 日に自動で行います。手動で更新する場合は次の 2 つのデータを取得し、コマンドでビットセットと
+市区町村名一覧を再生成してから
+`go test ./internal/dict ./internal/dict/gen ./internal/detect ./internal/eval` で検証します。
 
 - 住所の郵便番号（UTF-8）: `https://www.post.japanpost.jp/zipcode/dl/utf-zip.html`
   （`utf_ken_all.zip` / `KEN_ALL.CSV`）
@@ -602,8 +607,12 @@ $ go run ./internal/dict/gen \
 場合は、市区町村列を持つ `-ken-all-input` も必須です。列インデックス（ken_all は郵便番号が
 3 列目、jigyosyo は 8 列目）はフォーマットごとに固定なので、`-ken-all-input` と
 `-jigyosyo-input` を取り違えないでください（取り違えると実質ゼロ件取り込みになります）。
+`-output` / `-municipalities-output` はそれぞれ省略でき、省略した方は生成しません。ただし
+`-municipalities-output` は市区町村名（record[7]）を持つ KEN_ALL フォーマット専用のため
+`-ken-all-input` が必須です（`-jigyosyo-input` だけでは生成できません）。
 郵便番号の増減で `jp-postal-code` の精度数値が動くことがあるため、新しいビットセットを
-コミットしたら eval / バッジの再生成も行ってください。
+コミットしたら eval / バッジの再生成も行ってください（市区町村名一覧は jp-address-high-recall
+のみに使い、eval は既定で high-recall ルールを評価しないため精度ゲートへの影響はありません）。
 
 姓名辞書（[`internal/dict/surnames.txt`](../internal/dict/surnames.txt) /
 [`given_names.txt`](../internal/dict/given_names.txt)）のカタカナ読みと、ローマ字姓名辞書

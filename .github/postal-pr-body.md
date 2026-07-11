@@ -6,7 +6,7 @@
 - 取得元: <https://www.post.japanpost.jp/zipcode/dl/utf-zip.html>、
   <https://www.post.japanpost.jp/zipcode/dl/jigyosyo/index-zip.html>
 - 生成: `go run ./internal/dict/gen -ken-all-input ... -jigyosyo-input ... -municipalities-output ...`
-- 検証: ビットセット・市区町村名一覧のサイズ/件数・`go vet`・`go test ./...`・dogfooding 済み
+- 検証: ビットセット・市区町村名一覧のサイズ/件数・取り込み件数・`go vet`・`go test ./...`・dogfooding 済み
 - 精度: フィクスチャが設定されていれば `TestAccuracy`（F1 ゲート）も実行され、`docs/accuracy.md` と
   README バッジを実測で再生成して本 PR に含めています。
 

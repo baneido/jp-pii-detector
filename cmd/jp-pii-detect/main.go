@@ -279,7 +279,10 @@ func updateBaselineFile(path string, findings []detect.Finding) int {
 // runRules は --config を反映した実効ルール一覧（builtin + custom の合成後、
 // 無効化ルールを除いたもの）を表示する。detect.New と同じ合成ロジックを
 // 経由するため、scan コマンドが実際に使うルール集合と一致する。
-// 同一 ID の Rule が複数エントリ持つ場合は一覧表示で 1 行にまとめる。
+//
+// 同一 ID の Rule が複数エントリ持つ場合がある（例: jp-address は数字番地用と
+// 漢数字番地用で Prefilter が異なる別エントリを同一 ID で持つ。
+// internal/rule/builtin.go 参照）。一覧表示では 1 行にまとめる。
 func runRules(args []string) int {
 	fs := flag.NewFlagSet("rules", flag.ExitOnError)
 	configPath := fs.String("config", "", "")
