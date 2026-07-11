@@ -260,6 +260,25 @@ func TestValidBankAccount(t *testing.T) {
 	}
 }
 
+func TestRejectYuchoAccountSuffix(t *testing.T) {
+	tests := []struct {
+		line       string
+		start      int
+		wantAccept bool
+	}{
+		{"1234567", 0, true},
+		{"口座: 1234567", len("口座: "), true},
+		{"12340-7654321", 6, false},
+		{"22340-7654321", 6, true},
+		{"abcde-7654321", 6, true},
+	}
+	for _, tt := range tests {
+		if got := rejectYuchoAccountSuffix(tt.line, tt.start, len(tt.line)); got != tt.wantAccept {
+			t.Errorf("rejectYuchoAccountSuffix(%q) = %v, want %v", tt.line, got, tt.wantAccept)
+		}
+	}
+}
+
 func TestValidHealthInsurance(t *testing.T) {
 	tests := []struct {
 		name string
@@ -381,21 +400,22 @@ func TestValidBirthdate(t *testing.T) {
 }
 
 // validYuchoAccount はゆうちょ銀行の記号（5 桁・先頭は必ず "1"）・番号
-// （6〜8 桁）がハイフンで相関した表記かを検証する。
+// （7〜8 桁・末尾 1）がハイフンで相関した表記かを検証する。
 func TestValidYuchoAccount(t *testing.T) {
 	tests := []struct {
 		name string
 		in   string
 		want bool
 	}{
-		{"有効な記号番号（番号6桁）", "12345-123456", true},
+		{"有効な記号番号（番号7桁）", "12345-1234561", true},
 		{"有効な記号番号（番号8桁）", "10090-12345671", true},
 		{"記号の先頭が1以外", "22345-1234567", false},
 		{"記号が5桁でない", "1234-1234567", false},
-		{"番号が6桁未満", "12345-12345", false},
+		{"番号が6桁", "12345-123451", false},
 		{"番号が8桁超", "12345-123456789", false},
-		{"記号が全桁同一", "11111-111111", false},
-		{"番号が全桁同一", "12345-999999", false},
+		{"番号末尾が1以外", "12345-1234567", false},
+		{"記号が全桁同一", "11111-1234561", false},
+		{"番号が全桁同一", "12345-1111111", false},
 		{"ハイフンなし", "123451234567", false},
 	}
 	for _, tt := range tests {
