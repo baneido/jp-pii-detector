@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 使い方・設定の質問
+    url: https://github.com/baneido/jp-pii-detector/tree/main/docs
+    about: インストールや設定、CI への組み込み方法は docs/ のドキュメントを参照してください。

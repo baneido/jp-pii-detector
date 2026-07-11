@@ -15,9 +15,13 @@ permissions: {}
 jobs:
   release:
     name: release
+    # ムービングメジャータグ（v0 など、ドットを含まない）が push されたときは
+    # 本ジョブと後続ジョブ（needs: release）をまるごとスキップし、v0 の付け替えによる
+    # ワークフローの再帰起動を防ぐ。実リリースタグ（v0.3.6 など）のみを処理する。
+    if: ${{ contains(github.ref_name, '.') }}
     runs-on: ubuntu-latest
     permissions:
-      contents: write # GitHub Release の作成とアセットのアップロードに必要
+      contents: write # GitHub Release の作成とアセットのアップロード、v0 タグの付け替えに必要
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -72,6 +76,18 @@ jobs:
               --title "$GITHUB_REF_NAME" \
               --generate-notes
           fi
+      - name: Move major version tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -eu
+          # メジャータグ（例: v0.3.6 -> v0）を今回のリリースタグへ強制的に付け替え、
+          # 利用者が @v0 で最新の同一メジャー系を追従できるようにする。
+          # checkout は persist-credentials: false のため、push は認証付き URL で行う。
+          major="${TAG%%.*}"
+          git tag -f "$major" "$TAG"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/tags/${major}"
 
   docker:
     name: docker
@@ -174,4 +190,48 @@ jobs:
             gh pr create --repo baneido/homebrew-tap --base main --head "$branch" \
               --title "jp-pii-detect ${version}" \
               --body "jp-pii-detect ${version} の formula 自動更新です。リリース: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
+          fi
+
+  docs:
+    name: docs
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # docs 更新ブランチの push に必要
+      pull-requests: write # docs バージョン更新 PR の作成に必要
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # push / PR 作成には github.token を使うため checkout の認証情報は残さない
+          persist-credentials: false
+      - name: Open docs version bump PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -eu
+          # README / docs 内のバージョン表記（vX.Y.Z）と distribution_test.go の
+          # docsVersion 定数を新しいリリースタグへ一括更新する。バージョン表記の
+          # 陳腐化を防ぐ自動 PR（Homebrew formula 更新ジョブと同型）。
+          for f in README.md README.en.md docs/integrations.md; do
+            [ -f "$f" ] || continue
+            sed -i -E "s/v[0-9]+\.[0-9]+\.[0-9]+/${TAG}/g" "$f"
+          done
+          sed -i -E "s/(docsVersion = \")v[0-9]+\.[0-9]+\.[0-9]+(\")/\1${TAG}\2/" scripts/distribution_test.go
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "docs already up to date for ${TAG}; nothing to do"
+            exit 0
+          fi
+          branch="docs-version-${TAG}"
+          git config user.name "jp-pii-detect-release-bot"
+          git config user.email "contact@baneido.com" # jp-pii-detector:ignore リリース bot の連絡先
+          git checkout -b "$branch"
+          git commit -am "docs: バージョン表記を ${TAG} に更新"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$branch"
+          if gh pr view "$branch" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "PR for ${branch} already exists; branch updated"
+          else
+            gh pr create --repo "${GITHUB_REPOSITORY}" --base main --head "$branch" \
+              --title "docs: バージョン表記を ${TAG} に更新" \
+              --body "リリース ${TAG} に合わせて README / docs のバージョン表記と docsVersion 定数を自動更新しました。リリース: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
           fi

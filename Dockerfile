@@ -27,7 +27,8 @@ COPY --from=build /out/jp-pii-detect /usr/local/bin/jp-pii-detect
 LABEL org.opencontainers.image.title="jp-pii-detect" \
       org.opencontainers.image.description="日本特化の個人情報（PII）静的検出器" \
       org.opencontainers.image.source="https://github.com/baneido/jp-pii-detector" \
-      org.opencontainers.image.documentation="https://github.com/baneido/jp-pii-detector/blob/main/docs/integrations.md"
+      org.opencontainers.image.documentation="https://github.com/baneido/jp-pii-detector/blob/main/docs/integrations.md" \
+      org.opencontainers.image.licenses="MIT"
 # `docker run --rm -v "$PWD:/scan" <image>` だけでカレントディレクトリを
 # フルスキャンできるよう、作業ディレクトリと既定コマンドを設定する。
 WORKDIR /scan

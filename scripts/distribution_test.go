@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -18,6 +19,10 @@ const (
 	testOS      = "linux"
 	testArch    = "amd64"
 	testAsset   = "jp-pii-detect_linux_amd64.tar.gz"
+
+	// docsVersion は README / docs が案内する現行リリース版。README のバージョン表記と
+	// 一致させる（更新時はこの定数だけを直せば済むよう、期待文字列はここから組み立てる）。
+	docsVersion = "v0.3.6"
 )
 
 func repoRoot(t *testing.T) string {
@@ -494,8 +499,8 @@ func TestReadmeDocumentsMiseInstall(t *testing.T) {
 	text := string(data)
 	for _, want := range []string{
 		"### Option 2. mise",
-		"mise use -g github:baneido/jp-pii-detector@v0.1.8",
-		`"github:baneido/jp-pii-detector" = "v0.1.8"`,
+		"mise use -g github:baneido/jp-pii-detector@" + docsVersion,
+		`"github:baneido/jp-pii-detector" = "` + docsVersion + `"`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("README should document mise installation; missing %q", want)
@@ -512,8 +517,61 @@ func TestReadmeDocumentsTagPinnedInstaller(t *testing.T) {
 	if strings.Contains(text, "main/scripts/install.sh | sh") {
 		t.Fatalf("README should not recommend executing the mutable main installer URL")
 	}
-	if !strings.Contains(text, "v0.1.8/scripts/install.sh") || !strings.Contains(text, "JP_PII_DETECT_VERSION=v0.1.8") {
+	if !strings.Contains(text, docsVersion+"/scripts/install.sh") || !strings.Contains(text, "JP_PII_DETECT_VERSION="+docsVersion) {
 		t.Fatalf("README should show a tag-pinned installer URL and matching binary version")
+	}
+}
+
+// TestDocsVersionReferencesMatchDocsVersion は README / README.en / docs/integrations.md
+// が案内するリリース版が docsVersion 定数と一致していることを検証する（バージョン表記の
+// 陳腐化を防ぐオフライン検査。ネットワーク不要）。サードパーティのバージョン表記を誤検出
+// しないよう、自プロジェクトを指すマーカーが同一行または直前 2 行以内にある行だけを
+// 対象にする（pre-commit の rev: のようにマーカーと vX.Y.Z が別行になるケースも拾う）。
+func TestDocsVersionReferencesMatchDocsVersion(t *testing.T) {
+	verRe := regexp.MustCompile(`\bv\d+\.\d+\.\d+\b`)
+	// これらのいずれかが近傍にある行だけを検査対象とし、他ツールの rev 指定などへの誤爆を避ける。
+	markers := []string{
+		"jp-pii-detector",
+		"jp-pii-detect",
+		"JP_PII_DETECT_VERSION",
+		"ghcr.io/baneido",
+	}
+	hasMarker := func(line string) bool {
+		for _, m := range markers {
+			if strings.Contains(line, m) {
+				return true
+			}
+		}
+		return false
+	}
+	// README.en.md は未整備のことがあるが、勝手に対象から外さない。存在しなければ
+	// その subtest だけを t.Fatalf で落とす（最終検証は統括側で行う）。
+	for _, rel := range []string{"README.md", "README.en.md", filepath.Join("docs", "integrations.md")} {
+		t.Run(rel, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join(repoRoot(t), rel))
+			if err != nil {
+				t.Fatalf("%s を読み込めません: %v", rel, err)
+			}
+			lines := strings.Split(string(data), "\n")
+			for i, line := range lines {
+				// 同一行または直前 2 行以内にマーカーがあれば検査対象（スライディングウィンドウ）。
+				inScope := false
+				for j := i; j >= 0 && j >= i-2; j-- {
+					if hasMarker(lines[j]) {
+						inScope = true
+						break
+					}
+				}
+				if !inScope {
+					continue
+				}
+				for _, m := range verRe.FindAllString(line, -1) {
+					if m != docsVersion {
+						t.Errorf("%s:%d のバージョン表記 %q は docsVersion %q と一致しません", rel, i+1, m, docsVersion)
+					}
+				}
+			}
+		})
 	}
 }
 
