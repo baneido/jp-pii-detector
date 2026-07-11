@@ -932,6 +932,12 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 					}
 					reason.Validated = true
 				}
+				if p.ValidateLine != nil {
+					if !p.ValidateLine(norm, start, end) {
+						continue
+					}
+					reason.Validated = true
+				}
 				if d.allowlisted(entity) {
 					continue
 				}

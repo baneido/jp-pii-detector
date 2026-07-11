@@ -60,6 +60,11 @@ type Pattern struct {
 	// 異なる検証（例: 氏名の弱いラベルだけ姓名辞書で照合する）を
 	// 行うために使う。引数は正規化済みのマッチ文字列。
 	Validate func(match string) bool
+	// ValidateLine はマッチの前後を含む正規化済みの行を使うパターン固有の
+	// 追加検証（nil なら検証なし）。start/end は行内のバイトオフセットで、
+	// キャプチャグループ 1 の半開区間を示す。区切り付きの長いトークンを
+	// 部分一致させないなど、マッチ文字列だけでは判定できない場合に使う。
+	ValidateLine func(line string, start, end int) bool
 }
 
 // Prefilter は行単位の事前判定。正規化済みの行に必要な文字種が

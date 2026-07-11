@@ -57,9 +57,40 @@ func ag(core string) *regexp.Regexp {
 	return regexp.MustCompile(`(?:^|[^0-9A-Za-z])(` + core + `)(?:[^0-9A-Za-z]|$)`)
 }
 
+// rejectSeparatedDigitGroup は、候補の直後に separators のいずれかと指定桁数の
+// 数字グループが続く場合だけ棄却する ValidateLine を返す。共有境界ガードを
+// 厳しくすると、独立した別番号や年が隣接しただけでも全数値ルールが偽陰性に
+// なるため、長い区切り数字トークンの部分一致が問題になる新規パターンにだけ使う。
+func rejectSeparatedDigitGroup(separators string, widths ...int) func(string, int, int) bool {
+	return func(line string, _, end int) bool {
+		if end >= len(line) || !strings.ContainsRune(separators, rune(line[end])) {
+			return true
+		}
+		i := end + 1
+		start := i
+		for i < len(line) && line[i] >= '0' && line[i] <= '9' {
+			i++
+		}
+		width := i - start
+		for _, rejected := range widths {
+			if width == rejected {
+				return false
+			}
+		}
+		return true
+	}
+}
+
+// stripSeparators は番号表記の区切り文字（ハイフン・半角スペース・ドット・
+// 丸括弧）を除去する。マイナンバー・クレジットカードの呼び出しはこれらの
+// 区切り文字を元々捕捉しない（正規表現側にハイフン・空白しか含まない）ため、
+// ドット・丸括弧の追加は無効化に影響しない。電話番号（括弧市外局番・
+// ドット区切り携帯）と運転免許（ハイフン区切り 4-4-4）の新パターンが
+// この拡張に依存する。
 func stripSeparators(s string) string {
 	return strings.Map(func(r rune) rune {
-		if r == '-' || r == ' ' {
+		switch r {
+		case '-', ' ', '.', '(', ')':
 			return -1
 		}
 		return r
@@ -435,7 +466,13 @@ func Builtin() []Rule {
 				{Re: dgNoAlnumHyphen(`\d{12}`), Base: Medium},
 				// 前後にハイフンが続く場合はクレジットカード等の
 				// 4-4-4-4 グループの一部とみなして除外する。
-				{Re: regexp.MustCompile(`(?:^|[^0-9A-Za-z-])(\d{4}-\d{4}-\d{4})(?:[^0-9A-Za-z-]|$)`), Base: Medium},
+				{Re: dgNoAlnumHyphen(`\d{4}-\d{4}-\d{4}`), Base: Medium},
+				// 空白区切り（4-4-4 / 6-6）。stripSeparators は元々半角スペースを
+				// 除去するため Validate 側の変更は不要。
+				{Re: dgNoAlnumHyphen(`\d{4} \d{4} \d{4}`), Base: Medium,
+					ValidateLine: rejectSeparatedDigitGroup(" ", 4)},
+				{Re: dgNoAlnumHyphen(`\d{6} \d{6}`), Base: Medium,
+					ValidateLine: rejectSeparatedDigitGroup(" ", 6)},
 			},
 		},
 		{
@@ -452,10 +489,18 @@ func Builtin() []Rule {
 			Patterns: []Pattern{
 				// 区切りあり携帯・IP 電話（060/070/080/090/050）
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0-\d{4}-\d{4}`), Base: High, IgnoreNegativeContext: true},
+				// 空白・ドット区切り携帯・IP 電話
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0[ .]\d{4}[ .]\d{4}`), Base: Medium,
+					ValidateLine: rejectSeparatedDigitGroup(" .", 1)},
 				// 区切りなし携帯・IP 電話
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0\d{8}`), Base: Medium, IgnoreNegativeContext: true},
-				// 区切りあり固定電話（市外局番 2〜5 桁）
-				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}-\d{1,4}-\d{4}`), Base: Medium, IgnoreNegativeContext: true},
+				// 区切りあり固定電話（市外局番 2〜5 桁）。末尾は 3〜4 桁を許容し、
+				// フリーダイヤル・ナビダイヤル等の末尾 3 桁表記も拾う。
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}-\d{1,4}-\d{3,4}`), Base: Medium, IgnoreNegativeContext: true},
+				// 括弧市外局番（市外局番の直後に市内局番を括弧書き、または
+				// 市外局番全体を括弧で囲む表記）。
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}\(\d{1,4}\)\d{4}`), Base: Medium},
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`\(0\d{1,4}\)\s?\d{1,4}-?\d{4}`), Base: Medium},
 				// 区切りなし固定電話（10 桁）。裸の \d{10} は型番・伝票番号等との
 				// 衝突が非常に多く単独では出せないため、コンテキストキーワード必須
 				// （RequireContext）にした上で validPhone が市外局番辞書
@@ -605,6 +650,9 @@ func Builtin() []Rule {
 			Validate:             validDriversLicense,
 			Patterns: []Pattern{
 				{Re: dg(`\d{12}`), Base: High, RequireContext: true},
+				// ハイフン区切り（4-4-4）。dgNoAlnumHyphen で UUID 等のハイフン区切り
+				// トークンの内部を除外する（dg ではなく my-number と同じ境界ガード）。
+				{Re: dgNoAlnumHyphen(`\d{4}-\d{4}-\d{4}`), Base: High, RequireContext: true},
 			},
 		},
 		{
@@ -615,7 +663,9 @@ func Builtin() []Rule {
 			NegativeContext: digitRuleUnitAdjacentNegativeContext,
 			Validate:        validPassport,
 			Patterns: []Pattern{
-				{Re: ag(`[A-Z]{2}\d{7}`), Base: High, RequireContext: true},
+				// 英字 2 桁と数字 7 桁の間の半角スペースは任意（例: "AB 1234567"）。
+				{Re: ag(`[A-Z]{2} ?\d{7}`), Base: High, RequireContext: true,
+					ValidateLine: rejectSeparatedDigitGroup(" ", 1)},
 			},
 		},
 		{
@@ -626,7 +676,10 @@ func Builtin() []Rule {
 			NegativeContext:      digitRuleNegativeContext,
 			RequireContextWindow: digitRuleRequireContextWindow,
 			Patterns: []Pattern{
-				{Re: dg(`\d{4}-?\d{6}`), Base: High, RequireContext: true},
+				// ハイフン・半角スペースいずれの区切りも許容する（Validate なしのため
+				// 区切り文字の除去は不要）。
+				{Re: dg(`\d{4}[- ]?\d{6}`), Base: High, RequireContext: true,
+					ValidateLine: rejectSeparatedDigitGroup(" ", 1)},
 			},
 		},
 		{
@@ -956,7 +1009,12 @@ func validMyNumber(m string) bool {
 // 実装は採用せず、先頭桁（公安委員会コードは 10 以上 = 先頭桁が 0 でない）と、
 // 全桁同一・ゼロ埋め連番のみを見る。
 func validDriversLicense(m string) bool {
-	return m != "" && m[0] != '0' && !checksum.AllSame(m) && !checksum.IsZeroPaddedSequential(m)
+	// ハイフン区切り（4-4-4）はセパレータを除去してから判定する（区切り文字は
+	// チェックディジットではないため、AllSame 判定がハイフンに惑わされて
+	// "0000-0000-0000" のようなプレースホルダを通過させないようにする）。連続
+	// 12 桁は元々区切りを含まないため stripSeparators は無害（no-op）。
+	d := stripSeparators(m)
+	return d != "" && d[0] != '0' && !checksum.AllSame(d) && !checksum.IsZeroPaddedSequential(d)
 }
 
 // validBankAccount は銀行口座番号（7 桁）の全桁同一のダミー値を棄却する。
