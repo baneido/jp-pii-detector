@@ -183,8 +183,22 @@ jobs:
 > 次回リリース以降はムービングメジャータグ `v0` も利用でき、`baneido/jp-pii-detector@v0` で最新の v0 系を追従できます。
 
 `--format github` を指定すると、検出箇所が PR の該当行にアノテーション表示されます。
+アノテーションは信頼度に応じて `error` / `warning` / `notice` になります。たとえば
+Medium 以上を表示しつつ High の検出だけで CI を失敗させるには、次のように指定します。
+
+```yaml
+      - uses: baneido/jp-pii-detector@v0.3.6
+        with:
+          args: scan --diff origin/${{ github.base_ref }}...HEAD --format github --min-confidence medium --fail-on high
+```
+
+`--fail-on` を省略した場合は従来どおり、報告対象の検出が 1 件でもあれば終了コード 1 です。
 `--format sarif` の出力は GitHub Code Scanning に取り込めます
 （アップロード例は [docs/integrations.md](docs/integrations.md)）。
+
+現在の設定で各ルールが有効か、また高再現率ルールかを確認するには
+`jp-pii-detect rules` を実行します。`rules --high-recall` や
+`rules --config <path>` も scan と同じ設定を反映します。
 
 ### 4. その他の CI/CD・開発環境
 

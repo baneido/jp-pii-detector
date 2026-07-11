@@ -52,6 +52,18 @@ jobs:
           args: scan --diff origin/${{ github.base_ref }}...HEAD --format github
 ```
 
+Medium の候補は PR 上に `warning` として表示し、High の検出があるときだけジョブを
+失敗させる場合は、報告閾値と失敗閾値を分けて指定します。
+
+```yaml
+      - uses: baneido/jp-pii-detector@main
+        with:
+          args: scan --diff origin/${{ github.base_ref }}...HEAD --format github --min-confidence medium --fail-on high
+```
+
+`--fail-on` の指定がない場合は後方互換のため、報告された検出が 1 件でもあれば終了コード 1 です。
+High / Medium / Low の GitHub アノテーションは、それぞれ `error` / `warning` / `notice` になります。
+
 ### SARIF を GitHub Code Scanning に取り込む
 
 検出結果を PR の Security タブ / Code Scanning アラートとして管理したい場合は
