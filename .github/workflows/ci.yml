@@ -112,11 +112,12 @@ jobs:
       - run: go vet ./...
       # -race: 並列スキャン（internal/source）のデータ競合の回帰防止
       - run: go test -race ./...
-      # docs/accuracy.md が実測値からドリフトしていないことを検証する
-      # （フィクスチャ未取得時は TestGenerateDoc が Skip され accuracy.md は不変＝ドリフトなし）
+      # docs/accuracy.md・docs/accuracy.json（ゴールデンファイル）・README.md のバッジが
+      # 実測値からドリフトしていないことを検証する（フィクスチャ未取得時は
+      # TestGenerateDoc / TestReadmeBadges が Skip され、いずれのファイルも不変＝ドリフトなし）。
       - run: |
-          go test ./internal/eval -run TestGenerateDoc -update
-          git diff --exit-code docs/accuracy.md
+          go test ./internal/eval -run 'TestGenerateDoc|TestReadmeBadges' -update
+          git diff --exit-code docs/accuracy.md docs/accuracy.json README.md
       - run: go build ./cmd/jp-pii-detect
       # dogfooding: 自リポジトリを自分でスキャンして偽陽性ゼロを保証する
       # （フィクスチャは $RUNNER_TEMP にあり作業ツリー外なので走査対象に入らない）

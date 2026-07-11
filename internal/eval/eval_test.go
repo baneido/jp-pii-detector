@@ -12,43 +12,21 @@ import (
 	"github.com/baneido/jp-pii-detector/internal/piifixtures"
 )
 
-var update = flag.Bool("update", false, "docs/accuracy.md を再生成する")
+var update = flag.Bool("update", false, "docs/accuracy.md・docs/accuracy.json・README.md のバッジを再生成する")
 
-// wantF1 は各ルールの期待 F1（評価データセットに対する実測値）。
-// README の検出精度バッジと一致させること（TestReadmeBadges が検証する）。
-// ルールやデータセットを変更して値が動いたら、ここを更新したうえで
-// `-update` で README のバッジと docs/accuracy.md を再生成する。
-//
-// Issue #61（銀行名辞書による jp-bank-account の文脈強化・jp-yucho-account 新設）:
-//   - jp-bank-account は Validate/Pattern を変えていないが、銀行名辞書ヒットで
-//     新たに RequireContext を満たすケースが増えるため、実測 F1（特に recall）が
-//     動く可能性が高い。$JP_PII_FIXTURES を用意できる環境で
-//     `go test ./internal/eval -update` を実行し、この値と README バッジ・
-//     docs/accuracy.md を実測値に合わせて更新すること。
-//   - jp-yucho-account は新規ルールのため、評価データセット（リポジトリ外管理）に
-//     正例・負例ケースを追加してから wantF1 に登録する必要がある。ケースが
-//     ない状態で登録すると「評価結果に存在しない」で CI が落ちるため、
-//     ここには意図的にまだ追加していない。
-var wantF1 = map[string]float64{
-	"jp-my-number":        1.00,
-	"jp-phone-number":     1.00,
-	"jp-postal-code":      1.00,
-	"jp-address":          0.89,
-	"email-address":       1.00,
-	"credit-card":         1.00,
-	"jp-drivers-license":  1.00,
-	"jp-passport":         1.00,
-	"jp-pension-number":   1.00,
-	"jp-residence-card":   1.00,
-	"jp-bank-account":     0.86,
-	"jp-health-insurance": 1.00,
-	"person-name":         1.00,
-	"jp-birthdate":        1.00,
-}
+// accuracyMDPath / accuracyJSONPath は、検出精度のゴールデンファイル
+// （docs/accuracy.md・docs/accuracy.json）へのパス。README のバッジ・
+// docs/accuracy.md・TestAccuracy の回帰ガードは、すべて同じ評価結果から
+// 生成されるこの2ファイルを単一の情報源にする。
+const (
+	accuracyMDPath   = "../../docs/accuracy.md"
+	accuracyJSONPath = "../../docs/accuracy.json"
+)
 
-// wantF1Medium は CLI 既定の min_confidence=medium での期待 F1（wantF1 と同じ
-// 評価データセットに対する実測値）。低評価データセットに対する既定プロファイル
-// （--high-recall 無効）の体感精度をバッジ計測と別に可視化するためのゴールデン値。
+// wantF1Medium は CLI 既定の min_confidence=medium での期待 F1（low プロファイル
+// と同じ評価データセットに対する実測値）。低プロファイル（README バッジ・
+// docs/accuracy.json のゴールデン値）に対する既定プロファイル（--high-recall
+// 無効）の体感精度を、バッジ計測と別に可視化するためのゴールデン値。
 //
 // person-name（internal/rule/builtin.go）は、辞書検証済みマッチ（強ラベル+
 // 姓名辞書一致等の twin パターン）が Base: Medium で報告されるため、既定設定
@@ -58,10 +36,10 @@ var wantF1 = map[string]float64{
 // パターンでも検出できるため、medium プロファイルの F1 は low と同じ 1.00。
 // 辞書や評価ケースの変更でこの関係が動いた場合は、実測値に合わせて更新する。
 //
-// 他の 13 ルールは、低プロファイル（wantF1）で TP になっている検出のパターン
-// Base がいずれも Medium 以上（RequireContext のパターンは昇格せず Base の
-// まま、それ以外は Context 一致で High へ昇格）であるため、medium 閾値でも
-// 除外されず low と同じ検出集合になる（wantF1 と同値）。
+// 他の 13 ルールは、低プロファイルで TP になっている検出のパターン Base が
+// いずれも Medium 以上（RequireContext のパターンは昇格せず Base のまま、
+// それ以外は Context 一致で High へ昇格）であるため、medium 閾値でも除外され
+// ず low と同じ検出集合になる（docs/accuracy.json の low 値と同値）。
 var wantF1Medium = map[string]float64{
 	"jp-my-number":        1.00,
 	"jp-phone-number":     1.00,
@@ -79,27 +57,48 @@ var wantF1Medium = map[string]float64{
 	"jp-birthdate":        1.00,
 }
 
-// TestAccuracy は実測 F1 が期待値と一致することを検証する（CI の回帰ガード）。
-// バッジに掲げた精度をコードと評価データセットで裏付ける。プロファイル別
-// （既定 CLI 相当の low バッジ用 / 既定 CLI の min_confidence=medium /
-// --high-recall）に並行評価し、既定設定で沈黙する検出（person-name 等）を
-// 公式数値として可視化する（issue #43）。
+// TestAccuracy は CI の回帰ガード。low プロファイル（README バッジ・
+// docs/accuracy.md の根拠）は、実測結果がコミット済みの docs/accuracy.json
+// （ゴールデンファイル）と完全一致することを検証する。ルールやデータセットを
+// 変更して数値が動いたら、
+// `go test ./internal/eval -run 'TestGenerateDoc|TestReadmeBadges' -update`
+// で docs/accuracy.md・docs/accuracy.json・README.md をまとめて再生成して
+// コミットする。
 //
-// low プロファイルは README バッジ・docs/accuracy.md の根拠でありゲート対象。
-// medium プロファイルは wantF1Medium でゲートする。high-recall プロファイルは
-// 対応する評価データセットのケース（jp-address-high-recall /
+// あわせて medium / high-recall プロファイルを並行評価し、既定設定で沈黙する
+// 検出（person-name 等）を公式数値として可視化する（issue #43）。medium
+// プロファイルは wantF1Medium で許容誤差付きにゲートする。high-recall
+// プロファイルは対応する評価データセットのケース（jp-address-high-recall /
 // person-name-high-recall / person-name-structured）がまだ無いため、当面は
 // 計測・ログ出力のみでゲートしない（データセットにケースが揃ってから
 // wantF1HighRecall を追加してゲート化する）。
 func TestAccuracy(t *testing.T) {
 	piifixtures.Require(t)
+	results, err := Evaluate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases, ok := piifixtures.Dataset()
+	if !ok {
+		t.Fatal("評価データセットを取得できません")
+	}
+	got := BuildGolden(results, SpanlessPositiveCount(cases))
+
+	want, err := LoadGolden(accuracyJSONPath)
+	if err != nil {
+		t.Fatalf("docs/accuracy.json を読み込めません: %v"+
+			"（`go test ./internal/eval -run 'TestGenerateDoc|TestReadmeBadges' -update` で生成してください）", err)
+	}
+
+	for _, msg := range DiffGolden(got, want) {
+		t.Error(msg)
+	}
 
 	profiles := []struct {
 		name string
 		opts Options
 		want map[string]float64 // nil/空なら計測・ログのみ（ゲートしない）
 	}{
-		{name: "low", opts: Options{MinConfidence: "low"}, want: wantF1},
 		{name: "medium", opts: Options{MinConfidence: "medium"}, want: wantF1Medium},
 		{name: "high-recall", opts: Options{MinConfidence: "low", HighRecall: true}, want: nil},
 	}
@@ -127,7 +126,7 @@ func TestAccuracy(t *testing.T) {
 					continue
 				}
 				if math.Abs(r.F1-want) > 0.005 {
-					t.Errorf("%s [%s]: F1 = %.3f, want %.2f（README バッジ・wantF1・docs/accuracy.md を更新してください）",
+					t.Errorf("%s [%s]: F1 = %.3f, want %.2f（wantF1Medium・docs/accuracy.md を更新してください）",
 						r.RuleID, p.name, r.F1, want)
 				}
 			}
@@ -777,12 +776,14 @@ func hasSpanScore(r Result) bool {
 		r.SpanRelaxed.TP+r.SpanRelaxed.FP+r.SpanRelaxed.FN > 0
 }
 
-// TestGenerateDoc は -update 指定時に docs/accuracy.md を再生成する。
+// TestGenerateDoc は -update 指定時に docs/accuracy.md と docs/accuracy.json
+// （ゴールデンファイル。TestAccuracy・TestDatasetQuality・README バッジの
+// 単一の情報源）を再生成する。
 //
-//	go test ./internal/eval -run TestGenerateDoc -update
+//	go test ./internal/eval -run 'TestGenerateDoc|TestReadmeBadges' -update
 func TestGenerateDoc(t *testing.T) {
 	if !*update {
-		t.Skip("-update 指定時のみ docs/accuracy.md を再生成する")
+		t.Skip("-update 指定時のみ docs/accuracy.md・docs/accuracy.json を再生成する")
 	}
 	piifixtures.Require(t)
 	strat, err := EvaluateStratified()
@@ -790,6 +791,10 @@ func TestGenerateDoc(t *testing.T) {
 		t.Fatal(err)
 	}
 	results := strat.Results
+	cases, ok := piifixtures.Dataset()
+	if !ok {
+		t.Fatal("評価データセットを取得できません")
+	}
 	sort.Slice(results, func(i, j int) bool {
 		if results[i].F1 == results[j].F1 {
 			return results[i].RuleID < results[j].RuleID
@@ -853,6 +858,19 @@ func TestGenerateDoc(t *testing.T) {
 			relaxedMacro.F1, relaxedMacro.Precision, relaxedMacro.Recall)
 	}
 
+	stats := ComputeDatasetStats(cases)
+	b.WriteString("\n## データセットの統計（匿名）\n\n")
+	b.WriteString("評価データセットはリポジトリ外（GCS）で管理され、レビュー時に中身が見えないため、\n")
+	b.WriteString("PII やケース本文を含まない件数だけの統計をここに記録します。\n\n")
+	fmt.Fprintf(&b, "- 総ケース数: %d\n", stats.TotalCases)
+	fmt.Fprintf(&b, "- 陽性ケース数: %d（うちスパン付与 %d 件、付与率 %s）\n",
+		stats.PositiveCases, stats.SpanAnnotatedCases, spanCoverageText(stats))
+	fmt.Fprintf(&b, "- 陰性ケース数: %d\n\n", stats.NegativeCases)
+	b.WriteString("| ルール ID | 陽性ケース数 |\n|---|--:|\n")
+	for _, rc := range stats.PerRule {
+		fmt.Fprintf(&b, "| `%s` | %d |\n", rc.RuleID, rc.Cases)
+	}
+
 	writeStratifiedTable(&b, "ケース種別別", "ケース種別",
 		"評価ケースの入力形式（line/content/diff）別の内訳です。行レベル（Result.TP 等と同じ定義）の"+
 			"TP/FP/FN で、1 ケースに複数ルールの期待・検出があれば同じ種別へ合算します。",
@@ -871,10 +889,24 @@ func TestGenerateDoc(t *testing.T) {
 			strat.Tags, tags)
 	}
 
-	if err := os.WriteFile("../../docs/accuracy.md", []byte(b.String()), 0o644); err != nil {
+	if err := os.WriteFile(accuracyMDPath, []byte(b.String()), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Log("docs/accuracy.md を再生成しました")
+
+	golden := BuildGolden(results, SpanlessPositiveCount(cases))
+	if err := SaveGolden(accuracyJSONPath, golden); err != nil {
+		t.Fatal(err)
+	}
+	t.Log("docs/accuracy.md と docs/accuracy.json を再生成しました")
+}
+
+// spanCoverageText は陽性ケースのうちスパンが付与された割合を百分率表記で返す。
+// 陽性ケースが 0 件のときはゼロ除算を避けて "-" を返す。
+func spanCoverageText(stats DatasetStats) string {
+	if stats.PositiveCases == 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%.0f%%", float64(stats.SpanAnnotatedCases)/float64(stats.PositiveCases)*100)
 }
 
 // kindOrder は Stratified.Kinds の表示順（line → content → diff → その他は
