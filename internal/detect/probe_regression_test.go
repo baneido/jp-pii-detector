@@ -84,11 +84,6 @@ func TestProbeRegressionKnownFalseNegatives(t *testing.T) {
 		// （CLAUDE.md に明記済みの距離窓アーキテクチャの限界）。
 		{"probe-fn:drivers-license-context-beyond-window known-limitation",
 			"運転免許証について説明します。これは長い前置きの文章でありここには本題と関係のない一般的な話が続きます。番号は123456789012です。"},
-
-		// jp-residence-card / jp-passport: 英字部分が小文字だとパターンの
-		// [A-Z] に一致しない（大文字専用）。
-		{"probe-fn:residence-card-lowercase-letters", "在留カード番号: ab12345678cd"},
-		{"probe-fn:passport-lowercase-letters", "パスポート番号: ab1234567"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -100,6 +95,26 @@ func TestProbeRegressionKnownFalseNegatives(t *testing.T) {
 func TestProbeResolvedAddressKanjiNumeralFalseNegative(t *testing.T) {
 	d := newDetector(t, "")
 	assertRules(t, d.ScanLine("f.txt", 1, "住所: 東京都渋谷区神南二丁目十番七号"), "jp-address")
+}
+
+// TestProbeResolvedLowercaseLetterFalseNegatives は、jp-residence-card /
+// jp-passport の英字部分を小文字表記（ab12345678cd / ab1234567 等）にも
+// 対応させたことで偽陰性から検出に転じた系統を固定化する。元は
+// TestProbeRegressionKnownFalseNegatives に「検出なし」として並んでいたもので、
+// パターンの [A-Z] を [A-Za-z] へ拡張し（validResidenceCard の I/O 除外判定も
+// 大小文字を区別しないよう合わせて拡張した）、ルール改善に伴い期待値を
+// 反転した（回帰データセットとして機能している証拠）。
+func TestProbeResolvedLowercaseLetterFalseNegatives(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct{ name, line, want string }{
+		{"residence-card-lowercase-letters", "在留カード番号: ab12345678cd", "jp-residence-card"},
+		{"passport-lowercase-letters", "パスポート番号: ab1234567", "jp-passport"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want)
+		})
+	}
 }
 
 // TestProbeResolvedNumericSeparatorFalseNegatives は、#46（数字系ルールの区切り

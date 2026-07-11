@@ -73,6 +73,33 @@ func MyNumber(digits string) bool {
 	return int(digits[11]-'0') == check
 }
 
+// CorporateNumber は法人番号（13 桁）の検査用数字を検証する。アルゴリズムは
+// 「法人番号の指定等に関する省令」（平成26年財務省令第70号）による:
+//
+//	Pn = 検査用数字を除いた 12 桁（基礎番号）のうち末尾から n 桁目の数字
+//	Qn = 1 (n が奇数) / 2 (n が偶数)
+//	検査用数字 = 9 - (ΣPn*Qn mod 9)
+//
+// 先頭 1 桁が検査用数字、残り 12 桁が基礎番号（法人は法務省の会社法人等番号と
+// 同一）。国税庁公表の計算例（会社法人等番号 700110005901 → 検査用数字 8）で
+// 検証済み: https://www.houjin-bangou.nta.go.jp/documents/checkdigit.pdf
+func CorporateNumber(digits string) bool {
+	if len(digits) != 13 || !numeric(digits) || AllSame(digits) {
+		return false
+	}
+	sum := 0
+	for n := 1; n <= 12; n++ {
+		p := int(digits[13-n] - '0')
+		q := 1
+		if n%2 == 0 {
+			q = 2
+		}
+		sum += p * q
+	}
+	check := 9 - sum%9
+	return int(digits[0]-'0') == check
+}
+
 // Luhn は Luhn アルゴリズム（ISO/IEC 7812）でチェックディジットを検証する。
 func Luhn(digits string) bool {
 	if len(digits) < 2 || !numeric(digits) {

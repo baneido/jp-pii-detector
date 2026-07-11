@@ -297,6 +297,69 @@ func TestValidHealthInsurance(t *testing.T) {
 	}
 }
 
+// validPensionNumber / validEmploymentInsurance / validKaigoInsurance は
+// jp-bank-account の validBankAccount と同じ方針で全桁同一のダミー値だけを
+// 棄却する（検査用数字を持たず、連番も実在しうるため）。年金・雇用保険は
+// ハイフン・半角スペース区切りを含みうるため、区切り文字を除いてから判定する。
+func TestValidPensionNumber(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"実在しうる値（ハイフン区切り）", "1234-567890", true},
+		{"実在しうる値（半角スペース区切り）", "1234 567890", true},
+		{"区切りなしも許容", "1234567890", true},
+		{"全桁同一（ハイフン区切り）は棄却", "0000-000000", false},
+		{"全桁同一（区切りなし）は棄却", "0000000000", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := validPensionNumber(tt.in); got != tt.want {
+				t.Errorf("validPensionNumber(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidEmploymentInsurance(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"実在しうる値（ハイフン区切り）", "1234-567890-1", true},
+		{"実在しうる値（区切りなし11桁）", "12345678901", true},
+		{"全桁同一（ハイフン区切り）は棄却", "0000-000000-0", false},
+		{"全桁同一（区切りなし）は棄却", "00000000000", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := validEmploymentInsurance(tt.in); got != tt.want {
+				t.Errorf("validEmploymentInsurance(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidKaigoInsurance(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"実在しうる値", "1234567890", true},
+		{"全桁同一は棄却", "0000000000", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := validKaigoInsurance(tt.in); got != tt.want {
+				t.Errorf("validKaigoInsurance(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 // validPassport は末尾 7 桁が全桁同一の明らかなダミー値（0000000 等）のみを
 // 棄却する。旅券冊子記号の先頭文字制限（[T,M] 等）は一次情報の裏取りが
 // できるまで導入しない（NH1234567 のような値は現状も検出対象のまま）。

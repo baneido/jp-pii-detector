@@ -57,6 +57,73 @@ func TestMyNumberKnownValue(t *testing.T) {
 	}
 }
 
+// genCorporateNumber は 12 桁の基礎番号から検査用数字を計算して 13 桁を生成する
+// （実装と独立に財務省令のアルゴリズムを書き下したもの）。
+func genCorporateNumber(base12 string) string {
+	sum := 0
+	for n := 1; n <= 12; n++ {
+		p := int(base12[12-n] - '0')
+		q := 1
+		if n%2 == 0 {
+			q = 2
+		}
+		sum += p * q
+	}
+	check := 9 - sum%9
+	return fmt.Sprint(check) + base12
+}
+
+// TestCorporateNumberOfficialExample は国税庁公表の計算例（会社法人等番号
+// 700110005901 → 検査用数字 8）を一次資料と突き合わせて検証する。
+// https://www.houjin-bangou.nta.go.jp/documents/checkdigit.pdf
+func TestCorporateNumberOfficialExample(t *testing.T) {
+	got := genCorporateNumber("700110005901")
+	if got != "8700110005901" {
+		t.Fatalf("genCorporateNumber = %q, want 8700110005901", got)
+	}
+	if !CorporateNumber(got) {
+		t.Errorf("CorporateNumber(%q) = false, want true", got)
+	}
+}
+
+// TestCorporateNumber は実在する公開情報の法人番号（法人番号は国税庁が公表する
+// 公開情報であり個人情報ではない。CLAUDE.md / docs/detection-methods.md 参照）を
+// 正例として使い、構造的なダミー値・不正値を負例として検証する。
+func TestCorporateNumber(t *testing.T) {
+	valid := []string{
+		"8700110005901", // 国税庁公表の計算例（会社法人等番号 700110005901）
+		"1180301018771", // トヨタ自動車株式会社（国税庁法人番号公表サイト）
+		"5010401067252", // ソニーグループ株式会社（国税庁法人番号公表サイト）
+		"1130001011420", // 任天堂株式会社（国税庁法人番号公表サイト）
+	}
+	for _, v := range valid {
+		if !CorporateNumber(v) {
+			t.Errorf("CorporateNumber(%q) = false, want true", v)
+		}
+	}
+
+	// 自己無矛盾性テスト: 正例の基礎番号を 1 桁だけ変えると検査用数字が
+	// 合わなくなることを確認する。
+	mutated := "1180301018772" // 末尾を 1→2 に変更
+	if CorporateNumber(mutated) {
+		t.Errorf("CorporateNumber(%q) = true, want false (基礎番号の 1 桁破壊)", mutated)
+	}
+
+	invalid := []string{
+		"1180301018772",  // 検査用数字不一致（基礎番号を 1 桁破壊）
+		"111111111111",   // 桁数不足（12 桁）
+		"11111111111111", // 桁数超過（14 桁）
+		"1111111111111",  // 全桁同一はダミー扱い
+		"118030101877x",  // 非数字混入
+		"",
+	}
+	for _, v := range invalid {
+		if CorporateNumber(v) {
+			t.Errorf("CorporateNumber(%q) = true, want false", v)
+		}
+	}
+}
+
 func TestLuhn(t *testing.T) {
 	if !Luhn("4111111111111111") {
 		t.Error("Luhn(4111111111111111) = false, want true")
