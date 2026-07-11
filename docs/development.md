@@ -409,7 +409,13 @@ internal/
      隣接行の負コンテキスト判定（`hasCrossLineNegativeContext`、ScanContent 経由のみ）も
      同じ論理隣接規則で前後の非空白行を見るため、空行を挟んだ負コンテキストも取りこぼしません。
 3. **report** が `min_confidence` で絞った結果を指定フォーマットで出力します。
-   検出値は既定でマスクされます。JSON 出力では `--explain` 指定時のみ `reason` を含めます。
+   検出値は既定でマスクされます。`--explain` 指定時は JSON 出力の `reason` に加え、text 出力にも
+   検出理由（コンテキスト昇格・検証有無等）を 1 行追加します。`--fail-on` を指定すると、報告閾値
+   （`min_confidence`）とは独立に、その信頼度以上の検出があるときだけ終了コードを 1 にできます
+   （未指定時は既存どおり報告があれば 1）。SARIF の各 result には `region.endLine`/`endColumn` と、
+   ルール ID・ファイルパス・同一ルールのファイル内出現順ベースの `partialFingerprints` を付与します。
+   `partialFingerprints` には行・カラムと生の検出値を含めず、周辺行の増減に対する安定性と
+   マスク方針を維持します。
 
 #### テスト経路の信頼度降格（path demotion）
 
