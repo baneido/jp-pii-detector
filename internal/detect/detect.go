@@ -99,6 +99,9 @@ type Finding struct {
 	// 対象外にする。jp-birthdate のようにラベル埋め込み正規表現でクロスライン
 	// 検出するルールには、この越境情報を理由とした一律抑制を適用しない。
 	matchStart, matchEnd int
+	// ignoreNegativeContext はマッチしたパターンが Rule.NegativeContext の
+	// 適用対象外であることを表す。隣接行の負文脈フィルタにも引き継ぐ。
+	ignoreNegativeContext bool
 }
 
 // DetectReason は検出の根拠を表す。生の PII は含めない。
@@ -727,7 +730,7 @@ func (d *Detector) scanAdjacentLinesDiff(file string, firstLineNo int, first str
 }
 
 func (d *Detector) hasSourceNegativeForFinding(f Finding, line string, lineCtx lineContext) bool {
-	if len(lineCtx.Statements) == 0 || !d.ruleHasNegativeContext(f.RuleID) {
+	if f.ignoreNegativeContext || len(lineCtx.Statements) == 0 || !d.ruleHasNegativeContext(f.RuleID) {
 		return false
 	}
 	norm := normalize.Line(line)
@@ -914,7 +917,7 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 					}
 					reason.ContextKeywords = kws
 				}
-				if hasNegativeNear(start, end) {
+				if !p.IgnoreNegativeContext && hasNegativeNear(start, end) {
 					continue
 				}
 				if r.Validate != nil {
@@ -948,6 +951,7 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 					if len(kws) > 0 {
 						reason.ContextKeywords = kws
 						reason.ContextPromoted = true
+						reason.ContextWindow = window
 						conf = rule.High
 					}
 				}
@@ -967,18 +971,19 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 					origRunes = []rune(line)
 				}
 				found = append(found, Finding{
-					RuleID:      r.ID,
-					Description: r.Description,
-					File:        file,
-					Line:        lineNo,
-					Column:      rs + 1,
-					Match:       string(origRunes[rs:re]),
-					Confidence:  conf,
-					Reason:      reason,
-					start:       rs,
-					matchStart:  mrs,
-					matchEnd:    mre,
-					end:         re,
+					RuleID:                r.ID,
+					Description:           r.Description,
+					File:                  file,
+					Line:                  lineNo,
+					Column:                rs + 1,
+					Match:                 string(origRunes[rs:re]),
+					Confidence:            conf,
+					Reason:                reason,
+					start:                 rs,
+					end:                   re,
+					matchStart:            mrs,
+					matchEnd:              mre,
+					ignoreNegativeContext: p.IgnoreNegativeContext,
 				})
 			}
 		}

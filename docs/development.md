@@ -348,9 +348,12 @@ internal/
      `PositiveText` / `NegativeText` を適用します。AST 解析や言語別 parser は使いません。
    - 各ルールのパターンを正規表現でマッチし、`Validate`（チェックディジット等）と
      allowlist で絞り込みます。
-     - 同一行にコンテキストキーワードがあれば信頼度を High に昇格し、`RequireContext`
-       のルールはキーワードがなければ破棄します。`RequireContextWindow` が設定された
-       ルールでは、キーワードをマッチ前後の指定ルーン数以内に限定します。
+     - 同一行にコンテキストキーワードがあれば信頼度を High に昇格します。昇格時の探索は
+       マッチ前後 40 ルーン（`RequireContextWindow` 設定時はその値）に限定し、minified JSON
+       や長い 1 行の遠方にあるキーワードで無関係なマッチまで昇格するのを防ぎます。
+       `RequireContext` のルールはキーワードがなければ破棄します。この検出可否の判定は
+       `RequireContextWindow` が設定されていれば指定ルーン数以内、未設定なら後方互換のため
+       行全体を探索します。
      - ASCII キーワードは英数字の単語境界つきで照合し、`tel` が `hotel` の一部で成立する
        ような誤昇格を避けます。単語境界で見つからない場合は、行中の識別子を camelCase /
        snake_case / kebab-case の構成語に分割して照合するため、`account_no` が
@@ -419,7 +422,8 @@ internal/
     Description: "説明（rules コマンドと検出結果に表示される）",
     Context:              []string{"キーワード"}, // 小文字で定義。昇格・RequireContext 判定に使う
     NegativeContext:      []string{"円", "件"}, // 近傍にあれば棄却する語（任意）
-    RequireContextWindow: 40,          // 0 なら行全体、正数なら前後ルーン数で近接判定
+    RequireContextWindow: 40,          // RequireContext 判定は 0 なら行全体、正数なら前後ルーン数。
+                                        // High 昇格判定は未設定でも常に窓あり（既定 40 ルーン）。
     Prefilter:            PrefilterDigit, // 数字を含む行のみ走査（性能最適化。既定は常に走査）
     Validate: func(m string) bool {   // 追加検証（任意）。引数は正規化済みのマッチ文字列
         return checksum.Something(m)
@@ -466,6 +470,33 @@ internal/
 起きた場合は `.jp-pii.toml` の allowlist で除外してください。現状は書式（`T` + 13 桁）と周辺語のみで
 判定しており検査数字は未検証（法人番号にはチェックディジットが存在する）。将来的に
 `internal/checksum` へ実装できれば `Validate` に昇格させ、精度を高められる余地がある。
+
+固定電話の市外局番は総務省の電気通信番号指定状況（「市外局番の一覧」）由来の実在集合を
+[`internal/dict/area_codes.txt`](../internal/dict/area_codes.txt) にテキストで保存して
+`//go:embed` で取り込む。`dict.ValidAreaCode` は電話番号の先頭から**最長一致**する
+市外局番を探し、`validPhone`（`internal/rule/builtin.go`）が区切りなし固定電話 10 桁の
+実在性検証に使う。市外局番はほぼ変化しないため、郵便番号のような月次自動更新ワークフローは
+設けていない。
+
+> **既知の制限（#56 時点）**: `area_codes.txt` は総務省の公式データそのものではなく、
+> 都道府県庁所在地・政令指定都市クラスの市外局番（46 件、2〜3 桁のみ）に絞った
+> **代表的なシードデータ**である。総務省が公開する市外局番は全国で約 500 件（4〜5 桁の
+> 中小都市分を含む）あり、このシードはそのごく一部にすぎない。未収録の実在市外局番を使う
+> 固定電話番号は誤って未検出（false negative）になる。総務省の公式データを取得できる環境で、
+> 市外局番列を抽出した CSV（1 列目が市外局番。ヘッダ行や他の列があっても無視される）を用意し、
+> 次のコマンドで完全な一覧に差し替えること。
+
+```console
+$ go run ./internal/dict/gen -phone \
+    -input /path/to/area_codes_raw.csv \
+    -output internal/dict/area_codes.txt
+```
+
+差し替え後は `go test ./internal/dict ./internal/detect ./internal/rule` に加えて、
+`JP_PII_FIXTURES=<path> go test ./internal/eval` で `jp-phone-number` の F1 を再測定し、
+必要なら `wantF1` を更新のうえ `-update` で README バッジと `docs/accuracy.md` を
+再生成すること（区切りなし固定電話 10 桁の正例・未割当プレフィックスの負例を
+評価データセットに追加した場合は特に）。
 
 新ルールは `jp-pii-detect rules` に自動で表示されます。
 
@@ -535,6 +566,13 @@ PR タイトルに `[要レビュー]` を付与し、本文に削除された T
 未割当の番号は棄却されます）。インデックスのエンコーディングとサイズ定数は `internal/dict` 側で
 公開し、ジェネレータと共有します（両者が無言で乖離しないため）。
 
+同じ KEN_ALL データの都道府県名・市区町村名から、実在する市区町村名の一覧
+[`internal/dict/municipalities.txt`](../internal/dict/municipalities.txt)（1 行 1 エントリ、
+ソート・重複排除済み）も生成し `//go:embed` で取り込みます。
+`dict.MunicipalitySuffixMatch` は `jp-address-high-recall` の `Validate` に使い、
+「通学区域」のような非市区町村語の誤検出を棄却します。郡付きエントリは郡省略形、
+政令指定都市の区は市単独形も併録し、`ヶ` / `ケ` は生成・照合の両側で `ケ` に正規化します。
+
 更新は通常 [`.github/workflows/postal-update.yml`](../.github/workflows/postal-update.yml) が
 毎月 1 日に自動で行います。手動で更新する場合は次の 2 つのデータを取得し、コマンドでビットセットを
 再生成してから `go test ./internal/dict ./internal/dict/gen ./internal/detect ./internal/eval` で検証します。
@@ -548,12 +586,14 @@ PR タイトルに `[要レビュー]` を付与し、本文に削除された T
 $ go run ./internal/dict/gen \
     -ken-all-input /path/to/utf_ken_all.zip \
     -jigyosyo-input /path/to/jigyosyo.zip \
-    -output internal/dict/postal_codes.bitset
+    -output internal/dict/postal_codes.bitset \
+    -municipalities-output internal/dict/municipalities.txt
 ```
 
 `-ken-all-input` / `-jigyosyo-input` はどちらか片方だけでも、両方指定してもよいです
 （両方指定時はマージされ、重複コードは自動的に排除されます）。それぞれ展開済みの CSV
-（前者は UTF-8、後者は Shift_JIS）も直接指定できます。列インデックス（ken_all は郵便番号が
+（前者は UTF-8、後者は Shift_JIS）も直接指定できます。`-municipalities-output` を指定する
+場合は、市区町村列を持つ `-ken-all-input` も必須です。列インデックス（ken_all は郵便番号が
 3 列目、jigyosyo は 8 列目）はフォーマットごとに固定なので、`-ken-all-input` と
 `-jigyosyo-input` を取り違えないでください（取り違えると実質ゼロ件取り込みになります）。
 郵便番号の増減で `jp-postal-code` の精度数値が動くことがあるため、新しいビットセットを

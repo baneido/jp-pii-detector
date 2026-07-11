@@ -76,18 +76,51 @@ const (
 	// （フリガナ: ﾔﾏﾀﾞ 等）が氏名・住所の値パターンから漏れる。jp-pii-detector:ignore
 	katakana = `\x{30A1}-\x{30FA}\x{30FC}\x{3099}\x{309A}`
 
+	// hiraganaNoParticle は hiragana から助詞「で・に・は・を」を除いた文字クラス
+	// （\x{3067}=で \x{306B}=に \x{306F}=は \x{3092}=を を穴あきで除外）。市区町村と
+	// banchiDash（マーカーなしダッシュ連結）の間のギャップ専用。ひらがな全体を
+	// 除外すると「丸の内2-1-5」「霞が関3-2-1」のような実在住所（間に「の」「が」を
+	// 含む）まで棄却してしまうため、スコア表記「3-2で勝利」・ISO 日付「2025-07-02に」
+	// のように市区町村へ直結しやすい助詞だけを狙って除く。「はりまや町」等ひらがなを
+	// 含む町名がダッシュ表記住所の直前に来るケースの FN は許容範囲とする
+	// （現状でもマーカーなしダッシュ形は取れておらず実質的後退は限定的）。
+	hiraganaNoParticle = `\x{3041}-\x{3066}\x{3068}-\x{306A}\x{306C}-\x{306E}\x{3070}-\x{3091}\x{3093}-\x{3096}`
+
+	// kanjiDigits は漢数字の位取り表現に使う文字（〇・一〜九・十・百・千）。
+	kanjiDigits = `〇一二三四五六七八九十百千`
+
 	digitRuleRequireContextWindow = 40
 
-	// banchi は番地表現（丁目→番地→号）を最後まで捕捉する終端パターン。次を捕捉:
-	//   2丁目10番7号 / 2丁目10-7 / 2-10-7 / 10番地の7 / 10番7号 / 2丁目（番地なし）
-	// 構造は「任意の N丁目」＋「番地ブロック（番/号/ダッシュ連結のいずれかを必須）」、
-	// または「N丁目」単独。番地ブロックは 番[地] か 号 か ダッシュ連結のいずれかを
-	// 必ず含み、号は終端（号の後ろは続かない）とすることで、号の後ろの部屋番号・
-	// 電話番号や、丁目の後ろの「階」の数字など、単位もダッシュも伴わない裸の数字列を
-	// 吸収しない。RE2 は線形時間なので連鎖長による破滅的バックトラックは起きない。
-	banchi = `(?:` +
-		`(?:\d{1,4}丁目)?(?:\d{1,4}番地?(?:の?\d{1,4})?号?|\d{1,4}号|\d{1,4}(?:-\d{1,4})+)` +
-		`|\d{1,4}丁目` +
+	// banchiMarked は番地表現（丁目→番地→号）のうち、丁目・番・号のいずれかの
+	// マーカーが必ず含まれる形だけを最後まで捕捉する終端パターン。次を捕捉:
+	//   2丁目10番7号 / 2丁目10-7 / 10番地の7 / 10番7号 / 2丁目（番地なし）
+	// 構造は「N丁目」＋「任意の番地ブロック（番/号/ダッシュ連結）」、または
+	// マーカー付き番地ブロック単独（丁目なし）。号は終端（号の後ろは続かない）と
+	// することで、号の後ろの部屋番号・電話番号や、丁目の後ろの「階」の数字など、
+	// 単位もダッシュも伴わない裸の数字列を吸収しない。RE2 は線形時間なので
+	// 連鎖長による破滅的バックトラックは起きない。
+	banchiMarked = `(?:` +
+		`\d{1,4}丁目(?:\d{1,4}番地?(?:の?\d{1,4})?号?|\d{1,4}号|\d{1,4}(?:-\d{1,4})+)?` +
+		`|\d{1,4}番地?(?:の?\d{1,4})?号?` +
+		`|\d{1,4}号` +
+		`)`
+
+	// banchiDash はマーカー（丁目/番/号）を伴わない、ダッシュ連結のみの番地表現
+	// （2-1-5 等）。丁目/番/号のような明示的な番地マーカーが一切ないため、
+	// 市区町村名の直後に他の数字列（試合のスコア「3-2」・ISO 日付
+	// 「2025-07-02」等）が来ただけの文を誤って番地とみなしやすい。そのため
+	// jp-address / jp-address-high-recall では、このパターン専用に市区町村と
+	// の間のギャップを hiraganaNoParticle に制限し、末尾が実在する暦日形なら
+	// 棄却する Validate（notCalendarDateBanchi）を追加で必須にする。
+	banchiDash = `\d{1,4}(?:-\d{1,4})+`
+
+	// banchiKanji は漢数字表記の番地（神南一丁目十九番十一号 等）。ASCII 数字は
+	// 使わずダッシュ形も持たない（ダッシュ連結は漢数字では実質使われないため）。
+	// 丁目・番・号のいずれかのマーカーを必ず含む。
+	banchiKanji = `(?:` +
+		`[` + kanjiDigits + `]{1,6}丁目(?:[` + kanjiDigits + `]{1,6}番地?(?:の?[` + kanjiDigits + `]{1,6})?号?)?` +
+		`|[` + kanjiDigits + `]{1,6}番地?(?:の?[` + kanjiDigits + `]{1,6})?号?` +
+		`|[` + kanjiDigits + `]{1,6}号` +
 		`)`
 )
 
@@ -397,9 +430,7 @@ func Builtin() []Rule {
 			Prefilter:       PrefilterDigit,
 			Context:         []string{"マイナンバー", "個人番号", "mynumber", "my number", "my_number"},
 			NegativeContext: digitRuleUnitAdjacentNegativeContext,
-			Validate: func(m string) bool {
-				return checksum.MyNumber(stripSeparators(m))
-			},
+			Validate:        validMyNumber,
 			Patterns: []Pattern{
 				{Re: dgNoAlnumHyphen(`\d{12}`), Base: Medium},
 				// 前後にハイフンが続く場合はクレジットカード等の
@@ -412,16 +443,26 @@ func Builtin() []Rule {
 			Description: "電話番号（携帯・固定・IP・国際表記）",
 			Prefilter:   PrefilterDigit,
 			Context:     []string{"電話", "携帯", "連絡先", "tel", "phone", "fax", "mobile", "denwa"},
-			Validate:    validPhone,
+			// 桁ベースの区切りなし固定電話パターンは業務 ID・型番等と衝突しやすいため、
+			// 金額・数量・連番 ID 文脈で棄却する。既存パターンは従来の検出挙動を
+			// 維持するため IgnoreNegativeContext で適用対象から外す。
+			NegativeContext:      digitRuleNegativeContext,
+			RequireContextWindow: digitRuleRequireContextWindow,
+			Validate:             validPhone,
 			Patterns: []Pattern{
 				// 区切りあり携帯・IP 電話（060/070/080/090/050）
-				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0-\d{4}-\d{4}`), Base: High},
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0-\d{4}-\d{4}`), Base: High, IgnoreNegativeContext: true},
 				// 区切りなし携帯・IP 電話
-				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0\d{8}`), Base: Medium},
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0\d{8}`), Base: Medium, IgnoreNegativeContext: true},
 				// 区切りあり固定電話（市外局番 2〜5 桁）
-				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}-\d{1,4}-\d{4}`), Base: Medium},
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}-\d{1,4}-\d{4}`), Base: Medium, IgnoreNegativeContext: true},
+				// 区切りなし固定電話（10 桁）。裸の \d{10} は型番・伝票番号等との
+				// 衝突が非常に多く単独では出せないため、コンテキストキーワード必須
+				// （RequireContext）にした上で validPhone が市外局番辞書
+				// （dict.ValidAreaCode）で先頭一致の実在性を検証する。
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{9}`), Base: Medium, RequireContext: true},
 				// 国際表記 +81
-				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`\+81[- ]?\d{1,4}[- ]?\d{1,4}[- ]?\d{3,4}`), Base: High},
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`\+81[- ]?\d{1,4}[- ]?\d{1,4}[- ]?\d{3,4}`), Base: High, IgnoreNegativeContext: true},
 			},
 		},
 		{
@@ -430,6 +471,12 @@ func Builtin() []Rule {
 			Prefilter:       PrefilterDigit,
 			Context:         []string{"郵便番号", "郵便", "住所", "postal", "zipcode", "zip code", "〒"},
 			NegativeContext: digitRuleUnitAdjacentNegativeContext,
+			// RequireContextWindow: 未設定（行全体探索）だと、廃番の品番のような
+			// NNN-NNNN 形式の数字列が、行のずっと離れた場所にある「郵便」の
+			// 部分一致だけで Medium 成立してしまっていた（#54）。他の digit 系
+			// RequireContext ルール（jp-bank-account 等）と同じ
+			// digitRuleRequireContextWindow に揃える。
+			RequireContextWindow: digitRuleRequireContextWindow,
 			// 7 桁完全一致（ビットセット生成済みのとき。未生成なら上位 3 桁実在チェック）。
 			Validate: dict.ValidPostalCode,
 			Patterns: []Pattern{
@@ -438,16 +485,50 @@ func Builtin() []Rule {
 			},
 		},
 		{
+			// 数字番地（マーカー付き / ダッシュ連結のみ）。漢数字番地は Prefilter が
+			// 異なる（数字を含まない行もありうる）ため、同一 ID "jp-address" の
+			// 第 2 エントリとして下に分けて定義する（detect.New は ID セットで
+			// disable 判定するため、同一 ID の複数エントリは両立する）。
 			ID:          "jp-address",
 			Description: "住所（都道府県〜番地）",
 			Prefilter:   PrefilterDigit,
 			Context:     []string{"住所", "所在地", "自宅", "address", "居住"},
 			Patterns: []Pattern{
+				// マーカー付き番地（丁目/番/号）。既存どおり緩いギャップを許す
+				// （マーカー自体が強いシグナルのため誤検出リスクが低い）。
 				{Re: regexp.MustCompile(
 					`((?:北海道|東京都|京都府|大阪府|[` + kanji + `]{2,3}県)` +
 						`[` + kanji + hiragana + katakana + `0-9A-Za-z]{1,20}?[市区町村]` +
 						`[` + kanji + hiragana + katakana + `0-9-]{0,30}?` +
-						banchi + `)`,
+						banchiMarked + `)`,
+				), Base: High},
+				// マーカーなしダッシュ連結（2-1-5 等）。市区町村直後の助詞「で・に・
+				// は・を」を挟んだスコア表記・ISO 日付の誤検出を避けるため、
+				// ギャップを助詞抜き文字クラスに制限し、さらに末尾が実在する
+				// 暦日形（YYYY-MM-DD）なら Validate で棄却する。
+				{Re: regexp.MustCompile(
+					`((?:北海道|東京都|京都府|大阪府|[` + kanji + `]{2,3}県)` +
+						`[` + kanji + hiragana + katakana + `0-9A-Za-z]{1,20}?[市区町村]` +
+						`[` + kanji + hiraganaNoParticle + katakana + `0-9-]{0,30}?` +
+						banchiDash + `)`,
+				), Base: High, Validate: notCalendarDateBanchi},
+			},
+		},
+		{
+			// 漢数字番地（神南一丁目十九番十一号 等）。ASCII 数字を含まない行にも
+			// マッチさせる必要があるため、既存の PrefilterDigit ではなく
+			// PrefilterCJK + 都道府県リテラルで別途プリフィルタする。
+			ID:                "jp-address",
+			Description:       "住所（都道府県〜番地）",
+			Prefilter:         PrefilterCJK,
+			PrefilterLiterals: []string{"都", "道", "府", "県"},
+			Context:           []string{"住所", "所在地", "自宅", "address", "居住"},
+			Patterns: []Pattern{
+				{Re: regexp.MustCompile(
+					`((?:北海道|東京都|京都府|大阪府|[` + kanji + `]{2,3}県)` +
+						`[` + kanji + hiragana + katakana + `0-9A-Za-z]{1,20}?[市区町村]` +
+						`[` + kanji + hiragana + katakana + `0-9-]{0,30}?` +
+						banchiKanji + `)`,
 				), Base: High},
 			},
 		},
@@ -456,13 +537,24 @@ func Builtin() []Rule {
 			Description: "住所（都道府県なし・高再現率）",
 			Prefilter:   PrefilterDigit,
 			Context:     []string{"住所", "所在地", "勤務地", "勤務先", "自宅", "address"},
+			// 市区町村として辞書に実在しない語（「通学区域」等の一般語尾）を
+			// municipality と誤認した検出を棄却する。既定の jp-address には
+			// 付けない（郡省略・表記揺れで実在住所を drop する FN リスクが
+			// 高再現率でない既定ルールでは相対的に大きいため）。
+			Validate: dict.MunicipalitySuffixMatch,
 			Patterns: []Pattern{
 				{Re: regexp.MustCompile(
 					`(?:住所|所在地|勤務地|勤務先|自宅|address)?\s*[:=]?\s*(` +
 						`[` + kanji + hiragana + katakana + `]{1,15}[市区町村]` +
 						`[` + kanji + hiragana + katakana + `0-9-]{0,30}?` +
-						banchi + `)`,
+						banchiMarked + `)`,
 				), Base: Medium},
+				{Re: regexp.MustCompile(
+					`(?:住所|所在地|勤務地|勤務先|自宅|address)?\s*[:=]?\s*(` +
+						`[` + kanji + hiragana + katakana + `]{1,15}[市区町村]` +
+						`[` + kanji + hiraganaNoParticle + katakana + `0-9-]{0,30}?` +
+						banchiDash + `)`,
+				), Base: Medium, Validate: notCalendarDateBanchi},
 			},
 		},
 		{
@@ -510,11 +602,7 @@ func Builtin() []Rule {
 				"drivers license", "driver license", "license no", "license number", "licence"},
 			NegativeContext:      digitRuleNegativeContext,
 			RequireContextWindow: digitRuleRequireContextWindow,
-			Validate: func(m string) bool {
-				// 先頭 2 桁は公安委員会コードで 10 以上
-				// （= 先頭桁が 0 でないことと等価）
-				return !checksum.AllSame(m) && m[0] != '0'
-			},
+			Validate:             validDriversLicense,
 			Patterns: []Pattern{
 				{Re: dg(`\d{12}`), Base: High, RequireContext: true},
 			},
@@ -525,6 +613,7 @@ func Builtin() []Rule {
 			Prefilter:       PrefilterDigit,
 			Context:         []string{"パスポート", "旅券", "passport"},
 			NegativeContext: digitRuleUnitAdjacentNegativeContext,
+			Validate:        validPassport,
 			Patterns: []Pattern{
 				{Re: ag(`[A-Z]{2}\d{7}`), Base: High, RequireContext: true},
 			},
@@ -549,6 +638,7 @@ func Builtin() []Rule {
 			Context: []string{"在留", "residence card", "zairyu",
 				"特別永住", "特別永住者証明書", "永住者証明書", "special permanent"},
 			NegativeContext: digitRuleUnitAdjacentNegativeContext,
+			Validate:        validResidenceCard,
 			Patterns: []Pattern{
 				{Re: ag(`[A-Z]{2}\d{8}[A-Z]{2}`), Base: High, RequireContext: true},
 			},
@@ -560,6 +650,7 @@ func Builtin() []Rule {
 			Context:              []string{"口座", "普通預金", "当座預金", "支店番号", "account number", "account_no", "bank account", "kouza"},
 			NegativeContext:      digitRuleNegativeContext,
 			RequireContextWindow: digitRuleRequireContextWindow,
+			Validate:             validBankAccount,
 			Patterns: []Pattern{
 				{Re: dg(`\d{7}`), Base: Medium, RequireContext: true},
 			},
@@ -600,6 +691,7 @@ func Builtin() []Rule {
 			Context:              []string{"保険者番号", "被保険者", "保険証", "health insurance", "hokensha"},
 			NegativeContext:      digitRuleNegativeContext,
 			RequireContextWindow: digitRuleRequireContextWindow,
+			Validate:             validHealthInsurance,
 			Patterns: []Pattern{
 				{Re: dg(`\d{8}`), Base: Medium, RequireContext: true},
 			},
@@ -845,6 +937,67 @@ func Builtin() []Rule {
 	}
 }
 
+// validMyNumber はマイナンバー（個人番号）の検査用数字に加え、ダミー値で
+// よく使われる「先頭ゼロ埋め連番」（0000001 等）を棄却する。マイナンバーは
+// 日付を符号化しないため、先頭 8 桁が暦日に見えることだけでは棄却しない。
+func validMyNumber(m string) bool {
+	d := stripSeparators(m)
+	if !checksum.MyNumber(d) {
+		return false
+	}
+	if checksum.IsZeroPaddedSequential(d) {
+		return false
+	}
+	return true
+}
+
+// validDriversLicense は運転免許証番号（12 桁）のダミー値を棄却する。
+// 検査用数字アルゴリズムは公式に非公開のためリバースエンジニアリング由来の
+// 実装は採用せず、先頭桁（公安委員会コードは 10 以上 = 先頭桁が 0 でない）と、
+// 全桁同一・ゼロ埋め連番のみを見る。
+func validDriversLicense(m string) bool {
+	return m != "" && m[0] != '0' && !checksum.AllSame(m) && !checksum.IsZeroPaddedSequential(m)
+}
+
+// validBankAccount は銀行口座番号（7 桁）の全桁同一のダミー値を棄却する。
+// 口座番号自体は検査用数字を持たず、連番も実在しうるため、それ以上の
+// ヒューリスティックは適用しない。
+func validBankAccount(m string) bool {
+	return !checksum.AllSame(m)
+}
+
+// validHealthInsurance は健康保険 保険者番号・被保険者番号（8 桁）の全桁同一の
+// ダミー値を棄却する。連番も実在しうるため、それ以上のヒューリスティックは
+// 適用しない。
+func validHealthInsurance(m string) bool {
+	return !checksum.AllSame(m)
+}
+
+// validPassport は旅券（パスポート）番号（英字 2 + 数字 7）の末尾 7 桁が
+// 全桁同一の明らかなダミー値（0000000 等）を棄却する。旅券冊子記号の先頭
+// 文字制限（[T,M] 等）は外務省/ICAO の一次情報で裏取りができるまで導入しない
+// （docs/detection-methods.md 参照）。
+func validPassport(m string) bool {
+	if len(m) < 7 {
+		return false
+	}
+	return !checksum.AllSame(m[len(m)-7:])
+}
+
+// validResidenceCard は在留カード番号（英 2 + 数 8 + 英 2）のうち、
+// 出入国在留管理庁の文字集合仕様で使われない英字 I・O を含む値と、
+// 数字 8 桁が全桁同一のダミー値を棄却する。
+func validResidenceCard(m string) bool {
+	if len(m) != 12 {
+		return false
+	}
+	letters := m[:2] + m[10:]
+	if strings.ContainsAny(letters, "IO") {
+		return false
+	}
+	return !checksum.AllSame(m[2:10])
+}
+
 func validPhone(m string) bool {
 	d := stripSeparators(strings.TrimPrefix(m, "+"))
 	if checksum.AllSame(d) {
@@ -862,14 +1015,20 @@ func validPhone(m string) bool {
 		}
 		return false
 	}
-	// 国内表記は先頭 0、第 2 桁は 0 以外。固定電話は計 10 桁、
-	// 11 桁は携帯・IP（0[5-9]0）のみ。
+	// 国内表記は先頭 0。固定電話は計 10 桁、11 桁は携帯・IP（0[5-9]0）のみ。
 	if len(d) == 0 || d[0] != '0' {
 		return false
 	}
 	switch len(d) {
 	case 10:
-		return d[1] != '0'
+		if strings.ContainsAny(m, "- ") {
+			return d[1] != '0'
+		}
+		// 区切りなし固定電話は市外局番辞書（dict.ValidAreaCode）で先頭一致の
+		// 実在性を検証する。area_codes.txt は seed のため、区切りあり表記では
+		// この辞書を必須にしない。
+		_, ok := dict.ValidAreaCode(d)
+		return ok
 	case 11:
 		return d[1] >= '5' && d[1] <= '9' && d[2] == '0'
 	}
@@ -968,7 +1127,54 @@ func validCalendarDate(year, month, day int) bool {
 	return t.Year() == year && int(t.Month()) == month && t.Day() == day
 }
 
-// validEmail は予約済みドメイン（RFC 2606/6761）等のダミー値を除外する。
+// addressTailDashRe は住所候補の末尾にあるダッシュ連結の番地ブロック
+// （マーカーなし。banchiDash と同じ形）を切り出す。
+var addressTailDashRe = regexp.MustCompile(`(\d{1,4}(?:-\d{1,4})+)$`)
+
+// notCalendarDateBanchi は banchiDash（マーカーなしダッシュ連結）で終わる住所候補
+// v の末尾が「YYYY-MM-DD」形の 3 成分で、かつ先頭が西暦として妥当な範囲
+// （1900〜2100）かつ実在する暦日のときだけ棄却する（ISO 日付の誤検出対策）。
+// 2 成分（例: 大字直番地の「1993-1」）は年月とも解釈できてしまい、その形の FN が
+// 大きいため意図的に棄却しない（助詞除外のギャップ制限で実質カバーする）。
+func notCalendarDateBanchi(v string) bool {
+	m := addressTailDashRe.FindStringSubmatch(v)
+	if m == nil {
+		return true
+	}
+	parts := strings.Split(m[1], "-")
+	if len(parts) != 3 {
+		return true
+	}
+	year, err1 := strconv.Atoi(parts[0])
+	month, err2 := strconv.Atoi(parts[1])
+	day, err3 := strconv.Atoi(parts[2])
+	if err1 != nil || err2 != nil || err3 != nil || year < 1900 || year > 2100 {
+		return true
+	}
+	return !validCalendarDate(year, month, day)
+}
+
+// emailDummyWords はメールのダミー値でよく使われるローカル部・ドメイン第 1
+// ラベルの語（personNamePlaceholders と同じ「部分一致 denylist」方式で棄却）。
+// 既知の限界: 部分一致のため、これらの語を偶然含む実在のローカル部・ドメイン
+// （barclays.co.jp の "bar" 等）を巻き添えで棄却しうる。hoge@fuga.co.jp や
+// test1@sample.com のような明らかなダミー値の抑制を優先するトレードオフ。
+var emailDummyWords = []string{"hoge", "fuga", "dummy", "hogehoge", "sample", "foo", "bar"}
+
+// containsEmailDummyWord は s（ローカル部またはドメイン第 1 ラベル）が
+// emailDummyWords のいずれかを部分一致で含むかを返す。
+func containsEmailDummyWord(s string) bool {
+	s = strings.ToLower(s)
+	for _, w := range emailDummyWords {
+		if strings.Contains(s, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// validEmail は予約済みドメイン（RFC 2606/6761）・ダミー値でよく使われる
+// ローカル部/ドメイン語等を除外する。
 func validEmail(m string) bool {
 	at := strings.LastIndexByte(m, '@')
 	if at <= 0 || at == len(m)-1 {
@@ -987,6 +1193,9 @@ func validEmail(m string) bool {
 		if label == "" || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
 			return false
 		}
+	}
+	if containsEmailDummyWord(local) || containsEmailDummyWord(labels[0]) {
+		return false
 	}
 	tld := labels[len(labels)-1]
 	switch tld {

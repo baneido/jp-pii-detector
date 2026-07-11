@@ -260,6 +260,124 @@ func TestReadCSVColumnMismatchIsIgnored(t *testing.T) {
 	}
 }
 
+// TestGenerateMunicipalitiesFromCSV は record[7]（市区町村名）から municipalities.txt を
+// 生成し、郡省略形・政令市の市単独形が併録され、ソート・重複排除されていることを確認する。
+func TestGenerateMunicipalitiesFromCSV(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "KEN_ALL.CSV")
+	out := filepath.Join(dir, "municipalities.txt")
+
+	csv := "" +
+		`"13101","100  ","1000001","ﾄｳｷｮｳﾄ","ﾁﾖﾀﾞｸ","ﾁﾖﾀﾞ","東京都","千代田区","千代田"` + "\n" +
+		// 政令指定都市の区（市＋区連結）→ 市単独形も併録されるはず。
+		`"01101","060  ","0600000","ﾎｯｶｲﾄﾞｳ","ｻｯﾎﾟﾛｼﾁｭｳｵｳｸ","ｲｶﾆ","北海道","札幌市中央区","以下"` + "\n" +
+		`"01102","064  ","0640941","ﾎｯｶｲﾄﾞｳ","ｻｯﾎﾟﾛｼｷﾀｸ","ｱｻﾋｶﾞｵｶ","北海道","札幌市北区","旭ケ丘"` + "\n" +
+		// 郡付きエントリ → 郡省略形も併録されるはず。
+		`"01303","061  ","0610000","ﾎｯｶｲﾄﾞｳ","ｲｼｶﾘｸﾞﾝﾄｳﾍﾞﾂﾁｮｳ","ｲｶﾆ","北海道","石狩郡当別町","以下"` + "\n" +
+		// 「郡」の字を含むが郡区分ではない市名 → 誤って省略しない（実データで踏んだ回帰）。
+		`"40216","838  ","8388601","ﾌｸｵｶｹﾝ","ｵｺﾞｵﾘｼ","ｲｶﾆ","福岡県","小郡市","以下"` + "\n" +
+		// ヶ/ケ 表記ゆれ → ケ に正規化される。
+		`"12222","273  ","2730000","ﾁﾊﾞｹﾝ","ﾂﾙｶﾞｼ","ｲｶﾆ","千葉県","鶴ヶ島市","以下"` + "\n" +
+		// 重複（東京都渋谷区が 2 レコード）→ 1 件に畳まれる。
+		`"13113","150  ","1500000","ﾄｳｷｮｳﾄ","ｼﾌﾞﾔｸ","ｲｶﾆ","東京都","渋谷区","以下"` + "\n" +
+		`"13113","150  ","1500001","ﾄｳｷｮｳﾄ","ｼﾌﾞﾔｸ","ｼﾌﾞﾔ","東京都","渋谷区","渋谷"` + "\n"
+	if err := os.WriteFile(input, []byte(csv), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := generateMunicipalities(input, out); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := splitNonCommentLines(string(data))
+	got := map[string]bool{}
+	for _, l := range lines {
+		if got[l] {
+			t.Errorf("municipalities.txt に重複エントリ: %q", l)
+		}
+		got[l] = true
+	}
+
+	for _, want := range []string{
+		"千代田区", "札幌市中央区", "札幌市北区", "札幌市", // 政令市の区＋市単独形
+		"石狩郡当別町", "当別町", // 郡付き正式表記＋省略形
+		"小郡市",  // 郡の字を含むが郡区分ではない市名はそのまま（省略しない）
+		"鶴ケ島市", // ヶ→ケ正規化
+		"渋谷区",  // 重複排除
+	} {
+		if !got[want] {
+			t.Errorf("municipalities.txt に %q がない: %v", want, lines)
+		}
+	}
+	// 「郡」がついた市名の誤省略（小郡市 → 市）が起きていないこと。
+	if got["市"] || got["上市"] || got["山市"] {
+		t.Errorf("市名に含まれる「郡」の字を郡区分と誤認して省略した: %v", lines)
+	}
+	// 重複排除により渋谷区は 1 回だけ出現する。
+	count := 0
+	for _, l := range lines {
+		if l == "渋谷区" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("渋谷区 の出現数 = %d, want 1", count)
+	}
+}
+
+// TestAddMunicipalityVariants は addMunicipalityVariants 単体で、郡区分と紛らわしい
+// 市名（小郡市・郡山市・郡上市・蒲郡市・大和郡山市。いずれも実データで確認済み）を
+// 誤って郡省略しないことを確認する。
+func TestAddMunicipalityVariants(t *testing.T) {
+	tests := []struct {
+		raw          string
+		wantAbsent   []string
+		wantContains []string
+	}{
+		{"小郡市", []string{"市"}, []string{"小郡市"}},
+		{"郡山市", []string{"市", "山市"}, []string{"郡山市"}},
+		{"郡上市", []string{"上市"}, []string{"郡上市"}},
+		{"蒲郡市", []string{"市"}, []string{"蒲郡市"}},
+		{"大和郡山市", []string{"山市"}, []string{"大和郡山市"}},
+		{"石狩郡当別町", nil, []string{"石狩郡当別町", "当別町"}},
+		{"南秋田郡大潟村", nil, []string{"南秋田郡大潟村", "大潟村"}},
+		{"さいたま市中央区", nil, []string{"さいたま市中央区", "さいたま市"}},
+		{"鶴ヶ島市", nil, []string{"鶴ケ島市"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.raw, func(t *testing.T) {
+			munis := map[string]struct{}{}
+			addMunicipalityVariants(munis, tt.raw)
+			for _, absent := range tt.wantAbsent {
+				if _, ok := munis[absent]; ok {
+					t.Errorf("addMunicipalityVariants(%q) unexpectedly produced %q: %v", tt.raw, absent, munis)
+				}
+			}
+			for _, want := range tt.wantContains {
+				if _, ok := munis[want]; !ok {
+					t.Errorf("addMunicipalityVariants(%q) missing %q: %v", tt.raw, want, munis)
+				}
+			}
+		})
+	}
+}
+
+func splitNonCommentLines(s string) []string {
+	var out []string
+	for _, l := range strings.Split(s, "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" || strings.HasPrefix(l, "#") {
+			continue
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
 func writeZip(path string, files map[string]string) error {
 	f, err := os.Create(path)
 	if err != nil {

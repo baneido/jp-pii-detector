@@ -95,6 +95,16 @@ curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detector/v0.1.8/scri
  go install github.com/baneido/jp-pii-detector/cmd/jp-pii-detect@latest
 ```
 
+### Option 4. Docker / コンテナ
+
+リリースごとに `ghcr.io/baneido/jp-pii-detector` へマルチアーキテクチャ
+（linux/amd64, linux/arm64）イメージを公開しています。インストール不要で実行できるほか、
+GitLab CI などのジョブイメージとしてそのまま使えます（[docs/integrations.md](docs/integrations.md)）。
+
+```sh
+docker run --rm -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.1.8
+```
+
 ## 使い方
 
 ### 1. CLI として利用
@@ -162,7 +172,15 @@ jobs:
 ```
 
 `--format github` を指定すると、検出箇所が PR の該当行にアノテーション表示されます。
-`--format sarif` の出力は GitHub Code Scanning に取り込めます。
+`--format sarif` の出力は GitHub Code Scanning に取り込めます
+（アップロード例は [docs/integrations.md](docs/integrations.md)）。
+
+### 4. その他の CI/CD・開発環境
+
+GitLab CI / CircleCI / Bitbucket Pipelines / Jenkins などコンテナが使える CI、
+lefthook / husky などの git hook マネージャ、mise でのバイナリ管理、Dev Containers
+（VS Code / Codespaces）への組み込みレシピは
+[docs/integrations.md](docs/integrations.md) を参照してください。
 
 ## 設定（.jp-pii.toml）
 
@@ -237,6 +255,8 @@ $ jp-pii-detect scan --baseline .jp-pii-baseline.json --show-baseline .
 
 ## ドキュメント
 
+- [CI/CD・開発環境への組み込み](docs/integrations.md)：コンテナイメージ、GitLab CI /
+  CircleCI / Bitbucket / Jenkins、lefthook / husky、mise、Dev Containers のレシピ
 - [検出手法の調査と整理](docs/detection-methods.md)：検出できる PII の種類、精度の根拠、
   チェックディジットや正規化の仕組み、対象外とした項目とその理由
 - [検出精度（実測値）](docs/accuracy.md)：評価データセットに対するルール別の適合率、再現率、F1
