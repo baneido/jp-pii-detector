@@ -57,23 +57,38 @@ func ag(core string) *regexp.Regexp {
 	return regexp.MustCompile(`(?:^|[^0-9A-Za-z])(` + core + `)(?:[^0-9A-Za-z]|$)`)
 }
 
-// rejectSeparatedDigitGroup は、候補の直後に separators のいずれかと指定桁数の
-// 数字グループが続く場合だけ棄却する ValidateLine を返す。共有境界ガードを
-// 厳しくすると、独立した別番号や年が隣接しただけでも全数値ルールが偽陰性に
-// なるため、長い区切り数字トークンの部分一致が問題になる新規パターンにだけ使う。
+// rejectSeparatedDigitGroup は、候補の直前または直後に separators のいずれかと
+// 指定桁数の数字グループが隣接する場合だけ棄却する ValidateLine を返す。共有境界
+// ガードを厳しくすると、独立した別番号や年が隣接しただけでも全数値ルールが偽陰性
+// になるため、長い区切り数字トークンの部分一致が問題になる新規パターンにだけ使う。
 func rejectSeparatedDigitGroup(separators string, widths ...int) func(string, int, int) bool {
-	return func(line string, _, end int) bool {
-		if end >= len(line) || !strings.ContainsRune(separators, rune(line[end])) {
-			return true
-		}
-		i := end + 1
-		start := i
-		for i < len(line) && line[i] >= '0' && line[i] <= '9' {
-			i++
-		}
-		width := i - start
+	hasRejectedWidth := func(width int) bool {
 		for _, rejected := range widths {
 			if width == rejected {
+				return true
+			}
+		}
+		return false
+	}
+	return func(line string, start, end int) bool {
+		if start > 0 && strings.ContainsRune(separators, rune(line[start-1])) {
+			i := start - 2
+			last := i
+			for i >= 0 && line[i] >= '0' && line[i] <= '9' {
+				i--
+			}
+			if hasRejectedWidth(last - i) {
+				return false
+			}
+		}
+
+		if end < len(line) && strings.ContainsRune(separators, rune(line[end])) {
+			i := end + 1
+			first := i
+			for i < len(line) && line[i] >= '0' && line[i] <= '9' {
+				i++
+			}
+			if hasRejectedWidth(i - first) {
 				return false
 			}
 		}
