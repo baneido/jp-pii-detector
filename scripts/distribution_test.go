@@ -522,14 +522,18 @@ func TestReadmeDocumentsTagPinnedInstaller(t *testing.T) {
 	}
 }
 
-// TestDocsVersionReferencesMatchDocsVersion は README / README.en / docs/integrations.md
-// が案内するリリース版が docsVersion 定数と一致していることを検証する（バージョン表記の
-// 陳腐化を防ぐオフライン検査。ネットワーク不要）。サードパーティのバージョン表記を誤検出
-// しないよう、自プロジェクトを指すマーカーが同一行または直前 2 行以内にある行だけを
-// 対象にする（pre-commit の rev: のようにマーカーと vX.Y.Z が別行になるケースも拾う）。
+// TestDocsVersionReferencesMatchDocsVersion は README / README.en / docs/integrations.md /
+// docs/comparison.md が案内するリリース版が docsVersion 定数と一致していることを検証する
+// （バージョン表記の陳腐化を防ぐオフライン検査。ネットワーク不要）。とくに comparison.md は
+// gitleaks の rev（v8.18.4 等）のようなサードパーティ版数を含むため、単純な全置換はできない。
+// そこで自プロジェクトを指すマーカーが同一行または直前 2 行以内にある行だけを対象にする
+// （pre-commit の rev: のようにマーカーと vX.Y.Z が別行になるケースも拾う）。
 func TestDocsVersionReferencesMatchDocsVersion(t *testing.T) {
 	verRe := regexp.MustCompile(`\bv\d+\.\d+\.\d+\b`)
 	// これらのいずれかが近傍にある行だけを検査対象とし、他ツールの rev 指定などへの誤爆を避ける。
+	// このマーカー一覧は release.yml の docs ジョブ（バージョン自動更新の置換ロジック）と
+	// 同期している必要がある。片方だけ変更すると、自動 PR の置換対象と CI の検査対象が
+	// 食い違うので、両方を必ず一緒に更新すること。
 	markers := []string{
 		"jp-pii-detector",
 		"jp-pii-detect",
@@ -546,7 +550,7 @@ func TestDocsVersionReferencesMatchDocsVersion(t *testing.T) {
 	}
 	// README.en.md は未整備のことがあるが、勝手に対象から外さない。存在しなければ
 	// その subtest だけを t.Fatalf で落とす（最終検証は統括側で行う）。
-	for _, rel := range []string{"README.md", "README.en.md", filepath.Join("docs", "integrations.md")} {
+	for _, rel := range []string{"README.md", "README.en.md", filepath.Join("docs", "integrations.md"), filepath.Join("docs", "comparison.md")} {
 		t.Run(rel, func(t *testing.T) {
 			data, err := os.ReadFile(filepath.Join(repoRoot(t), rel))
 			if err != nil {
