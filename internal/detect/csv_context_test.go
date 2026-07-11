@@ -121,6 +121,39 @@ func TestSplitCSVLineUnterminatedQuoteFallsBack(t *testing.T) {
 	}
 }
 
+// RFC 4180 で許されない引用符構文は、列を誤帰属させないため不成立にする。
+func TestSplitCSVLineRejectsMalformedQuotes(t *testing.T) {
+	for _, line := range []string{
+		`a,"b"junk,c`, // 閉じ引用符の後に区切り文字以外が続く
+		`a,b"c,d`,     // 非引用フィールド内に引用符が現れる
+	} {
+		t.Run(line, func(t *testing.T) {
+			if _, terminated := splitCSVLine(line, ','); terminated {
+				t.Fatalf("splitCSVLine(%q) terminated = true, want false", line)
+			}
+		})
+	}
+}
+
+// 不正な引用符を含むレコード以降は列境界を信頼せず、後続行にも列文脈を
+// 付与しない。malformed CSV による誤検出を安全側に倒す回帰テスト。
+func TestCSVColumnContextStopsAfterMalformedQuotes(t *testing.T) {
+	lines := []string{
+		"備考,口座番号",
+		`"社内"junk,1234567`,
+		"社内,7654321",
+	}
+	contexts := csvLineContexts("data.csv", lines)
+	if len(contexts) != len(lines) {
+		t.Fatalf("contexts = %d 行, want %d", len(contexts), len(lines))
+	}
+	for i := 1; i < len(contexts); i++ {
+		if len(contexts[i].Statements) != 0 {
+			t.Errorf("line %d statements = %+v, want none", i+1, contexts[i].Statements)
+		}
+	}
+}
+
 func TestLooksLikeCSVHeader(t *testing.T) {
 	tests := []struct {
 		name string
