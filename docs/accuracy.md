@@ -5,6 +5,8 @@
 `go test ./internal/eval` で検証され（[eval_test.go](../internal/eval/eval_test.go)）、
 `-update` で本ファイルを再生成します。
 
+評価コーパスID: `legacy`（生データのハッシュや本文は公開しません）。
+
 README バッジと下表の主指標は、ルール自体の検出能力を見るため `min_confidence=low`、
 高再現率ルール無効の既存プロファイルで計測しています。評価ケースは単一行（`line`）に加え、
 複数行入力（`content`）と diff hunk（`diff`: 追加行のみを報告）も表現できます。

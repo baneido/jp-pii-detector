@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/baneido/jp-pii-detector/internal/piifixtures"
+	"github.com/baneido/jp-pii-detector/internal/testfixtures"
 )
 
 // このファイルは internal/rule のヘルパー関数（validPhone / validEmail /
@@ -17,23 +17,22 @@ import (
 // validPhone はマッチ文字列を受け取り、区切り文字（- / 半角スペース）や先頭の "+" を除去した上で、
 // 桁数・先頭桁・国番号（+81）規則を満たす電話番号だけを有効とする。
 func TestValidPhone(t *testing.T) {
-	piifixtures.Require(t)
 	tests := []struct {
 		name string
 		in   string
 		want bool
 	}{
 		// ---- 有効（実在形式の値はフィクスチャから取得）----
-		{"携帯 区切りあり", piifixtures.MustGet(t, "rule.phone_mobile_sep"), true},
-		{"携帯 区切りなし", piifixtures.MustGet(t, "rule.phone_mobile_nosep"), true},
-		{"固定 10 桁", piifixtures.MustGet(t, "rule.phone_landline_sep"), true},
+		{"携帯 区切りあり", testfixtures.MustGet(t, "rule.phone_mobile_sep"), true},
+		{"携帯 区切りなし", testfixtures.MustGet(t, "rule.phone_mobile_nosep"), true},
+		{"固定 10 桁", testfixtures.MustGet(t, "rule.phone_landline_sep"), true},
 		{"固定 10 桁・seed 辞書未収録の市外局番", "04992-2-1234", true},
 		// 新規 fixture キーを増やさず、既存の区切りあり固定電話から同じ番号の
 		// 区切りなし表記を作って市外局番辞書による validPhone 拡張を検証する。
-		{"固定 10 桁 区切りなし", stripSeparators(piifixtures.MustGet(t, "detect.phone_fixed_tokyo")), true},
-		{"IP 電話", piifixtures.MustGet(t, "rule.phone_ip_sep"), true},
-		{"国際表記 携帯", piifixtures.MustGet(t, "rule.phone_mobile_intl"), true},
-		{"国際表記 固定 9 桁", piifixtures.MustGet(t, "rule.phone_landline_intl"), true},
+		{"固定 10 桁 区切りなし", stripSeparators(testfixtures.MustGet(t, "detect.phone_fixed_tokyo")), true},
+		{"IP 電話", testfixtures.MustGet(t, "rule.phone_ip_sep"), true},
+		{"国際表記 携帯", testfixtures.MustGet(t, "rule.phone_mobile_intl"), true},
+		{"国際表記 固定 9 桁", testfixtures.MustGet(t, "rule.phone_landline_intl"), true},
 		// ---- 無効（意図的に不正な値・実在 PII ではないため inline）----
 		{"桁数不正（9 桁）", "0123-456-78", false},
 		{"第 2 桁が 0", "00-1234-5678", false},

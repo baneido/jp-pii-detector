@@ -1,4 +1,5 @@
 {
+  "dataset_id": "legacy",
   "rules": [
     {
       "rule_id": "credit-card",

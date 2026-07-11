@@ -22,9 +22,10 @@ $ go test -race ./...            # データ競合の検査（並列スキャン
 $ go vet ./...                   # 静的解析
 ```
 
-評価データセットはリポジトリ外（環境変数 `$JP_PII_FIXTURES`）で管理されています。
-未設定でも eval 系テストは自動的にスキップされ、`go test ./...` は green のままになります。
-取得手順は [docs/development.md](docs/development.md) を参照してください。
+通常の単体・結合テストは `internal/testfixtures` の公開合成値だけで完結します。
+実在しうる値を含む非公開評価コーパスは `$JP_PII_FIXTURES` で明示的に渡し、
+precision / recall / F1 の計測にだけ使います。取得・一時実行・明示キャッシュの手順は
+[docs/development.md](docs/development.md) を参照してください。
 
 ## 検出ルールの追加・変更
 
@@ -43,8 +44,8 @@ $ go vet ./...                   # 静的解析
 
 ## 実 PII を貼らない
 
-テストケース・issue・PR のいずれにも、実在する PII を含めないでください。必ずダミー化した値を
-使ってください。
+テストケース・issue・PR のいずれにも、採取した PII を含めないでください。公開テストでは
+`internal/testfixtures`、予約済み値、公開された非個人属性だけを使い、生値を失敗ログへ出さないでください。
 
 ## Pull Request
 

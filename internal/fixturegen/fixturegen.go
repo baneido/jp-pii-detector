@@ -1,7 +1,7 @@
 // Package fixturegen は「ルール × 表記ゆれ」のマトリクスに沿った合成評価ケース
-// （internal/piifixtures.Case）を生成する。値はすべて checksum のチェックディジット
-// 算出ロジックや dict の実在辞書から逆算した計算合成で、リテラルの実在 PII は
-// ソースに一切含まれない（ドッグフード CI 対策。GitHub Issue #70 のリスク節を参照）。
+// （internal/evalcase.Case）を生成する。値はすべて checksum のチェックディジット
+// 算出ロジックや公開dictから作る合成値で、人物レコードから採取したPIIは
+// ソースに含まれない。生成値が実在する番号空間と偶然一致しないことは保証しない。
 //
 // 対応ルールは、値の妥当性を検証だけでなく合成もできる（チェックディジットを
 // 逆算できる、または実在辞書から抽出できる）ものに限定している:
@@ -15,33 +15,49 @@
 //   - person-name: dict.SurnameSample / dict.GivenNameSample で姓名辞書から
 //     実在する姓・名を抽出する。
 //
-// 生成物は internal/piifixtures の JSON スキーマ（dataset 配列）に互換な
-// []piifixtures.Case で、cmd/pii-dataset-gen が JSON として書き出す。出力は
-// レビューのうえ外部データセット（GCS）へ人手でマージする運用を想定しており、
-// このリポジトリにはコミットしない。
+// 生成物は internal/evalcase の JSON スキーマ（dataset 配列）に互換な
+// []evalcase.Case で、cmd/pii-dataset-gen が JSON として書き出す。出力は
+// private corpusのF1分母へはマージせず、仕様契約のpass/failにだけ使う。
 package fixturegen
 
 import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/baneido/jp-pii-detector/internal/dict"
-	"github.com/baneido/jp-pii-detector/internal/piifixtures"
+	"github.com/baneido/jp-pii-detector/internal/evalcase"
 )
 
-// SourceTag はこのパッケージが生成したケースすべてに付与するタグ。実採取
-// データセットと区別し、マクロ平均・層別集計で合成データの重みを緩和するために使う
-// （Issue #70 のリスク節: 「タグで合成/実採取を区別」）。
+// SourceTag はこのパッケージが生成したケースすべてに付与するタグ。非公開評価
+// コーパスと混ぜず、公開の仕様契約として層別集計するために使う。
 const SourceTag = "source:synthetic"
 
 // Generate はすべての対応ルールの合成ケースを結合して返す。
-func Generate() []piifixtures.Case {
-	var cases []piifixtures.Case
+func Generate() []evalcase.Case {
+	var cases []evalcase.Case
 	cases = append(cases, MyNumberCases()...)
 	cases = append(cases, CreditCardCases()...)
 	cases = append(cases, PostalCodeCases()...)
 	cases = append(cases, PersonNameCases()...)
+	counts := map[string]int{}
+	for i := range cases {
+		key := "negative"
+		if len(cases[i].Want) > 0 {
+			key = cases[i].Want[0]
+		} else {
+			for _, tag := range cases[i].Tags {
+				if strings.HasPrefix(tag, "rule:") {
+					key = strings.TrimPrefix(tag, "rule:") + "-negative"
+					break
+				}
+			}
+		}
+		counts[key]++
+		cases[i].ID = fmt.Sprintf("synthetic-%s-%03d", key, counts[key])
+		cases[i].SourceClass = "algorithmic"
+	}
 	return cases
 }
 
@@ -62,6 +78,23 @@ func groupDigits(digits string, widths []int, sep string) string {
 		i += w
 	}
 	return b.String()
+}
+
+// expectedSpan は line 内の value に対する期待スパンを作る。検出器と同じ
+// ルーンオフセットを使い、生成ロジックの変更で期待位置も追従させる。
+func expectedSpan(line, value, ruleID, confidence string, lineNo int) []evalcase.Span {
+	byteStart := strings.Index(line, value)
+	if byteStart < 0 {
+		panic("fixturegen: value is not contained in line")
+	}
+	start := utf8.RuneCountInString(line[:byteStart])
+	return []evalcase.Span{{
+		RuleID:         ruleID,
+		Line:           lineNo,
+		Start:          start,
+		End:            start + utf8.RuneCountInString(value),
+		WantConfidence: confidence,
+	}}
 }
 
 // toFullWidthDigits は ASCII 数字とハイフンを全角に変換する（normalize.Line の
@@ -121,7 +154,8 @@ func myNumberCheckDigit(base11 string) int {
 }
 
 // syntheticMyNumber は seed ごとに異なる（全桁同一にならない）11 桁の基底列から
-// checksum.MyNumber を満たす 12 桁の合成マイナンバーを返す。実在のマイナンバーではない。
+// checksum.MyNumber を満たす12桁の合成値を返す。採取値ではないが、
+// 実在する番号空間との偶然一致までは否定しない。
 func syntheticMyNumber(seed int) string {
 	base := make([]byte, 11)
 	for i := range base {
@@ -135,7 +169,7 @@ func syntheticMyNumber(seed int) string {
 
 // syntheticCardNumber は prefix（ブランドのプレフィックス）から始まる length 桁の、
 // checksum.CreditCard（ブランド判定 + Luhn）を満たす合成カード番号を返す。
-// 実在のカード番号ではない。
+// 採取値ではないが、番号空間との偶然一致までは否定しない。
 func syntheticCardNumber(prefix string, length int) string {
 	payload := prefix
 	for len(payload) < length-1 {
@@ -151,7 +185,7 @@ func syntheticCardNumber(prefix string, length int) string {
 // ---- jp-my-number ----
 
 // MyNumberCases はマイナンバーのラベル語彙 × 区切り × 全角/半角のマトリクスを返す。
-func MyNumberCases() []piifixtures.Case {
+func MyNumberCases() []evalcase.Case {
 	labels := []struct{ tag, text string }{
 		{"label:jp-strong", "マイナンバー"},
 		{"label:jp-alt", "個人番号"},
@@ -173,7 +207,7 @@ func MyNumberCases() []piifixtures.Case {
 		{"notation:fullwidth", true},
 	}
 
-	var cases []piifixtures.Case
+	var cases []evalcase.Case
 	for i, lbl := range labels {
 		digits := syntheticMyNumber(i)
 		for _, sp := range seps {
@@ -183,10 +217,12 @@ func MyNumberCases() []piifixtures.Case {
 				if w.full {
 					value = toFullWidthDigits(grouped)
 				}
-				cases = append(cases, piifixtures.Case{
-					Line: lbl.text + "：" + value, // ：: 全角コロン
-					Want: []string{"jp-my-number"},
-					Tags: []string{SourceTag, "rule:jp-my-number", lbl.tag, sp.tag, w.tag},
+				line := lbl.text + "：" + value
+				cases = append(cases, evalcase.Case{
+					Line:  line, // ：: 全角コロン
+					Want:  []string{"jp-my-number"},
+					Spans: expectedSpan(line, value, "jp-my-number", "high", 0),
+					Tags:  []string{SourceTag, "rule:jp-my-number", lbl.tag, sp.tag, w.tag},
 				})
 			}
 		}
@@ -223,7 +259,7 @@ var creditCardGrouping = map[string][]int{
 }
 
 // CreditCardCases はクレジットカードのブランド × 区切り × 全角/半角のマトリクスを返す。
-func CreditCardCases() []piifixtures.Case {
+func CreditCardCases() []evalcase.Case {
 	seps := []struct {
 		tag string
 		sep string
@@ -240,7 +276,7 @@ func CreditCardCases() []piifixtures.Case {
 		{"notation:fullwidth", true},
 	}
 
-	var cases []piifixtures.Case
+	var cases []evalcase.Case
 	for _, brand := range cardBrands {
 		digits := syntheticCardNumber(brand.prefix, brand.length)
 		widthsGroup := creditCardGrouping[brand.tag]
@@ -255,10 +291,12 @@ func CreditCardCases() []piifixtures.Case {
 				if w.full {
 					value = toFullWidthDigits(grouped)
 				}
-				cases = append(cases, piifixtures.Case{
-					Line: "カード番号：" + value, // "カード番号："
-					Want: []string{"credit-card"},
-					Tags: []string{SourceTag, "rule:credit-card", brand.tag, sp.tag, w.tag},
+				line := "カード番号：" + value
+				cases = append(cases, evalcase.Case{
+					Line:  line, // "カード番号："
+					Want:  []string{"credit-card"},
+					Spans: expectedSpan(line, value, "credit-card", "high", 0),
+					Tags:  []string{SourceTag, "rule:credit-card", brand.tag, sp.tag, w.tag},
 				})
 			}
 		}
@@ -271,9 +309,9 @@ func CreditCardCases() []piifixtures.Case {
 // PostalCodeCases は実在する郵便番号（dict.SamplePostalCodes）に対する、
 // 〒記号/ラベル語/ラベルなしのマトリクスを返す。ラベルなしケースは
 // RequireContext で棄却される陰性ケース（polarity:negative）として含める。
-func PostalCodeCases() []piifixtures.Case {
+func PostalCodeCases() []evalcase.Case {
 	codes := dict.SamplePostalCodes(2)
-	var cases []piifixtures.Case
+	var cases []evalcase.Case
 	for _, code := range codes {
 		hyphenated := code[:3] + "-" + code[3:]
 
@@ -292,12 +330,21 @@ func PostalCodeCases() []piifixtures.Case {
 			{[]string{"format:bare", "sep:none", "polarity:negative"}, code + "を入力", false},
 		}
 		for _, v := range variants {
-			c := piifixtures.Case{
+			c := evalcase.Case{
 				Line: v.line,
 				Tags: append([]string{SourceTag, "rule:jp-postal-code"}, v.tags...),
 			}
 			if v.match {
 				c.Want = []string{"jp-postal-code"}
+				value := hyphenated
+				confidence := "medium"
+				if strings.Contains(v.tags[0], "mark") {
+					value = v.line
+					confidence = "high"
+				} else if strings.Contains(v.tags[2], "fullwidth") {
+					value = toFullWidthDigits(hyphenated)
+				}
+				c.Spans = expectedSpan(v.line, value, "jp-postal-code", confidence, 0)
 			}
 			cases = append(cases, c)
 		}
@@ -309,18 +356,20 @@ func PostalCodeCases() []piifixtures.Case {
 	if len(codes) > 0 {
 		hyphenated := codes[0][:3] + "-" + codes[0][3:]
 		cases = append(cases,
-			piifixtures.Case{
+			evalcase.Case{
 				Content: "郵便番号\n" + hyphenated, // ラベル行 + 値行（値は実行時に合成する。コメントへの値の例示は避ける）
 				Want:    []string{"jp-postal-code"},
+				Spans:   expectedSpan(hyphenated, hyphenated, "jp-postal-code", "medium", 2),
 				Tags:    []string{SourceTag, "rule:jp-postal-code", "layout:cross-line", "format:bare", "sep:hyphen"},
 			},
-			piifixtures.Case{
-				Diff: []piifixtures.DiffLine{
+			evalcase.Case{
+				Diff: []evalcase.DiffLine{
 					{Text: "郵便番号", Added: false},
 					{Text: hyphenated, Added: true},
 				},
-				Want: []string{"jp-postal-code"},
-				Tags: []string{SourceTag, "rule:jp-postal-code", "layout:cross-line", "format:bare", "sep:hyphen"},
+				Want:  []string{"jp-postal-code"},
+				Spans: expectedSpan(hyphenated, hyphenated, "jp-postal-code", "medium", 2),
+				Tags:  []string{SourceTag, "rule:jp-postal-code", "layout:cross-line", "format:bare", "sep:hyphen"},
 			},
 		)
 	}
@@ -336,7 +385,7 @@ func PostalCodeCases() []piifixtures.Case {
 const personNamePairCount = 5
 
 // PersonNameCases は氏名辞書からの姓名ペア × ラベル種別のマトリクスを返す。
-func PersonNameCases() []piifixtures.Case {
+func PersonNameCases() []evalcase.Case {
 	// 弱いラベル（姓・名単独）は 2 文字以上でないと単独要素として通らない
 	// （internal/rule.validNameField）ため、2 文字以上の候補だけを使う。
 	// 辞書全体ではなく personNamePairCount 件ぶんだけ確保できればよいが、
@@ -346,7 +395,7 @@ func PersonNameCases() []piifixtures.Case {
 	givens := filterMinRunes(dict.GivenNameSample(pool), 2, 4)
 	n := min(personNamePairCount, len(surnames), len(givens))
 
-	var cases []piifixtures.Case
+	var cases []evalcase.Case
 	for i := 0; i < n; i++ {
 		surname, given := surnames[i], givens[i]
 		full := surname + given
@@ -354,27 +403,32 @@ func PersonNameCases() []piifixtures.Case {
 		fullFullwidthSpace := surname + "　" + given // 全角スペース
 
 		cases = append(cases,
-			nameCase("氏名："+full, []string{"label:jp-strong", "format:packed"}),                          // "氏名："
-			nameCase("氏名："+fullSpaced, []string{"label:jp-strong", "format:spaced"}),                    // "氏名："
-			nameCase("氏名："+fullFullwidthSpace, []string{"label:jp-strong", "notation:fullwidth-space"}), // "氏名："
-			nameCase("full_name="+full, []string{"label:ascii-strong", "format:packed"}),
-			nameCase("姓："+surname, []string{"label:weak-surname"}), // "姓："
-			nameCase("名："+given, []string{"label:weak-given"}),     // "名："
-			nameCase("name: "+full, []string{"label:weak-ascii-bare"}),
+			nameCase("氏名："+full, full, []string{"label:jp-strong", "format:packed"}),                                        // "氏名："
+			nameCase("氏名："+fullSpaced, fullSpaced, []string{"label:jp-strong", "format:spaced"}),                            // "氏名："
+			nameCase("氏名："+fullFullwidthSpace, fullFullwidthSpace, []string{"label:jp-strong", "notation:fullwidth-space"}), // "氏名："
+			nameCase("full_name="+full, full, []string{"label:ascii-strong", "format:packed"}),
+			nameCase("姓："+surname, surname, []string{"label:weak-surname"}), // "姓："
+			nameCase("名："+given, given, []string{"label:weak-given"}),       // "名："
+			nameCase("name: "+full, full, []string{"label:weak-ascii-bare"}),
 		)
 	}
 	// 陰性ケース: 弱い ASCII ラベルはあるが値が辞書に無い（人名らしくない）ため
 	// 棄却されるべきケース（表記ゆれではなく値バリデーションの回帰確認。1 件で十分）。
-	cases = append(cases, piifixtures.Case{
+	cases = append(cases, evalcase.Case{
 		Line: "name: プロジェクト", // "name: プロジェクト"
 		Tags: []string{SourceTag, "rule:person-name", "label:weak-ascii-bare", "polarity:negative"},
 	})
 	return cases
 }
 
-func nameCase(line string, extraTags []string) piifixtures.Case {
+func nameCase(line, value string, extraTags []string) evalcase.Case {
 	tags := append([]string{SourceTag, "rule:person-name"}, extraTags...)
-	return piifixtures.Case{Line: line, Want: []string{"person-name"}, Tags: tags}
+	return evalcase.Case{
+		Line:  line,
+		Want:  []string{"person-name"},
+		Spans: expectedSpan(line, value, "person-name", "medium", 0),
+		Tags:  tags,
+	}
 }
 
 // filterMinRunes は minRunes 以上 maxRunes 以下のルーン数を持つ要素だけを残す。
@@ -391,23 +445,21 @@ func filterMinRunes(list []string, minRunes, maxRunes int) []string {
 
 // ---- JSON 書き出し（cmd/pii-dataset-gen 用） ----
 
-// File は internal/piifixtures が読み込む JSON スキーマ
-// （{"strings": {...}, "dataset": [...]}）と互換の書き出し用構造体。
-// fixturegen が計算合成するケースは Strings（生 PII 文字列の定数プール）を
-// 使わないため常に空。
+// File は internal/evalcase が読み込む JSON スキーマと互換の書き出し用構造体。
 type File struct {
-	Strings map[string]string  `json:"strings"`
-	Dataset []piifixtures.Case `json:"dataset"`
+	SchemaVersion int             `json:"schema_version"`
+	DatasetID     string          `json:"dataset_id"`
+	Dataset       []evalcase.Case `json:"dataset"`
 }
 
 // GenerateFile はデータセット全体を File として返す（JSON マーシャルは
 // 呼び出し側 / cmd/pii-dataset-gen に任せる）。
 func GenerateFile() File {
-	return File{Strings: map[string]string{}, Dataset: Generate()}
+	return File{SchemaVersion: 1, DatasetID: "synthetic-contract-v1", Dataset: Generate()}
 }
 
 // Summary はルール ID ごとの生成件数を人間可読な文字列で返す（CLI のログ用）。
-func Summary(cases []piifixtures.Case) string {
+func Summary(cases []evalcase.Case) string {
 	counts := map[string]int{}
 	var order []string
 	for _, c := range cases {

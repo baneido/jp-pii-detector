@@ -11,16 +11,15 @@ import (
 
 	"github.com/baneido/jp-pii-detector/internal/config"
 	"github.com/baneido/jp-pii-detector/internal/detect"
-	"github.com/baneido/jp-pii-detector/internal/piifixtures"
+	"github.com/baneido/jp-pii-detector/internal/evalcase"
+	"github.com/baneido/jp-pii-detector/internal/privatecorpus"
 )
 
-// Case / Span は評価ケースとその期待検出範囲。実在しうる PII を含む
-// 評価データセットは piifixtures（リポジトリ外 JSON）から読み込むため、
-// 型定義は piifixtures に置き、ここでは型別名で参照する。
+// Case / Span はデータの取得方法に依存しない評価モデル。
 type (
-	Case     = piifixtures.Case
-	Span     = piifixtures.Span
-	DiffLine = piifixtures.DiffLine
+	Case     = evalcase.Case
+	Span     = evalcase.Span
+	DiffLine = evalcase.DiffLine
 )
 
 // Score は TP/FP/FN と、それらから算出した指標。
@@ -59,9 +58,9 @@ type Options struct {
 
 // Evaluate はデータセット全体を走査し、ルールごとの指標を返す。
 // すべてのルールを評価対象にするため min_confidence=low で検出する。
-// ErrNoDataset は評価データセット（piifixtures）が取得できないことを表す。
+// ErrNoDataset は非公開評価コーパスが未設定であることを表す。
 // 認証情報やフィクスチャ JSON が無い環境では、呼び出し側テストが Skip する。
-var ErrNoDataset = errors.New("評価データセットが利用できません（" + piifixtures.EnvVar + " を設定してください）")
+var ErrNoDataset = errors.New("評価データセットが利用できません（" + privatecorpus.EnvVar + " を設定してください）")
 
 func Evaluate() ([]Result, error) {
 	return EvaluateWithOptions(Options{MinConfidence: "low"})
@@ -72,14 +71,17 @@ func Evaluate() ([]Result, error) {
 // 開発時には既定 CLI 相当（medium）や high-recall 有効時の指標も同じハーネスで
 // 計測できる。
 func EvaluateWithOptions(opts Options) ([]Result, error) {
-	cases, ok := piifixtures.Dataset()
-	if !ok {
+	corpus, configured, err := privatecorpus.FromEnv()
+	if err != nil {
+		return nil, err
+	}
+	if !configured {
 		return nil, ErrNoDataset
 	}
-	return EvaluateCasesWithOptions(cases, opts)
+	return EvaluateCasesWithOptions(corpus.Dataset, opts)
 }
 
-// EvaluateCases は指定されたケース集合を評価する。Evaluate は piifixtures から
+// EvaluateCases は指定されたケース集合を評価する。Evaluate は privatecorpus から
 // 読み込んだ外部データセットをこれに渡す薄いラッパーで、テストは任意のケースを渡せる。
 func EvaluateCases(cases []Case) ([]Result, error) {
 	return EvaluateCasesWithOptions(cases, Options{MinConfidence: "low"})
@@ -110,21 +112,24 @@ type Stratified struct {
 	Kinds map[string]Score
 }
 
-// EvaluateStratified は piifixtures の外部データセットを Evaluate 相当の
+// EvaluateStratified は privatecorpus の外部データセットを Evaluate 相当の
 // 既定オプション（min_confidence=low）で評価し、タグ別・ケース種別別の
 // 層別集計も返す。
 func EvaluateStratified() (Stratified, error) {
 	return EvaluateStratifiedWithOptions(Options{MinConfidence: "low"})
 }
 
-// EvaluateStratifiedWithOptions は piifixtures の外部データセットを指定
+// EvaluateStratifiedWithOptions は privatecorpus の外部データセットを指定
 // オプションで評価し、タグ別・ケース種別別の層別集計も返す。
 func EvaluateStratifiedWithOptions(opts Options) (Stratified, error) {
-	cases, ok := piifixtures.Dataset()
-	if !ok {
+	corpus, configured, err := privatecorpus.FromEnv()
+	if err != nil {
+		return Stratified{}, err
+	}
+	if !configured {
 		return Stratified{}, ErrNoDataset
 	}
-	return EvaluateCasesStratifiedWithOptions(cases, opts)
+	return EvaluateCasesStratifiedWithOptions(corpus.Dataset, opts)
 }
 
 // EvaluateCasesStratifiedWithOptions は EvaluateCasesWithOptions と同じ評価を
@@ -335,7 +340,7 @@ func caseKind(c Case) string {
 }
 
 // confidenceRankOrder は rule.Confidence の順序を文字列表現のまま比較するための
-// 対応表（detect.DetectReason.FinalConfidence / piifixtures.Span.WantConfidence は
+// 対応表（detect.DetectReason.FinalConfidence / evalcase.Span.WantConfidence は
 // いずれも "low"|"medium"|"high" の文字列のため、ここでは internal/rule に依存しない）。
 var confidenceRankOrder = map[string]int{"low": 1, "medium": 2, "high": 3}
 
@@ -386,6 +391,9 @@ func scanCase(d *detect.Detector, c Case) ([]detect.Finding, error) {
 }
 
 func caseLabel(c Case) string {
+	if c.ID != "" {
+		return "id:" + c.ID
+	}
 	switch {
 	case len(c.Diff) > 0:
 		return fmt.Sprintf("diff:%d lines", len(c.Diff))

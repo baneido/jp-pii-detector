@@ -1,14 +1,10 @@
 // Command pii-dataset-gen は internal/fixturegen が計算合成する「ルール ×
-// 表記ゆれ」マトリクスの評価ケースを、internal/piifixtures と互換の JSON
-// （{"strings": {...}, "dataset": [...]}）として書き出す。
+// 表記ゆれ」マトリクスの合成契約ケースを、version付きJSONとして書き出す。
 //
 // 出力する値はすべて checksum のチェックディジット算出ロジックや dict の実在辞書
-// から計算合成したもので、リテラルの実在 PII ではない（internal/fixturegen の
-// パッケージコメントを参照）。ただし、既存の外部評価データセット
-// （internal/piifixtures が JP_PII_FIXTURES から読み込む GCS 管理の JSON）と
-// マージする際は、レビューのうえ人手で行うこと。この CLI 自体は GCS への
-// アップロードを行わず、出力先はこのリポジトリの管理外のパスを指定すること
-// （このリポジトリへコミットしない。ドッグフード CI 対策）。
+// から計算合成したもので、人物レコードから採取していない。ただし実在番号空間との
+// 偶然一致は保証できないため、値をログへ出さず、private corpusや公式F1へ混ぜない。
+// このCLIはGCSへ書き込まず、出力先はリポジトリ管理外を指定する。
 //
 //	go run ./cmd/pii-dataset-gen -output /path/outside/repo/synthetic-cases.json
 package main
@@ -23,7 +19,7 @@ import (
 )
 
 func main() {
-	output := flag.String("output", "", "output JSON path (piifixtures-compatible; must NOT be committed to this repo)")
+	output := flag.String("output", "", "output JSON path for synthetic contract cases; must NOT be committed")
 	flag.Parse()
 
 	if *output == "" || flag.NArg() != 0 {
@@ -52,6 +48,6 @@ func run(output string, stdout, stderr *os.File) error {
 
 	fmt.Fprintf(stdout, "wrote %d synthetic cases to %s\n", len(file.Dataset), output)
 	fmt.Fprint(stdout, fixturegen.Summary(file.Dataset))
-	fmt.Fprintln(stderr, "warning: review before merging into the external JP_PII_FIXTURES dataset; do not commit this file to the repository")
+	fmt.Fprintln(stderr, "warning: synthetic contract data must not be merged into the private accuracy corpus or committed")
 	return nil
 }

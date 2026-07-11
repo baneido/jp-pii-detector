@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/baneido/jp-pii-detector/internal/config"
-	"github.com/baneido/jp-pii-detector/internal/piifixtures"
+	"github.com/baneido/jp-pii-detector/internal/testfixtures"
 )
 
 func benchDetector(b *testing.B) *Detector {
@@ -48,9 +48,8 @@ func BenchmarkScanLineJapaneseNoMatch(b *testing.B) {
 
 // 検出がヒットする行。
 func BenchmarkScanLineHit(b *testing.B) {
-	piifixtures.Require(b)
 	d := benchDetector(b)
-	line := "電話番号：" + piifixtures.MustGet(b, "detect.phone_mobile_fullwidth")
+	line := "電話番号：" + testfixtures.MustGet(b, "detect.phone_mobile_fullwidth")
 	b.ReportAllocs()
 	for b.Loop() {
 		d.ScanLine("f.txt", 1, line)

@@ -3,6 +3,13 @@ on:
   push:
     branches: [main]
   pull_request:
+  # main上のworkflowから、レビュー済みcommitを保守者が明示評価できる。
+  workflow_dispatch:
+    inputs:
+      eval_ref:
+        description: '評価するレビュー済みcommit SHA（40桁）'
+        required: true
+        type: string
 
 # 同一ブランチ/PR の古い進行中ランを新しいランで置き換え、無駄な実行を避ける
 concurrency:
@@ -58,11 +65,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write # GCP Workload Identity Federation（OIDC）に必要
-    env:
-      # 信頼できる実行か（push か同一リポジトリの PR）。fork からの PR では false。
-      # fork PR には実在しうる PII を含むフィクスチャを取得させない（OIDC トークン悪用の防止）。
-      TRUSTED: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -72,53 +74,80 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # 実在しうる PII を含む評価データセット/フィクスチャを GCS から取得する。
-      # 取得は「信頼できる実行（push / 同一リポジトリ PR）」かつリポジトリ変数が設定された場合のみ。
-      # fork からの PR では TRUSTED=false のため取得せず、後続の PR 側コードがフィクスチャを読めない。
+      # 公開テストレーンは認証・非公開コーパスに依存せず、fork PR でも同じ範囲を実行する。
+      - run: go vet ./...
+      - run: go test -race ./...
+      - run: go build ./cmd/jp-pii-detect
+      - run: ./jp-pii-detect scan --format github .
+
+  private-eval:
+    name: private-eval
+    # 非公開平文をPRコードへ自動配布しない。mainへのpush、または保守者の明示実行だけで評価する。
+    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Validate explicitly selected commit
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          EVAL_REF: ${{ inputs.eval_ref }}
+        run: |
+          if ! [[ "$EVAL_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "::error::eval_refには40桁のcommit SHAを指定してください。"
+            exit 1
+          fi
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.eval_ref || github.sha }}
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
       - name: Authenticate to Google Cloud (OIDC / Workload Identity)
-        if: ${{ env.TRUSTED == 'true' && vars.JP_PII_FIXTURES_PROVIDER != '' }}
+        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
         uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
           workload_identity_provider: ${{ vars.JP_PII_FIXTURES_PROVIDER }}
           service_account: ${{ vars.JP_PII_FIXTURES_SA }}
       - name: Set up gcloud
-        if: ${{ env.TRUSTED == 'true' && vars.JP_PII_FIXTURES_PROVIDER != '' }}
+        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
         uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
       - name: Download PII fixtures from GCS
-        if: ${{ env.TRUSTED == 'true' && vars.JP_PII_FIXTURES_PROVIDER != '' }}
+        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
         env:
           FIXTURES_BUCKET: ${{ vars.JP_PII_FIXTURES_BUCKET }}
+          FIXTURES_GENERATION: ${{ vars.JP_PII_FIXTURES_GENERATION }}
         run: |
           set -eu
-          # runner コンテキストは job-level env では使えないため、shell 側の
-          # $RUNNER_TEMP と GITHUB_ENV で後続ステップへ渡す。
           dest="$RUNNER_TEMP/pii-fixtures.json"
-          gcloud storage cp "gs://$FIXTURES_BUCKET/pii-fixtures.json" "$dest"
+          object=$(jq -r '.object' fixtures.lock.json)
+          lock_generation=$(jq -r '.generation' fixtures.lock.json)
+          source="gs://$FIXTURES_BUCKET/$object"
+          if [ -z "${FIXTURES_GENERATION:-}" ]; then
+            FIXTURES_GENERATION="$lock_generation"
+          fi
+          if [ -n "${FIXTURES_GENERATION:-}" ]; then
+            source="${source}#${FIXTURES_GENERATION}"
+          fi
+          gcloud storage cp "$source" "$dest"
+          chmod 600 "$dest"
           echo "JP_PII_FIXTURES=$dest" >> "$GITHUB_ENV"
       - name: Remove Google Cloud credentials file
-        if: ${{ env.TRUSTED == 'true' && vars.JP_PII_FIXTURES_PROVIDER != '' }}
+        if: ${{ always() && vars.JP_PII_FIXTURES_PROVIDER != '' }}
         run: rm -f "${GOOGLE_GHA_CREDS_PATH:-}"
 
-      # 信頼できる実行ではフィクスチャ取得を必須にし、回帰ガード（精度・バッジ・検出器テスト）が
-      # 取得失敗で黙って Skip されないよう fail-fast する。fork PR では Skip のままでよい。
-      - name: Require fixtures on trusted runs
-        if: ${{ env.TRUSTED == 'true' }}
+      - name: Require and validate private corpus
         run: |
           test -f "$JP_PII_FIXTURES" || {
-            echo "::error::PII フィクスチャを取得できませんでした。push / 同一リポジトリ PR では JP_PII_FIXTURES_PROVIDER / _SA / _BUCKET を設定してください。"
+            echo "::error::非公開評価コーパスを取得できませんでした。"
             exit 1
           }
-
-      - run: go vet ./...
-      # -race: 並列スキャン（internal/source）のデータ競合の回帰防止
-      - run: go test -race ./...
-      # docs/accuracy.md・docs/accuracy.json（ゴールデンファイル）・README.md のバッジが
-      # 実測値からドリフトしていないことを検証する（フィクスチャ未取得時は
-      # TestGenerateDoc / TestReadmeBadges が Skip され、いずれのファイルも不変＝ドリフトなし）。
+          go test ./internal/privatecorpus ./internal/eval
       - run: |
           go test ./internal/eval -run 'TestGenerateDoc|TestReadmeBadges' -update
           git diff --exit-code docs/accuracy.md docs/accuracy.json README.md
-      - run: go build ./cmd/jp-pii-detect
-      # dogfooding: 自リポジトリを自分でスキャンして偽陽性ゼロを保証する
-      # （フィクスチャは $RUNNER_TEMP にあり作業ツリー外なので走査対象に入らない）
-      - run: ./jp-pii-detect scan --format github .
+      - name: Remove private corpus
+        if: ${{ always() }}
+        run: rm -f "${JP_PII_FIXTURES:-}"

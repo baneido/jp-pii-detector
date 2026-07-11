@@ -42,6 +42,7 @@ type GoldenDatasetQuality struct {
 // TestAccuracy の回帰ガードの単一の情報源になる。件数と集計値のみを保持し、
 // PII・ケース本文・ハッシュは含めない。
 type Golden struct {
+	DatasetID        string               `json:"dataset_id,omitempty"`
 	Rules            []GoldenRule         `json:"rules"`
 	Micro            GoldenScore          `json:"micro"`
 	MicroSpanExact   GoldenScore          `json:"micro_span_exact"`
@@ -55,6 +56,12 @@ type Golden struct {
 // BuildGolden は評価結果と、期待スパンなし陽性件数（SpanlessPositiveCount 参照）
 // から docs/accuracy.json の内容を組み立てる。
 func BuildGolden(results []Result, spanlessPositiveCount int) Golden {
+	return BuildGoldenForDataset(results, spanlessPositiveCount, "")
+}
+
+// BuildGoldenForDataset は集計値を、それを生成した非公開コーパスの安定IDへ
+// 結び付ける。生データのハッシュは公開しない。
+func BuildGoldenForDataset(results []Result, spanlessPositiveCount int, datasetID string) Golden {
 	rules := make([]GoldenRule, 0, len(results))
 	for _, r := range results {
 		rules = append(rules, GoldenRule{
@@ -71,7 +78,8 @@ func BuildGolden(results []Result, spanlessPositiveCount int) Golden {
 
 	m := Micro(results)
 	return Golden{
-		Rules: rules,
+		DatasetID: datasetID,
+		Rules:     rules,
 		Micro: GoldenScore{
 			TP: m.TP, FP: m.FP, FN: m.FN,
 			Precision: m.Precision, Recall: m.Recall, F1: m.F1,
@@ -89,7 +97,13 @@ func BuildGolden(results []Result, spanlessPositiveCount int) Golden {
 // BuildGoldenForCases は実測結果とケース集合から、精度と匿名データセット統計を
 // 一度に組み立てる。生成物にはケース本文や PII を含めない。
 func BuildGoldenForCases(results []Result, cases []Case) Golden {
-	g := BuildGolden(results, SpanlessPositiveCount(cases))
+	return BuildGoldenForDatasetCases(results, cases, "")
+}
+
+// BuildGoldenForDatasetCases は匿名統計を含むゴールデンを、生成元コーパスの
+// 安定IDへ結び付ける。
+func BuildGoldenForDatasetCases(results []Result, cases []Case, datasetID string) Golden {
+	g := BuildGoldenForDataset(results, SpanlessPositiveCount(cases), datasetID)
 	g.Dataset = ComputeDatasetStats(cases)
 	return g
 }
@@ -122,6 +136,9 @@ func LoadGolden(path string) (Golden, error) {
 // 比較しない（ラチェット方式のため専用の検証を TestDatasetQuality が行う）。
 func DiffGolden(got, want Golden) []string {
 	var diffs []string
+	if got.DatasetID != want.DatasetID {
+		diffs = append(diffs, fmt.Sprintf("dataset_id: 実測 %q, docs/accuracy.json は %q", got.DatasetID, want.DatasetID))
+	}
 
 	gotByID := make(map[string]GoldenRule, len(got.Rules))
 	for _, r := range got.Rules {

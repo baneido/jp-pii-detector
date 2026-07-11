@@ -1,13 +1,14 @@
 package fixturegen
 
 import (
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/baneido/jp-pii-detector/internal/checksum"
 	"github.com/baneido/jp-pii-detector/internal/dict"
-	"github.com/baneido/jp-pii-detector/internal/piifixtures"
+	"github.com/baneido/jp-pii-detector/internal/evalcase"
 )
 
 func TestGroupDigits(t *testing.T) {
@@ -131,6 +132,9 @@ func TestGenerateProducesTaggedSyntheticCases(t *testing.T) {
 		"jp-my-number": false, "credit-card": false, "jp-postal-code": false, "person-name": false,
 	}
 	for _, c := range cases {
+		if c.ID == "" || c.SourceClass != "algorithmic" {
+			t.Errorf("case metadata is incomplete: id=%q source_class=%q", c.ID, c.SourceClass)
+		}
 		if !hasTagPrefix(c.Tags, SourceTag) {
 			t.Errorf("case %q missing %s tag", caseLine(c), SourceTag)
 		}
@@ -144,6 +148,9 @@ func TestGenerateProducesTaggedSyntheticCases(t *testing.T) {
 		if !seen {
 			t.Errorf("Generate() produced no positive case for rule %q", id)
 		}
+	}
+	if again := Generate(); !reflect.DeepEqual(cases, again) {
+		t.Error("Generate() must be deterministic")
 	}
 }
 
@@ -163,7 +170,7 @@ func hasTagPrefix(tags []string, want string) bool {
 	return false
 }
 
-func caseLine(c piifixtures.Case) string {
+func caseLine(c evalcase.Case) string {
 	switch {
 	case c.Content != "":
 		return c.Content

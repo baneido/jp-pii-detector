@@ -2,6 +2,7 @@
 package detect
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"unicode"
@@ -102,6 +103,13 @@ type Finding struct {
 	// ignoreNegativeContext はマッチしたパターンが Rule.NegativeContext の
 	// 適用対象外であることを表す。隣接行の負文脈フィルタにも引き継ぐ。
 	ignoreNegativeContext bool
+}
+
+// Format は fmt の全verbで生の Match と文脈詳細を出さない。テスト失敗時の
+// `%+v` やログ出力を、json:"-" では防げないための安全境界。
+func (f Finding) Format(s fmt.State, _ rune) {
+	fmt.Fprintf(s, "{RuleID:%q File:%q Line:%d Column:%d Confidence:%s Match:<redacted>}",
+		f.RuleID, f.File, f.Line, f.Column, f.Confidence)
 }
 
 // DetectReason は検出の根拠を表す。生の PII は含めない。

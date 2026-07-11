@@ -43,6 +43,13 @@ func TestGeneratedCasesDetectAsExpected(t *testing.T) {
 			t.Errorf("rule %q: FP = %d, want 0 (an expected-negative variant was wrongly detected: TP=%d FP=%d FN=%d)",
 				id, r.FP, r.TP, r.FP, r.FN)
 		}
+		if r.SpanExact.FN != 0 || r.SpanExact.FP != 0 {
+			t.Errorf("rule %q: exact span mismatch: TP=%d FP=%d FN=%d",
+				id, r.SpanExact.TP, r.SpanExact.FP, r.SpanExact.FN)
+		}
+		if r.ConfidenceMiss != 0 {
+			t.Errorf("rule %q: confidence misses = %d, want 0", id, r.ConfidenceMiss)
+		}
 	}
 
 	// 他ルールへの意図しない混入（例: 合成カード番号が jp-my-number も誤検出する等）

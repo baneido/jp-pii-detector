@@ -316,7 +316,9 @@ func TestCIWorkflowPinsGoogleActionsAndAvoidsFixtureTemplateInjection(t *testing
 		"google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2",
 		"google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2",
 		"FIXTURES_BUCKET: ${{ vars.JP_PII_FIXTURES_BUCKET }}",
-		`gs://$FIXTURES_BUCKET/pii-fixtures.json`,
+		`object=$(jq -r '.object' fixtures.lock.json)`,
+		`source="gs://$FIXTURES_BUCKET/$object"`,
+		`FIXTURES_GENERATION: ${{ vars.JP_PII_FIXTURES_GENERATION }}`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("ci workflow missing %q:\n%s", want, text)
@@ -324,7 +326,7 @@ func TestCIWorkflowPinsGoogleActionsAndAvoidsFixtureTemplateInjection(t *testing
 	}
 }
 
-func TestCIWorkflowScopesOIDCPermissionToTestJob(t *testing.T) {
+func TestCIWorkflowScopesOIDCPermissionToPrivateEvalJob(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
 	if err != nil {
 		t.Fatal(err)
@@ -338,9 +340,17 @@ func TestCIWorkflowScopesOIDCPermissionToTestJob(t *testing.T) {
 	if testJobStart == -1 {
 		t.Fatalf("ci workflow missing test job:\n%s", text)
 	}
-	testJob := text[testJobStart:]
-	if !strings.Contains(testJob, "id-token: write") {
-		t.Fatalf("test job should grant id-token for GCP Workload Identity:\n%s", text)
+	privateStart := strings.Index(text, "  private-eval:")
+	if privateStart == -1 {
+		t.Fatalf("ci workflow missing private-eval job:\n%s", text)
+	}
+	testJob := text[testJobStart:privateStart]
+	if strings.Contains(testJob, "id-token: write") {
+		t.Fatalf("public test job must not grant id-token:\n%s", testJob)
+	}
+	privateJob := text[privateStart:]
+	if !strings.Contains(privateJob, "id-token: write") {
+		t.Fatalf("private-eval job should grant id-token for GCP Workload Identity:\n%s", text)
 	}
 }
 
@@ -444,7 +454,7 @@ func TestCIWorkflowDoesNotUseRunnerContextInJobEnv(t *testing.T) {
 	}
 }
 
-func TestCIWorkflowRemovesGeneratedGoogleCredentialsBeforeDogfooding(t *testing.T) {
+func TestCIWorkflowSeparatesPublicDogfoodingAndPrivateCleanup(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
 	if err != nil {
 		t.Fatal(err)
@@ -454,13 +464,17 @@ func TestCIWorkflowRemovesGeneratedGoogleCredentialsBeforeDogfooding(t *testing.
 		"name: Remove Google Cloud credentials file",
 		`rm -f "${GOOGLE_GHA_CREDS_PATH:-}"`,
 		"./jp-pii-detect scan --format github .",
+		"name: Remove private corpus",
+		`rm -f "${JP_PII_FIXTURES:-}"`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("ci workflow missing %q", want)
 		}
 	}
-	if strings.Index(text, "Remove Google Cloud credentials file") > strings.Index(text, "./jp-pii-detect scan --format github .") {
-		t.Fatalf("ci workflow should remove generated credentials before dogfooding scan")
+	privateStart := strings.Index(text, "  private-eval:")
+	publicJob := text[:privateStart]
+	if strings.Contains(publicJob, "JP_PII_FIXTURES") || strings.Contains(publicJob, "id-token: write") {
+		t.Fatalf("public test/dogfooding boundary must not receive private fixture authority")
 	}
 }
 

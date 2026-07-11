@@ -3,7 +3,7 @@ package eval
 import (
 	"testing"
 
-	"github.com/baneido/jp-pii-detector/internal/piifixtures"
+	"github.com/baneido/jp-pii-detector/internal/privatecorpus"
 	"github.com/baneido/jp-pii-detector/internal/rule"
 )
 
@@ -12,11 +12,8 @@ import (
 // （ルール ID の typo・完全一致の重複ケース・スパン付与の後退）を拾う。
 // wantF1 map の撤去で失われた「未知のルール ID の検出」の代替も兼ねる。
 func TestDatasetQuality(t *testing.T) {
-	piifixtures.Require(t)
-	cases, ok := piifixtures.Dataset()
-	if !ok {
-		t.Fatal("評価データセットを取得できません")
-	}
+	corpus := privatecorpus.Require(t)
+	cases := corpus.Dataset
 
 	knownRules := map[string]bool{}
 	for _, r := range rule.Builtin() {

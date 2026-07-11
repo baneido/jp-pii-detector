@@ -9,12 +9,11 @@ import (
 
 	"github.com/baneido/jp-pii-detector/internal/config"
 	"github.com/baneido/jp-pii-detector/internal/detect"
-	"github.com/baneido/jp-pii-detector/internal/piifixtures"
+	"github.com/baneido/jp-pii-detector/internal/testfixtures"
 )
 
 func TestParseDiff(t *testing.T) {
-	piifixtures.Require(t)
-	phone := piifixtures.MustGet(t, "source.phone_mobile_sep")
+	phone := testfixtures.MustGet(t, "source.phone_mobile_sep")
 	diff := `diff --git a/users.csv b/users.csv
 index 1111111..2222222 100644
 --- a/users.csv
@@ -56,8 +55,7 @@ func TestParseDiffBinaryAndEmpty(t *testing.T) {
 
 // core.quotePath=false で出力される非 ASCII ファイル名をそのまま扱える。
 func TestParseDiffJapaneseFilename(t *testing.T) {
-	piifixtures.Require(t)
-	phone := piifixtures.MustGet(t, "source.phone_mobile_sep")
+	phone := testfixtures.MustGet(t, "source.phone_mobile_sep")
 	diff := `diff --git a/顧客リスト.csv b/顧客リスト.csv
 --- a/顧客リスト.csv
 +++ b/顧客リスト.csv
@@ -76,8 +74,7 @@ func TestParseDiffJapaneseFilename(t *testing.T) {
 // 旧実装は b/ の除去を引用符の除去より先に行っていたため接頭辞が残った。
 // なおエスケープシーケンス（\t 等）の復元までは行わない。
 func TestParseDiffQuotedFilename(t *testing.T) {
-	piifixtures.Require(t)
-	phone := piifixtures.MustGet(t, "source.phone_mobile_sep")
+	phone := testfixtures.MustGet(t, "source.phone_mobile_sep")
 	diff := "diff --git \"a/tab\\tname.csv\" \"b/tab\\tname.csv\"\n" +
 		"--- \"a/tab\\tname.csv\"\n" +
 		"+++ \"b/tab\\tname.csv\"\n" +
@@ -121,10 +118,9 @@ func git(t *testing.T, args ...string) {
 // ScanStaged が日本語ファイル名でも正しいパスで検出を報告できること
 // （core.quotePath 既定値では 8 進エスケープされ壊れていた）。
 func TestScanStagedJapaneseFilename(t *testing.T) {
-	piifixtures.Require(t)
 	repo := initTestRepo(t)
 	name := "顧客リスト.csv"
-	content := []byte("氏名,電話\n山田," + piifixtures.MustGet(t, "source.phone_mobile_sep") + "\n")
+	content := []byte("氏名,電話\n山田," + testfixtures.MustGet(t, "source.phone_mobile_sep") + "\n")
 	if err := os.WriteFile(filepath.Join(repo, name), content, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -354,10 +350,9 @@ func TestScanStagedContextIgnoreMarkerScope(t *testing.T) {
 
 // ScanDiff がコミット間の追加行のみを走査すること。
 func TestScanDiffRange(t *testing.T) {
-	piifixtures.Require(t)
 	repo := initTestRepo(t)
-	base := "既存の電話: " + piifixtures.MustGet(t, "source.phone_mobile_nosep")
-	added := "追加の電話: " + piifixtures.MustGet(t, "source.phone_mobile_sep")
+	base := "既存の電話: " + testfixtures.MustGet(t, "source.phone_mobile_nosep")
+	added := "追加の電話: " + testfixtures.MustGet(t, "source.phone_mobile_sep")
 	path := filepath.Join(repo, "memo.txt")
 	if err := os.WriteFile(path, []byte(base+"\n"), 0o644); err != nil {
 		t.Fatal(err)
