@@ -213,10 +213,51 @@ jobs:
           # README / docs 内のバージョン表記（vX.Y.Z）と distribution_test.go の
           # docsVersion 定数を新しいリリースタグへ一括更新する。バージョン表記の
           # 陳腐化を防ぐ自動 PR（Homebrew formula 更新ジョブと同型）。
-          for f in README.md README.en.md docs/integrations.md; do
-            [ -f "$f" ] || continue
-            sed -i -E "s/v[0-9]+\.[0-9]+\.[0-9]+/${TAG}/g" "$f"
-          done
+          #
+          # comparison.md は gitleaks の rev（v8.18.4 等）のようなサードパーティ版数を
+          # 含むため無差別 sed は使えない。scripts/distribution_test.go の一貫性検査
+          # （TestDocsVersionReferencesMatchDocsVersion）と同じ「自プロジェクトを指す
+          # マーカーが同一行または直前 2 行以内にある行だけを置換する」方式を python3 で
+          # 実装する。下記 MARKERS は distribution_test.go の markers と同期している必要が
+          # あり、片方だけ変更すると置換対象と CI 検査対象が食い違うので必ず一緒に更新すること。
+          python3 - "$TAG" README.md README.en.md docs/integrations.md docs/comparison.md <<'PY'
+          import re
+          import sys
+
+          tag = sys.argv[1]
+          files = sys.argv[2:]
+          # distribution_test.go の markers と同期させること。
+          MARKERS = (
+              "jp-pii-detector",
+              "jp-pii-detect",
+              "JP_PII_DETECT_VERSION",
+              "ghcr.io/baneido",
+          )
+          ver_re = re.compile(r"\bv\d+\.\d+\.\d+\b")
+
+          def has_marker(line):
+              return any(m in line for m in MARKERS)
+
+          for path in files:
+              try:
+                  with open(path, encoding="utf-8") as fh:
+                      lines = fh.read().split("\n")
+              except FileNotFoundError:
+                  continue
+              changed = False
+              for i, line in enumerate(lines):
+                  # 同一行または直前 2 行以内にマーカーがある行だけを対象にする。
+                  in_scope = any(has_marker(lines[j]) for j in range(max(0, i - 2), i + 1))
+                  if not in_scope:
+                      continue
+                  new_line = ver_re.sub(tag, line)
+                  if new_line != line:
+                      lines[i] = new_line
+                      changed = True
+              if changed:
+                  with open(path, "w", encoding="utf-8") as fh:
+                      fh.write("\n".join(lines))
+          PY
           sed -i -E "s/(docsVersion = \")v[0-9]+\.[0-9]+\.[0-9]+(\")/\1${TAG}\2/" scripts/distribution_test.go
           if [ -z "$(git status --porcelain)" ]; then
             echo "docs already up to date for ${TAG}; nothing to do"
