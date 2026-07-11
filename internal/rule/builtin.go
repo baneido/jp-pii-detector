@@ -706,7 +706,8 @@ func Builtin() []Rule {
 			Validate:        validPassport,
 			Patterns: []Pattern{
 				// 英字 2 桁と数字 7 桁の間の半角スペースは任意（例: "AB 1234567"）。
-				{Re: ag(`[A-Z]{2} ?\d{7}`), Base: High, RequireContext: true,
+				// 英字は小文字表記（ab1234567 等）も許容する（#42 プローブ FN 解消）。
+				{Re: ag(`[A-Za-z]{2} ?\d{7}`), Base: High, RequireContext: true,
 					ValidateLine: rejectSeparatedDigitGroup(" ", 1)},
 			},
 		},
@@ -717,9 +718,10 @@ func Builtin() []Rule {
 			Context:              []string{"年金", "pension", "nenkin"},
 			NegativeContext:      digitRuleNegativeContext,
 			RequireContextWindow: digitRuleRequireContextWindow,
+			Validate:             validPensionNumber,
 			Patterns: []Pattern{
-				// ハイフン・半角スペースいずれの区切りも許容する（Validate なしのため
-				// 区切り文字の除去は不要）。
+				// ハイフン・半角スペースいずれの区切りも許容する（Validate は
+				// stripSeparators で区切り文字を除いた上で判定する）。
 				{Re: dg(`\d{4}[- ]?\d{6}`), Base: High, RequireContext: true,
 					ValidateLine: rejectSeparatedDigitGroup(" ", 1)},
 			},
@@ -735,7 +737,8 @@ func Builtin() []Rule {
 			NegativeContext: digitRuleUnitAdjacentNegativeContext,
 			Validate:        validResidenceCard,
 			Patterns: []Pattern{
-				{Re: ag(`[A-Z]{2}\d{8}[A-Z]{2}`), Base: High, RequireContext: true},
+				// 英字は小文字表記（ab12345678cd 等）も許容する（#42 プローブ FN 解消）。
+				{Re: ag(`[A-Za-z]{2}\d{8}[A-Za-z]{2}`), Base: High, RequireContext: true},
 			},
 		},
 		{
@@ -834,6 +837,7 @@ func Builtin() []Rule {
 			Context:              []string{"雇用保険", "被保険者番号", "koyou hoken", "employment insurance"},
 			NegativeContext:      digitRuleNegativeContext,
 			RequireContextWindow: digitRuleRequireContextWindow,
+			Validate:             validEmploymentInsurance,
 			Patterns: []Pattern{
 				// 区切りあり（4桁-6桁-1桁）は書式自体が固有の形状のため
 				// コンテキストなしで High とする（電話番号の区切りあり表記と同様）。
@@ -849,6 +853,7 @@ func Builtin() []Rule {
 			Context:              []string{"介護保険", "要介護", "被保険者証", "kaigo hoken"},
 			NegativeContext:      digitRuleNegativeContext,
 			RequireContextWindow: digitRuleRequireContextWindow,
+			Validate:             validKaigoInsurance,
 			Patterns: []Pattern{
 				// 10 桁は基礎年金番号（4桁-6桁、区切りなしでも同じ 10 桁形状）と
 				// 桁数が衝突するが、両ルールとも RequireContext:true のため
@@ -877,10 +882,15 @@ func Builtin() []Rule {
 			Description: "適格請求書発行事業者登録番号（インボイス登録番号）",
 			Prefilter:   PrefilterDigit,
 			Context:     []string{"登録番号", "適格請求書", "インボイス", "invoice number", "invoice registration"},
+			// T + 13 桁の末尾 13 桁を法人番号の検査用数字（checksum.CorporateNumber）
+			// で検証する。個人事業主分の登録番号も法人番号と同一の採番体系
+			// （検査用数字を含む 13 桁）のため同じ検証式が使える。
+			Validate: func(m string) bool {
+				return checksum.CorporateNumber(strings.TrimPrefix(m, "T"))
+			},
 			Patterns: []Pattern{
 				// T + 13 桁（法人は法人番号と同一の 13 桁、個人事業主等は
-				// 別途 13 桁が採番される）。検査数字の検証は未実装
-				// （将来の Validate 昇格候補。docs/development.md 参照）。
+				// 別途 13 桁が採番される）。
 				{Re: ag(`T\d{13}`), Base: Medium, RequireContext: true},
 			},
 		},
@@ -1102,6 +1112,30 @@ func validBankAccount(m string) bool {
 	return !checksum.AllSame(m)
 }
 
+// validPensionNumber は基礎年金番号（4 桁-6 桁）の全桁同一のダミー値を棄却する。
+// マッチはハイフン・半角スペースいずれの区切りも含みうるため、AllSame 判定が
+// 区切り文字に惑わされて "0000-000000" のようなプレースホルダを通過させない
+// よう stripSeparators で除去してから判定する。年金番号自体は検査用数字を
+// 持たず、連番も実在しうるため、それ以上のヒューリスティックは適用しない。
+func validPensionNumber(m string) bool {
+	return !checksum.AllSame(stripSeparators(m))
+}
+
+// validEmploymentInsurance は雇用保険被保険者番号（4桁-6桁-1桁 または区切りなし
+// 11桁）の全桁同一のダミー値を棄却する。区切りあり表記のハイフンに AllSame 判定が
+// 惑わされないよう stripSeparators で除去してから判定する。検査用数字を持たず、
+// 連番も実在しうるため、それ以上のヒューリスティックは適用しない。
+func validEmploymentInsurance(m string) bool {
+	return !checksum.AllSame(stripSeparators(m))
+}
+
+// validKaigoInsurance は介護保険被保険者番号（10 桁）の全桁同一のダミー値を
+// 棄却する。検査用数字を持たず、連番も実在しうるため、それ以上の
+// ヒューリスティックは適用しない。
+func validKaigoInsurance(m string) bool {
+	return !checksum.AllSame(m)
+}
+
 // rejectYuchoAccountSuffix は、通常の 7 桁口座番号パターンが
 // 「ゆうちょ記号5桁-番号7桁」の番号部分だけを拾う隣接汚染を防ぐ。
 // ゆうちょ形式全体は jp-yucho-account が専用の文脈と境界で判定する。
@@ -1141,13 +1175,15 @@ func validPassport(m string) bool {
 
 // validResidenceCard は在留カード番号（英 2 + 数 8 + 英 2）のうち、
 // 出入国在留管理庁の文字集合仕様で使われない英字 I・O を含む値と、
-// 数字 8 桁が全桁同一のダミー値を棄却する。
+// 数字 8 桁が全桁同一のダミー値を棄却する。パターン側が小文字表記
+// （ab12345678cd 等）も許容するため、I・O 除外判定も大小文字を区別しない
+// （i・o も同様に棄却する）。
 func validResidenceCard(m string) bool {
 	if len(m) != 12 {
 		return false
 	}
 	letters := m[:2] + m[10:]
-	if strings.ContainsAny(letters, "IO") {
+	if strings.ContainsAny(letters, "IOio") {
 		return false
 	}
 	return !checksum.AllSame(m[2:10])

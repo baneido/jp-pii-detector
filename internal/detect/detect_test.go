@@ -487,6 +487,9 @@ func TestPensionNumberSpaceVariant(t *testing.T) {
 		{"回帰: 区切りなしは変わらない", "基礎年金番号: 1234567890", []string{"jp-pension-number"}},
 		{"コンテキストなし", "1234 567890", nil},
 		{"より長い数字列の一部は対象外", "基礎年金番号: 12345678901", nil},
+		// 全桁同一のダミー値は Validate（validPensionNumber）で棄却される。
+		{"全桁同一（空白区切り）は棄却", "基礎年金番号: 0000 000000", nil},
+		{"全桁同一（ハイフン区切り）は棄却", "基礎年金番号: 0000-000000", nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -2733,6 +2736,9 @@ func TestEmploymentInsuranceRule(t *testing.T) {
 		{"区切りなし 11 桁はコンテキストが必要", "雇用保険被保険者番号: 12345678901", []string{"jp-employment-insurance"}, rule.Medium},
 		{"区切りなし 11 桁はコンテキストなしでは不成立", "value = 12345678901", nil, 0},
 		{"英語コンテキスト", "employment insurance no: 12345678901", []string{"jp-employment-insurance"}, rule.Medium},
+		// 全桁同一のダミー値は Validate（validEmploymentInsurance）で棄却される。
+		{"区切りあり全桁同一は棄却", "value = 0000-000000-0", nil, 0},
+		{"区切りなし全桁同一は棄却", "雇用保険被保険者番号: 00000000000", nil, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -3032,6 +3038,8 @@ func TestKaigoInsuranceRule(t *testing.T) {
 		{"コンテキストなしでは不成立", "value = 9876543210", nil},
 		{"より長い数字列の一部は対象外", "介護保険 被保険者証番号: 912345678901", nil},
 		{"要介護コンテキスト", "要介護認定 被保険者番号 9876543210", []string{"jp-kaigo-insurance"}},
+		// 全桁同一のダミー値は Validate（validKaigoInsurance）で棄却される。
+		{"全桁同一は棄却", "介護保険 被保険者証番号: 0000000000", nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -3064,9 +3072,12 @@ func TestJuminhyoCodeRule(t *testing.T) {
 }
 
 // TestInvoiceNumberRule は適格請求書発行事業者登録番号（T + 13桁）を検証する。
+// 値は国税庁公表の検査用数字（チェックデジット）計算例（会社法人等番号
+// 700110005901 → 検査用数字 8）を使う。
+// https://www.houjin-bangou.nta.go.jp/documents/checkdigit.pdf
 func TestInvoiceNumberRule(t *testing.T) {
 	d := newDetector(t, "")
-	const valid = "T1234567890123"
+	const valid = "T8700110005901"
 	tests := []struct {
 		name, line string
 		want       []string
@@ -3077,7 +3088,9 @@ func TestInvoiceNumberRule(t *testing.T) {
 		{"コンテキストなしでは不成立", "value = " + valid, nil},
 		{"桁数不足（12桁）は対象外", "登録番号: T123456789012", nil},
 		{"より長い数字列の一部は対象外", "登録番号: " + valid + "4", nil},
-		{"英数字トークンに埋め込まれた場合は対象外", "登録番号: aT1234567890123b", nil},
+		{"英数字トークンに埋め込まれた場合は対象外", "登録番号: aT8700110005901b", nil},
+		// 検査用数字が不一致（末尾を 1 破壊）の値は棄却される。
+		{"検査用数字が不一致は対象外", "登録番号: T8700110005900", nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
