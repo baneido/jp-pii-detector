@@ -1,9 +1,58 @@
 package detect
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/baneido/jp-pii-detector/internal/rule"
+)
 
 func (d *Detector) containsAnyContext(haystack string, kws []string) bool {
 	return len(d.matchingContexts(haystack, kws)) > 0
+}
+
+// matchContextPatterns は rule.ContextPattern（辞書照合が必要な文脈シグナル）を
+// haystack に対して評価し、検証済みの候補文字列を返す。Literals の事前ゲートを
+// 通過したパターンだけ正規表現を評価するため、辞書規模が大きくても
+// 該当しない大半の行はほぼ無コストになる。ValidateSuffixes が有効なら、
+// 日本語の地の文を前方に含む候補から辞書一致する最長の接尾部分を回収する。
+func matchContextPatterns(haystack string, patterns []rule.ContextPattern) []string {
+	var out []string
+	for _, cp := range patterns {
+		if len(cp.Literals) > 0 && !containsAnyLiteral(haystack, cp.Literals) {
+			continue
+		}
+		for _, m := range cp.Re.FindAllStringSubmatch(haystack, -1) {
+			if len(m) < 2 {
+				continue
+			}
+			if candidate, ok := validatedContextCandidate(m[1], cp); ok {
+				out = append(out, candidate)
+			}
+		}
+	}
+	return out
+}
+
+// validatedContextCandidate は candidate 全体を最初に検証し、必要なら
+// ルーン境界ごとの接尾部分を長い順に試す。銀行名の直前に助詞や熟語が空白なしで
+// 続く日本語文でも、辞書一致する完全な銀行名だけを文脈語として回収できる。
+func validatedContextCandidate(candidate string, cp rule.ContextPattern) (string, bool) {
+	if cp.Validate == nil || cp.Validate(candidate) {
+		return candidate, true
+	}
+	if !cp.ValidateSuffixes {
+		return "", false
+	}
+	for start := range candidate {
+		if start == 0 {
+			continue
+		}
+		suffix := candidate[start:]
+		if cp.Validate(suffix) {
+			return suffix, true
+		}
+	}
+	return "", false
 }
 
 func (d *Detector) matchingContexts(haystack string, kws []string) []string {

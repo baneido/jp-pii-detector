@@ -1,0 +1,60 @@
+name: 不具合の報告（Bug report）
+description: 検出精度以外の不具合（クラッシュ、出力の異常、インストール等）を報告します
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        検出精度に関する問題（誤検出・見逃し）は、専用の「誤検出の報告」「見逃しの報告」
+        テンプレートをご利用ください。ここでは、それ以外の不具合を報告してください。
+
+        ⚠️ 再現手順に PII を含める場合は、必ずマスク／ダミー化してください。
+  - type: input
+    id: version
+    attributes:
+      label: jp-pii-detect のバージョン
+      description: "`jp-pii-detect version` の出力"
+      placeholder: "例: v0.3.6"
+    validations:
+      required: true
+  - type: input
+    id: os-arch
+    attributes:
+      label: OS / アーキテクチャ
+      placeholder: "例: macOS 14 (arm64) / Ubuntu 22.04 (amd64) / Windows 11 (amd64)"
+    validations:
+      required: true
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: インストール方法
+      options:
+        - Homebrew
+        - mise
+        - install.sh（バイナリ）
+        - go install
+        - Docker
+        - GitHub Action
+        - その他
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: 再現手順
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected-actual
+    attributes:
+      label: 期待する動作と実際の動作
+      placeholder: |
+        期待: ...
+        実際: ...
+    validations:
+      required: true

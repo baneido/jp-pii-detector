@@ -761,6 +761,24 @@ func TestRulesCommandHighRecallFlag(t *testing.T) {
 	}
 }
 
+// TestRulesCommandHighRecallConfig は rules コマンドが設定ファイルの
+// high_recall=true も scan と同じように実効状態へ反映することを確認する。
+func TestRulesCommandHighRecallConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, ".jp-pii.toml")
+	if err := os.WriteFile(cfgPath, []byte("[rules]\nhigh_recall = true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, code := run(t, dir, "rules", "--config", cfgPath)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0:\n%s", code, out)
+	}
+	line := ruleLine(t, out, "jp-address-high-recall")
+	if !strings.Contains(line, "有効") || !strings.Contains(line, "高再現率") {
+		t.Errorf("high_recall=true の実効状態が表示されていない: %s", line)
+	}
+}
+
 // カスタムルールの正規表現コンパイル失敗は、rules コマンドでも
 // panic ではなく exit 2（設定エラー）として扱う。
 func TestRulesCommandInvalidCustomRule(t *testing.T) {

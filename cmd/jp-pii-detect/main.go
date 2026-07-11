@@ -327,6 +327,10 @@ func updateBaselineFile(path string, findings []detect.Finding) int {
 // を経由するため、scan コマンドが実際に使うルール集合と一致する。disabled 指定や
 // high_recall（および --high-recall）の効果で実際に有効なルールがどれかを、
 // 無効化されたルールも一覧から外さずそのまま確認できる。
+//
+// 同一 ID の Rule が複数エントリ持つ場合がある（例: jp-address は数字番地用と
+// 漢数字番地用で Prefilter が異なる別エントリを同一 ID で持つ。
+// internal/rule/builtin.go 参照）。一覧表示では 1 行にまとめる。
 func runRules(args []string) int {
 	fs := flag.NewFlagSet("rules", flag.ExitOnError)
 	configPath := fs.String("config", "", "")
@@ -343,7 +347,6 @@ func runRules(args []string) int {
 	if *highRecall {
 		cfg.SetHighRecall(true)
 	}
-
 	disabled := map[string]bool{}
 	for _, id := range cfg.Rules.Disabled {
 		disabled[id] = true
@@ -355,7 +358,13 @@ func runRules(args []string) int {
 
 	all := append([]rule.Rule{}, rule.Builtin()...)
 	all = append(all, cfg.CustomRules()...)
+	// 同一 ID の Rule が複数エントリ持つ場合（jp-address 等）は 1 行にまとめる。
+	seen := map[string]bool{}
 	for _, r := range all {
+		if seen[r.ID] {
+			continue
+		}
+		seen[r.ID] = true
 		status := "有効"
 		if disabled[r.ID] {
 			status = "無効"

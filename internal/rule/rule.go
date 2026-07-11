@@ -51,11 +51,20 @@ type Pattern struct {
 	// RequireContext が true の場合、コンテキストキーワードが
 	// 同一行に存在しなければ検出を破棄する。
 	RequireContext bool
+	// IgnoreNegativeContext が true の場合、Rule.NegativeContext による
+	// 棄却をこのパターンには適用しない。同一ルール内で既存の高精度パターンと
+	// 負文脈を必要とする高偽陽性パターンが混在する場合に使う。
+	IgnoreNegativeContext bool
 	// Validate はこのパターン固有の追加検証（nil なら検証なし）。
 	// ルール全体の Rule.Validate に加えて適用され、パターンごとに
 	// 異なる検証（例: 氏名の弱いラベルだけ姓名辞書で照合する）を
 	// 行うために使う。引数は正規化済みのマッチ文字列。
 	Validate func(match string) bool
+	// ValidateLine はマッチの前後を含む正規化済みの行を使うパターン固有の
+	// 追加検証（nil なら検証なし）。start/end は行内のバイトオフセットで、
+	// キャプチャグループ 1 の半開区間を示す。区切り付きの長いトークンを
+	// 部分一致させないなど、マッチ文字列だけでは判定できない場合に使う。
+	ValidateLine func(line string, start, end int) bool
 }
 
 // Prefilter は行単位の事前判定。正規化済みの行に必要な文字種が
@@ -75,6 +84,25 @@ const (
 	PrefilterCJK
 )
 
+// ContextPattern は Context キーワードの単純一致では表現しづらい文脈シグナル
+// （銀行名などの固有名詞）を、正規表現で候補を切り出してから辞書照合で検証する
+// 仕組み。数百〜千語規模の辞書を Context の線形走査（containsWord）に混ぜて
+// ホットパスを劣化させないための専用経路で、Literals による安価な事前ゲートを
+// 通過した行だけが正規表現評価に進む。
+type ContextPattern struct {
+	// Re は候補文字列を切り出す正規表現。キャプチャグループ 1 が候補になる。
+	Re *regexp.Regexp
+	// Validate は候補が有効な文脈語かどうかを判定する（辞書照合など）。
+	Validate func(candidate string) bool
+	// ValidateSuffixes は Re が日本語の地の文を候補の前方に取り込む場合に、
+	// 候補全体だけでなくルーン境界ごとの接尾部分も長い順に Validate する。
+	// 辞書に一致した最長の接尾部分を文脈語として採用する。
+	ValidateSuffixes bool
+	// Literals はいずれか 1 つも行に含まれなければ Re の評価自体を
+	// スキップする安価な事前ゲート（OR 条件）。空なら常に Re を評価する。
+	Literals []string
+}
+
 // Rule は 1 種類の PII に対応する検出ルール。
 type Rule struct {
 	ID          string
@@ -82,6 +110,10 @@ type Rule struct {
 	// Context は信頼度昇格・RequireContext 判定に使う周辺キーワード。
 	// 小文字で定義し、ASCII 語は単語境界つき、日本語語は部分一致で評価する。
 	Context []string
+	// ContextPatterns は辞書照合が必要な文脈シグナル（銀行名等）。Context と
+	// 同様に信頼度昇格・RequireContext 判定に使うが、キーワード一致ではなく
+	// 正規表現の切り出し＋辞書検証で判定する。
+	ContextPatterns []ContextPattern
 	// NegativeContext は同一行（または近傍）に存在する場合に検出を
 	// 棄却する語。金額・数量・連番 ID など PII でない数字列の文脈を表す。
 	// 各語がどの近接判定（値の直前隣接・直後隣接・±window 汎用一致）で
@@ -90,6 +122,11 @@ type Rule struct {
 	NegativeContext []string
 	// RequireContextWindow は RequireContext の肯定語をマッチ前後の
 	// ルーン数に限定する。0 の場合は後方互換のため行全体を見る。
+	// Base<High（RequireContext ではない）パターンの High 昇格判定にも同じ値を
+	// 使うが、そちらは未設定（0）でも行全体には広げず、既定の窓
+	// （internal/detect の既定昇格窓 40 ルーン）にフォールバックする。
+	// 昇格は検出の成立条件ではなく補助情報のため、無制限に広げると長い 1 行で
+	// キーワード 1 個だけで行内の全マッチが昇格してしまうため（#54）。
 	RequireContextWindow int
 	// Prefilter はパターンがマッチし得ない行を走査前に除外する事前判定。
 	// パターンの必須文字種（数字など）を含まない行をスキップする。

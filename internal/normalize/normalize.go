@@ -44,6 +44,40 @@ func isProlongedSoundMark(r rune) bool {
 	return false
 }
 
+// halfwidthKatakanaStart/End は半角カナブロック（JIS X 0201 カナ）の範囲。
+// U+FF61-FF9F はすべて halfwidthKatakanaFold で 1 対 1 に変換できるため、
+// 常に変換対象（isConvTarget）とする。
+const (
+	halfwidthKatakanaStart = 0xFF61
+	halfwidthKatakanaEnd   = 0xFF9F
+)
+
+// halfwidthKatakanaFold は半角カナ（U+FF61-FF9F）を対応する全角文字へ写像する
+// テーブル（インデックス = コードポイント - halfwidthKatakanaStart）。Unicode の
+// 互換分解（NFKD）と同じ対応だが、濁点・半濁点（U+FF9E/FF9F）は結合文字
+// （U+3099/U+309A）に写像し、直前の仮名と合成しない。NFKC 相当の合成（ｶﾞ 2ルーン
+// → ガ 1ルーン）はルーン数を変えてしまい、internal/normalize の 1 ルーン = 1 ルーンの
+// 位置不変条件（正規化後の位置が元テキストの位置と一致する）を破るため、意図的に
+// 未合成のまま返す。合成が必要な照合（辞書引きなど）は internal/dict.ComposeKana を
+// 呼び出し側で使う。
+var halfwidthKatakanaFold = [halfwidthKatakanaEnd - halfwidthKatakanaStart + 1]rune{
+	'。', '「', '」', '、', '・', // U+FF61-FF65 句読点・中点
+	'ヲ',                                         // U+FF66
+	'ァ', 'ィ', 'ゥ', 'ェ', 'ォ', 'ャ', 'ュ', 'ョ', 'ッ', // U+FF67-FF6F 小書き
+	'ー',                     // U+FF70 半角プロロング記号
+	'ア', 'イ', 'ウ', 'エ', 'オ', // U+FF71-FF75
+	'カ', 'キ', 'ク', 'ケ', 'コ', // U+FF76-FF7A
+	'サ', 'シ', 'ス', 'セ', 'ソ', // U+FF7B-FF7F
+	'タ', 'チ', 'ツ', 'テ', 'ト', // U+FF80-FF84
+	'ナ', 'ニ', 'ヌ', 'ネ', 'ノ', // U+FF85-FF89
+	'ハ', 'ヒ', 'フ', 'ヘ', 'ホ', // U+FF8A-FF8E
+	'マ', 'ミ', 'ム', 'メ', 'モ', // U+FF8F-FF93
+	'ヤ', 'ユ', 'ヨ', // U+FF94-FF96
+	'ラ', 'リ', 'ル', 'レ', 'ロ', // U+FF97-FF9B
+	'ワ', 'ン', // U+FF9C-FF9D
+	'゙', '゚', // U+FF9E-FF9F 濁点・半濁点（結合文字。未合成）
+}
+
 func mapRune(r rune) rune {
 	switch {
 	case r >= '！' && r <= '～': // 全角 ASCII → 半角
@@ -52,6 +86,8 @@ func mapRune(r rune) rune {
 		return ' '
 	case hyphens[r]:
 		return '-'
+	case r >= halfwidthKatakanaStart && r <= halfwidthKatakanaEnd: // 半角カナ → 全角
+		return halfwidthKatakanaFold[r-halfwidthKatakanaStart]
 	case isSpaceLike(r), isInvisible(r):
 		return ' '
 	}
@@ -90,8 +126,10 @@ func isInvisible(r rune) bool {
 }
 
 // isConvTarget は mapRune が別の文字へ写像する文字（全角 ASCII・全角スペース・
-// ハイフン類・Unicode 空白類・不可視文字）かを返す。長音記号類（「ー」「ｰ」「゠」）
-// は数字隣接時のみ変換するため、ここには含めず needsConversion 側で隣接判定する。
+// ハイフン類・半角カナ・Unicode 空白類・不可視文字）かを返す。長音記号類
+// （「ー」「ｰ」「゠」）は数字隣接時のみ変換するため、ここには含めず
+// needsConversion 側で隣接判定する（半角プロロング記号 U+FF70 は全角「ー」へ
+// 無条件変換したうえで、写像後の値に対して同じ隣接判定を適用する）。
 func isConvTarget(r rune) bool {
 	// 変換対象の最小コードポイントは U+00A0（NBSP）のため、それ未満（ASCII を
 	// 含む大半の文字）は残りの判定をすべて省略できる。ソースコード行の大半を
@@ -100,7 +138,8 @@ func isConvTarget(r rune) bool {
 	if r < '\u00A0' {
 		return false
 	}
-	return (r >= '！' && r <= '～') || r == '　' || hyphens[r] || isSpaceLike(r) || isInvisible(r)
+	return (r >= '！' && r <= '～') || r == '　' || hyphens[r] || isSpaceLike(r) || isInvisible(r) ||
+		(r >= halfwidthKatakanaStart && r <= halfwidthKatakanaEnd)
 }
 
 // needsConversion は s に変換対象が 1 つでも含まれるかを 1 パスで判定する
@@ -136,6 +175,8 @@ func needsConversion(s string) bool {
 //   - 不可視文字（ZERO WIDTH SPACE 等）→ 半角スペース
 //   - 長音記号類「ー」「ｰ」「゠」は数字に隣接する場合のみ '-'（カタカナ語・
 //     人名区切りとしての用法は保持する）
+//   - 半角カナ（U+FF61-FF9F）→ 対応する全角カナ・句読点（濁点・半濁点は
+//     結合文字 U+3099/U+309A のまま。1 ルーン = 1 ルーンを保つため合成しない）
 func Line(s string) string {
 	// 変換対象を厳密に判定する。対象がなければ（純 ASCII でも、変換対象を
 	// 含まない通常の日本語文でも）割り当てなしで元文字列をそのまま返す。
