@@ -38,7 +38,7 @@ jp-pii-detect はこれらの置き換えではなく、シークレット検出
 | 基礎年金番号 | `年金番号: 1234-567890` | ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 4桁-6桁 + 周辺の語が必要 |
 | 在留カード番号 | `在留カード AB12345678CD` | ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 英2+数8+英2 + 周辺の語が必要 |
 | 銀行口座番号 | `口座番号: 1234567` | △ | ![F1 0.95](https://img.shields.io/badge/F1-0.95-brightgreen) | 7 桁 + 周辺の語が必要 |
-| ゆうちょ銀行 記号番号 | `記号 1XXXX / 番号 XXXXXX1` | △ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 記号5桁 + 番号8桁以下 + ゆうちょ固有の周辺語が必要 |
+| ゆうちょ銀行 記号番号 | `記号 1XX?0 / 番号 XXXXXX1` | ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 記号4桁目の検査数字 + 番号との相関 + ゆうちょ固有の周辺語が必要 |
 | 健康保険 保険者番号等 | `保険者番号: 12345678` | △ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 8 桁 + 周辺の語、または強ラベル直結の国保6桁保険者番号 |
 | 雇用保険被保険者番号 | `XXXX-XXXXXX-X` | ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 4桁-6桁-1桁 + 周辺の語が必要 |
 | 介護保険被保険者番号 | `XXXXXXXXXX` | △ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 10 桁 + 周辺の語が必要 |
