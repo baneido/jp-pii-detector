@@ -911,13 +911,15 @@ func (d *Detector) scanAdjacentLinesDiff(file string, firstLineNo int, first str
 }
 
 func (d *Detector) hasSourceNegativeForFinding(f Finding, line string, lineCtx lineContext) bool {
-	// この構造化 source context 判定（label: value 代入文の Statements）は
-	// NegativeContext のクラス分類（ClassifyNegativeKeyword）とは独立の
-	// 別経路のため、NegativeContextAdjacentLabelOnly でも従来どおり適用する
-	// （制限対象は hasNegativeContextNear の語彙クラスのみ）。完全に適用対象
-	// 外にするのは旧 IgnoreNegativeContext: true 相当の NegativeContextIgnore
-	// だけ。
-	if f.negativeContextMode == rule.NegativeContextIgnore || len(lineCtx.Statements) == 0 || !d.ruleHasNegativeContext(f.RuleID) {
+	// モードの契約: NegativeContextAdjacentLabelOnly で抑制に使えるのは採番
+	// ラベル明示語彙（numberingLabelPrefixes）の隣接一致だけで、それ以外の
+	// 抑制経路は旧 IgnoreNegativeContext: true と同一（＝無効）。この構造化
+	// source context の NegativeText（phone_id / phoneID のようなキー名の
+	// id・version 等のトークン）は明示語彙の隣接判定ではないため、
+	// NegativeContextAll のときだけ適用する。AdjacentLabelOnly にも適用すると
+	// `phone_id: "090-..."`（.yaml）や `phoneID := "090-..."`（.go）のような
+	// 正当な電話番号キーの検出が旧挙動から回帰する（統合前検証で実測）。
+	if f.negativeContextMode != rule.NegativeContextAll || len(lineCtx.Statements) == 0 || !d.ruleHasNegativeContext(f.RuleID) {
 		return false
 	}
 	norm := normalize.Line(line)
@@ -1064,17 +1066,24 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 		// hasNegativeNear は mode（呼び出し元のパターンの NegativeContextMode）が
 		// NegativeContextIgnore なら呼び出し側で既に呼ばれない前提（下の
 		// パターンループ参照）。ここに来る mode は NegativeContextAll /
-		// NegativeContextAdjacentLabelOnly のいずれかで、両者の分岐は
-		// hasNegativeContextNear 内で行う（構造化 source context の判定
-		// （st.NegativeText・statementHasCleanPositiveLabel）はクラス制限の
-		// 対象外で両モード共通。理由は hasSourceNegativeForFinding のコメント
-		// を参照）。
+		// NegativeContextAdjacentLabelOnly のいずれかで、語彙クラスの分岐は
+		// hasNegativeContextNear 内で行う。
 		hasNegativeNear := func(start, end int, mode rule.NegativeContextMode) bool {
 			if len(r.NegativeContext) == 0 {
 				return false
 			}
 			st := lineCtx.statementFor(start, end)
-			if st != nil && st.NegativeText != "" {
+			// モードの契約: NegativeContextAdjacentLabelOnly で抑制に使える
+			// のは採番ラベル明示語彙の隣接一致だけで、それ以外の抑制経路は
+			// 旧 IgnoreNegativeContext: true と同一（＝無効）。構造化 source
+			// context の NegativeText（phone_id / phoneID のようなキー名の
+			// id 等のトークン）は明示語彙の隣接判定ではないため、
+			// NegativeContextAll のときだけ見る（適用すると正当な電話番号
+			// キーの検出が旧挙動から回帰する。hasSourceNegativeForFinding の
+			// コメントも参照）。statementHasCleanPositiveLabel（正ラベル優先）
+			// は抑制ではなく保護（検出維持方向にしか働かない）のため、
+			// 両モード共通に適用してよい。
+			if mode == rule.NegativeContextAll && st != nil && st.NegativeText != "" {
 				return true
 			}
 			if d.statementHasCleanPositiveLabel(st, r.Context) {

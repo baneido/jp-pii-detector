@@ -348,6 +348,35 @@ func TestPhoneAdjacentLabelOnlyCrossLineBehavior(t *testing.T) {
 	assertRules(t, d.ScanContent("f.txt", "SKU:\n"+mobileSep))
 }
 
+// TestPhoneAdjacentLabelOnlyBypassesSourceContextNegativeTokens は統合前検証で
+// 実測された回帰の再発防止テスト。モードの契約: NegativeContextAdjacentLabelOnly
+// で抑制に使えるのは採番ラベル明示語彙（numberingLabelPrefixes）の隣接一致
+// **だけ**で、それ以外の抑制経路は旧 IgnoreNegativeContext: true と同一（＝無効）。
+// 構造化 source context の NegativeText（キー名 phone_id / phoneID をトークン化
+// した id 等）は明示語彙の隣接判定ではないため、このモードではバイパスされ、
+// .yaml のキーや .go の変数代入にある正当な電話番号は旧挙動どおり Base の High
+// のまま検出される（一時 hasSourceNegativeForFinding と hasNegativeNear の
+// st.NegativeText 判定を AdjacentLabelOnly にも適用したことで、キー名の id が
+// 負文脈として効いてこの 2 ケースが抑制される回帰が起きた）。
+func TestPhoneAdjacentLabelOnlyBypassesSourceContextNegativeTokens(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, file, content string
+	}{
+		{"yaml キー phone_id（id が source negative トークン）", "a.yaml", `phone_id: "090-2345-6789"`},
+		{"go 変数 phoneID（id が source negative トークン）", "b.go", `phoneID := "090-2345-6789"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanContent(tt.file, tt.content)
+			assertRules(t, fs, "jp-phone-number")
+			if fs[0].Confidence != rule.High {
+				t.Errorf("confidence = %v, want high", fs[0].Confidence)
+			}
+		})
+	}
+}
+
 // TestPhoneNumberSeparatorVariants は issue #46 で追加した区切り表記ゆれ
 // （区切りなし固定電話・空白/ドット区切り携帯・括弧市外局番・フリーダイヤル）を
 // カバーする。既存 4 パターン（区切りあり携帯・区切りなし携帯・区切りあり固定・
