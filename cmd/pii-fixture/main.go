@@ -17,8 +17,10 @@ import (
 )
 
 const (
-	lockPath  = "fixtures.lock.json"
-	bucketEnv = "JP_PII_FIXTURES_BUCKET"
+	lockPath         = "fixtures.lock.json"
+	bucketEnv        = "JP_PII_FIXTURES_BUCKET"
+	projectEnv       = "JP_PII_FIXTURES_PROJECT"
+	gcloudAccountEnv = "JP_PII_FIXTURES_GCLOUD_ACCOUNT"
 )
 
 type lockFile struct {
@@ -58,13 +60,40 @@ func run(args []string, stdout, stderr io.Writer) error {
 			return usageError()
 		}
 		return purge(stdout)
+	case "migrate":
+		fs := flag.NewFlagSet("migrate", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		input := fs.String("input", "", "旧コーパスのローカルパス")
+		output := fs.String("output", "", "新コーパスの出力先（既存ファイルは上書きしない）")
+		datasetID := fs.String("dataset-id", "", "新コーパスの安定ID")
+		if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 || *input == "" || *output == "" || *datasetID == "" {
+			return usageError()
+		}
+		return migrate(*input, *output, *datasetID, stdout)
 	default:
 		return usageError()
 	}
 }
 
 func usageError() error {
-	return errors.New("usage: pii-fixture eval [-cache] | status | purge")
+	return errors.New("usage: pii-fixture eval [-cache] | status | purge | migrate -input PATH -output PATH -dataset-id ID")
+}
+
+func migrate(input, output, datasetID string, stdout io.Writer) error {
+	legacy, err := privatecorpus.Load(input)
+	if err != nil {
+		return err
+	}
+	corpus, err := privatecorpus.MigrateLegacy(legacy, datasetID, "legacy-curated")
+	if err != nil {
+		return err
+	}
+	if err := privatecorpus.WriteNew(output, corpus); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "migrated private corpus: dataset_id=%s cases=%d source_class=legacy-curated\n",
+		corpus.DatasetID, len(corpus.Dataset))
+	return nil
 }
 
 func runEval(cache bool, stdout, stderr io.Writer) error {
@@ -152,7 +181,7 @@ func download(lock lockFile, path string, stdout, stderr io.Writer) error {
 	}
 	tmp := path + ".tmp"
 	_ = os.Remove(tmp)
-	cmd := exec.Command("gcloud", "storage", "cp", source, tmp)
+	cmd := exec.Command("gcloud", gcloudCopyArgs(source, tmp)...)
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	if err := cmd.Run(); err != nil {
 		_ = os.Remove(tmp)
@@ -172,6 +201,17 @@ func download(lock lockFile, path string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("dataset_id mismatch: lock=%q corpus=%q", lock.DatasetID, corpus.DatasetID)
 	}
 	return os.Rename(tmp, path)
+}
+
+func gcloudCopyArgs(source, destination string) []string {
+	args := []string{"storage", "cp", source, destination, "--quiet"}
+	if account := strings.TrimSpace(os.Getenv(gcloudAccountEnv)); account != "" {
+		args = append(args, "--account="+account)
+	}
+	if project := strings.TrimSpace(os.Getenv(projectEnv)); project != "" {
+		args = append(args, "--project="+project)
+	}
+	return args
 }
 
 func goTest(path string, stdout, stderr io.Writer) error {
