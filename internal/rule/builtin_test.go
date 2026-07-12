@@ -847,3 +847,30 @@ func TestPhoneNumberPatternsUseAdjacentLabelOnlyMode(t *testing.T) {
 		}
 	}
 }
+
+// TestMatchesLabeledNoPrefectureAddress は、internal/corpusv2 が非公開評価
+// コーパスのWant帰属移行に使う唯一の情報源（MatchesLabeledNoPrefectureAddress）の
+// 契約を固定する。入力は呼び出し側が normalize.Line 済みであることを前提とする
+// ため、正規化前の値（全角コロン等）を渡した場合の挙動もここで明示しておく。
+func TestMatchesLabeledNoPrefectureAddress(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"ラベル付き・マーカーなしダッシュ番地", "住所: 渋谷区神南1-2-3", true},
+		{"ラベル付き・マーカー付き番地", "住所: 渋谷区神南1丁目2番3号", true},
+		{"ラベルなしは対象外", "渋谷区神南1-2-3", false},
+		{"第3エントリの語彙にないラベル(勤務地)は対象外", "勤務地: 渋谷区神南1-2-3", false},
+		{"都道府県つきは対象外（既存2エントリの担当領域）", "住所: 東京都渋谷区神南1-2-3", false},
+		{"実在しない市区町村は辞書ゲートで対象外", "住所: 通学区1-2-3", false},
+		{"正規化前の全角コロンはそのままでは対象外（呼び出し側でnormalize.Line必須）", "住所：渋谷区神南1-2-3", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := MatchesLabeledNoPrefectureAddress(tt.in); got != tt.want {
+				t.Errorf("MatchesLabeledNoPrefectureAddress(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}

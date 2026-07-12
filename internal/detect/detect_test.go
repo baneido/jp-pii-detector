@@ -1262,6 +1262,32 @@ func TestNumberingSuffixHeuristicProtectsLegitimateLabels(t *testing.T) {
 	}
 }
 
+// TestNumberingSuffixHeuristicProtectionReachesDistantOwnLabel は保護規則の
+// 走査幅バグの回帰テスト。jp-kaigo-insurance は Context に「介護保険」
+// 「要介護」「被保険者証」を持つが「被保険者番号」自体は含まないため、
+// 値の直前ラベルが（他の保険系ルールと同様に）単に「被保険者番号」である
+// 場合、保護規則はラベル自身の文字列だけでは成立せず、地の文を挟んでやや
+// 手前にある正文脈語（「介護保険」「要介護」）まで遡って初めて成立する。
+// 保護規則の走査幅がラベル抽出用の numberingSuffixMaxTokenRunes（12 ルーン）
+// に固定されていたときは、この距離のラベルで保護が届かず、接尾辞
+// ヒューリスティック（このタスクで新規追加）が本来 RequireContext を満たす
+// 正当な検出まで誤って抑制する回帰があった（走査幅を radius まで広げて
+// 修正）。読点等の区切りを挟まない自然な文でも回帰したため、契約に
+// 記載の「要介護認定 被保険者番号」（12 ルーン以内で収まる）だけでは
+// この回帰を検知できない。
+func TestNumberingSuffixHeuristicProtectionReachesDistantOwnLabel(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct{ name, line string }{
+		{"介護保険が地の文を挟んで手前にある", "介護保険の被保険者証に記載された被保険者番号は1234567890です"},
+		{"要介護認定を受けた、から始まる自然文", "要介護認定を受けた方の被保険者番号は1234567890です"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), "jp-kaigo-insurance")
+		})
+	}
+}
+
 // hasUnitAfter の requireBoundary（issue #53 (2)）: 修正前は単位直後が
 // ひらがな（助詞）でも「日本語文字」とみなして境界不成立にしていたため、
 // 「1234567件に到達した」のような助詞続きでカウンタ抑制が効かなかった
