@@ -45,6 +45,55 @@ func TestBuildMeetsV2CoverageContract(t *testing.T) {
 	}
 }
 
+func TestUpgradePublishedV2AddsEAIAndConfusableCoverageIdempotently(t *testing.T) {
+	complete, _, err := Build([]evalcase.Case{{
+		ID: "legacy-negative-1", SourceClass: "legacy-curated", Line: "識別情報を含まない行",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var base []evalcase.Case
+	hardNegatives := 0
+	for _, c := range complete {
+		if c.SourceClass == "hard-negative" {
+			hardNegatives++
+		}
+		remove := false
+		for _, id := range c.Want {
+			remove = remove || id == "email-address-eai" || id == "email-address-confusable"
+		}
+		if !remove {
+			base = append(base, c)
+		}
+	}
+	got, err := UpgradePublishedV2(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := positiveCounts(got)
+	if counts["email-address-eai"] != MinPositiveCasesPerRule ||
+		counts["email-address-confusable"] != MinPositiveCasesPerRule ||
+		len(got) != len(base)+2*MinPositiveCasesPerRule {
+		t.Fatalf("missing coverage was not supplemented: counts=%v len=%d base=%d", counts, len(got), len(base))
+	}
+	gotHardNegatives := 0
+	for _, c := range got {
+		if c.SourceClass == "hard-negative" {
+			gotHardNegatives++
+		}
+	}
+	if gotHardNegatives != hardNegatives {
+		t.Fatalf("hard negatives = %d, want unchanged %d", gotHardNegatives, hardNegatives)
+	}
+	again, err := UpgradePublishedV2(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(again, got) {
+		t.Fatal("UpgradePublishedV2 must be idempotent after filling missing coverage")
+	}
+}
+
 func TestHardNegativePANsAreTheExplicitKnownTestSet(t *testing.T) {
 	seen := map[string]bool{}
 	for _, pan := range wellKnownTestPANs() {
