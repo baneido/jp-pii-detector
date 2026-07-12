@@ -3,6 +3,8 @@ package rule
 // highRecallRuleIDs は高再現率モードでのみ有効にするルール ID 一覧。
 // config パッケージが既定値を組み立てる際に参照する。
 var highRecallRuleIDs = []string{
+	"email-address-confusable",
+	"email-address-eai",
 	"jp-address-high-recall",
 	"person-name-high-recall",
 	"person-name-structured",
