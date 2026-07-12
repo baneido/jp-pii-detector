@@ -1100,8 +1100,10 @@ func Builtin() []Rule {
 			// PrefilterLiterals の "name" だけでホットパスを絞る。
 			Prefilter:         PrefilterNone,
 			PrefilterLiterals: []string{"name"},
-			// 姓辞書・名辞書の共起（語順不問）を必須にする。ヘボン式の表記揺れ
-			// （Itô/Itoh/Ito 等）や、辞書外の英単語（Ken/Kai/Mori 等）との衝突は
+			// 姓辞書・名辞書の共起（語順不問）を必須にする。長音省略ヘボン式
+			// （Ito/Saito）と OH 表記（Itoh/Ohno）は辞書読み込み時の機械派生で
+			// 併録済み（internal/dict の loadRomaji 参照）。マクロン付き表記
+			// （Itô/Itō 等）や、辞書外の英単語（Ken/Kai/Mori 等）との衝突は
 			// 網羅できないため、初期実装は高再現率モード限定（既定オフ、
 			// HighRecallRuleIDs）とする。
 			Validate: validRomajiFullName,
