@@ -84,7 +84,7 @@ var (
 	// （CrossLineSurnameLabelRe と同じ設計。呼び出し側で明示的な ignore 判定は
 	// 不要）。
 	CrossLineYuchoSymbolRe = regexp.MustCompile(
-		`^\s*(?:ゆうちょ)?\s*記号\s*[:=]?\s*(1\d{4})\s*$`,
+		`^\s*(?:ゆうちょ)?\s*記号\s*[:=]?\s*(1\d{3}0)\s*$`,
 	)
 	// CrossLineYuchoNumberRe は CrossLineYuchoSymbolRe の番号側版。値（7〜8 桁、
 	// 末尾は必ず "1"）をグループ 1 で返す。桁数・末尾の制約は
@@ -124,17 +124,16 @@ func ValidCrossLineSurnameGivenPair(sei, mei string) bool {
 // ValidCrossLineYuchoPair は、記号ラベル行から取り出した値 symbol と番号ラベル行
 // から取り出した値 number が、ゆうちょ銀行の記号番号ペアとして妥当かを返す。
 // 判定基準は builtin.go の validYuchoAccount（同一行ハイフン相関形式）と同一
-// （記号は 5 桁で先頭が必ず "1"、番号は 7〜8 桁で末尾が必ず "1"、全桁同一の
-// ダミー値は棄却）。CrossLineYuchoSymbolRe / CrossLineYuchoNumberRe が桁数・
-// 先頭/末尾を既に正規表現側で保証しているため実質的には AllSame の棄却が主だが、
-// validYuchoAccount と同じ形状チェックも defense-in-depth として残す（将来
-// どちらかの正規表現だけが変更されても判定基準がずれないように）。
+// （記号は 5 桁で先頭 "1"・末尾 "0"、番号は 7〜8 桁で末尾 "1"、全桁同一の
+// ダミー値は棄却し、記号 4 桁目を checksum.YuchoAccount で検証）。正規表現が
+// 桁数・先頭/末尾を保証していても、validYuchoAccount と同じ形状チェックを
+// defense-in-depth として残す（将来どちらかだけが変更されても基準がずれない）。
 func ValidCrossLineYuchoPair(symbol, number string) bool {
 	symbol = strings.TrimSpace(symbol)
 	number = strings.TrimSpace(number)
-	if len(symbol) != 5 || symbol[0] != '1' ||
+	if len(symbol) != 5 || symbol[0] != '1' || symbol[4] != '0' ||
 		(len(number) != 7 && len(number) != 8) || number[len(number)-1] != '1' {
 		return false
 	}
-	return !checksum.AllSame(symbol) && !checksum.AllSame(number)
+	return !checksum.AllSame(symbol) && !checksum.AllSame(number) && checksum.YuchoAccount(symbol, number)
 }
