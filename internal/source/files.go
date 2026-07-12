@@ -168,10 +168,15 @@ func scanFiles(d *detect.Detector, files []string) ([]detect.Finding, []error) {
 					text = string(data)
 				}
 				// 上記いずれの経路で得た最終的な UTF-8 テキストに対しても、
-				// 後段として JSON の \uXXXX エスケープ（ensure_ascii=True 出力・
-				// .ipynb 等）の復号ビューを適用する。1 箇所も復号できなければ
-				// text はそのまま変わらない。
-				if unescaped, ok := decodeJSONUnicodeEscapes(text); ok {
+				// 後段として \uXXXX エスケープ（ensure_ascii=True 出力・.ipynb
+				// 等）→ HTML 数値文字参照（&#...; 等）→ URL パーセントエンコード
+				// （%XX の連続列）の順に適用する復号ビューの直列チェーン
+				// （decodeEscapedViews）を適用する。DecodeEscapedView（scan
+				// --stdin 経路、cmd/jp-pii-detect/main.go）も同じ
+				// decodeEscapedViews を呼ぶため、フルスキャンと stdin の両経路は
+				// 常に同じ復号チェーンを通る。1 箇所も復号できなければ text は
+				// そのまま変わらない。
+				if unescaped, ok := decodeEscapedViews(text); ok {
 					text = unescaped
 				}
 				results[i] = d.ScanContent(filepath.ToSlash(path), text)
