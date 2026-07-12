@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/baneido/jp-pii-detector/internal/config"
@@ -465,5 +466,259 @@ func TestScanStagedMissingGitBinary(t *testing.T) {
 	}
 	if _, err := ScanStaged(d, cfg); err == nil {
 		t.Error("expected error when git binary is unavailable")
+	}
+}
+
+// --- CSV/TSV 列コンテキストを --staged / --diff でも効かせる機能 ---
+//
+// internal/detect/csv_context.go のヘッダ→列文脈の仕組みはフルスキャン限定
+// だったが、post-image のヘッダ行を `git show` で個別取得することで
+// --staged / --diff でも働くようになった（detect.ScanDiffHunkWithCSVHeader
+// 経由）。以下は internal/source/gitdiff.go 側の配線（diffRangePostRevision・
+// fetchCSVHeader・scanHunk からの呼び出し）の end-to-end 確認。
+
+// csvColumnContextFixtureCSV は、ヘッダから何行離れていても列コンテキストが
+// 追加行まで届くこと（-U3 の文脈行ウィンドウにヘッダが入らないケース）を
+// 確認するテスト群の共有セットアップ。5 行の既存データ行を挟むことで、
+// 末尾に 1 行追加したときの hunk が（末尾 3 行の文脈行＋追加行のみを含み）
+// ヘッダ行（1 行目）を含まないことを保証する。
+func csvColumnContextFixtureCSV(t *testing.T) (repo, name, phone string) {
+	t.Helper()
+	repo = initTestRepo(t)
+	name = "data.csv"
+	// 区切りなし固定電話（10 桁）。jp-phone-number の他のパターン（携帯・IP・
+	// 区切りあり固定電話等）はいずれもコンテキスト不要のため単独でも検出される。
+	// 列単位のコンテキスト（RequireContext）が効いていることを確認したいので、
+	// あえてコンテキスト必須の区切りなし固定電話パターン（`0\d{9}`）だけが
+	// マッチする形にする。
+	phone = strings.ReplaceAll(testfixtures.MustGet(t, "detect.phone_fixed_tokyo"), "-", "")
+
+	var base strings.Builder
+	base.WriteString("電話番号,金額\n")
+	for range 5 {
+		base.WriteString("dummy,1000\n")
+	}
+	if err := os.WriteFile(filepath.Join(repo, name), []byte(base.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, "add", ".")
+	git(t, "commit", "-q", "-m", "base")
+
+	// ヘッダから離れた末尾（7 行目）に、電話番号列・金額列とも同じ値を追加する。
+	// 同じ値なのに列によって検出結果が変わることが、列コンテキストが
+	// 列ごとに正しくスコープされている証拠になる。
+	content := base.String() + phone + "," + phone + "\n"
+	if err := os.WriteFile(filepath.Join(repo, name), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, "add", ".")
+	return repo, name, phone
+}
+
+// ヘッダが hunk の外（変更行から 4 行以上手前）にあっても、git show で取得した
+// ヘッダにより列コンテキストが追加行まで届くこと。電話番号列の値は検出され、
+// 同じ値を金額列に置いても検出されない（RequireContext が列ごとに正しく
+// スコープされていることの確認）。
+func TestScanStagedCSVColumnContextHeaderOutsideHunk(t *testing.T) {
+	_, name, _ := csvColumnContextFixtureCSV(t)
+
+	cfg := config.Default()
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, err := ScanStaged(d, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("findings = %+v, want 1 件（電話番号列のみ検出。金額列の同じ値は検出されない）", findings)
+	}
+	if f := findings[0]; f.File != name || f.RuleID != "jp-phone-number" || f.Line != 7 || f.Column != 1 {
+		t.Errorf("finding = %+v, want %s:7:1 jp-phone-number", f, name)
+	}
+}
+
+// ScanDiff（コミット範囲）でも同じ列コンテキストが働くこと。diffRangePostRevision
+// が "A...B" 形式から post-image（B 側）を正しく解決できることの確認を兼ねる。
+func TestScanDiffRangeCSVColumnContext(t *testing.T) {
+	_, name, _ := csvColumnContextFixtureCSV(t)
+	git(t, "commit", "-q", "-m", "add row")
+
+	cfg := config.Default()
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, err := ScanDiff(d, cfg, "HEAD~1...HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("findings = %+v, want 1 件", findings)
+	}
+	if f := findings[0]; f.File != name || f.RuleID != "jp-phone-number" || f.Line != 7 {
+		t.Errorf("finding = %+v, want %s:7 jp-phone-number", f, name)
+	}
+}
+
+// 新規ファイル（ヘッダ自体が追加行として hunk 内にあるケース）でも、
+// git show :<path> によるヘッダ取得は成功し（ステージ済みインデックスに
+// 新規ファイルの内容がある）、データ行の列コンテキストが正しく働くこと。
+func TestScanStagedCSVColumnContextNewFileHeaderInHunk(t *testing.T) {
+	repo := initTestRepo(t)
+	name := "data.csv"
+	phone := strings.ReplaceAll(testfixtures.MustGet(t, "detect.phone_fixed_tokyo"), "-", "")
+	content := "電話番号,金額\n" + phone + "," + phone + "\n"
+	if err := os.WriteFile(filepath.Join(repo, name), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, "add", name)
+
+	cfg := config.Default()
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, err := ScanStaged(d, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("findings = %+v, want 1 件", findings)
+	}
+	if f := findings[0]; f.File != name || f.RuleID != "jp-phone-number" || f.Line != 2 || f.Column != 1 {
+		t.Errorf("finding = %+v, want %s:2:1 jp-phone-number", f, name)
+	}
+}
+
+// TSV（タブ区切り）でも同じ列コンテキストの仕組みが働くこと。
+func TestScanStagedCSVColumnContextTSV(t *testing.T) {
+	repo := initTestRepo(t)
+	name := "data.tsv"
+	phone := strings.ReplaceAll(testfixtures.MustGet(t, "detect.phone_fixed_tokyo"), "-", "")
+	content := "電話番号\t金額\n" + phone + "\t" + phone + "\n"
+	if err := os.WriteFile(filepath.Join(repo, name), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, "add", name)
+
+	cfg := config.Default()
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, err := ScanStaged(d, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 || findings[0].RuleID != "jp-phone-number" || findings[0].Line != 2 {
+		t.Fatalf("findings = %+v, want 1 件 %s:2 jp-phone-number", findings, name)
+	}
+}
+
+// --diff にドットを含まない裸のリビジョン（例: "HEAD~1"）を渡すと、git diff 的には
+// 作業ツリーとの比較になり単一の post-image リビジョンを解決できない
+// （diffRangePostRevision が ok=false を返す）。この場合はヘッダ取得を諦め、
+// 列コンテキストなしの安全側にフォールバックすること（クラッシュしない・
+// ヘッダ行から離れた追加行が検出されないままであることを確認する。従来の
+// diff 走査そのものは変わらず正常に動作する）。
+func TestScanDiffCSVColumnContextFallsBackWhenPostRevisionUnresolvable(t *testing.T) {
+	csvColumnContextFixtureCSV(t)
+	git(t, "commit", "-q", "-m", "add row")
+
+	cfg := config.Default()
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// "HEAD~1" はドットを含まないため post-image の単一リビジョンとして
+	// 解決できない（scanGitDiff 自体は working tree との通常の diff として
+	// 変わらず動作する）。
+	findings, err := ScanDiff(d, cfg, "HEAD~1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range findings {
+		if f.Line == 7 {
+			t.Errorf("header 行から離れた追加行が検出された（列コンテキストの安全側フォールバックが効いていない）: %+v", f)
+		}
+	}
+}
+
+// diffRangePostRevision が "--diff <range>" の各形式から post-image リビジョンを
+// 正しく解決すること（ScanDiff は range 文字列をそのまま git diff の 1 引数として
+// 渡すため、ここでも同じ文字列を解析する）。
+func TestDiffRangePostRevision(t *testing.T) {
+	tests := []struct {
+		in      string
+		wantRev string
+		wantOK  bool
+	}{
+		{"origin/main...HEAD", "HEAD", true},
+		{"a..b", "b", true},
+		{"a...b", "b", true},
+		{"a...", "HEAD", true},
+		{"...b", "b", true},
+		{"a..", "HEAD", true},
+		{"..b", "b", true},
+		{"abc123", "", false},
+		{"", "", false},
+		{"  a...b  ", "b", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			rev, ok := diffRangePostRevision(tt.in)
+			if rev != tt.wantRev || ok != tt.wantOK {
+				t.Errorf("diffRangePostRevision(%q) = (%q, %v), want (%q, %v)", tt.in, rev, ok, tt.wantRev, tt.wantOK)
+			}
+		})
+	}
+}
+
+// fetchCSVHeader の取得失敗（存在しないパス・存在しないリビジョン）が
+// パニックせず "" にフォールバックすること、および --staged
+// （revSpec=""）・コミット済み（revSpec="HEAD"）の双方でヘッダを取得
+// できることを直接確認する（scanHunk 経由の end-to-end テストとは別に、
+// この関数単体の境界条件を確認する）。
+func TestFetchCSVHeader(t *testing.T) {
+	repo := initTestRepo(t)
+	name := "data.csv"
+	if err := os.WriteFile(filepath.Join(repo, name), []byte("郵便番号,口座番号\n100-0001,1234567\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, "add", name)
+	git(t, "commit", "-q", "-m", "base")
+
+	const want = "郵便番号,口座番号"
+	if got := fetchCSVHeader("HEAD", name); got != want {
+		t.Errorf("fetchCSVHeader(HEAD, %q) = %q, want %q", name, got, want)
+	}
+	if got := fetchCSVHeader("", name); got != want {
+		t.Errorf("fetchCSVHeader(\"\", %q) = %q, want %q (index stage 0)", name, got, want)
+	}
+	if got := fetchCSVHeader("HEAD", "does-not-exist.csv"); got != "" {
+		t.Errorf("fetchCSVHeader for a missing path = %q, want empty (git show failure falls back safely)", got)
+	}
+	if got := fetchCSVHeader("no-such-rev", name); got != "" {
+		t.Errorf("fetchCSVHeader for a missing revision = %q, want empty", got)
+	}
+}
+
+// firstLine が改行・CRLF を正しく処理すること。
+func TestFirstLine(t *testing.T) {
+	tests := []struct {
+		in   []byte
+		want string
+	}{
+		{[]byte("a,b\nc,d\n"), "a,b"},
+		{[]byte("a,b\r\nc,d\r\n"), "a,b"},
+		{[]byte("onlyline"), "onlyline"},
+		{[]byte(""), ""},
+	}
+	for _, tt := range tests {
+		if got := firstLine(tt.in); got != tt.want {
+			t.Errorf("firstLine(%q) = %q, want %q", tt.in, got, tt.want)
+		}
 	}
 }

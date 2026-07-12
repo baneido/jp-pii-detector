@@ -494,28 +494,54 @@ type DiffLine struct {
 }
 
 // ScanDiffHunk は差分 hunk（文脈行＋追加行）を走査し、検出値が追加行に乗る
-// finding だけを返す（行番号はウィンドウ内 1 始まり）。
+// finding だけを返す（行番号はウィンドウ内 1 始まり）。CSV/TSV の列コンテキスト
+// （ヘッダ行→同一列の正負文脈。internal/detect/csv_context.go）は使わない
+// 後方互換のエントリポイントで、ScanDiffHunkWithCSVHeader(file, lines, "") に
+// 委譲する（既存呼び出し — internal/source/gitdiff.go の CSV 以外の経路、
+// internal/eval 等 — のシグネチャ・挙動を一切変えないため）。
+func (d *Detector) ScanDiffHunk(file string, lines []DiffLine) []Finding {
+	return d.ScanDiffHunkWithCSVHeader(file, lines, "")
+}
+
+// ScanDiffHunkWithCSVHeader は ScanDiffHunk に、走査対象が .csv/.tsv の場合の
+// post-image ヘッダ行（1 行目のテキスト）を追加で渡せる版。hunk 自体は
+// 変更箇所がファイル先頭付近でない限りヘッダ行を含まないため、呼び出し側
+// （internal/source/gitdiff.go）が `git show` で post-image のヘッダ行だけを
+// 個別取得して渡す。csvHeader を空文字にすると ScanDiffHunk と完全に同じ
+// 挙動になる（ヘッダ未取得・取得失敗・非 CSV ファイルはすべてこの経路）。
 //
-// 設計意図: 文脈行（未変更行）は正のコンテキスト（ラベル等）の補完にのみ使い、
-// 抑制（ignore マーカー・負コンテキスト）の駆動には使わない。これにより、
-// 追加した値の隣の既存行に「円」等の負コンテキストや古い jp-pii-detector:ignore が
-// あっても、追加行の新規 PII を取りこぼさない（セキュリティ検出器として偽陰性を避ける）。
-// 同一行の抑制（値そのものの行）は通常どおり適用される。一方、追加行同士が隣接する
-// 場合（両方 Added）は、フルスキャン（ScanContent）と同じく隣接行の負コンテキストを
-// 適用する。そうしないと、同じ 2 行の追加が CI のフルスキャンでは抑制され
-// pre-commit --staged では報告されるという非対称が生まれるため。
+// API 拡張の形について: ScanDiffHunk の既存シグネチャ・既存呼び出し（本パッケージ
+// 外では internal/source・internal/eval）を一切変更せず、新規のオプション付き
+// 関数を追加する形を選んだ。DiffLine 自体に CSV ヘッダを持たせる案（各行へ同じ
+// 文字列を複製する）や、DiffLine とは別の opts 構造体を第 3 引数にする案も
+// 検討したが、渡すオプションが現時点で「CSV ヘッダ 1 個」だけであり、
+// 汎用の opts 構造体を導入するより意図の伝わる専用関数名の方が呼び出し側
+// （internal/source/gitdiff.go）を読みやすいと判断した。
+//
+// 設計意図（ScanDiffHunk と共通）: 文脈行（未変更行）は正のコンテキスト
+// （ラベル等）の補完にのみ使い、抑制（ignore マーカー・負コンテキスト）の
+// 駆動には使わない。これにより、追加した値の隣の既存行に「円」等の負コンテキストや
+// 古い jp-pii-detector:ignore があっても、追加行の新規 PII を取りこぼさない
+// （セキュリティ検出器として偽陰性を避ける）。同一行の抑制（値そのものの行）は
+// 通常どおり適用される。一方、追加行同士が隣接する場合（両方 Added）は、
+// フルスキャン（ScanContent）と同じく隣接行の負コンテキストを適用する。
+// そうしないと、同じ 2 行の追加が CI のフルスキャンでは抑制され pre-commit
+// --staged では報告されるという非対称が生まれるため。CSV 列コンテキストの
+// PositiveText/NegativeText も、この「文脈行は正の補完のみ・抑制は値の行のみ」
+// という原則に従う（csvHeader 自体は外部から渡された固定情報であり、hunk 内の
+// 文脈行/追加行の区別とは独立に、行ごとの列の割り当てにのみ使う）。
 //
 // この「抑制は検出値が乗る行に対してのみ適用し、隣接行のマーカーを巻き添えに
 // しない」という原則は diff 経路専用ではなく、ScanContent 側の隣接行走査
 // （scanAdjacentLines）にも同様に適用される。
-func (d *Detector) ScanDiffHunk(file string, lines []DiffLine) []Finding {
+func (d *Detector) ScanDiffHunkWithCSVHeader(file string, lines []DiffLine, csvHeader string) []Finding {
 	texts := make([]string, len(lines))
 	added := make([]bool, len(lines))
 	for i, l := range lines {
 		texts[i] = l.Text
 		added[i] = l.Added
 	}
-	lineContexts := sourceLineContextsForDiff(file, texts, added)
+	lineContexts := sourceLineContextsForDiff(file, texts, added, csvHeader)
 
 	var candidates []Finding
 	// 追加行は単独走査（同一行コンテキスト・同一行抑制が正しく適用される）。

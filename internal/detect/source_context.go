@@ -159,9 +159,14 @@ func sourceKindForPath(path string) sourceKind {
 
 func sourceLineContexts(file string, lines []string) []lineContext {
 	// CSV/TSV はヘッダ列名から、.sql は INSERT 文の列名から、それぞれ
-	// フィールド単位の文脈を組み立てる専用パーサへ分岐する（フル走査限定。
-	// diff 走査ではヘッダ行・INSERT の列リストが hunk 外のことが多く誤帰属の
-	// リスクが高いため sourceLineContextsForDiff では使わない）。
+	// フィールド単位の文脈を組み立てる専用パーサへ分岐する。フル走査の CSV は
+	// 1 行目（lines[0]）自身がヘッダなので csvLineContexts が使える。diff 走査
+	// （sourceLineContextsForDiff）の CSV はヘッダ行が hunk 外のことが多いため、
+	// 呼び出し側が `git show` で個別取得したヘッダを csvDiffLineContexts に渡す
+	// （internal/source/gitdiff.go 参照）。SQL の diff 走査は現状未対応
+	// （列コンテキストなしの安全側。対象の単一行 INSERT は列リストと値が同一
+	// 物理行で自己完結するため、必要になれば sqlLineContexts をそのまま分岐に
+	// 追加するだけで対応できる）。
 	switch sourceKindForPath(file) {
 	case sourceKindCSV:
 		return csvLineContexts(file, lines)
@@ -178,7 +183,20 @@ func sourceLineContexts(file string, lines []string) []lineContext {
 	return out
 }
 
-func sourceLineContextsForDiff(file string, lines []string, added []bool) []lineContext {
+// csvHeader は .csv/.tsv の post-image ヘッダ行（1 行目）で、hunk 自体には
+// 含まれないことが多いため呼び出し側（internal/source/gitdiff.go）が
+// `git show` で個別取得して渡す（ScanDiffHunkWithCSVHeader 経由）。空文字なら
+// 「取得できなかった／対象外」を表し、CSV/TSV は csvDiffLineContexts が
+// そのまま列コンテキストなしを返す（安全側 = ScanDiffHunk のみを使っていた
+// 従来の挙動と同じ）。
+func sourceLineContextsForDiff(file string, lines []string, added []bool, csvHeader string) []lineContext {
+	// CSV/TSV は汎用のコード文パーサ（baseSourceLineContexts）ではなく専用の
+	// 列コンテキストパーサへ分岐する（sourceLineContexts のフル走査版と対称）。
+	// cross-line source context（addCrossLineSourceContexts）は CSV には適用しない
+	// （フル走査の csvLineContexts と同じ方針）。
+	if sourceKindForPath(file) == sourceKindCSV {
+		return csvDiffLineContexts(file, csvHeader, lines)
+	}
 	out, ok := baseSourceLineContexts(file, lines)
 	if !ok {
 		return out
@@ -195,8 +213,10 @@ func sourceLineContextsForDiff(file string, lines []string, added []bool) []line
 func baseSourceLineContexts(file string, lines []string) ([]lineContext, bool) {
 	out := make([]lineContext, len(lines))
 	// sourceKindCSV・sourceKindSQL はここでは常に ok=false（コード文パーサ
-	// 対象外）。sourceLineContextsForDiff がこの関数だけを使うため、結果として
-	// CSV/SQL は diff 走査での列コンテキスト付与から自動的に除外される。
+	// 対象外）。CSV/TSV はフル走査・diff 走査とも、この関数へ渡る前に専用の
+	// csv*LineContexts へ分岐するため実際にはここへ来ない。SQL はフル走査では
+	// sqlLineContexts へ分岐し、diff 走査（sourceLineContextsForDiff）だけが
+	// ここへ来て ok=false → 列コンテキストなしの安全側になる。
 	if sourceKindForPath(file) != sourceKindCode {
 		return out, false
 	}

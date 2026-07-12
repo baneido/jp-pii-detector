@@ -439,10 +439,12 @@ func TestCSVColumnContextDoesNotApplyToOtherExtensions(t *testing.T) {
 	}
 }
 
-// diff 走査（ScanDiffHunk）では CSV 列コンテキストを使わない
-// （sourceLineContextsForDiff は CSV を素通りする）。ヘッダに隣接する行は
-// 既存の ±1 行 source context で従来どおり救えるが、ヘッダから 2 行以上
-// 離れた追加行は救えないままであることを確認する。
+// ScanDiffHunk（CSV ヘッダを渡さない後方互換のエントリポイント。実運用では
+// git show でヘッダ取得できないときの安全側フォールバックにも相当する。
+// internal/source/gitdiff.go 参照）は CSV 列コンテキストを使わない。ヘッダに
+// 隣接する行は既存の ±1 行 source context で従来どおり救えるが、ヘッダから
+// 2 行以上離れた追加行は救えないままであることを確認する。ヘッダを渡す版
+// （TestScanDiffHunkWithCSVHeader* 群）と対になる回帰テスト。
 func TestCSVColumnContextDoesNotApplyToDiffScan(t *testing.T) {
 	d := newDetector(t, "")
 	fs := d.ScanDiffHunk("data.csv", []DiffLine{
@@ -457,6 +459,105 @@ func TestCSVColumnContextDoesNotApplyToDiffScan(t *testing.T) {
 	if len(full) == 0 {
 		t.Fatal("full scan should detect the same rows via CSV column context")
 	}
+}
+
+// --- Part D: diff hunk への CSV 列コンテキスト（ScanDiffHunkWithCSVHeader） ---
+//
+// internal/source/gitdiff.go が git show で取得した post-image のヘッダ行を
+// 渡す経路。hunk 自体はヘッダ行を含まない（先頭付近の変更でない限り）ことが
+// 多いため、csvDiffLineContexts は lines[0] からデータ行として列を割り当てる
+// （csvLineContexts が lines[0] をヘッダとしてスキップするのと対照的）。
+
+// ヘッダを渡せば、ヘッダから何行離れていても（hunk 自体がヘッダを含まなくても）
+// 追加行の列コンテキストが働くこと。Part A の
+// TestCSVColumnContextPromotesRowsBeyondAdjacentWindow の diff 版。
+func TestScanDiffHunkWithCSVHeaderPromotesRowsBeyondAdjacentWindow(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanDiffHunkWithCSVHeader("data.csv", []DiffLine{
+		{Text: "100-0001,1234567", Added: false}, // 文脈行（未変更）。ヘッダはこの中にも hunk 内にも無い。
+		{Text: "100-0001,1234567", Added: true},  // 追加行
+	}, "郵便番号,口座番号")
+
+	var gotPostal, gotBank bool
+	for _, f := range fs {
+		switch f.RuleID {
+		case "jp-postal-code":
+			gotPostal = true
+		case "jp-bank-account":
+			gotBank = true
+		default:
+			t.Errorf("unexpected rule %s", f.RuleID)
+		}
+		if f.Line != 2 {
+			t.Errorf("finding at unexpected line: %+v, want line 2 (the added line)", f)
+		}
+	}
+	if !gotPostal || !gotBank {
+		t.Errorf("jp-postal-code/jp-bank-account not found via externally supplied CSV header: %+v", fs)
+	}
+}
+
+// csvHeader を空文字にすると ScanDiffHunk と完全に同じ挙動になること
+// （ScanDiffHunk はまさにこの委譲で実装されている。detect.go 参照）。
+func TestScanDiffHunkWithCSVHeaderEmptyMatchesScanDiffHunk(t *testing.T) {
+	d := newDetector(t, "")
+	lines := []DiffLine{
+		{Text: "100-0001,1234567", Added: false},
+		{Text: "100-0001,1234567", Added: true},
+	}
+	got := d.ScanDiffHunkWithCSVHeader("data.csv", lines, "")
+	want := d.ScanDiffHunk("data.csv", lines)
+	if len(got) != len(want) {
+		t.Fatalf("ScanDiffHunkWithCSVHeader(header=\"\") = %+v, want == ScanDiffHunk = %+v", got, want)
+	}
+}
+
+// ヘッダ行らしくない文字列（例: データ行そのもの）を渡した場合は、フル走査の
+// looksLikeCSVHeader と同じ基準で列コンテキストなしにフォールバックする
+// （安全側）。
+func TestScanDiffHunkWithCSVHeaderRejectsNonHeaderShapedText(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanDiffHunkWithCSVHeader("data.csv", []DiffLine{
+		{Text: "100-0001,1234567", Added: true},
+	}, "100-0001,1234567") // 数値主体のフィールドを含む＝ヘッダ行らしくない
+	assertRules(t, fs)
+}
+
+// TSV でも同じ列コンテキストの仕組みが働くこと。
+func TestScanDiffHunkWithCSVHeaderTSV(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanDiffHunkWithCSVHeader("data.tsv", []DiffLine{
+		{Text: "100-0001\t1234567", Added: true},
+	}, "郵便番号\t口座番号")
+	assertRules(t, fs, "jp-postal-code", "jp-bank-account")
+}
+
+// 列名が金額・件数等の負コンテキスト語を含む場合、diff 走査でも（フル走査の
+// TestCSVColumnContextSuppressesMisleadingHeaderWord と同様に）抑制されること。
+func TestScanDiffHunkWithCSVHeaderSuppressesMisleadingHeaderWord(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanDiffHunkWithCSVHeader("data.csv", []DiffLine{
+		{Text: "1234567,1234567", Added: true},
+	}, "口座件数,口座番号")
+	assertRules(t, fs, "jp-bank-account")
+	if fs[0].Column == 1 {
+		t.Fatalf("finding = %+v, want the 口座番号 column (2nd field), not 口座件数", fs[0])
+	}
+}
+
+// hunk 内で引用符状態が破綻した行（フィールド内改行の途中等）以降は列
+// コンテキストの割り当てを打ち切る（csvUnterminatedRecordEnd の diff 版。
+// フル走査の TestCSVColumnContextUnterminatedToEOFStillLosesRemainder と対になる）。
+// hunk 冒頭が引用符未閉レコードの途中であるケース自体は診断できない
+// （制限として docs/development.md に明記）が、hunk 内で閉じないレコードに
+// 出会った時点からは同じ安全側の打ち切りが働くことを確認する。
+func TestScanDiffHunkWithCSVHeaderStopsAfterUnterminatedQuote(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanDiffHunkWithCSVHeader("data.csv", []DiffLine{
+		{Text: `"社内メモ`, Added: false}, // フィールド内改行の開始（行末までに閉じ引用符なし）
+		{Text: "100-0001,1234567", Added: true},
+	}, "郵便番号,口座番号")
+	assertRules(t, fs)
 }
 
 // --- Part C: 氏名列（高再現率限定） ---

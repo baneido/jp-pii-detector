@@ -1,6 +1,7 @@
 package source
 
 import (
+	"bytes"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -11,16 +12,29 @@ import (
 )
 
 // ScanStaged は git のステージ済み変更の追加行を走査する（pre-commit 用）。
+// CSV/TSV 列コンテキストの post-image ヘッダは `git show :<path>`（インデックスの
+// stage 0 = ステージ済み内容）で取得するため、csvHeaderRevSpec は空文字を渡す
+// （fetchCSVHeader 参照。"" + ":path" = ":path"）。
 func ScanStaged(d *detect.Detector, cfg *config.Config) ([]detect.Finding, error) {
-	return scanGitDiff(d, cfg, []string{"--staged"})
+	return scanGitDiff(d, cfg, []string{"--staged"}, "", true)
 }
 
 // ScanDiff は指定リビジョン範囲（例: origin/main...HEAD）の追加行を走査する（CI 用）。
+// CSV/TSV 列コンテキストの post-image ヘッダは diffRange の右辺（post-image を
+// 指すリビジョン）から取得する。diffRangePostRevision で解決できない場合
+// （裸のリビジョンなど）は csvHeaderRevOK=false となり、scanGitDiff はヘッダ取得を
+// 試みず列コンテキストなしにフォールバックする。
 func ScanDiff(d *detect.Detector, cfg *config.Config, diffRange string) ([]detect.Finding, error) {
-	return scanGitDiff(d, cfg, []string{diffRange})
+	rev, ok := diffRangePostRevision(diffRange)
+	return scanGitDiff(d, cfg, []string{diffRange}, rev, ok)
 }
 
-func scanGitDiff(d *detect.Detector, cfg *config.Config, extra []string) ([]detect.Finding, error) {
+// csvHeaderRevSpec/csvHeaderRevOK は CSV/TSV の post-image ヘッダ行を
+// `git show <csvHeaderRevSpec>:<path>` で取得する際に使うリビジョン式
+// （ScanStaged/ScanDiff がそれぞれの post-image に応じて解決する）。
+// csvHeaderRevOK=false は「単一のリビジョンを解決できない」ことを表し、
+// この呼び出し全体でヘッダ取得を行わない（列コンテキストなしの安全側）。
+func scanGitDiff(d *detect.Detector, cfg *config.Config, extra []string, csvHeaderRevSpec string, csvHeaderRevOK bool) ([]detect.Finding, error) {
 	// core.quotePath=false: 日本語などの非 ASCII ファイル名が
 	// 8 進エスケープ（"\346\227\245..."）で出力されるのを防ぐ。
 	//
@@ -44,9 +58,15 @@ func scanGitDiff(d *detect.Detector, cfg *config.Config, extra []string) ([]dete
 		}
 		return nil, fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
 	}
+	// CSV/TSV ファイルの post-image ヘッダ行（1 行目）を、実際にそのファイルの
+	// hunk が現れたときだけ遅延取得してファイルパスごとにキャッシュする（1 ファイルに
+	// 複数 hunk があっても git show の呼び出しは 1 回で済む）。ヘッダ自体を使わない
+	// 呼び出し（csvHeaderRevOK=false・CSV/TSV を含まない diff）では一切 git show を
+	// 呼ばない。
+	headerCache := map[string]string{}
 	var findings []detect.Finding
 	for _, h := range parseDiffHunks(string(out)) {
-		findings = append(findings, scanHunk(d, cfg, h)...)
+		findings = append(findings, scanHunk(d, cfg, h, csvHeaderRevSpec, csvHeaderRevOK, headerCache)...)
 	}
 	return findings, nil
 }
@@ -54,7 +74,7 @@ func scanGitDiff(d *detect.Detector, cfg *config.Config, extra []string) ([]dete
 // scanHunk は 1 つの diff hunk を走査し、検出値が追加行に乗っているものだけを
 // 報告する。文脈行（未変更行）はラベル等のコンテキストを補うために走査対象へ
 // 含めるが、文脈行上で完結する検出（既存 PII）は新規追加ではないため除外する。
-func scanHunk(d *detect.Detector, cfg *config.Config, h fileHunk) []detect.Finding {
+func scanHunk(d *detect.Detector, cfg *config.Config, h fileHunk, csvHeaderRevSpec string, csvHeaderRevOK bool, headerCache map[string]string) []detect.Finding {
 	if h.File == "" || !cfg.PathAllowed(h.File) {
 		return nil
 	}
@@ -62,11 +82,21 @@ func scanHunk(d *detect.Detector, cfg *config.Config, h fileHunk) []detect.Findi
 	for i, l := range h.Lines {
 		dlines[i] = detect.DiffLine{Text: l.Text, Added: l.Added}
 	}
+	// CSV/TSV の列コンテキスト（internal/detect/csv_context.go）は post-image の
+	// ヘッダ行を要求するが、hunk は変更箇所がファイル先頭付近でない限りヘッダ行を
+	// 含まない。git show で個別取得できたときだけ ScanDiffHunkWithCSVHeader へ渡し、
+	// 取得できなければ（csvHeaderRevOK=false・非 CSV・取得失敗・ヘッダ行らしくない
+	// 等）空文字のまま渡す — detect.ScanDiffHunkWithCSVHeader はそれを
+	// ScanDiffHunk と同じ「列コンテキストなし」として扱う。
+	var csvHeader string
+	if csvHeaderRevOK && detect.IsCSVOrTSVPath(h.File) {
+		csvHeader = cachedCSVHeader(headerCache, csvHeaderRevSpec, h.File)
+	}
 	var findings []detect.Finding
-	// ScanDiffHunk は検出値が追加行に乗る finding だけを返す（文脈行は正の
-	// コンテキスト補完にのみ使う）。行番号はウィンドウ内 1 始まりなので、
+	// ScanDiffHunkWithCSVHeader は検出値が追加行に乗る finding だけを返す（文脈行は
+	// 正のコンテキスト補完にのみ使う）。行番号はウィンドウ内 1 始まりなので、
 	// 元ファイルの行番号へ写像する。
-	for _, f := range d.ScanDiffHunk(h.File, dlines) {
+	for _, f := range d.ScanDiffHunkWithCSVHeader(h.File, dlines, csvHeader) {
 		idx := f.Line - 1
 		if idx < 0 || idx >= len(h.Lines) {
 			continue
@@ -75,6 +105,87 @@ func scanHunk(d *detect.Detector, cfg *config.Config, h fileHunk) []detect.Findi
 		findings = append(findings, f)
 	}
 	return findings
+}
+
+// diffRangePostRevision は `--diff <range>` の range 文字列から、post-image
+// （新しい側 = diff の "+" 側）を指す単一のリビジョンを取り出す。ScanDiff は
+// range をそのまま 1 個の git diff 引数として渡す（git 自身が "A..B" /
+// "A...B" のドット記法を解釈する。scanGitDiff 参照）ため、ここでも同じ文字列を
+// 解析する。二点（"A..B"）・三点（"A...B"）のいずれも右辺が post-image を
+// 指すため、最初に出現した方の区切りで分割し右辺を使う（"..." は ".." を
+// 含むため先に調べる）。右辺省略時（"A.."・"A..." 等）は git 自身の既定動作に
+// ならい HEAD を補う。
+//
+// ドットを含まない裸のリビジョン（例: "abc123"）は git diff 的には作業ツリーとの
+// 比較になり、単一のリビジョンを指せないため ok=false を返す（呼び出し側は
+// ヘッダ取得を諦め、列コンテキストなしの安全側にフォールバックする）。この
+// ツールが文書化する --diff の使用例は常に "origin/main...HEAD" のような
+// 二点/三点記法であり（README・docs/integrations.md 等）、裸のリビジョンは
+// 通常の利用形ではないため、この安全側フォールバックによる機能低下は実運用上
+// 問題にならない想定。
+func diffRangePostRevision(diffRange string) (rev string, ok bool) {
+	s := strings.TrimSpace(diffRange)
+	sep := "..."
+	i := strings.Index(s, sep)
+	if i < 0 {
+		sep = ".."
+		i = strings.Index(s, sep)
+	}
+	if i < 0 {
+		return "", false
+	}
+	rev = strings.TrimSpace(s[i+len(sep):])
+	if rev == "" {
+		rev = "HEAD"
+	}
+	return rev, true
+}
+
+// cachedCSVHeader は fetchCSVHeader の結果をファイルパスごとにキャッシュする。
+func cachedCSVHeader(cache map[string]string, revSpec, path string) string {
+	if header, ok := cache[path]; ok {
+		return header
+	}
+	header := fetchCSVHeader(revSpec, path)
+	cache[path] = header
+	return header
+}
+
+// fetchCSVHeader は post-image の 1 行目（ヘッダ想定）を
+// `git show <revSpec>:<path>` で取得する。revSpec=="" なら ":<path>"
+// （インデックスの stage 0 = --staged の post-image）になる。
+//
+// path は diff hunk のヘッダ（"+++ b/..."）由来で常にリポジトリルート相対
+// （gitrevisions(7): "<rev>:<path>" の <path> は "./"/"../" 接頭辞がない限り
+// リポジトリルート相対に解釈される）なので、走査時のカレントディレクトリに
+// 関わらずそのまま使える。
+//
+// 取得失敗（新規ファイルが対象リビジョンにまだ存在しない・マージ未解決で
+// stage 0 が無い等）・バイナリ・空はすべて "" を返す。呼び出し側
+// （detect.ScanDiffHunkWithCSVHeader）はこれを「列コンテキストなし」として扱う
+// 安全側デフォルトなので、ここでは git diff 本体のエラーとして呼び出し元へ
+// 伝播させない — ヘッダ取得は列コンテキストを広げるためだけのベストエフォートな
+// 補助機能であり、失敗のたびに走査全体を止めるべきではないため。
+func fetchCSVHeader(revSpec, path string) string {
+	out, err := exec.Command("git", "show", revSpec+":"+path).Output()
+	if err != nil {
+		return ""
+	}
+	if isBinary(out) {
+		return ""
+	}
+	return firstLine(out)
+}
+
+// firstLine は git show の出力（バイト列）から 1 行目だけを取り出す
+// （CRLF の \r も取り除く）。ヘッダ行らしいかどうかの判定自体は呼び出し先の
+// detect.ScanDiffHunkWithCSVHeader（内部的には parseCSVHeader/looksLikeCSVHeader）
+// に委ねる。
+func firstLine(b []byte) string {
+	if i := bytes.IndexByte(b, '\n'); i >= 0 {
+		b = b[:i]
+	}
+	return strings.TrimSuffix(string(b), "\r")
 }
 
 // diffLine は diff hunk 内の新ファイル側 1 行。

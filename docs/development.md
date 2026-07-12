@@ -390,8 +390,10 @@ internal/
      デコード後の行・列はルーン単位としては正しいものの、元ファイルのバイトオフセット
      とは対応しません。この変換はフルスキャン限定で、`git diff` がバイナリ扱いする
      UTF-16 ファイルは `--staged` / `--diff` の走査対象になりません。
-   - git モード: `git diff -U3` で文脈行付きの差分を取得し、`detect.ScanDiffHunk` で
-     走査します。検出値が**追加行に乗っているもののみ**を報告し、文脈行（未変更行）上の
+   - git モード: `git diff -U3` で文脈行付きの差分を取得し、`detect.ScanDiffHunk`
+     （`.csv`/`.tsv` は `git show` で post-image のヘッダ行を追加取得できたときだけ
+     `detect.ScanDiffHunkWithCSVHeader`。詳細は後述の CSV/TSV の項）で走査します。
+     検出値が**追加行に乗っているもののみ**を報告し、文脈行（未変更行）上の
      既存 PII は報告しません。
    - ラベルが**論理的に隣接する未変更行**（間が空白のみの行なら最大 2 行挟んでもよい。
      `j-i<=3`）にあり値だけを追加したケースでも、コンテキスト必須ルールが発火します
@@ -410,10 +412,10 @@ internal/
      source context は文脈判定にだけ使い、正規表現は従来どおり正規化済みの元行だけを走査します。
      statement の値範囲は正規化済み行の byte offset で持ち、候補マッチがその範囲内にある場合だけ
      `PositiveText` / `NegativeText` を適用します。AST 解析や言語別 parser は使いません。
-   - `.csv`/`.tsv`（[`internal/detect/csv_context.go`](../internal/detect/csv_context.go)、
-     フルスキャン限定）は上記のコード文パーサとは別の専用パーサへ分岐します
+   - `.csv`/`.tsv`（[`internal/detect/csv_context.go`](../internal/detect/csv_context.go)）は
+     上記のコード文パーサとは別の専用パーサへ分岐します
      （`sourceExtensions` には加えていません。カンマを文区切りとして誤解釈するためです）。
-     1 行目をヘッダとして RFC 4180 準拠の引用符処理（`""` エスケープ）でフィールドに
+     ヘッダ行を RFC 4180 準拠の引用符処理（`""` エスケープ）でフィールドに
      分割します。区切り直後の半角空白を挟む引用フィールドも認識し、引用符が続かない
      先頭空白は値の一部として保持します。各列のラベル語をその列の**全データ行**の
      該当フィールドへ `PositiveText` / `NegativeText` として付与し、隣接 ±1 行の
@@ -426,8 +428,27 @@ internal/
      フィールド値を `rule.CSVNameValueRe` で切り出し `rule.ValidCrossLineName`
      （姓名辞書照合）で検証して `person-name-structured` として報告します（フリガナ列は
      辞書が漢字ベースのため対象外です）。この Medium finding は `min_confidence` を尊重します。
-     diff 走査では使いません（hunk はヘッダ行を含まないことが多く、列のずれた誤帰属の
-     リスクが高いためです）。
+     フルスキャンではファイル自身の 1 行目を `csvLineContexts` がヘッダとして使います。
+     diff 走査（`--staged` / `--diff`）は hunk 自体がヘッダ行を含まないことが多い
+     （変更箇所がファイル先頭付近でない限り）ため、`internal/source/gitdiff.go` が
+     post-image のヘッダ行だけを個別に `git show` で取得し、
+     `detect.ScanDiffHunkWithCSVHeader`（`ScanDiffHunk` の既存シグネチャ・既存呼び出しは
+     変えず、CSV ヘッダを渡せる別関数として追加）経由で `csvDiffLineContexts` に渡します
+     （`csvLineContexts` と異なり hunk の 1 行目からデータ行として列を割り当てます）。
+     取得コマンドは `--staged` なら `git show :<path>`（インデックスの stage 0）、
+     `--diff <range>` なら `git show <rev>:<path>`（`range` の post-image 側 —
+     `A..B` / `A...B` いずれも右辺、省略時は `HEAD` — を `rev` として使う。
+     `diffRangePostRevision` が range 文字列から解決します）。取得に失敗した場合
+     （新規ファイルが対象リビジョンにまだ無い等）・出力がバイナリ判定される場合・
+     空・ヘッダ行らしくない場合は、いずれも列コンテキストなしの従来どおりの安全側に
+     フォールバックします（`fetchCSVHeader`）。`--diff <range>` がドットを含まない
+     裸のリビジョン（作業ツリーとの比較になり単一の post-image リビジョンを指せない）
+     の場合も同様にヘッダ取得自体を行いません。
+     **制限**: hunk 内で引用符状態が破綻した行（フィールド内改行の途中等）に
+     遭遇したら、フルスキャンの `csvUnterminatedRecordEnd` と同じ安全側の方針で
+     それ以降の列コンテキスト付与を打ち切ります。ただし hunk の先頭が、hunk に
+     含まれない先行行から続く引用符未閉レコードの途中である可能性そのものは
+     診断できません（hunk 外の内容は見えないため）。
    - 各ルールのパターンを正規表現でマッチし、`Validate`（チェックディジット等）と
      allowlist で絞り込みます。
      - 同一行にコンテキストキーワードがあれば信頼度を High に昇格します。昇格時の探索は
