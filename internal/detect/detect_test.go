@@ -286,6 +286,68 @@ func TestPhoneSepAllowsAreaCodeMissingFromSeedDictionary(t *testing.T) {
 	assertRules(t, d.ScanLine("f.txt", 1, "電話番号：04992-2-1234"), "jp-phone-number")
 }
 
+// TestPhoneAdjacentLabelOnlySuppressesExplicitNumberingLabels は、区切りあり
+// 携帯・区切りなし携帯・区切りあり固定電話（旧 IgnoreNegativeContext: true、現
+// NegativeContextAdjacentLabelOnly）が、採番ラベル接頭クラスの明示語彙
+// （sku・version・型番・シリアル番号等）に値が直接隣接する場合は抑制する
+// ことを確認する。既知FP: 「電話機SKU: 090-...」「電話API version: 03-...」
+// （internal/corpusv2/corpusv2.go の hard-negative "phone-like"）。
+func TestPhoneAdjacentLabelOnlySuppressesExplicitNumberingLabels(t *testing.T) {
+	d := newDetector(t, "")
+	mobileSep := testfixtures.MustGet(t, "detect.phone_mobile_sep")
+	mobileNoSep := testfixtures.MustGet(t, "detect.phone_mobile_nosep")
+	fixedSep := testfixtures.MustGet(t, "detect.phone_fixed_tokyo")
+	tests := []struct{ name, line string }{
+		{"SKU（区切りあり携帯、コロン+空白のグルー）", "電話機SKU: " + mobileSep + " (test model)"},
+		{"version（区切りあり固定電話、コロン+空白のグルー）", "電話API version: " + fixedSep + " (alpha)"},
+		{"型番（区切りあり携帯、コロン+空白のグルー）", "型番: " + mobileSep},
+		{"シリアル番号（区切りなし携帯、空白のみ）", "シリアル番号 " + mobileNoSep},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line))
+		})
+	}
+}
+
+// TestPhoneAdjacentLabelOnlyPreservesNonExplicitLabels は
+// NegativeContextAdjacentLabelOnly が採番ラベル接尾辞ヒューリスティック
+// （hasNumberingSuffixBefore）を呼ばないことを確認する最重要ガード。
+// 「お客様番号」は「番号」で終わるが numberingLabelPrefixes の明示語彙
+// （伝票番号・受付番号 等）のどれとも完全一致しないため、接尾辞の形状だけで
+// 判定する接尾辞ヒューリスティックが働くと実電話番号を誤って棄却（FN 化）
+// してしまう。明示語彙への直接隣接に限定した AdjacentLabelOnly では、この
+// ような正当な電話ラベルを誤って抑制しないことを確認する。
+func TestPhoneAdjacentLabelOnlyPreservesNonExplicitLabels(t *testing.T) {
+	d := newDetector(t, "")
+	mobileSep := testfixtures.MustGet(t, "detect.phone_mobile_sep")
+	fixedSep := testfixtures.MustGet(t, "detect.phone_fixed_tokyo")
+	intl := testfixtures.MustGet(t, "detect.phone_intl_mobile")
+	tests := []struct{ name, line string }{
+		{"お客様番号（最重要ガード: 番号で終わるが明示語彙に非一致）", "お客様番号 " + mobileSep},
+		{"連絡先（ラベルは正文脈語で負文脈語ではない）", "連絡先 " + mobileSep},
+		{"TEL", "TEL: " + fixedSep},
+		{"+81 国際表記（負文脈語なし）", intl},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), "jp-phone-number")
+		})
+	}
+}
+
+// TestPhoneAdjacentLabelOnlyCrossLineBehavior は、ラベルだけの行「SKU:」と
+// 電話番号だけの次行という論理隣接ペアに対する hasCrossLineNegativeContext の
+// 実挙動を固定する。cross-line 経路は前後の論理隣接行を結合してから同じ
+// hasNegativeContextNear（AdjacentLabelOnly）を評価するため、単一行の
+// 「SKU: 090-...」と同様に抑制される（cross-line 経路にも AdjacentLabelOnly
+// の制限をそのまま適用しただけで、抑制させるための追加改修はしていない）。
+func TestPhoneAdjacentLabelOnlyCrossLineBehavior(t *testing.T) {
+	d := newDetector(t, "")
+	mobileSep := testfixtures.MustGet(t, "detect.phone_mobile_sep")
+	assertRules(t, d.ScanContent("f.txt", "SKU:\n"+mobileSep))
+}
+
 // TestPhoneNumberSeparatorVariants は issue #46 で追加した区切り表記ゆれ
 // （区切りなし固定電話・空白/ドット区切り携帯・括弧市外局番・フリーダイヤル）を
 // カバーする。既存 4 パターン（区切りあり携帯・区切りなし携帯・区切りあり固定・

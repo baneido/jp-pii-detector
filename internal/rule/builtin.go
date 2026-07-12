@@ -592,8 +592,12 @@ func Builtin() []Rule {
 			Prefilter:   PrefilterDigit,
 			Context:     []string{"電話", "携帯", "連絡先", "tel", "phone", "fax", "mobile", "denwa"},
 			// 桁ベースの区切りなし固定電話パターンは業務 ID・型番等と衝突しやすいため、
-			// 金額・数量・連番 ID 文脈で棄却する。既存パターンは従来の検出挙動を
-			// 維持するため IgnoreNegativeContext で適用対象から外す。
+			// 金額・数量・連番 ID 文脈で棄却する。区切りあり携帯・区切りなし携帯・
+			// 区切りあり固定・国際表記の 4 パターンは、汎用の負文脈クラス（金額・
+			// カウンタ・汎用窓語）まで適用すると既存の検出挙動を落としかねないため
+			// NegativeContextAdjacentLabelOnly に限定し、採番ラベル（型番・SKU 等）が
+			// 値に直接隣接する場合だけ棄却する（既知FP: 「電話機SKU: 090-...」
+			// 「電話API version: 03-...」。それ以外の検出挙動は維持する）。
 			NegativeContext:      digitRuleNegativeContext,
 			RequireContextWindow: digitRuleRequireContextWindow,
 			Validate:             validPhone,
@@ -604,15 +608,15 @@ func Builtin() []Rule {
 			Kind: PhoneKind,
 			Patterns: []Pattern{
 				// 区切りあり携帯・IP 電話（060/070/080/090/050）
-				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0-\d{4}-\d{4}`), Base: High, IgnoreNegativeContext: true},
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0-\d{4}-\d{4}`), Base: High, NegativeContextMode: NegativeContextAdjacentLabelOnly},
 				// 空白・ドット区切り携帯・IP 電話
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0[ .]\d{4}[ .]\d{4}`), Base: Medium,
 					ValidateLine: rejectSeparatedDigitGroup(" .", 1)},
 				// 区切りなし携帯・IP 電話
-				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0\d{8}`), Base: Medium, IgnoreNegativeContext: true},
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0\d{8}`), Base: Medium, NegativeContextMode: NegativeContextAdjacentLabelOnly},
 				// 区切りあり固定電話（市外局番 2〜5 桁）。末尾は 3〜4 桁を許容し、
 				// フリーダイヤル・ナビダイヤル等の末尾 3 桁表記も拾う。
-				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}-\d{1,4}-\d{3,4}`), Base: Medium, IgnoreNegativeContext: true},
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}-\d{1,4}-\d{3,4}`), Base: Medium, NegativeContextMode: NegativeContextAdjacentLabelOnly},
 				// ドット区切り固定電話（携帯のドット区切りパターン、上の
 				// 空白・ドット区切り携帯・IP 電話に倣う）。validPhone は 10 桁で
 				// ハイフン・空白のいずれも含まない場合、区切りなし固定電話と同じ
@@ -632,7 +636,7 @@ func Builtin() []Rule {
 				// （dict.ValidAreaCode）で先頭一致の実在性を検証する。
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{9}`), Base: Medium, RequireContext: true},
 				// 国際表記 +81
-				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`\+81[- ]?\d{1,4}[- ]?\d{1,4}[- ]?\d{3,4}`), Base: High, IgnoreNegativeContext: true},
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`\+81[- ]?\d{1,4}[- ]?\d{1,4}[- ]?\d{3,4}`), Base: High, NegativeContextMode: NegativeContextAdjacentLabelOnly},
 			},
 		},
 		{

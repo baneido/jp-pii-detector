@@ -105,9 +105,10 @@ type Finding struct {
 	// 対象外にする。jp-birthdate のようにラベル埋め込み正規表現でクロスライン
 	// 検出するルールには、この越境情報を理由とした一律抑制を適用しない。
 	matchStart, matchEnd int
-	// ignoreNegativeContext はマッチしたパターンが Rule.NegativeContext の
-	// 適用対象外であることを表す。隣接行の負文脈フィルタにも引き継ぐ。
-	ignoreNegativeContext bool
+	// negativeContextMode はマッチしたパターンの rule.NegativeContextMode
+	// （このパターンに Rule.NegativeContext をどこまで適用するか）を表す。
+	// 隣接行の負文脈フィルタ（hasCrossLineNegativeContext）にも引き継ぐ。
+	negativeContextMode rule.NegativeContextMode
 	// scoreEvidence は ConfidenceScore の計算にだけ使う非公開の構造証拠。
 	scoreEvidence confidenceScoreEvidence
 }
@@ -910,7 +911,13 @@ func (d *Detector) scanAdjacentLinesDiff(file string, firstLineNo int, first str
 }
 
 func (d *Detector) hasSourceNegativeForFinding(f Finding, line string, lineCtx lineContext) bool {
-	if f.ignoreNegativeContext || len(lineCtx.Statements) == 0 || !d.ruleHasNegativeContext(f.RuleID) {
+	// この構造化 source context 判定（label: value 代入文の Statements）は
+	// NegativeContext のクラス分類（ClassifyNegativeKeyword）とは独立の
+	// 別経路のため、NegativeContextAdjacentLabelOnly でも従来どおり適用する
+	// （制限対象は hasNegativeContextNear の語彙クラスのみ）。完全に適用対象
+	// 外にするのは旧 IgnoreNegativeContext: true 相当の NegativeContextIgnore
+	// だけ。
+	if f.negativeContextMode == rule.NegativeContextIgnore || len(lineCtx.Statements) == 0 || !d.ruleHasNegativeContext(f.RuleID) {
 		return false
 	}
 	norm := normalize.Line(line)
@@ -1054,7 +1061,15 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 			}
 			return kws, structured
 		}
-		hasNegativeNear := func(start, end int) bool {
+		// hasNegativeNear は mode（呼び出し元のパターンの NegativeContextMode）が
+		// NegativeContextIgnore なら呼び出し側で既に呼ばれない前提（下の
+		// パターンループ参照）。ここに来る mode は NegativeContextAll /
+		// NegativeContextAdjacentLabelOnly のいずれかで、両者の分岐は
+		// hasNegativeContextNear 内で行う（構造化 source context の判定
+		// （st.NegativeText・statementHasCleanPositiveLabel）はクラス制限の
+		// 対象外で両モード共通。理由は hasSourceNegativeForFinding のコメント
+		// を参照）。
+		hasNegativeNear := func(start, end int, mode rule.NegativeContextMode) bool {
 			if len(r.NegativeContext) == 0 {
 				return false
 			}
@@ -1068,7 +1083,7 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 				// 件数等）で誤って棄却しない（正ラベル優先。issue #68 段階1(a)）。
 				return false
 			}
-			return d.hasNegativeContextNear(norm, start, end, negativeContextWindowRunes, &normRunes, r.NegativeContext, r.Context)
+			return d.hasNegativeContextNear(norm, start, end, negativeContextWindowRunes, &normRunes, r.NegativeContext, r.Context, mode)
 		}
 		for _, p := range r.Patterns {
 			requireContextWindow := r.RequireContextWindow
@@ -1126,7 +1141,7 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 					contextEvidence.patternBoundContext = scoreEvidence.patternBoundContext
 					scoreEvidence = contextEvidence
 				}
-				if !p.IgnoreNegativeContext && hasNegativeNear(start, end) {
+				if p.NegativeContextMode != rule.NegativeContextIgnore && hasNegativeNear(start, end, p.NegativeContextMode) {
 					if d.collectDropped {
 						d.recordDroppedMatch(r.ID, file, lineNo, norm, start, DropReasonNegativeContext, p.Base)
 					}
@@ -1222,20 +1237,20 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 					origRunes = []rune(line)
 				}
 				finding := Finding{
-					RuleID:                r.ID,
-					Description:           r.Description,
-					File:                  file,
-					Line:                  lineNo,
-					Column:                rs + 1,
-					Match:                 string(origRunes[rs:re]),
-					Confidence:            conf,
-					Reason:                reason,
-					start:                 rs,
-					end:                   re,
-					matchStart:            mrs,
-					matchEnd:              mre,
-					ignoreNegativeContext: p.IgnoreNegativeContext,
-					scoreEvidence:         scoreEvidence,
+					RuleID:              r.ID,
+					Description:         r.Description,
+					File:                file,
+					Line:                lineNo,
+					Column:              rs + 1,
+					Match:               string(origRunes[rs:re]),
+					Confidence:          conf,
+					Reason:              reason,
+					start:               rs,
+					end:                 re,
+					matchStart:          mrs,
+					matchEnd:            mre,
+					negativeContextMode: p.NegativeContextMode,
+					scoreEvidence:       scoreEvidence,
 				}
 				finalizeFindingScore(&finding)
 				found = append(found, finding)

@@ -16,7 +16,7 @@ const negativeContextWindowRunes = 20
 // スキップしないと、口座番号の直後に空行を挟んだ先に金額の単位（円）が
 // 続くようなケースで、負コンテキストによる抑制を取りこぼす。
 func (d *Detector) hasCrossLineNegativeContext(f Finding, lines []string, lineContexts []lineContext, lineIdx int) bool {
-	if f.ignoreNegativeContext || lineIdx < 0 || lineIdx >= len(lines) {
+	if f.negativeContextMode == rule.NegativeContextIgnore || lineIdx < 0 || lineIdx >= len(lines) {
 		return false
 	}
 	var negCtx, posCtx []string
@@ -68,7 +68,7 @@ func (d *Detector) hasCrossLineNegativeContext(f Finding, lines []string, lineCo
 	// 改行と空白は両方とも 1 バイトなのでオフセットは変わらない。
 	combined = strings.ReplaceAll(combined, "\n", " ")
 	var runes []rune
-	return d.hasNegativeContextNear(combined, offset+byteStart, offset+byteEnd, negativeContextWindowRunes, &runes, negCtx, posCtx)
+	return d.hasNegativeContextNear(combined, offset+byteStart, offset+byteEnd, negativeContextWindowRunes, &runes, negCtx, posCtx, f.negativeContextMode)
 }
 
 // statementHasCleanPositiveLabel は st がこのルール自身の Context キーワードに
@@ -91,13 +91,24 @@ func (d *Detector) statementHasCleanPositiveLabel(st *statementContext, ctx []st
 // NegativeKeywordLabelPrefix の語が 1 つでも kws に含まれる場合、明示語彙の
 // 一致とは別に 1 回だけ実行する「採番ラベル接尾辞ヒューリスティック」
 // （hasNumberingSuffixBefore）の保護規則判定に使う。
-func (d *Detector) hasNegativeContextNear(s string, start, end, radius int, runes *[]rune, kws []string, posCtx []string) bool {
+//
+// mode が NegativeContextAdjacentLabelOnly の場合は
+// hasNegativeContextNearAdjacentLabelOnly に委譲し、採番ラベル接頭クラスの
+// 明示語彙が値に直接隣接する場合だけを判定する（汎用窓語・通貨・カウンタ・
+// 接尾辞ヒューリスティックは適用しない）。それ以外（NegativeContextAll。
+// NegativeContextIgnore は呼び出し側で既にこの関数を呼ばない前提）は
+// 従来どおり全クラスを評価する。
+func (d *Detector) hasNegativeContextNear(s string, start, end, radius int, runes *[]rune, kws []string, posCtx []string, mode rule.NegativeContextMode) bool {
 	if *runes == nil {
 		*runes = []rune(s)
 	}
 	rs := *runes
 	runeStart := len([]rune(s[:start]))
 	runeEnd := runeStart + len([]rune(s[start:end]))
+
+	if mode == rule.NegativeContextAdjacentLabelOnly {
+		return hasNegativeContextNearAdjacentLabelOnly(rs, runeStart, radius, kws)
+	}
 
 	var generic []string
 	sawLabelPrefix := false
@@ -139,6 +150,30 @@ func (d *Detector) hasNegativeContextNear(s string, start, end, radius int, rune
 		return false
 	}
 	return d.containsAnyContext(contextWindow(s, start, end, radius, runes), generic)
+}
+
+// hasNegativeContextNearAdjacentLabelOnly は NegativeContextAdjacentLabelOnly
+// 用の制限版判定。kws のうち採番ラベル接頭クラス
+// （rule.NegativeKeywordLabelPrefix）に分類される**明示語彙**だけを対象に、
+// 値への直接隣接（hasLabelBefore。助詞・コロン・イコールのグルーは許容）を
+// 判定する。汎用窓語・通貨接頭/接尾・カウンタ接尾の各クラスと、採番ラベル
+// 接尾辞ヒューリスティック（hasNumberingSuffixBefore）は一切呼ばない。
+//
+// 接尾辞ヒューリスティックを呼ばない理由: 「お客様番号 090-XXXX-XXXX」の
+// ような正当な電話番号のラベルは「番号」で終わるため、接尾辞判定を適用すると
+// 実電話番号が誤って棄却（FN 化）される。明示語彙（sku・型番等）への直接
+// 隣接に限定すれば、電話番号のような肯定文脈が必須ではないルールでも安全に
+// 適用できる。
+func hasNegativeContextNearAdjacentLabelOnly(rs []rune, runeStart, radius int, kws []string) bool {
+	for _, kw := range kws {
+		if rule.ClassifyNegativeKeyword(kw) != rule.NegativeKeywordLabelPrefix {
+			continue
+		}
+		if hasLabelBefore(rs, runeStart, radius, []rune(kw)) {
+			return true
+		}
+	}
+	return false
 }
 
 func hasUnitBefore(rs []rune, start, radius int, unit []rune) bool {

@@ -449,6 +449,13 @@ func positiveCandidates(id string, seed int) []evalcase.Case {
 				out = append(out, evalcase.Case{File: "added.txt", Diff: []evalcase.DiffLine{{Text: "TEL: " + value, Added: true}}, Tags: []string{"layout:diff"}})
 			case 1:
 				out = append(out, evalcase.Case{File: "user.json", Content: "{\n  \"phone\": \"" + value + "\"\n}", Tags: []string{"file-format:json", "layout:content"}})
+			case 2:
+				// 保護系ポジティブ（NegativeContextAdjacentLabelOnly の保護規則
+				// 固定）。「お客様番号」は「番号」で終わるが numberingLabelPrefixes
+				// の明示語彙のどれとも完全一致しないため、採番ラベル接尾辞
+				// ヒューリスティックを適用しない AdjacentLabelOnly では誤って
+				// 抑制されない、採番風だが電話の実値。
+				out = append(out, lineCase("お客様番号 "+value))
 			default:
 				out = append(out, lineCase("TEL: "+value))
 			}
