@@ -18,6 +18,7 @@ import (
 	"github.com/baneido/jp-pii-detector/internal/detect"
 	"github.com/baneido/jp-pii-detector/internal/dict"
 	"github.com/baneido/jp-pii-detector/internal/evalcase"
+	"github.com/baneido/jp-pii-detector/internal/normalize"
 	"github.com/baneido/jp-pii-detector/internal/rule"
 )
 
@@ -101,7 +102,9 @@ func Build(base []evalcase.Case) ([]evalcase.Case, Summary, error) {
 }
 
 // UpgradePublishedV2 は、旧v2で正例扱いだった公知sandbox PANを陰性へ
-// 再分類し、後から追加した高再現率ルールを含む不足正例を既存の決定的合成器で補う。
+// 再分類し、jp-address第3エントリ追加後にWant帰属が古くなったケースを
+// jp-addressへ読み替え（reassignLabeledNoPrefectureAddressWant参照）、
+// 後から追加した高再現率ルールを含む不足正例を既存の決定的合成器で補う。
 // GCS objectを更新せずに固定generationを現行ルールの評価契約へ読み替える
 // 互換migrationで、
 // 入力を変更せず、同じ入力からは常に同じ出力を返す。
@@ -119,10 +122,17 @@ func UpgradePublishedV2(input []evalcase.Case) ([]evalcase.Case, error) {
 	seed := corpusSeed(input)
 	for i := range cases {
 		reclassifyKnownTestPAN(&cases[i])
+		reassignLabeledNoPrefectureAddressWant(&cases[i])
 	}
 	// この互換migrationで不足しうるルールだけを補い、他ルールの
-	// データ品質不備を暗黙に修復しない。
-	upgradeRuleIDs := []string{"credit-card", "email-address-confusable", "email-address-eai"}
+	// データ品質不備を暗黙に修復しない。jp-address-high-recallは、上の
+	// reassignLabeledNoPrefectureAddressWantでnative陽性の一部をjp-addressへ
+	// 帰属し直した分だけ不足しうるため、他の互換migration対象と同様にここへ
+	// 加える（合成陽性は既にラベルなし形のため、この読み替えとは衝突しない。
+	// positiveCandidatesの"jp-address-high-recall"節を参照）。既にMinPositiveCasesPerRule
+	// 以上あるコーパスに対してはfillPositiveCoverageが何も追加しないため、
+	// このルールを常にidsへ含めても既存の合成陽性件数は変わらない。
+	upgradeRuleIDs := []string{"credit-card", "email-address-confusable", "email-address-eai", "jp-address-high-recall"}
 	if _, err := fillPositiveCoverage(&cases, seed, upgradeRuleIDs, low, high); err != nil {
 		return nil, err
 	}
@@ -136,6 +146,66 @@ func UpgradePublishedV2(input []evalcase.Case) ([]evalcase.Case, error) {
 		return nil, fmt.Errorf("span未付与の陽性(rule,case)が%d件残っています", spanless)
 	}
 	return cases, nil
+}
+
+// reassignLabeledNoPrefectureAddressWant は、旧 jp-address-high-recall 単独陽性
+// ケースのうち、PR #148 で jp-address に追加された第 3 エントリ（都道府県なし・
+// ラベル必須住所）が新たに検出するようになった値を、jp-address の陽性へ
+// 帰属し直す（true を返す）。対象外なら false を返し、c は変更しない。
+//
+// なぜコーパス本体を書き換えず、コードで読み替えるのか:
+// private-eval-v2（このリポジトリの外、GCS 管理下の固定 generation）には
+// 「ラベル付き・都道府県なし住所」の陽性ケースが実在し、PR #148 より前は
+// この形を検出できる組み込みルールが jp-address-high-recall（high-recall
+// 限定）しかなかったため、Want はそのルールに固定されていた。PR #148 で
+// jp-address に第 3 エントリが入り、既定プロファイルでも同じ値を検出できる
+// ようになった結果、resolveOverlaps は同一スパンで prior の無い jp-address 側を
+// 常に優先するようになった（internal/rule/builtin.go の jp-address 第 3
+// エントリのコメント参照）。検出そのものの変化は意図どおりだが、コーパス側の
+// Want 帰属が旧ルールのまま古くなっているため、low/medium/high-recall の
+// 全プロファイルで jp-address の FindingFP と jp-address-high-recall の FN が
+// 対になって発生してしまう（帰属衝突であって精度劣化ではない）。コーパス本体は
+// 非公開かつ GCS 管理の固定 generation のため本リポジトリから直接編集できず、
+// また編集すべきでもない（オプションな dataset_id を固定したまま評価契約を
+// 変えないため）。UpgradePublishedV2 はまさにこの「コード側で決定的に
+// コーパスを読み替える」ための互換migration層であり、この関数はその 1 ステップ。
+//
+// 述語（すべて満たす場合だけ書き換える）:
+//  1. c.Want がちょうど 1 要素で "jp-address-high-recall"
+//     （複数ルールへの陽性ケースは、他ルールの帰属まで巻き添えで変えないよう
+//     安全側で対象外にする）。
+//  2. c が Line 入力（Content/Diff ケースは対象外）。ScanContent /
+//     ScanDiffHunk は隣接行昇格・CSV 列文脈・diff の追加行限定報告など
+//     Line 単体の判定では再現できない経路を持つため、この移行が想定する
+//     「単純な 1 行、ラベル+値」の形に安全側で絞る。
+//  3. normalize.Line(c.Line) が rule.MatchesLabeledNoPrefectureAddress
+//     （jp-address 第 3 エントリと同一の正規表現・Validate を再利用した
+//     判定。internal/rule/builtin.go 参照）を満たす。判定ロジック自体は
+//     internal/rule 側を単一の情報源とし、ここでは再実装しない。
+//
+// 書き換え内容: Want を ["jp-address"] に差し替え、既存 Spans のうち
+// RuleID == "jp-address-high-recall" のものだけを "jp-address" に書き換える
+// （Start/End/Line/Tags/WantConfidence 等、RuleID 以外のフィールドは不変）。
+//
+// 決定性: 乱数・時刻を使わず、c の既存フィールド（Want/Line/Content/Diff/
+// Spans）だけを見て判定するため、同じ入力からは常に同じ結果になる。
+func reassignLabeledNoPrefectureAddressWant(c *evalcase.Case) bool {
+	if len(c.Want) != 1 || c.Want[0] != "jp-address-high-recall" {
+		return false
+	}
+	if c.Line == "" || c.Content != "" || len(c.Diff) > 0 {
+		return false
+	}
+	if !rule.MatchesLabeledNoPrefectureAddress(normalize.Line(c.Line)) {
+		return false
+	}
+	c.Want = []string{"jp-address"}
+	for i := range c.Spans {
+		if c.Spans[i].RuleID == "jp-address-high-recall" {
+			c.Spans[i].RuleID = "jp-address"
+		}
+	}
+	return true
 }
 
 func fillPositiveCoverage(cases *[]evalcase.Case, seed int, ids []string, low, high *detect.Detector) (int, error) {

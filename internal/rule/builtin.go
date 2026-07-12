@@ -284,6 +284,43 @@ func addressLabeledMunicipalityValid(v string) bool {
 	return dict.MunicipalitySuffixMatch(v)
 }
 
+// MatchesLabeledNoPrefectureAddress は、正規化済みの行 normalizedLine が
+// jp-address 第 3 エントリ（都道府県なし・ラベル必須住所。addressLabeledMarkedRe /
+// addressLabeledDashRe とその Validate 群、上記参照）の検出対象になるかを返す。
+// internal/corpusv2 が非公開評価コーパスの Want 帰属を決定的に移行する際、
+// 「この値を第 3 エントリが検出するか」を判定する唯一の情報源として使うための
+// エクスポートで、判定ロジック自体は第 3 エントリが使う正規表現・Validate を
+// そのまま再利用する（ここでは再実装しない）。第 3 エントリの正規表現・辞書検証を
+// 変更すれば、この関数の判定も自動的に追随する。
+//
+// 第 3 エントリは同一正規表現の 2 枚組（twin、addressLabeledMarkedRe /
+// addressLabeledDashRe それぞれに High/Medium）を持つため、「検出対象になる」は
+// twin のどちらか一方でも成立すれば true とする（呼び出し側の要件どおり）。
+// 各 twin の Medium 側は Rule.Validate（addressLabeledMunicipalityValid）だけを
+// 追加要求し、High 側はそれに加えてさらに厳しい Pattern.Validate
+// （dict.MunicipalityThenTownMatch / notCalendarDateBanchiAndRealTown）を要求する
+// 真部分集合になっている。そのため Medium 側の条件さえ満たせば twin 全体としては
+// 必ず成立しており、High 側の追加検証まで重ねて評価する必要はない
+// （マーカー付きは addressLabeledMunicipalityValid、ダッシュ連結はそれに加えて
+// notCalendarDateBanchi を満たせば十分）。
+//
+// 1 行に複数の候補が含まれる場合に備え、FindAllStringSubmatch で候補を尽くす
+// （internal/detect.ScanLine の各 Pattern は行全体を逐次走査するため、判定を
+// 最初の 1 候補だけに限定すると挙動が食い違いうる）。
+func MatchesLabeledNoPrefectureAddress(normalizedLine string) bool {
+	for _, m := range addressLabeledMarkedRe.FindAllStringSubmatch(normalizedLine, -1) {
+		if addressLabeledMunicipalityValid(m[1]) {
+			return true
+		}
+	}
+	for _, m := range addressLabeledDashRe.FindAllStringSubmatch(normalizedLine, -1) {
+		if addressLabeledMunicipalityValid(m[1]) && notCalendarDateBanchi(m[1]) {
+			return true
+		}
+	}
+	return false
+}
+
 // 氏名ルールで共用する部分パターン。正規化済みの行を前提とする
 // （全角コロン `：`・全角イコール `＝`・全角スペースは正規化で半角になる）。
 var (

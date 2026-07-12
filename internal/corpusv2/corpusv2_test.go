@@ -1,6 +1,7 @@
 package corpusv2
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -145,6 +146,188 @@ func hasTag(tags []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// singleAddressCase は Want=[jp-address-high-recall] 単独・対応するSpan 1件を
+// 持つ単純な Line ケースを組み立てるテスト用ヘルパー。addr は line 内に含まれる
+// 住所値そのもの（ラベル・区切りを含まない部分文字列）。
+func singleAddressCase(t *testing.T, id, line, addr string) evalcase.Case {
+	t.Helper()
+	return evalcase.Case{
+		ID: id, SourceClass: "legacy-curated", Line: line,
+		Want:  []string{"jp-address-high-recall"},
+		Spans: []evalcase.Span{addressSpanFor(t, line, "jp-address-high-recall", addr)},
+	}
+}
+
+// addressSpanFor は line 内で addr が最初に現れる位置から ruleID 用の Span を
+// 組み立てる（ルーン位置は evalcase.Span の契約どおり0始まり半開区間）。
+func addressSpanFor(t *testing.T, line, ruleID, addr string) evalcase.Span {
+	t.Helper()
+	start := strings.Index(line, addr)
+	if start < 0 {
+		t.Fatalf("%q に %q が見つかりません", line, addr)
+	}
+	runeStart := utf8.RuneCountInString(line[:start])
+	return evalcase.Span{
+		RuleID: ruleID, Line: 1,
+		Start: runeStart, End: runeStart + utf8.RuneCountInString(addr),
+	}
+}
+
+// TestUpgradePublishedV2ReassignsLabeledNoPrefectureAddressWant は
+// reassignLabeledNoPrefectureAddressWant（PR #148 の jp-address 第3エントリ追加に
+// 伴うWant帰属の読み替え）の述語を固定する。判定ロジック自体は
+// rule.MatchesLabeledNoPrefectureAddress に委譲しているため、ここでは
+// 「どのケース形が書き換え対象になるか」という述語の境界だけを確認する
+// （正規表現・辞書照合そのものの詳細は internal/rule 側のテストが持つ）。
+func TestUpgradePublishedV2ReassignsLabeledNoPrefectureAddressWant(t *testing.T) {
+	tests := []struct {
+		name        string
+		c           evalcase.Case
+		wantRewrite bool
+	}{
+		{
+			name:        "ラベル付き都道府県なし住所は jp-address へ書き換わる",
+			c:           singleAddressCase(t, "native-1", "住所: 渋谷区神南1-2-3", "渋谷区神南1-2-3"), // jp-pii-detector:ignore
+			wantRewrite: true,
+		},
+		{
+			name:        "第3エントリの語彙にないラベル(勤務地)は書き換わらない",
+			c:           singleAddressCase(t, "native-2", "勤務地: 渋谷区神南1-2-3", "渋谷区神南1-2-3"),
+			wantRewrite: false,
+		},
+		{
+			name:        "ラベルなし形は書き換わらない",
+			c:           singleAddressCase(t, "native-3", "渋谷区神南1-2-3", "渋谷区神南1-2-3"),
+			wantRewrite: false,
+		},
+		{
+			name:        "全角コロンでも normalize.Line 経由で書き換わる",
+			c:           singleAddressCase(t, "native-4", "住所：渋谷区神南1-2-3", "渋谷区神南1-2-3"), // jp-pii-detector:ignore
+			wantRewrite: true,
+		},
+		{
+			name:        "実在しない市区町村ラベル付きは辞書ゲートで書き換わらない",
+			c:           singleAddressCase(t, "native-5", "住所: 通学区1-2-3", "通学区1-2-3"),
+			wantRewrite: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			base := []evalcase.Case{tt.c}
+			wantInput := cloneCases(base)
+
+			got, err := UpgradePublishedV2(base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(base, wantInput) {
+				t.Fatal("UpgradePublishedV2 が入力を変更した")
+			}
+
+			gotCase := got[0]
+			if tt.wantRewrite {
+				if !reflect.DeepEqual(gotCase.Want, []string{"jp-address"}) {
+					t.Fatalf("Want = %v, want [jp-address]", gotCase.Want)
+				}
+				if len(gotCase.Spans) != 1 || gotCase.Spans[0].RuleID != "jp-address" {
+					t.Fatalf("Spans = %+v, want single jp-address span", gotCase.Spans)
+				}
+				if gotCase.Spans[0].Start != tt.c.Spans[0].Start || gotCase.Spans[0].End != tt.c.Spans[0].End {
+					t.Fatalf("span位置が変わった: got %+v, original %+v", gotCase.Spans[0], tt.c.Spans[0])
+				}
+			} else {
+				if !reflect.DeepEqual(gotCase.Want, tt.c.Want) {
+					t.Fatalf("Want が書き換わってしまった: got %v, want %v", gotCase.Want, tt.c.Want)
+				}
+				if !reflect.DeepEqual(gotCase.Spans, tt.c.Spans) {
+					t.Fatalf("Spans が書き換わってしまった: got %+v, want %+v", gotCase.Spans, tt.c.Spans)
+				}
+			}
+		})
+	}
+}
+
+// TestUpgradePublishedV2DoesNotReassignMultiWantCase は、Want が複数ルールに
+// またがるケース（他ルールの帰属まで巻き添えで変えないための安全側ガード）が
+// 書き換え対象にならないことを、2 span を持つケースで個別に確認する。
+func TestUpgradePublishedV2DoesNotReassignMultiWantCase(t *testing.T) {
+	line := "住所: 渋谷区神南1-2-3 山田太郎" // jp-pii-detector:ignore
+	c := evalcase.Case{
+		ID: "native-multi-want", SourceClass: "legacy-curated", Line: line,
+		Want: []string{"jp-address-high-recall", "person-name"},
+		Spans: []evalcase.Span{
+			addressSpanFor(t, line, "jp-address-high-recall", "渋谷区神南1-2-3"),
+			addressSpanFor(t, line, "person-name", "山田太郎"),
+		},
+	}
+	base := []evalcase.Case{c}
+	wantInput := cloneCases(base)
+
+	got, err := UpgradePublishedV2(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(base, wantInput) {
+		t.Fatal("UpgradePublishedV2 が入力を変更した")
+	}
+	if !reflect.DeepEqual(got[0].Want, c.Want) || !reflect.DeepEqual(got[0].Spans, c.Spans) {
+		t.Fatalf("Want が複数あるケースが書き換わってしまった: Want=%v Spans=%+v", got[0].Want, got[0].Spans)
+	}
+}
+
+// TestUpgradePublishedV2RefillsJPAddressHighRecallAfterReassignment は、
+// jp-address-high-recall のnative陽性が全件jp-addressへ読み替えられて10件を
+// 下回っても、fillPositiveCoverageによる既存の合成補完（ラベルなし形。
+// positiveCandidatesの"jp-address-high-recall"節参照）が自動的に10件まで
+// 埋め戻すことを確認する。TestBuildMeetsV2CoverageContract等の既存カバレッジ
+// 契約を壊さないことの直接確認でもある。
+func TestUpgradePublishedV2RefillsJPAddressHighRecallAfterReassignment(t *testing.T) {
+	var base []evalcase.Case
+	for i := 0; i < MinPositiveCasesPerRule; i++ {
+		addr := fmt.Sprintf("渋谷区神南%d-%d-%d", i+1, i+2, i+3)
+		line := "住所: " + addr
+		base = append(base, singleAddressCase(t, fmt.Sprintf("native-labeled-%02d", i+1), line, addr))
+	}
+
+	got, err := UpgradePublishedV2(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for i, c := range got[:len(base)] {
+		if !reflect.DeepEqual(c.Want, []string{"jp-address"}) {
+			t.Fatalf("case %d: Want = %v, want [jp-address]", i, c.Want)
+		}
+		if len(c.Spans) != 1 || c.Spans[0].RuleID != "jp-address" {
+			t.Fatalf("case %d: Spans = %+v, want single jp-address span", i, c.Spans)
+		}
+	}
+
+	counts := positiveCounts(got)
+	if counts["jp-address-high-recall"] != MinPositiveCasesPerRule {
+		t.Fatalf("jp-address-high-recall positives = %d, want %d (fillPositiveCoverageによる埋め戻し)",
+			counts["jp-address-high-recall"], MinPositiveCasesPerRule)
+	}
+	if counts["jp-address"] < MinPositiveCasesPerRule {
+		t.Fatalf("jp-address positives = %d, want >= %d", counts["jp-address"], MinPositiveCasesPerRule)
+	}
+
+	// 埋め戻されたjp-address-high-recallの合成陽性は、新第3エントリと衝突しない
+	// ラベルなし形であること（帰属衝突が再発しないことの確認）。
+	for _, c := range got {
+		wantsHighRecall := false
+		for _, id := range c.Want {
+			if id == "jp-address-high-recall" {
+				wantsHighRecall = true
+			}
+		}
+		if wantsHighRecall && strings.Contains(c.Line, "住所") {
+			t.Fatalf("補完されたjp-address-high-recallケースがラベル付きになっている: %+v", c)
+		}
+	}
 }
 
 func TestGeneratedDigitsDependDeterministicallyOnPrivateBase(t *testing.T) {
