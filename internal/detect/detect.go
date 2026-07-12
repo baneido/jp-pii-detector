@@ -263,6 +263,7 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 		}
 		candidates = append(candidates, d.scanAdjacentLines(file, i+1, lines[i], j+1, lines[j], lineContexts[i], lineContexts[j])...)
 	}
+	candidates = append(candidates, d.scanCrossLineYuchoPairs(file, lines)...)
 	if d.crossLineName != nil {
 		candidates = append(candidates, d.scanCrossLineNames(file, lines)...)
 		candidates = append(candidates, d.scanCrossLineSurnameGivenPairs(file, lines)...)

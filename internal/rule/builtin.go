@@ -827,15 +827,17 @@ func Builtin() []Rule {
 				{Re: dgNoAlnumHyphen(`1\d{4}-\d{6,7}1`), Base: High, RequireContext: true, Validate: validYuchoAccount},
 				// 記号・番号のラベルが同一行で別々に書かれる形式（"記号 11111
 				// 番号 11111111" 相当の並び。ラベル直結・コロン・スペース区切り
-				// いずれも許容）。同一行のラベル形式は対応済み。別行のラベル形式
-				// （記号: … の次行に番号: … が続く表記）はレコードスコープ実装後の
-				// 拡張対象とする。捕捉値（グループ1）は記号側の数字先頭から番号側の
-				// 数字末尾まで（間の「番号」ラベルを含む）とし、ラベル語「記号」
-				// 自体はグループ外に置く。間に非数字のラベルを挟むため dg ヘルパーは
-				// グループを二重にしてしまい使えず、境界ガード（前後が数字で
-				// ないこと）を自前で書く。このコメント自体が dogfooding で自己検出
-				// されないよう、上の例は全桁同一のダミー値（Validate で棄却される
-				// 形）だけを書く。
+				// いずれも許容）。同一行のラベル形式は対応済み。別行形式も
+				// ScanContent の専用ペア走査で対応済み（internal/detect/yucho_pair.go
+				// の scanCrossLineYuchoPairs。rule.CrossLineYuchoSymbolRe /
+				// CrossLineYuchoNumberRe / ValidCrossLineYuchoPair を使用。diff 走査の
+				// ScanDiffHunk は未対応で将来課題）。捕捉値（グループ1）は記号側の
+				// 数字先頭から番号側の数字末尾まで（間の「番号」ラベルを含む）とし、
+				// ラベル語「記号」自体はグループ外に置く。間に非数字のラベルを挟む
+				// ため dg ヘルパーはグループを二重にしてしまい使えず、境界ガード
+				// （前後が数字でないこと）を自前で書く。このコメント自体が
+				// dogfooding で自己検出されないよう、上の例は全桁同一のダミー値
+				// （Validate で棄却される形）だけを書く。
 				{Re: regexp.MustCompile(
 					`(?:^|[^0-9])記号\s*[:=]?\s*(1\d{4}\s*[:=]?\s*番号\s*[:=]?\s*\d{6,7}1)(?:[^0-9]|$)`,
 				), Base: High, RequireContext: true, Validate: validYuchoLabeledAccount},

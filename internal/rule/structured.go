@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/baneido/jp-pii-detector/internal/checksum"
 	"github.com/baneido/jp-pii-detector/internal/dict"
 )
 
@@ -65,6 +66,32 @@ var (
 	CrossLineGivenLabelRe = regexp.MustCompile(
 		`^\s*["']?(?:名|first_?name)["']?\s*[:=]\s*["'「]?(` + personNameValueShort + `)["'」]?\s*$`,
 	)
+	// CrossLineYuchoSymbolRe / CrossLineYuchoNumberRe は、ゆうちょ銀行の記号・番号が
+	// フォームでそれぞれ独立したラベル付きフィールドとして別行に分かれる表記
+	// （例:「記号:」の次行に「番号:」、値はそれぞれ独立した行に載る）に対応する。
+	// internal/rule/builtin.go の jp-yucho-account は同一行のハイフン相関形式・
+	// 同一行のラベル形式（具体例は同ファイルの jp-yucho-account 節のコメント参照。
+	// dogfooding での自己検出を避けるためここでは繰り返さない）には対応済みだが、
+	// 記号・番号が別行に分かれる形式は未対応だった。CrossLineSurnameLabelRe /
+	// CrossLineGivenLabelRe（姓名別行ペア）と同じ方式で、値が同一行に収まる
+	// 「ラベル+値」を行全体アンカーで判定し、記号行・番号行それぞれを単独に識別
+	// できるようにする。ペアとしての相関検証（形状チェック）は
+	// ValidCrossLineYuchoPair が行う（このファイルは正規表現・検証器の定義に
+	// 留め、走査は internal/detect/yucho_pair.go の scanCrossLineYuchoPairs が行う）。
+	// 前置語「ゆうちょ」は任意（"ゆうちょ 記号: …" のような表記も許す）。
+	// 行全体を `^...$` でアンカーするため、行末に何か（ignore マーカーを含む）が
+	// 付くとその行自体がマッチしなくなり、抑制は自然に値が乗る行基準になる
+	// （CrossLineSurnameLabelRe と同じ設計。呼び出し側で明示的な ignore 判定は
+	// 不要）。
+	CrossLineYuchoSymbolRe = regexp.MustCompile(
+		`^\s*(?:ゆうちょ)?\s*記号\s*[:=]?\s*(1\d{4})\s*$`,
+	)
+	// CrossLineYuchoNumberRe は CrossLineYuchoSymbolRe の番号側版。値（7〜8 桁、
+	// 末尾は必ず "1"）をグループ 1 で返す。桁数・末尾の制約は
+	// jp-yucho-account の同一行パターンおよび validYuchoAccount と同じ。
+	CrossLineYuchoNumberRe = regexp.MustCompile(
+		`^\s*(?:ゆうちょ)?\s*番号\s*[:=]?\s*(\d{6,7}1)\s*$`,
+	)
 )
 
 // ValidCrossLineName は次行の値 v が氏名として妥当かを返す。クロスライン検出は
@@ -92,4 +119,22 @@ func ValidCrossLineSurnameGivenPair(sei, mei string) bool {
 		return false
 	}
 	return dict.IsSurname(sei) && dict.IsGivenName(mei)
+}
+
+// ValidCrossLineYuchoPair は、記号ラベル行から取り出した値 symbol と番号ラベル行
+// から取り出した値 number が、ゆうちょ銀行の記号番号ペアとして妥当かを返す。
+// 判定基準は builtin.go の validYuchoAccount（同一行ハイフン相関形式）と同一
+// （記号は 5 桁で先頭が必ず "1"、番号は 7〜8 桁で末尾が必ず "1"、全桁同一の
+// ダミー値は棄却）。CrossLineYuchoSymbolRe / CrossLineYuchoNumberRe が桁数・
+// 先頭/末尾を既に正規表現側で保証しているため実質的には AllSame の棄却が主だが、
+// validYuchoAccount と同じ形状チェックも defense-in-depth として残す（将来
+// どちらかの正規表現だけが変更されても判定基準がずれないように）。
+func ValidCrossLineYuchoPair(symbol, number string) bool {
+	symbol = strings.TrimSpace(symbol)
+	number = strings.TrimSpace(number)
+	if len(symbol) != 5 || symbol[0] != '1' ||
+		(len(number) != 7 && len(number) != 8) || number[len(number)-1] != '1' {
+		return false
+	}
+	return !checksum.AllSame(symbol) && !checksum.AllSame(number)
 }
