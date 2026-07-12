@@ -547,6 +547,15 @@ func hardNegativeCases(seed int) []evalcase.Case {
 		// 12桁業務IDが偶然マイナンバーの検査数字を満たす既知FP系統。
 		add("business-id", label+" "+myNumber(seed+500+i)+" を処理")
 	}
+	// 負文脈「隣接ラベル」判定のグルー許容（hasLabelBefore）と採番ラベル
+	// 接尾辞ヒューリスティック（hasNumberingSuffixBefore）が対象とする
+	// 表記ゆれ（助詞・コロン・イコールでラベルと値が途切れる形）を、上の
+	// 空白区切り系統に加えて評価コーパスにも反映する。
+	add("business-id", "受付番号は"+myNumber(seed+920)+"です")
+	add("business-id", "ジョブID: "+myNumber(seed+921))
+	add("business-id", "発注コード="+myNumber(seed+922))
+	add("business-id", "管理キー: "+myNumber(seed+923))
+	add("model", "海外パスポート対応 型番: TK"+digitRun(seed+924, 7))
 	testPANs := wellKnownTestPANs()
 	for i, label := range []string{"決済sandboxのテストカード", "payment fixture", "QA用PAN", "テスト決済", "カードブランド試験"} {
 		add("test-pan", label+" "+testPANs[i])
