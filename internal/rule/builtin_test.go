@@ -558,6 +558,39 @@ func TestValidYuchoAccount(t *testing.T) {
 	}
 }
 
+// TestYuchoValueChecksumStatus は、internal/corpusv2 が非公開評価コーパスの
+// Want帰属移行に使う唯一の情報源（YuchoValueChecksumStatus）の契約を固定する。
+// ハイフン形・ラベル形どちらの表記も対象になり、桁数・先頭/末尾が想定と異なる
+// 表記は「判定不能」（Unparseable）を返すことで、検査数字が不成立の場合
+// （Invalid）と区別できることを確認する。
+func TestYuchoValueChecksumStatus(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want YuchoChecksumStatus
+	}{
+		{"ハイフン形・検査数字成立（番号7桁）", "12390-1234561", YuchoChecksumValid},
+		{"ハイフン形・検査数字成立（番号8桁）", "10010-12345671", YuchoChecksumValid},
+		{"ハイフン形・検査数字が不一致", "10020-12345671", YuchoChecksumInvalid},
+		{"ハイフン形・番号が全桁同一のダミー値", "12340-1111111", YuchoChecksumInvalid},
+		{"ラベル形・検査数字成立（スペース区切り）", "14030 番号 12345671", YuchoChecksumValid},
+		{"ラベル形・検査数字成立（ラベル直結）", "14030番号12345671", YuchoChecksumValid},
+		{"ラベル形・検査数字が不一致", "10020 番号 12345671", YuchoChecksumInvalid},
+		{"パース不能・記号の先頭が1以外", "22345-1234567", YuchoChecksumUnparseable},
+		{"パース不能・記号が5桁でない", "1234-1234567", YuchoChecksumUnparseable},
+		{"パース不能・ハイフンもラベルもない数字列", "123451234567", YuchoChecksumUnparseable},
+		{"パース不能・数字を含まない表記", "記号番号は台帳参照", YuchoChecksumUnparseable},
+		{"パース不能・空文字列", "", YuchoChecksumUnparseable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := YuchoValueChecksumStatus(tt.in); got != tt.want {
+				t.Errorf("YuchoValueChecksumStatus(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 // stripSeparators はハイフン・半角スペース・ドット・丸括弧を除去し、
 // その他の文字（'+' を含む）は保持する。ドット・丸括弧は issue #46 で
 // 括弧市外局番（03(1234)5678）・ドット区切り携帯（090.1234.5678）向けに

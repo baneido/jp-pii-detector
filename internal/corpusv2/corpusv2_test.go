@@ -344,3 +344,361 @@ func TestGeneratedDigitsDependDeterministicallyOnPrivateBase(t *testing.T) {
 		t.Fatal("generated digits do not depend on the private base")
 	}
 }
+
+// yuchoValidValue は seed から検査数字が成立する記号・番号を決定的に生成する
+// （positiveCandidates の "jp-yucho-account" 節と同じ手法。yuchoSymbol は
+// 4桁目を総当たりして検査数字を必ず成立させるため、返る値は常に
+// rule.YuchoChecksumValid と判定される）。
+func yuchoValidValue(seed int) (symbol, number string) {
+	d := digitRun(seed, 20)
+	number = d[4:10] + "1"
+	symbol = yuchoSymbol("1"+d[:2], number)
+	return symbol, number
+}
+
+// yuchoInvalidChecksumValue は yuchoValidValue が返す検査数字成立の記号を
+// 4桁目だけ +1 mod 10 でずらす。1 だけの差なので同じ検査数字には戻らず、
+// 形状（先頭1・末尾0・桁数）はそのままなので rule.YuchoValueChecksumStatus は
+// 常に YuchoChecksumInvalid（パース可能かつ検査数字不成立）と判定する値になる。
+func yuchoInvalidChecksumValue(seed int) (symbol, number string) {
+	symbol, number = yuchoValidValue(seed)
+	b := []byte(symbol)
+	b[3] = '0' + (b[3]-'0'+1)%10
+	return string(b), number
+}
+
+// spanOnLine は addressSpanFor と同じ「lineText内でvalueが最初に現れる位置」を
+// 探すロジックを使い、Content ケースなど対象行が1行目でない場合にも Line 番号を
+// 明示できるようにしたテスト用ヘルパー。
+func spanOnLine(t *testing.T, lineText string, lineNum int, ruleID, value string) evalcase.Span {
+	t.Helper()
+	span := addressSpanFor(t, lineText, ruleID, value)
+	span.Line = lineNum
+	return span
+}
+
+// TestUpgradePublishedV2ReclassifiesChecksumInvalidYuchoAndRefillsCoverage は、
+// jp-yucho-accountが2026-07private-evalの全プロファイルでTP0/FN10になった
+// 本命仮説（#145で導入した公式検査数字の検証を満たさないnative陽性が公開
+// コーパスに入っていた）を再現する: 検査数字が不成立のハイフン形陽性が
+// reclassifyChecksumInvalidYuchoで陰性へ再分類され、fillPositiveCoverageの
+// 既存の決定的合成器（yuchoSymbolで検査数字を必ず満たす）が不足分を
+// MinPositiveCasesPerRuleまで自動的に埋め戻すこと、かつこの移行が
+// （既存のIdempotentlyテストの流儀で）冪等であることを確認する。
+func TestUpgradePublishedV2ReclassifiesChecksumInvalidYuchoAndRefillsCoverage(t *testing.T) {
+	var base []evalcase.Case
+	for i := 0; i < 3; i++ {
+		symbol, number := yuchoInvalidChecksumValue(700 + i)
+		line := "ゆうちょ銀行 記号" + symbol + "-" + number
+		base = append(base, evalcase.Case{
+			ID: fmt.Sprintf("native-yucho-invalid-%02d", i+1), SourceClass: "legacy-curated", Line: line,
+			Want:  []string{"jp-yucho-account"},
+			Spans: []evalcase.Span{addressSpanFor(t, line, "jp-yucho-account", symbol+"-"+number)},
+		})
+	}
+	wantInput := cloneCases(base)
+
+	got, err := UpgradePublishedV2(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(base, wantInput) {
+		t.Fatal("UpgradePublishedV2 が入力を変更した")
+	}
+
+	for i, c := range got[:len(base)] {
+		if len(c.Want) != 0 || len(c.Spans) != 0 || !hasTag(c.Tags, "polarity:negative") ||
+			!hasTag(c.Tags, "scenario:checksum-invalid-yucho") {
+			t.Fatalf("case %d: 検査数字不成立のゆうちょ陽性が陰性へ再分類されていない: %+v", i, c)
+		}
+	}
+	if n := positiveCounts(got)["jp-yucho-account"]; n != MinPositiveCasesPerRule {
+		t.Fatalf("jp-yucho-account positives = %d, want exactly %d（合成のみで埋まるはず）", n, MinPositiveCasesPerRule)
+	}
+	if len(got) <= len(base) {
+		t.Fatal("不足した陽性カバレッジが補完されていない")
+	}
+
+	again, err := UpgradePublishedV2(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(again, got) {
+		t.Fatal("UpgradePublishedV2は既に移行済みのコーパスに対して冪等でなければならない")
+	}
+}
+
+// TestUpgradePublishedV2DoesNotReclassifyValidChecksumYucho は、公式検査数字が
+// 成立するゆうちょ陽性（本物のPIIとして矛盾しない値）が一切変更されないことを
+// 固定する。この仮説が外れていた場合に正常なnative陽性まで巻き添えで壊さない
+// ための安全性の直接確認。
+func TestUpgradePublishedV2DoesNotReclassifyValidChecksumYucho(t *testing.T) {
+	symbol, number := yuchoValidValue(710)
+	line := "ゆうちょ銀行 記号" + symbol + "-" + number
+	c := evalcase.Case{
+		ID: "native-yucho-valid", SourceClass: "legacy-curated", Line: line,
+		Want:  []string{"jp-yucho-account"},
+		Spans: []evalcase.Span{addressSpanFor(t, line, "jp-yucho-account", symbol+"-"+number)},
+	}
+	base := []evalcase.Case{c}
+	wantInput := cloneCases(base)
+
+	got, err := UpgradePublishedV2(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(base, wantInput) {
+		t.Fatal("UpgradePublishedV2 が入力を変更した")
+	}
+	if !reflect.DeepEqual(got[0].Want, c.Want) || !reflect.DeepEqual(got[0].Spans, c.Spans) {
+		t.Fatalf("検査数字成立のゆうちょ陽性が書き換わってしまった: Want=%v Spans=%+v", got[0].Want, got[0].Spans)
+	}
+}
+
+// TestUpgradePublishedV2DoesNotReclassifyUnparseableYuchoSpan は、記号・番号の
+// 形状として解釈できないスパン文字列（想定外の表記ゆれ）が「判定不能」のまま
+// 一切変更されないことを固定する。検査数字不成立の仮説が外れ、真因が未対応の
+// 表記ゆれだった場合でも、この移行がコーパスを壊さないための安全性の直接確認。
+func TestUpgradePublishedV2DoesNotReclassifyUnparseableYuchoSpan(t *testing.T) {
+	value := "記号番号は台帳参照"
+	line := "備考: " + value
+	c := evalcase.Case{
+		ID: "native-yucho-unparseable", SourceClass: "legacy-curated", Line: line,
+		Want:  []string{"jp-yucho-account"},
+		Spans: []evalcase.Span{addressSpanFor(t, line, "jp-yucho-account", value)},
+	}
+	base := []evalcase.Case{c}
+	wantInput := cloneCases(base)
+
+	got, err := UpgradePublishedV2(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(base, wantInput) {
+		t.Fatal("UpgradePublishedV2 が入力を変更した")
+	}
+	if !reflect.DeepEqual(got[0].Want, c.Want) || !reflect.DeepEqual(got[0].Spans, c.Spans) {
+		t.Fatalf("パース不能なスパンが書き換わってしまった: Want=%v Spans=%+v", got[0].Want, got[0].Spans)
+	}
+}
+
+// TestUpgradePublishedV2ReclassifiesChecksumInvalidLabeledYucho は、記号・番号
+// ラベルが同一行で別々に書かれるラベル形（parseYuchoLabeledForm）の検査数字
+// 不成立値も、ハイフン形と同様に陰性へ再分類されることを確認する。
+func TestUpgradePublishedV2ReclassifiesChecksumInvalidLabeledYucho(t *testing.T) {
+	symbol, number := yuchoInvalidChecksumValue(720)
+	value := symbol + "番号" + number
+	line := "記号" + value + " ゆうちょ口座"
+	c := evalcase.Case{
+		ID: "native-yucho-labeled-invalid", SourceClass: "legacy-curated", Line: line,
+		Want:  []string{"jp-yucho-account"},
+		Spans: []evalcase.Span{addressSpanFor(t, line, "jp-yucho-account", value)},
+	}
+	base := []evalcase.Case{c}
+	wantInput := cloneCases(base)
+
+	got, err := UpgradePublishedV2(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(base, wantInput) {
+		t.Fatal("UpgradePublishedV2 が入力を変更した")
+	}
+	if len(got[0].Want) != 0 || len(got[0].Spans) != 0 || !hasTag(got[0].Tags, "polarity:negative") {
+		t.Fatalf("ラベル形の検査数字不成立ゆうちょ陽性が陰性へ再分類されていない: %+v", got[0])
+	}
+}
+
+// TestUpgradePublishedV2ReclassifiesChecksumInvalidYuchoContentCase は、
+// Content ケース（複数行のうち1行だけにゆうちょ値がある）でも、対象行を
+// Start/Endのルーン位置で正しく切り出して判定できることを確認する。
+func TestUpgradePublishedV2ReclassifiesChecksumInvalidYuchoContentCase(t *testing.T) {
+	symbol, number := yuchoInvalidChecksumValue(730)
+	value := symbol + "-" + number
+	line2 := "ゆうちょ銀行 記号" + value
+	content := "備考:\n" + line2 + "\n以上"
+	c := evalcase.Case{
+		ID: "native-yucho-content", SourceClass: "legacy-curated", File: "memo.txt", Content: content,
+		Want:  []string{"jp-yucho-account"},
+		Spans: []evalcase.Span{spanOnLine(t, line2, 2, "jp-yucho-account", value)},
+	}
+	base := []evalcase.Case{c}
+	wantInput := cloneCases(base)
+
+	got, err := UpgradePublishedV2(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(base, wantInput) {
+		t.Fatal("UpgradePublishedV2 が入力を変更した")
+	}
+	if len(got[0].Want) != 0 || len(got[0].Spans) != 0 || !hasTag(got[0].Tags, "polarity:negative") {
+		t.Fatalf("Contentケースのゆうちょ陽性が陰性へ再分類されていない: %+v", got[0])
+	}
+}
+
+// TestUpgradePublishedV2DoesNotReclassifyDiffYuchoCase は、Diff ケースが
+// reclassifyChecksumInvalidYucho の対象外（安全側）であることを固定する。
+// ScanDiffHunk は追加行限定報告などLine単体の判定では再現できない経路を持つため、
+// reassignLabeledNoPrefectureAddressWant と同じ理由でこの移行の対象から外す。
+func TestUpgradePublishedV2DoesNotReclassifyDiffYuchoCase(t *testing.T) {
+	symbol, number := yuchoInvalidChecksumValue(740)
+	value := symbol + "-" + number
+	line := "ゆうちょ銀行 記号" + value
+	c := evalcase.Case{
+		ID: "native-yucho-diff", SourceClass: "legacy-curated", File: "added.txt",
+		Diff:  []evalcase.DiffLine{{Text: line, Added: true}},
+		Want:  []string{"jp-yucho-account"},
+		Spans: []evalcase.Span{addressSpanFor(t, line, "jp-yucho-account", value)},
+	}
+	base := []evalcase.Case{c}
+	wantInput := cloneCases(base)
+
+	got, err := UpgradePublishedV2(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(base, wantInput) {
+		t.Fatal("UpgradePublishedV2 が入力を変更した")
+	}
+	if !reflect.DeepEqual(got[0].Want, c.Want) || !reflect.DeepEqual(got[0].Spans, c.Spans) {
+		t.Fatalf("Diffケースが対象外のはずが書き換わってしまった: Want=%v Spans=%+v", got[0].Want, got[0].Spans)
+	}
+}
+
+// TestUpgradePublishedV2ChecksumInvalidYuchoMultiWantOnlyRemovesYucho は、
+// reclassifyKnownTestPAN と同じ多Want時の挙動（対象ルールのWant/Spansだけを
+// 除去し、他ルールのWant/Spansは一切変更しない）を、2 span を持つケースで
+// 固定する（TestUpgradePublishedV2DoesNotReassignMultiWantCase が
+// reassignLabeledNoPrefectureAddressWant について固定しているのと対になる。
+// reassignLabeledNoPrefectureAddressWant はWantが複数なら丸ごと対象外にするが、
+// reclassifyKnownTestPANはそうではなく対象ルールだけを外す。
+// reclassifyChecksumInvalidYuchoはこの後者と同じ構造）。
+func TestUpgradePublishedV2ChecksumInvalidYuchoMultiWantOnlyRemovesYucho(t *testing.T) {
+	symbol, number := yuchoInvalidChecksumValue(750)
+	name := syntheticFullName()
+	line := "記号" + symbol + "-" + number + " 担当" + name
+	c := evalcase.Case{
+		ID: "native-yucho-multi-want", SourceClass: "legacy-curated", Line: line,
+		Want: []string{"jp-yucho-account", "person-name"},
+		Spans: []evalcase.Span{
+			addressSpanFor(t, line, "jp-yucho-account", symbol+"-"+number),
+			addressSpanFor(t, line, "person-name", name),
+		},
+	}
+	base := []evalcase.Case{c}
+	wantInput := cloneCases(base)
+
+	got, err := UpgradePublishedV2(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(base, wantInput) {
+		t.Fatal("UpgradePublishedV2 が入力を変更した")
+	}
+
+	gotCase := got[0]
+	if !reflect.DeepEqual(gotCase.Want, []string{"person-name"}) {
+		t.Fatalf("Want = %v, want [person-name]（jp-yucho-accountだけが除去されるはず）", gotCase.Want)
+	}
+	if len(gotCase.Spans) != 1 || gotCase.Spans[0].RuleID != "person-name" {
+		t.Fatalf("Spans = %+v, want single person-name span", gotCase.Spans)
+	}
+	if !hasTag(gotCase.Tags, "scenario:checksum-invalid-yucho") {
+		t.Fatalf("tags = %v, want scenario:checksum-invalid-yucho", gotCase.Tags)
+	}
+	if hasTag(gotCase.Tags, "polarity:negative") {
+		t.Fatal("他ルールのWantが残っているのに陰性へ倒れてしまった")
+	}
+}
+
+// TestUpgradePublishedV2ChecksumInvalidYuchoRequiresAllSpansInvalid は、1
+// ケースに複数のゆうちょスパンがある場合、全スパンが「パース可能かつ検査数字
+// 不成立」の場合だけ除去し、一部だけ不成立では部分除去しない（安全側）ことを
+// 固定する。
+func TestUpgradePublishedV2ChecksumInvalidYuchoRequiresAllSpansInvalid(t *testing.T) {
+	t.Run("一部だけ不成立なら一切変更しない", func(t *testing.T) {
+		validSymbol, validNumber := yuchoValidValue(760)
+		invalidSymbol, invalidNumber := yuchoInvalidChecksumValue(761)
+		line1 := "ゆうちょ銀行 記号" + validSymbol + "-" + validNumber
+		line2 := "ゆうちょ銀行 記号" + invalidSymbol + "-" + invalidNumber
+		content := line1 + "\n" + line2
+		c := evalcase.Case{
+			ID: "native-yucho-mixed", SourceClass: "legacy-curated", File: "memo.txt", Content: content,
+			Want: []string{"jp-yucho-account"},
+			Spans: []evalcase.Span{
+				spanOnLine(t, line1, 1, "jp-yucho-account", validSymbol+"-"+validNumber),
+				spanOnLine(t, line2, 2, "jp-yucho-account", invalidSymbol+"-"+invalidNumber),
+			},
+		}
+		base := []evalcase.Case{c}
+		wantInput := cloneCases(base)
+
+		got, err := UpgradePublishedV2(base)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(base, wantInput) {
+			t.Fatal("UpgradePublishedV2 が入力を変更した")
+		}
+		if !reflect.DeepEqual(got[0].Want, c.Want) || !reflect.DeepEqual(got[0].Spans, c.Spans) {
+			t.Fatalf("一部のスパンだけ不成立のケースが書き換わってしまった（部分除去禁止）: Want=%v Spans=%+v", got[0].Want, got[0].Spans)
+		}
+	})
+	t.Run("全スパンが不成立なら除去される", func(t *testing.T) {
+		s1, n1 := yuchoInvalidChecksumValue(762)
+		s2, n2 := yuchoInvalidChecksumValue(763)
+		line1 := "ゆうちょ銀行 記号" + s1 + "-" + n1
+		line2 := "ゆうちょ銀行 記号" + s2 + "-" + n2
+		content := line1 + "\n" + line2
+		c := evalcase.Case{
+			ID: "native-yucho-both-invalid", SourceClass: "legacy-curated", File: "memo.txt", Content: content,
+			Want: []string{"jp-yucho-account"},
+			Spans: []evalcase.Span{
+				spanOnLine(t, line1, 1, "jp-yucho-account", s1+"-"+n1),
+				spanOnLine(t, line2, 2, "jp-yucho-account", s2+"-"+n2),
+			},
+		}
+		base := []evalcase.Case{c}
+
+		got, err := UpgradePublishedV2(base)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got[0].Want) != 0 || len(got[0].Spans) != 0 || !hasTag(got[0].Tags, "polarity:negative") {
+			t.Fatalf("全スパンが不成立なのに除去されていない: %+v", got[0])
+		}
+	})
+}
+
+// TestUpgradePublishedV2JPYuchoAccountUpgradeIsNoOpWithSufficientNativeCoverage
+// は、upgradeRuleIDsへjp-yucho-accountを加えたことが、既にMinPositiveCasesPerRule
+// 件以上のnative陽性（検査数字成立、つまり再分類されない）を持つコーパスに
+// 対してはno-opであること（合成ケースを追加しない）を確認する。
+func TestUpgradePublishedV2JPYuchoAccountUpgradeIsNoOpWithSufficientNativeCoverage(t *testing.T) {
+	var base []evalcase.Case
+	for i := 0; i < MinPositiveCasesPerRule; i++ {
+		symbol, number := yuchoValidValue(800 + i)
+		line := "ゆうちょ銀行 記号" + symbol + "-" + number
+		base = append(base, evalcase.Case{
+			ID: fmt.Sprintf("native-yucho-sufficient-%02d", i+1), SourceClass: "legacy-curated", Line: line,
+			Want:  []string{"jp-yucho-account"},
+			Spans: []evalcase.Span{addressSpanFor(t, line, "jp-yucho-account", symbol+"-"+number)},
+		})
+	}
+
+	got, err := UpgradePublishedV2(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	counts := positiveCounts(got)
+	if counts["jp-yucho-account"] != MinPositiveCasesPerRule {
+		t.Fatalf("jp-yucho-account positives = %d, want unchanged %d (no-op)", counts["jp-yucho-account"], MinPositiveCasesPerRule)
+	}
+	for _, c := range got {
+		if strings.HasPrefix(c.ID, "v2-jp-yucho-account-") {
+			t.Fatalf("既に%d件のnative陽性があるのに合成ゆうちょケースが追加された: %+v", MinPositiveCasesPerRule, c)
+		}
+	}
+}
