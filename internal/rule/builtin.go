@@ -136,6 +136,10 @@ const (
 	kanjiDigits = `〇一二三四五六七八九十百千`
 
 	digitRuleRequireContextWindow = 40
+	// healthInsurance6DigitContextWindow は国民健康保険の 6 桁保険者番号に
+	// 限定した肯定文脈窓。6 桁は日常の金額・件数・コードと衝突しやすいため、
+	// 「保険者番号」ラベルが値へほぼ直結する範囲だけを許容する。
+	healthInsurance6DigitContextWindow = 12
 
 	// banchiMarked は番地表現（丁目→番地→号）のうち、丁目・番・号のいずれかの
 	// マーカーが必ず含まれる形だけを最後まで捕捉する終端パターン。次を捕捉:
@@ -947,6 +951,22 @@ func Builtin() []Rule {
 			Validate:             validHealthInsurance,
 			Patterns: []Pattern{
 				{Re: dg(`\d{8}`), Base: Medium, RequireContext: true},
+				// 国民健康保険の保険者番号は 6 桁。日常的な数字との衝突が大きい
+				// ため、既存の広い文脈語（「保険証」「被保険者」等）だけでは
+				// 発火させず、正規表現自体にも強ラベル「保険者番号」と通常の
+				// 区切りだけを埋め込む。「被保険者番号」は別の番号なので、直前の
+				// 「被」から始まる部分一致を除外する。RequireContextWindow も 12
+				// ルーンへ狭め、長い説明を挟んだ受付 ID・金額等を拾わない。
+				// 検査用数字は厚生省通知（昭和49年9月20日 保険発第104号）の
+				// M10W21 算式を validHealthInsurance で検証する。
+				{Re: regexp.MustCompile(
+					`(?:^|[^被])保険者番号[[:space:]　]*[:：=]?[[:space:]　]*(\d{6})(?:[^0-9A-Za-z-]|$)`,
+				), Base: Medium, RequireContext: true, RequireContextWindow: healthInsurance6DigitContextWindow},
+				// 帳票等の「値→ラベル」順と、値行の次にラベル行が来る表記も
+				// 同じ強ラベル・狭い窓で扱う。
+				{Re: regexp.MustCompile(
+					`(?:^|[^0-9A-Za-z-])(\d{6})[[:space:]　]*[:：=]?[[:space:]　]*保険者番号(?:[^0-9]|$)`,
+				), Base: Medium, RequireContext: true, RequireContextWindow: healthInsurance6DigitContextWindow},
 			},
 		},
 		{
@@ -1291,11 +1311,15 @@ func rejectYuchoAccountSuffix(line string, start, _ int) bool {
 	return false
 }
 
-// validHealthInsurance は健康保険 保険者番号・被保険者番号（8 桁）の全桁同一の
-// ダミー値を棄却する。連番も実在しうるため、それ以上のヒューリスティックは
-// 適用しない。
+// validHealthInsurance は健康保険の 8 桁番号では全桁同一ダミー値だけを棄却し、
+// 国民健康保険の 6 桁保険者番号ではさらに M10W21 の検証番号を確認する。算式は
+// 厚生省保険局国民健康保険課長通知「診療報酬明細書等に記載される保険者番号の
+// 設定について」（昭和49年9月20日 保険発第104号）を一次資料とする。
 func validHealthInsurance(m string) bool {
-	return !checksum.AllSame(m)
+	if checksum.AllSame(m) {
+		return false
+	}
+	return len(m) != 6 || checksum.Modulus10Weight21(m)
 }
 
 // validPassport は旅券（パスポート）番号（英字 2 + 数字 7）の末尾 7 桁が

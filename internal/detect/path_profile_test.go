@@ -94,6 +94,7 @@ func TestPathDemotionAppliesToOtherMediumRequireContextRules(t *testing.T) {
 		name, file, content, wantRule string
 	}{
 		{"健康保険", "testdata/sample.go", "保険者番号: 12345678", "jp-health-insurance"},
+		{"国保6桁保険者番号", "testdata/sample.go", "保険者番号: 138057", "jp-health-insurance"},
 		// 150-0043 は実在の郵便番号（渋谷区道玄坂）。internal/dict/postal_test.go と同じ値。
 		{"郵便番号", "testdata/sample.go", "郵便番号: 150-0043", "jp-postal-code"},
 	}
