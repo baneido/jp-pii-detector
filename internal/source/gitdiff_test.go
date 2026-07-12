@@ -617,6 +617,48 @@ func TestScanStagedCSVColumnContextTSV(t *testing.T) {
 	}
 }
 
+// --- .sql の INSERT 列コンテキストを --staged でも効かせる機能 ---
+//
+// internal/detect/sql_context.go の INSERT 列コンテキストは CSV と異なり、
+// 列リストと値が同一物理行に同居するため、CSV のような git show による
+// post-image ヘッダの個別取得を必要としない（sourceLineContextsForDiff の
+// sourceKindSQL 分岐は sqlLineContexts をそのまま呼ぶだけ）。実際の git
+// リポジトリを使い、--staged 経由の配線（parseDiffHunks・scanHunk・
+// ScanDiffHunkWithCSVHeader を経由して sourceLineContextsForDiff に到達する
+// 経路全体）が正しく機能することを end-to-end で確認する
+// （internal/detect/sql_context_test.go の
+// TestSQLScanDiffHunkOrderIDColumnSuppressesBankAccountFalsePositive の
+// 統合テスト版）。
+
+// kouza 列の値は銀行口座番号として検出され、同じ行の order_id 列の 7 桁の
+// 値は「注文 ID」を意味する列コンテキストの負文脈により誤検出されない
+// （列単位で正負の文脈が独立して効くことの確認）。
+func TestScanStagedSQLColumnContext(t *testing.T) {
+	repo := initTestRepo(t)
+	name := "dump.sql"
+	content := "INSERT INTO t (kouza,order_id) VALUES ('1234567',7654321);\n" // jp-pii-detector:ignore
+	if err := os.WriteFile(filepath.Join(repo, name), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, "add", name)
+
+	cfg := config.Default()
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, err := ScanStaged(d, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("findings = %+v, want 1 件（kouza 列のみ検出。order_id 列の 7 桁は銀行口座番号として誤検出されない）", findings)
+	}
+	if f := findings[0]; f.File != name || f.RuleID != "jp-bank-account" || f.Match != "1234567" || f.Line != 1 {
+		t.Errorf("finding = %+v, want %s:1 jp-bank-account match=1234567", f, name)
+	}
+}
+
 // --diff にドットを含まない裸のリビジョン（例: "HEAD~1"）を渡すと、git diff 的には
 // 作業ツリーとの比較になり単一の post-image リビジョンを解決できない
 // （diffRangePostRevision が ok=false を返す）。この場合はヘッダ取得を諦め、
