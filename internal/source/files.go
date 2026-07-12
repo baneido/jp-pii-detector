@@ -157,18 +157,24 @@ func scanFiles(d *detect.Detector, files []string) ([]detect.Finding, []error) {
 					errs[i] = fmt.Errorf("read %s: %w", path, err)
 					continue
 				}
-				if text, ok := decodeUTF16(data); ok {
-					results[i] = d.ScanContent(filepath.ToSlash(path), text)
-					continue
+				text, ok := decodeUTF16(data)
+				if !ok {
+					text, ok = decodeLegacyJapanese(data)
 				}
-				if text, ok := decodeLegacyJapanese(data); ok {
-					results[i] = d.ScanContent(filepath.ToSlash(path), text)
-					continue
+				if !ok {
+					if isBinary(data) {
+						continue
+					}
+					text = string(data)
 				}
-				if isBinary(data) {
-					continue
+				// 上記いずれの経路で得た最終的な UTF-8 テキストに対しても、
+				// 後段として JSON の \uXXXX エスケープ（ensure_ascii=True 出力・
+				// .ipynb 等）の復号ビューを適用する。1 箇所も復号できなければ
+				// text はそのまま変わらない。
+				if unescaped, ok := decodeJSONUnicodeEscapes(text); ok {
+					text = unescaped
 				}
-				results[i] = d.ScanContent(filepath.ToSlash(path), string(data))
+				results[i] = d.ScanContent(filepath.ToSlash(path), text)
 			}
 		})
 	}

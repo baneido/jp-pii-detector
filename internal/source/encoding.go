@@ -276,3 +276,163 @@ func countJapaneseRunes(s string) int {
 func isJapaneseRune(r rune) bool {
 	return unicode.Is(unicode.Hiragana, r) || unicode.Is(unicode.Katakana, r) || unicode.Is(unicode.Han, r)
 }
+
+// ---- JSON \uXXXX エスケープの復号ビュー ----
+//
+// json.dumps(ensure_ascii=True) の出力・.ipynb・各種ログでは、日本語を含む
+// 文字列が "山田..." のように JSON の \uXXXX エスケープで ASCII 化
+// される。電話番号のような ASCII の値は既存ルールでそのまま検出できるが、
+// 氏名・住所など非 ASCII の値はエスケープの中に隠れて正規表現から完全に
+// すり抜ける。これは decodeUTF16/decodeLegacyJapanese が対象とするバイト列
+// レベルの文字コードとは別種の問題（既に正当な UTF-8 のテキストの中の
+// ASCII エスケープ表記）のため、それらの後段・最終的な UTF-8 テキストに
+// 対して独立に適用する。
+
+// decodeJSONUnicodeEscapes は text（正当な UTF-8 のテキストであることを
+// 呼び出し側は問わないが、本関数内で確認する）に含まれる JSON の \uXXXX
+// エスケープ（u は小文字、XXXX は 16 進数 4 桁）を実際の文字へ復号した
+// ビューを返す。decodeUTF16 と同じ「疑わしければ復号しない」保守的な
+// 方針に従う:
+//
+//   - 直前の連続バックスラッシュ数（このバックスラッシュ自身は含まない）が
+//     偶数の \uXXXX だけを復号する。奇数（\\u0040 の 2 文字目の \ 等）は
+//     手前のバックスラッシュとペアになるリテラルの \ であり、JSON の
+//     エスケープ規則上そこから \u エスケープは始まらないため復号しない。
+//   - 上位サロゲート（\uD800〜\uDBFF）は直後に低位サロゲート
+//     （\uDC00〜\uDFFF）が続く場合だけ 1 文字へ合成する。ペアが揃わない
+//     孤立サロゲートは復号せずリテラルのまま残す。
+//   - 復号結果が U+0020 未満の制御文字（\n・\r・\t 等）になるエスケープは
+//     復号せずリテラルのまま残す。
+//   - 16 進数 4 桁が揃わない・非 16 進文字を含むなど構文として不正な
+//     エスケープは、そのままリテラルとして残す。
+//
+// 位置セマンティクス（呼び出し側が前提としてよいこと）: 復号は改行文字
+// （U+000A/U+000D 等、いずれも U+0020 未満）を新たに生み出さないため、
+// 復号後テキストの行数・各行番号は元テキストと厳密に一致する
+// （ScanContent は "\n" で行分割する）。一方、列（Column）は \uXXXX
+// （6 ルーン）が復号後は 1〜2 ルーンに縮むため、エスケープを含む行では
+// 復号後の文字列上の位置になり、元ファイルのバイト/ルーン位置とは
+// 対応しない（decodeUTF16 の「デコード後の位置は元ファイルのオフセットに
+// 対応しない」という既知の割り切りと同じ性質）。
+//
+// 1 箇所も復号できなければ ok=false を返し、呼び出し側は元のテキストを
+// そのまま使う（decodeUTF16 と同じ「置き換え」方式）。各エスケープは
+// 互いに独立に判定・復号され、復号対象にならない部分はバイト単位で一切
+// 変更しないため、元テキストで（電話番号のように）ASCII のまま見えていた
+// PII は復号後も変わらず見える。つまりこの層を追加しても既存の検出が
+// 失われることはない。
+//
+// 適用条件・パフォーマンス: フルスキャン（scanFiles）経由でのみ呼ばれる
+// （git diff はこれらのエスケープも普通の ASCII テキストとして扱うため、
+// 既存のバイト列レベルのエンコーディング層と異なり技術的には diff 走査でも
+// 動作しうるが、位置セマンティクスの割り切りを diff 走査に持ち込まない
+// 設計とするため、呼び出しをフルスキャンに限定する）。大多数を占める \u を
+// 含まないファイルは、strings.Contains によるバイト走査 1 回で早期
+// リターンする（既存の valid UTF-8 fast path と同じ思想）。
+func decodeJSONUnicodeEscapes(text string) (string, bool) {
+	// 高速パス: \u（バックスラッシュ + 小文字 u）を含まないテキストは
+	// 1 回のバイト走査で早期リターンする。
+	if !strings.Contains(text, `\u`) {
+		return "", false
+	}
+	// 疑わしければ復号しない: 正当な UTF-8 のテキストにのみ適用する
+	// （decodeUTF16/decodeLegacyJapanese の出力は常に正当な UTF-8 だが、
+	// バイナリ判定を通過しただけの生テキストはそうとは限らない）。
+	if !utf8.ValidString(text) {
+		return "", false
+	}
+
+	var b strings.Builder
+	b.Grow(len(text))
+	decoded := false
+	backslashRun := 0 // 現在位置の直前まで連続するバックスラッシュの数
+	for i := 0; i < len(text); {
+		c := text[i]
+		if c == '\\' && backslashRun%2 == 0 {
+			if r, width, ok := decodeOneJSONEscape(text, i); ok {
+				b.WriteRune(r)
+				i += width
+				decoded = true
+				backslashRun = 0
+				continue
+			}
+		}
+		b.WriteByte(c)
+		if c == '\\' {
+			backslashRun++
+		} else {
+			backslashRun = 0
+		}
+		i++
+	}
+	if !decoded {
+		return "", false
+	}
+	return b.String(), true
+}
+
+// decodeOneJSONEscape は text[i] を先頭とする \uXXXX（上位サロゲートの
+// 場合は直後の低位サロゲート \uXXXX まで）を解釈する。呼び出し側は
+// text[i] == '\\' であることと、この \ 自身の直前の連続バックスラッシュ数が
+// 偶数（＝この \ がエスケープを開始しうる）であることを確認済みとする。
+//
+// 復号しない（ok=false）と判断するケースは decodeJSONUnicodeEscapes の
+// doc コメントに記載の方針のとおり: 16 進数 4 桁が揃わない不正なエスケープ、
+// 対応が揃わない孤立サロゲート、U+0020 未満の制御文字。
+//
+// 戻り値の width は消費した text のバイト数（単独エスケープなら 6、
+// サロゲートペアなら 12）。
+func decodeOneJSONEscape(text string, i int) (rune, int, bool) {
+	high, ok := parseHex4Escape(text, i)
+	if !ok {
+		return 0, 0, false
+	}
+	switch {
+	case high >= 0xD800 && high <= 0xDBFF: // 上位サロゲート
+		low, ok := parseHex4Escape(text, i+6)
+		if !ok || low < 0xDC00 || low > 0xDFFF {
+			return 0, 0, false // 対応する低位サロゲートが無い孤立サロゲート
+		}
+		return utf16.DecodeRune(rune(high), rune(low)), 12, true
+	case high >= 0xDC00 && high <= 0xDFFF: // 対応する上位サロゲートの無い孤立した低位サロゲート
+		return 0, 0, false
+	case high < 0x20: // 制御文字（行構造を壊さないため復号しない）
+		return 0, 0, false
+	default:
+		return rune(high), 6, true
+	}
+}
+
+// parseHex4Escape は text[i:i+6] が "\u" ＋ 16 進数 4 桁（大文字・小文字
+// どちらも可）であることを確認し、コードユニット（0〜0xFFFF）を返す。
+// u は小文字固定（JSON の \u エスケープに合わせる。大文字 \U は対象外）。
+// 桁数不足や範囲外の文字があれば ok=false。
+func parseHex4Escape(text string, i int) (uint16, bool) {
+	if i+6 > len(text) || text[i] != '\\' || text[i+1] != 'u' {
+		return 0, false
+	}
+	var v uint16
+	for k := 0; k < 4; k++ {
+		d, ok := hexDigitValue(text[i+2+k])
+		if !ok {
+			return 0, false
+		}
+		v = v<<4 | uint16(d)
+	}
+	return v, true
+}
+
+// hexDigitValue は 1 文字の 16 進数（大文字・小文字どちらも可）を 0〜15 の
+// 値へ変換する。16 進数でなければ ok=false。
+func hexDigitValue(c byte) (uint16, bool) {
+	switch {
+	case c >= '0' && c <= '9':
+		return uint16(c - '0'), true
+	case c >= 'a' && c <= 'f':
+		return uint16(c-'a') + 10, true
+	case c >= 'A' && c <= 'F':
+		return uint16(c-'A') + 10, true
+	default:
+		return 0, false
+	}
+}
