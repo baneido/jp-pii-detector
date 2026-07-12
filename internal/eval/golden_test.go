@@ -2,6 +2,7 @@ package eval
 
 import (
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -31,33 +32,63 @@ func sampleResults() []Result {
 	}
 }
 
+func sampleGolden(results []Result, spanless int) Golden {
+	return Golden{
+		Profiles:       []GoldenProfile{BuildGoldenProfile(ProfileSpec{ID: "low", Options: Options{MinConfidence: "low"}}, results)},
+		DatasetQuality: GoldenDatasetQuality{SpanlessPositiveCount: spanless},
+	}
+}
+
 func TestBuildGoldenSortsRulesAndFillsAggregates(t *testing.T) {
 	results := sampleResults()
-	g := BuildGolden(results, 3)
+	g := sampleGolden(results, 3)
+	p := g.Profiles[0]
 
-	if len(g.Rules) != 2 {
-		t.Fatalf("len(Rules) = %d, want 2", len(g.Rules))
+	if len(p.Rules) != 2 {
+		t.Fatalf("len(Rules) = %d, want 2", len(p.Rules))
 	}
 	// jp-address < email-address のはずが、辞書順は "email-address" < "jp-address"。
-	if g.Rules[0].RuleID != "email-address" || g.Rules[1].RuleID != "jp-address" {
+	if p.Rules[0].RuleID != "email-address" || p.Rules[1].RuleID != "jp-address" {
 		t.Fatalf("Rules order = [%s, %s], want sorted by rule id",
-			g.Rules[0].RuleID, g.Rules[1].RuleID)
+			p.Rules[0].RuleID, p.Rules[1].RuleID)
 	}
-	if g.Rules[1].Row.FN != 1 {
-		t.Fatalf("jp-address row FN = %d, want 1", g.Rules[1].Row.FN)
+	if p.Rules[1].Row.FN != 1 {
+		t.Fatalf("jp-address row FN = %d, want 1", p.Rules[1].Row.FN)
 	}
 
 	wantMicro := Micro(results)
-	if g.Micro.TP != wantMicro.TP || g.Micro.F1 != wantMicro.F1 {
-		t.Fatalf("Micro = %+v, want TP:%d F1:%.6f", g.Micro, wantMicro.TP, wantMicro.F1)
+	if p.Micro.TP != wantMicro.TP || p.Micro.F1 != wantMicro.F1 {
+		t.Fatalf("Micro = %+v, want TP:%d F1:%.6f", p.Micro, wantMicro.TP, wantMicro.F1)
 	}
 	if g.DatasetQuality.SpanlessPositiveCount != 3 {
 		t.Fatalf("SpanlessPositiveCount = %d, want 3", g.DatasetQuality.SpanlessPositiveCount)
 	}
 }
 
+func TestBuildGoldenPersistsContainmentAndAuxiliaryMetrics(t *testing.T) {
+	results := sampleResults()
+	results[0].SpanContainment = mkScore(2, 1, 1)
+	results[0].Negatives = 70
+	results[0].FindingFP = 3
+	results[0].ConfidenceMiss = 2
+	g := sampleGolden(results, 0)
+	p := g.Profiles[0]
+	var email GoldenRule
+	for _, r := range p.Rules {
+		if r.RuleID == "email-address" {
+			email = r
+		}
+	}
+	if email.SpanContainment.TP != 2 || email.Auxiliary.FindingFP != 3 || email.Auxiliary.ConfidenceMiss != 2 {
+		t.Fatalf("rule metrics not persisted: %+v", email)
+	}
+	if p.Auxiliary.Negatives != 70 || p.Auxiliary.FindingFP != 3 || p.Auxiliary.ConfidenceMiss != 2 {
+		t.Fatalf("profile auxiliary metrics not persisted: %+v", p.Auxiliary)
+	}
+}
+
 func TestSaveGoldenLoadGoldenRoundTrips(t *testing.T) {
-	g := BuildGolden(sampleResults(), 5)
+	g := sampleGolden(sampleResults(), 5)
 	path := filepath.Join(t.TempDir(), "accuracy.json")
 
 	if err := SaveGolden(path, g); err != nil {
@@ -79,10 +110,10 @@ func TestLoadGoldenMissingFileReturnsError(t *testing.T) {
 }
 
 func TestDiffGoldenReportsRuleMismatch(t *testing.T) {
-	want := BuildGolden(sampleResults(), 3)
+	want := sampleGolden(sampleResults(), 3)
 	results := sampleResults()
 	results[0].TP = 999 // 実測がドリフトしたことを模す
-	got := BuildGolden(results, 3)
+	got := sampleGolden(results, 3)
 
 	diffs := DiffGolden(got, want)
 	if len(diffs) == 0 {
@@ -101,8 +132,8 @@ func TestDiffGoldenReportsRuleMismatch(t *testing.T) {
 
 func TestDiffGoldenReportsMissingAndExtraRules(t *testing.T) {
 	results := sampleResults()
-	want := BuildGolden(results[:1], 0) // email-address のみ
-	got := BuildGolden(results[1:], 0)  // jp-address のみ
+	want := sampleGolden(results[:1], 0) // email-address のみ
+	got := sampleGolden(results[1:], 0)  // jp-address のみ
 
 	diffs := DiffGolden(got, want)
 	var sawMissing, sawExtra bool
@@ -121,8 +152,8 @@ func TestDiffGoldenReportsMissingAndExtraRules(t *testing.T) {
 
 func TestDiffGoldenIgnoresDatasetQuality(t *testing.T) {
 	results := sampleResults()
-	got := BuildGolden(results, 1)
-	want := BuildGolden(results, 999)
+	got := sampleGolden(results, 1)
+	want := sampleGolden(results, 999)
 
 	if diffs := DiffGolden(got, want); len(diffs) != 0 {
 		t.Fatalf("DiffGolden compared DatasetQuality, which TestDatasetQuality owns: %v", diffs)
@@ -131,8 +162,11 @@ func TestDiffGoldenIgnoresDatasetQuality(t *testing.T) {
 
 func TestDiffGoldenReportsDatasetStatsMismatch(t *testing.T) {
 	results := sampleResults()
-	got := BuildGoldenForCases(results, []Case{{Line: "positive", Want: []string{"email-address"}}})
-	want := BuildGoldenForCases(results, []Case{{Line: "negative"}})
+	spec := ProfileSpec{ID: "low", Options: Options{MinConfidence: "low"}}
+	gotCases := []Case{{Line: "positive", Want: []string{"email-address"}}}
+	wantCases := []Case{{Line: "negative"}}
+	got := BuildGolden([]ProfileEvaluation{{Spec: spec, Stratified: Stratified{Results: results}}}, gotCases, "")
+	want := BuildGolden([]ProfileEvaluation{{Spec: spec, Stratified: Stratified{Results: results}}}, wantCases, "")
 
 	diffs := DiffGolden(got, want)
 	if len(diffs) == 0 || !strings.Contains(strings.Join(diffs, "\n"), "dataset") {
@@ -142,13 +176,12 @@ func TestDiffGoldenReportsDatasetStatsMismatch(t *testing.T) {
 
 func TestComputeDatasetStatsCountsPositiveNegativeAndSpans(t *testing.T) {
 	cases := []Case{
-		{Line: "TEL: 090-1234-5678", Want: []string{"jp-phone-number"}},
+		{File: "input.txt", SourceClass: "legacy", Line: "TEL: 090-1234-5678", Want: []string{"jp-phone-number"}},
 		{
-			Line:  "TEL: 090-1234-5678",
-			Want:  []string{"jp-phone-number"},
-			Spans: []Span{{RuleID: "jp-phone-number", Start: 5, End: 18}},
+			File: "input.csv", SourceClass: "generated", Content: "TEL: 090-1234-5678",
+			Want: []string{"jp-phone-number"}, Spans: []Span{{RuleID: "jp-phone-number", Start: 5, End: 18}},
 		},
-		{Line: "memo only, nothing sensitive here"}, // 陰性ケース
+		{File: "input.txt", SourceClass: "legacy", Diff: []DiffLine{{Text: "memo only", Added: true}}}, // 陰性ケース
 	}
 
 	stats := ComputeDatasetStats(cases)
@@ -166,6 +199,15 @@ func TestComputeDatasetStatsCountsPositiveNegativeAndSpans(t *testing.T) {
 	}
 	if len(stats.PerRule) != 1 || stats.PerRule[0].RuleID != "jp-phone-number" || stats.PerRule[0].Cases != 2 {
 		t.Fatalf("PerRule = %+v, want [{jp-phone-number 2}]", stats.PerRule)
+	}
+	if !reflect.DeepEqual(stats.PerKind, []DatasetDimensionCount{{Name: "content", Cases: 1}, {Name: "diff", Cases: 1}, {Name: "line", Cases: 1}}) {
+		t.Fatalf("PerKind = %+v", stats.PerKind)
+	}
+	if !reflect.DeepEqual(stats.PerFormat, []DatasetDimensionCount{{Name: "csv", Cases: 1}, {Name: "txt", Cases: 2}}) {
+		t.Fatalf("PerFormat = %+v", stats.PerFormat)
+	}
+	if !reflect.DeepEqual(stats.PerSourceClass, []DatasetDimensionCount{{Name: "generated", Cases: 1}, {Name: "legacy", Cases: 2}}) {
+		t.Fatalf("PerSourceClass = %+v", stats.PerSourceClass)
 	}
 }
 
@@ -196,8 +238,8 @@ func TestSpanlessPositiveCountCountsWantAndSpanRulePairsWithoutASpan(t *testing.
 
 func TestDatasetQualityProblemsDetectsUnknownIDsAndDuplicatesWithoutLeakingContent(t *testing.T) {
 	cases := []Case{
-		{Line: "private value", Want: []string{"known"}},
-		{Line: "private value", Want: []string{"known"}},
+		{ID: "case-1", Line: "private value", Want: []string{"known"}},
+		{ID: "case-2", Line: "private value", Want: []string{"known"}},
 		{Line: "another private value", Spans: []Span{{RuleID: "typo", Start: 0, End: 1}}},
 	}
 	problems := DatasetQualityProblems(cases, map[string]bool{"known": true})
@@ -207,19 +249,6 @@ func TestDatasetQualityProblemsDetectsUnknownIDsAndDuplicatesWithoutLeakingConte
 	}
 	if strings.Contains(joined, "private value") {
 		t.Fatalf("エラーにケース本文が漏れています: %s", joined)
-	}
-}
-
-func TestSpanlessPositiveRatchetOnlyRejectsIncrease(t *testing.T) {
-	cases := []Case{{Line: "value", Want: []string{"rule"}}}
-	if SpanlessPositiveIncreased(cases, 1) {
-		t.Fatal("同数を増加と判定しました")
-	}
-	if SpanlessPositiveIncreased(cases, 2) {
-		t.Fatal("減少を増加と判定しました")
-	}
-	if !SpanlessPositiveIncreased(cases, 0) {
-		t.Fatal("増加を検出できませんでした")
 	}
 }
 

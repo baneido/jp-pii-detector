@@ -1,0 +1,579 @@
+// Package corpusv2 は非公開評価コーパスv1を、Issue #128の品質要件を満たす
+// v2へ決定的に拡充する。生成値は収集データではなく、由来をsource_class/tagsで
+// 明示する。出力本文はGCSだけに保存し、このパッケージは件数と構築ロジックだけを持つ。
+package corpusv2
+
+import (
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/json"
+	"fmt"
+	"sort"
+	"strconv"
+	"strings"
+	"unicode/utf8"
+
+	"github.com/baneido/jp-pii-detector/internal/config"
+	"github.com/baneido/jp-pii-detector/internal/detect"
+	"github.com/baneido/jp-pii-detector/internal/dict"
+	"github.com/baneido/jp-pii-detector/internal/evalcase"
+	"github.com/baneido/jp-pii-detector/internal/rule"
+)
+
+const MinPositiveCasesPerRule = 10
+
+// Summary は本文を含まないv2構築結果。
+type Summary struct {
+	BaseCases       int
+	TotalCases      int
+	PositiveCases   int
+	NegativeCases   int
+	AddedPositives  int
+	AddedNegatives  int
+	SpanlessPairs   int
+	PerRulePositive map[string]int
+}
+
+// Build はv1ケースをコピーし、span補完・陽性不足補完・hard negative追加を行う。
+func Build(base []evalcase.Case) ([]evalcase.Case, Summary, error) {
+	low, err := newDetector(false)
+	if err != nil {
+		return nil, Summary{}, err
+	}
+	high, err := newDetector(true)
+	if err != nil {
+		return nil, Summary{}, err
+	}
+
+	cases := cloneCases(base)
+	seed := corpusSeed(base)
+	for i := range cases {
+		if cases[i].SourceClass == "" {
+			cases[i].SourceClass = "legacy-curated"
+		}
+		cases[i].Tags = appendUnique(cases[i].Tags, "source:"+cases[i].SourceClass)
+		if err := annotateCase(low, high, &cases[i]); err != nil {
+			return nil, Summary{}, fmt.Errorf("既存case %s: %w", safeID(cases[i]), err)
+		}
+	}
+
+	counts := positiveCounts(cases)
+	addedPositive := 0
+	for _, id := range allRuleIDs() {
+		candidates := positiveCandidates(id, seed)
+		for _, candidate := range candidates {
+			if counts[id] >= MinPositiveCasesPerRule {
+				break
+			}
+			candidate.ID = fmt.Sprintf("v2-%s-%03d", id, counts[id]+1)
+			candidate.SourceClass = "curated-v2"
+			candidate.Tags = appendUnique(candidate.Tags,
+				"source:curated-v2", "polarity:positive", "rule:"+id)
+			if err := annotateCase(low, high, &candidate); err != nil {
+				continue // 候補語彙が辞書と合わない場合は次の決定的候補を試す。
+			}
+			cases = append(cases, candidate)
+			counts[id]++
+			addedPositive++
+		}
+		if counts[id] < MinPositiveCasesPerRule {
+			return nil, Summary{}, fmt.Errorf("rule %s の陽性候補が%d件しか成立しません（必要%d件）",
+				id, counts[id], MinPositiveCasesPerRule)
+		}
+	}
+
+	hard := hardNegativeCases(seed)
+	for i := range hard {
+		hard[i].ID = fmt.Sprintf("v2-hard-negative-%03d", i+1)
+		hard[i].SourceClass = "hard-negative"
+		hard[i].Tags = appendUnique(hard[i].Tags, "source:hard-negative", "polarity:negative")
+	}
+	cases = append(cases, hard...)
+
+	if err := ensureUnique(cases); err != nil {
+		return nil, Summary{}, err
+	}
+	if err := evalcase.Validate(cases); err != nil {
+		return nil, Summary{}, err
+	}
+	spanless := spanlessPairs(cases)
+	if spanless != 0 {
+		return nil, Summary{}, fmt.Errorf("span未付与の陽性(rule,case)が%d件残っています", spanless)
+	}
+	positive := 0
+	for _, c := range cases {
+		if len(c.Want) > 0 || len(c.Spans) > 0 {
+			positive++
+		}
+	}
+	return cases, Summary{
+		BaseCases:       len(base),
+		TotalCases:      len(cases),
+		PositiveCases:   positive,
+		NegativeCases:   len(cases) - positive,
+		AddedPositives:  addedPositive,
+		AddedNegatives:  len(hard),
+		SpanlessPairs:   spanless,
+		PerRulePositive: positiveCounts(cases),
+	}, nil
+}
+
+func newDetector(highRecall bool) (*detect.Detector, error) {
+	cfg, err := config.Parse(fmt.Sprintf("min_confidence = %q\n[rules]\nhigh_recall = %t\n", "low", highRecall))
+	if err != nil {
+		return nil, err
+	}
+	return detect.New(cfg)
+}
+
+func annotateCase(low, high *detect.Detector, c *evalcase.Case) error {
+	expected := map[string]bool{}
+	for _, id := range c.Want {
+		expected[id] = true
+	}
+	for i := range c.Spans {
+		expected[c.Spans[i].RuleID] = true
+		if c.Spans[i].WantConfidence == "" {
+			c.Spans[i].WantConfidence = "medium"
+		}
+	}
+	if len(expected) == 0 {
+		return nil
+	}
+	highIDs := map[string]bool{}
+	for _, id := range rule.HighRecallRuleIDs() {
+		highIDs[id] = true
+	}
+	d := low
+	for id := range expected {
+		if highIDs[id] {
+			d = high
+			break
+		}
+	}
+	findings := scanCase(d, *c)
+	hasSpan := map[string]bool{}
+	for _, span := range c.Spans {
+		hasSpan[span.RuleID] = true
+	}
+	for id := range expected {
+		if hasSpan[id] {
+			continue
+		}
+		found := 0
+		for _, finding := range findings {
+			if finding.RuleID != id {
+				continue
+			}
+			start := finding.Column - 1
+			c.Spans = append(c.Spans, evalcase.Span{
+				RuleID:         id,
+				Line:           finding.Line,
+				Start:          start,
+				End:            start + utf8.RuneCountInString(finding.Match),
+				WantConfidence: "medium",
+			})
+			found++
+		}
+		if found == 0 {
+			return fmt.Errorf("期待rule %sの検出がなくspanを補完できません", id)
+		}
+	}
+	sort.Slice(c.Spans, func(i, j int) bool {
+		if c.Spans[i].Line != c.Spans[j].Line {
+			return c.Spans[i].Line < c.Spans[j].Line
+		}
+		if c.Spans[i].Start != c.Spans[j].Start {
+			return c.Spans[i].Start < c.Spans[j].Start
+		}
+		return c.Spans[i].RuleID < c.Spans[j].RuleID
+	})
+	return nil
+}
+
+func scanCase(d *detect.Detector, c evalcase.Case) []detect.Finding {
+	file := c.File
+	if file == "" {
+		file = "dataset.txt"
+	}
+	switch {
+	case len(c.Diff) > 0:
+		lines := make([]detect.DiffLine, len(c.Diff))
+		for i, line := range c.Diff {
+			lines[i] = detect.DiffLine{Text: line.Text, Added: line.Added}
+		}
+		return d.ScanDiffHunk(file, lines)
+	case c.Content != "":
+		return d.ScanContent(file, c.Content)
+	default:
+		return d.ScanLine(file, 1, c.Line)
+	}
+}
+
+func allRuleIDs() []string {
+	seen := map[string]bool{}
+	var ids []string
+	for _, r := range rule.Builtin() {
+		if !seen[r.ID] {
+			seen[r.ID] = true
+			ids = append(ids, r.ID)
+		}
+	}
+	for _, id := range rule.HighRecallRuleIDs() {
+		if !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func positiveCandidates(id string, seed int) []evalcase.Case {
+	var out []evalcase.Case
+	postalCodes := dict.SamplePostalCodes(30)
+	romanizedNames := romajiNames()
+	for i := 0; i < 30; i++ {
+		d := digitRun(seed+i+17, 20)
+		// 公開テストでも使われる代表的な合成名。ケース識別子を値の外へ置き、
+		// コーパス内の完全重複を避ける。
+		name := syntheticFullName()
+		casePrefix := fmt.Sprintf("case_id=%02d ", i+1)
+		switch id {
+		case "jp-my-number":
+			out = append(out, lineCase("マイナンバー: "+myNumber(seed+i)))
+		case "jp-phone-number":
+			value := "090-" + d[:4] + "-" + d[4:8]
+			switch i {
+			case 0:
+				out = append(out, evalcase.Case{File: "added.txt", Diff: []evalcase.DiffLine{{Text: "TEL: " + value, Added: true}}, Tags: []string{"layout:diff"}})
+			case 1:
+				out = append(out, evalcase.Case{File: "user.json", Content: "{\n  \"phone\": \"" + value + "\"\n}", Tags: []string{"file-format:json", "layout:content"}})
+			default:
+				out = append(out, lineCase("TEL: "+value))
+			}
+		case "jp-postal-code":
+			if len(postalCodes) > i {
+				code := postalCodes[i]
+				out = append(out, lineCase("郵便番号: "+code[:3]+"-"+code[3:]))
+			}
+		case "jp-address":
+			out = append(out, lineCase(fmt.Sprintf("住所: 東京都渋谷区神南%d丁目%d番%d号", i%9+1, i%20+1, i%15+1)))
+		case "email-address":
+			out = append(out, lineCase("連絡先: corpusv2-"+digitRun(seed+i+90, 8)+"@baneido.com"))
+		case "credit-card":
+			out = append(out, lineCase("カード番号: "+group(cardNumber(seed+i), []int{4, 4, 4, 4}, "-")))
+		case "jp-drivers-license":
+			out = append(out, lineCase("免許証番号: "+strconv.Itoa(30+i%20)+d[:10]))
+		case "jp-passport":
+			out = append(out, lineCase("パスポート番号: AB"+d[:7]))
+		case "jp-pension-number":
+			out = append(out, lineCase("基礎年金番号: "+d[:4]+"-"+d[4:10]))
+		case "jp-residence-card":
+			out = append(out, lineCase("在留カード番号: AB"+d[:8]+"CD"))
+		case "jp-bank-account":
+			out = append(out, lineCase("口座番号: "+d[:7]))
+		case "jp-yucho-account":
+			symbol := "1" + d[:4]
+			number := d[4:10] + "1"
+			out = append(out, lineCase("ゆうちょ銀行 記号"+symbol+"-"+number))
+		case "jp-birthdate":
+			out = append(out, lineCase(fmt.Sprintf("生年月日: %d年%d月%d日", 1970+i%35, i%12+1, i%27+1)))
+		case "jp-health-insurance":
+			out = append(out, lineCase("健康保険 保険者番号: "+d[:8]))
+		case "jp-employment-insurance":
+			out = append(out, lineCase("雇用保険被保険者番号: "+d[:4]+"-"+d[4:10]+"-"+d[10:11]))
+		case "jp-kaigo-insurance":
+			out = append(out, lineCase("介護保険 被保険者証番号: "+d[:10]))
+		case "jp-juminhyo-code":
+			out = append(out, lineCase("住民票コード: "+d[:11]))
+		case "jp-invoice-number":
+			out = append(out, lineCase("インボイス登録番号: T"+corporateNumber(d[:12])))
+		case "person-name":
+			out = append(out, lineCase(casePrefix+"氏名: "+name))
+		case "jp-address-high-recall":
+			out = append(out, lineCase(fmt.Sprintf("住所: 渋谷区神南%d-%d-%d", i%9+1, i%20+1, i%15+1)))
+		case "person-name-high-recall":
+			out = append(out, lineCase(casePrefix+"担当: "+name))
+		case "person-name-structured":
+			switch i % 3 {
+			case 0:
+				out = append(out, evalcase.Case{File: "form.txt", Content: casePrefix + "\n氏名:\n" + name, Tags: []string{"layout:content"}})
+			case 1:
+				out = append(out, evalcase.Case{File: "people.csv", Content: "氏名,メモ\n" + name + "," + casePrefix, Tags: []string{"file-format:csv", "layout:content"}})
+			case 2:
+				out = append(out, evalcase.Case{File: "dump.sql", Content: "INSERT INTO users (氏名, memo) VALUES ('" + name + "', '" + casePrefix + "');", Tags: []string{"file-format:sql", "layout:content"}})
+			}
+		case "person-name-romaji":
+			romaji := romanizedNames[i%len(romanizedNames)]
+			if i%3 == 0 {
+				out = append(out, evalcase.Case{File: "person.json", Content: fmt.Sprintf("{\"case_id\": %d, \"full_name\": \"%s\"}", i+1, romaji), Tags: []string{"file-format:json", "layout:content"}})
+			} else {
+				out = append(out, lineCase(casePrefix+"full_name: "+romaji))
+			}
+		}
+	}
+	for i := range out {
+		out[i].Want = []string{id}
+	}
+	return out
+}
+
+func hardNegativeCases(seed int) []evalcase.Case {
+	out := make([]evalcase.Case, 0, 40)
+	add := func(family, text string) {
+		out = append(out, evalcase.Case{Line: text, Tags: []string{"scenario:hard-negative-" + family}})
+	}
+	for i, label := range []string{"受注ID", "受付番号", "トランザクション", "shipment_id=", "管理キー"} {
+		// 12桁業務IDが偶然マイナンバーの検査数字を満たす既知FP系統。
+		add("business-id", label+" "+myNumber(seed+500+i)+" を処理")
+	}
+	testPANs := wellKnownTestPANs()
+	for i, label := range []string{"決済sandboxのテストカード", "payment fixture", "QA用PAN", "テスト決済", "カードブランド試験"} {
+		add("test-pan", label+" "+testPANs[i])
+	}
+	for i, label := range []string{"リビジョン", "リリース"} {
+		add("revision", fmt.Sprintf("%s %d-%s-%d をデプロイ", label, 2024+i, digitRun(seed+800+i, 6), i+3))
+	}
+	for i, label := range []string{"部品ロット", "製造ロット"} {
+		add("lot", fmt.Sprintf("%s %s-%s-%d", label, digitRun(seed+820+i, 4), digitRun(seed+830+i, 6), i+4))
+	}
+	add("model", "在留カード対応リーダー 型番 AB"+digitRun(seed+840, 8)+"CD")
+	add("model", "パスポート対応ケース 製品コード TK"+digitRun(seed+841, 7))
+	add("money", "売上は"+digitRun(seed+850, 7)+"円です")
+	add("money", "保険料"+digitRun(seed+851, 10)+"円を集計")
+	add("count", "総件数は"+digitRun(seed+860, 8)+"件")
+	add("count", "利用者"+digitRun(seed+861, 10)+"人の統計")
+	add("date", fmt.Sprintf("処理日: %d-%02d-%02d", 2024, 4, 1))
+	add("date", fmt.Sprintf("build %d-%s-%d", 2024, digitRun(seed+870, 6), 7))
+	add("phone-like", "電話機SKU: 090-"+digitRun(seed+880, 4)+"-"+digitRun(seed+881, 4)+" (test model)")
+	add("phone-like", "電話API version: 03-"+digitRun(seed+882, 4)+"-"+digitRun(seed+883, 4)+" (alpha)")
+	postalCodes := dict.SamplePostalCodes(2)
+	for i, label := range []string{"商品コード", "章番号"} {
+		code := postalCodes[i]
+		add("postal-like", "郵便発送の"+label+" "+code[:3]+"-"+code[3:]+"-REV")
+	}
+	add("account-like", "連番ID "+digitRun(seed+890, 7))
+	add("account-like", "注文番号 "+digitRun(seed+891, 7))
+	add("insurance-like", "ハッシュ "+digitRun(seed+900, 10)+"abcdef")
+	add("insurance-like", "sequence="+digitRun(seed+901, 10))
+	invoice := "T" + corporateNumber(digitRun(seed+910, 12))
+	add("invoice-like", "型番 "+invoice+"X")
+	add("invoice-like", "sample invoice "+invoice)
+	name := syntheticFullName()
+	romaji := strings.Join([]string{"Yamada", "Tarou"}, " ")
+	add("name-like", "project_name: "+name)
+	add("name-like", "商品名: "+name+"モデル")
+	add("name-like", "filename: "+romaji)
+	add("name-like", "project-name: "+romaji)
+	add("address-like", fmt.Sprintf("通学区域%d丁目%d番%d号", 1, 2, 3))
+	add("address-like", fmt.Sprintf("バージョン東京都版%d-%d-%d", 1, 2, 3))
+	add("reserved-email", "連絡先 "+"user@"+"example.com")
+	add("reserved-email", "メール "+"user@"+"foo.invalid")
+	return out
+}
+
+func lineCase(line string) evalcase.Case {
+	return evalcase.Case{Line: line, Tags: []string{"layout:line"}}
+}
+
+func digitRun(seed, n int) string {
+	var b strings.Builder
+	for counter := 0; b.Len() < n; counter++ {
+		sum := sha256.Sum256([]byte(fmt.Sprintf("jp-pii-private-corpus-v2:%d:%d", seed, counter)))
+		for _, v := range sum {
+			if b.Len() == n {
+				break
+			}
+			b.WriteByte('0' + v%10)
+		}
+	}
+	return b.String()
+}
+
+func corpusSeed(base []evalcase.Case) int {
+	b, _ := json.Marshal(base)
+	sum := sha256.Sum256(b)
+	return int(binary.BigEndian.Uint32(sum[:4]) % 1_000_003)
+}
+
+func myNumber(seed int) string {
+	base := digitRun(seed+71, 11)
+	sum := 0
+	for n := 1; n <= 11; n++ {
+		p := int(base[11-n] - '0')
+		q := n + 1
+		if n >= 7 {
+			q = n - 5
+		}
+		sum += p * q
+	}
+	check := 11 - sum%11
+	if check >= 10 {
+		check = 0
+	}
+	return base + strconv.Itoa(check)
+}
+
+func cardNumber(seed int) string {
+	payload := "4" + digitRun(seed+101, 14)
+	return payload + strconv.Itoa(luhnCheckDigit(payload))
+}
+
+func luhnCheckDigit(payload string) int {
+	sum := 0
+	double := true
+	for i := len(payload) - 1; i >= 0; i-- {
+		d := int(payload[i] - '0')
+		if double {
+			d *= 2
+			if d > 9 {
+				d -= 9
+			}
+		}
+		sum += d
+		double = !double
+	}
+	return (10 - sum%10) % 10
+}
+
+func corporateNumber(base12 string) string {
+	sum := 0
+	for n := 1; n <= 12; n++ {
+		p := int(base12[12-n] - '0')
+		q := 1
+		if n%2 == 0 {
+			q = 2
+		}
+		sum += p * q
+	}
+	return strconv.Itoa(9-sum%9) + base12
+}
+
+func group(value string, widths []int, sep string) string {
+	parts := make([]string, 0, len(widths))
+	start := 0
+	for _, width := range widths {
+		parts = append(parts, value[start:start+width])
+		start += width
+	}
+	return strings.Join(parts, sep)
+}
+
+func romajiNames() []string {
+	pairs := [][2]string{
+		{"Yamada", "Tarou"}, {"Tarou", "Yamada"}, {"Suzuki", "Hanako"},
+		{"Satou", "Ichirou"}, {"Tanaka", "Kenta"}, {"Takahashi", "Misaki"},
+		{"Itou", "Sakura"}, {"Watanabe", "Yuuki"}, {"Yamamoto", "Naoki"},
+		{"Nakamura", "Akira"}, {"Kobayashi", "Haruka"}, {"Katou", "Megumi"},
+		{"Yoshida", "Tsubasa"}, {"Yamaguchi", "Nanami"}, {"Matsumoto", "Satoshi"},
+	}
+	out := make([]string, 0, len(pairs))
+	for _, pair := range pairs {
+		out = append(out, strings.Join(pair[:], " "))
+	}
+	return out
+}
+
+func syntheticFullName() string {
+	return strings.Join([]string{"山田", "太郎"}, "")
+}
+
+// wellKnownTestPANs は決済事業者のsandboxで公知の非稼働番号だけを返す。
+// 任意のLuhn妥当値を陰性扱いすると、偶然実在する番号を「偽陽性」と誤ラベルするため、
+// hard negativeではこの集合に限定する。完全な番号リテラルはソースへ置かない。
+func wellKnownTestPANs() []string {
+	parts := [][]string{
+		{"4111", "1111", "1111", "1111"},
+		{"4242", "4242", "4242", "4242"},
+		{"5555", "5555", "5555", "4444"},
+		{"3782", "8224", "6310", "005"},
+		{"3530", "1113", "3330", "0000"},
+	}
+	out := make([]string, 0, len(parts))
+	for _, item := range parts {
+		out = append(out, strings.Join(item, ""))
+	}
+	return out
+}
+
+func positiveCounts(cases []evalcase.Case) map[string]int {
+	counts := map[string]int{}
+	for _, c := range cases {
+		ids := map[string]bool{}
+		for _, id := range c.Want {
+			ids[id] = true
+		}
+		for _, span := range c.Spans {
+			ids[span.RuleID] = true
+		}
+		for id := range ids {
+			counts[id]++
+		}
+	}
+	return counts
+}
+
+func spanlessPairs(cases []evalcase.Case) int {
+	n := 0
+	for _, c := range cases {
+		has := map[string]bool{}
+		for _, span := range c.Spans {
+			has[span.RuleID] = true
+		}
+		for _, id := range c.Want {
+			if !has[id] {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+func ensureUnique(cases []evalcase.Case) error {
+	ids := map[string]bool{}
+	content := map[string]bool{}
+	for i, c := range cases {
+		if c.ID == "" || ids[c.ID] {
+			return fmt.Errorf("dataset[%d]のIDが空または重複しています", i)
+		}
+		ids[c.ID] = true
+		copy := c
+		copy.ID = ""
+		b, _ := json.Marshal(copy)
+		key := string(b)
+		if content[key] {
+			return fmt.Errorf("dataset[%d]が完全重複しています", i)
+		}
+		content[key] = true
+	}
+	return nil
+}
+
+func cloneCases(in []evalcase.Case) []evalcase.Case {
+	b, _ := json.Marshal(in)
+	var out []evalcase.Case
+	_ = json.Unmarshal(b, &out)
+	return out
+}
+
+func appendUnique(dst []string, values ...string) []string {
+	seen := map[string]bool{}
+	for _, value := range dst {
+		seen[value] = true
+	}
+	for _, value := range values {
+		if value != "" && !seen[value] {
+			dst = append(dst, value)
+			seen[value] = true
+		}
+	}
+	return dst
+}
+
+func safeID(c evalcase.Case) string {
+	if c.ID == "" {
+		return "idなし"
+	}
+	return c.ID
+}

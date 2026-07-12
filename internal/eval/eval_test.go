@@ -3,7 +3,6 @@ package eval
 import (
 	"flag"
 	"fmt"
-	"math"
 	"os"
 	"sort"
 	"strings"
@@ -24,63 +23,18 @@ const (
 	accuracyJSONPath = "../../docs/accuracy.json"
 )
 
-// wantF1Medium は CLI 既定の min_confidence=medium での期待 F1（low プロファイル
-// と同じ評価データセットに対する実測値）。低プロファイル（README バッジ・
-// docs/accuracy.json のゴールデン値）に対する既定プロファイル（--high-recall
-// 無効）の体感精度を、バッジ計測と別に可視化するためのゴールデン値。
-//
-// person-name（internal/rule/builtin.go）は、辞書検証済みマッチ（強ラベル+
-// 姓名辞書一致等の twin パターン）が Base: Medium で報告されるため、既定設定
-// （cli の min_confidence=medium）でも辞書検証済みの検出は残る（issue #44）。
-// 辞書検証を伴わないフォールバックパターンは Base: Low のままフィルタで
-// 除外されるが、現行の評価データセットの陽性はすべて辞書検証済みの Medium
-// パターンでも検出できるため、medium プロファイルの F1 は low と同じ 1.00。
-// 辞書や評価ケースの変更でこの関係が動いた場合は、実測値に合わせて更新する。
-//
-// 他の 13 ルールは、低プロファイルで TP になっている検出のパターン Base が
-// いずれも Medium 以上（RequireContext のパターンは昇格せず Base のまま、
-// それ以外は Context 一致で High へ昇格）であるため、medium 閾値でも除外され
-// ず low と同じ検出集合になる（docs/accuracy.json の low 値と同値）。
-var wantF1Medium = map[string]float64{
-	"jp-my-number":        1.00,
-	"jp-phone-number":     1.00,
-	"jp-postal-code":      1.00,
-	"jp-address":          0.89,
-	"email-address":       1.00,
-	"credit-card":         1.00,
-	"jp-drivers-license":  1.00,
-	"jp-passport":         1.00,
-	"jp-pension-number":   1.00,
-	"jp-residence-card":   1.00,
-	"jp-bank-account":     0.86,
-	"jp-health-insurance": 1.00,
-	"person-name":         1.00,
-	"jp-birthdate":        1.00,
-}
-
-// TestAccuracy は CI の回帰ガード。low プロファイル（README バッジ・
-// docs/accuracy.md の根拠）は、実測結果がコミット済みの docs/accuracy.json
-// （ゴールデンファイル）と完全一致することを検証する。ルールやデータセットを
-// 変更して数値が動いたら、
+// TestAccuracy は3公表プロファイルすべての完全一致回帰ガード。ルールや
+// データセットを変更して数値が動いたら、
 // `go test ./internal/eval -run 'TestGenerateDoc|TestReadmeBadges' -update`
 // で docs/accuracy.md・docs/accuracy.json・README.md をまとめて再生成して
 // コミットする。
-//
-// あわせて medium / high-recall プロファイルを並行評価し、既定設定で沈黙する
-// 検出（person-name 等）を公式数値として可視化する（issue #43）。medium
-// プロファイルは wantF1Medium で許容誤差付きにゲートする。high-recall
-// プロファイルは対応する評価データセットのケース（jp-address-high-recall /
-// person-name-high-recall / person-name-structured）がまだ無いため、当面は
-// 計測・ログ出力のみでゲートしない（データセットにケースが揃ってから
-// wantF1HighRecall を追加してゲート化する）。
 func TestAccuracy(t *testing.T) {
 	corpus := privatecorpus.Require(t)
-	results, err := Evaluate()
+	profiles, err := EvaluatePublishedProfileCases(corpus.Dataset)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cases := corpus.Dataset
-	got := BuildGoldenForDatasetCases(results, cases, corpus.DatasetID)
+	got := BuildGolden(profiles, corpus.Dataset, corpus.DatasetID)
 
 	want, err := LoadGolden(accuracyJSONPath)
 	if err != nil {
@@ -90,50 +44,6 @@ func TestAccuracy(t *testing.T) {
 
 	for _, msg := range DiffGolden(got, want) {
 		t.Error(msg)
-	}
-
-	profiles := []struct {
-		name string
-		opts Options
-		want map[string]float64 // nil/空なら計測・ログのみ（ゲートしない）
-	}{
-		{name: "medium", opts: Options{MinConfidence: "medium"}, want: wantF1Medium},
-		{name: "high-recall", opts: Options{MinConfidence: "low", HighRecall: true}, want: nil},
-	}
-
-	for _, p := range profiles {
-		t.Run(p.name, func(t *testing.T) {
-			results, err := EvaluateWithOptions(p.opts)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(p.want) == 0 {
-				for _, r := range results {
-					t.Logf("%-24s F1=%.3f P=%.3f R=%.3f TP=%d FP=%d FN=%d",
-						r.RuleID, r.F1, r.Precision, r.Recall, r.TP, r.FP, r.FN)
-				}
-				return
-			}
-			seen := map[string]bool{}
-			for _, r := range results {
-				seen[r.RuleID] = true
-				want, ok := p.want[r.RuleID]
-				if !ok {
-					t.Errorf("ルール %q の期待 F1 が未登録（プロファイル %s の want map に追加してください）",
-						r.RuleID, p.name)
-					continue
-				}
-				if math.Abs(r.F1-want) > 0.005 {
-					t.Errorf("%s [%s]: F1 = %.3f, want %.2f（wantF1Medium・docs/accuracy.md を更新してください）",
-						r.RuleID, p.name, r.F1, want)
-				}
-			}
-			for id := range p.want {
-				if !seen[id] {
-					t.Errorf("ルール %q がプロファイル %s の評価結果に存在しない", id, p.name)
-				}
-			}
-		})
 	}
 }
 
@@ -191,6 +101,48 @@ func TestEvaluateCasesCountsExactAndRelaxedSpans(t *testing.T) {
 	if r.SpanRelaxed.TP != 2 || r.SpanRelaxed.FP != 0 || r.SpanRelaxed.FN != 0 {
 		t.Fatalf("relaxed span counts = TP:%d FP:%d FN:%d, want TP:2 FP:0 FN:0",
 			r.SpanRelaxed.TP, r.SpanRelaxed.FP, r.SpanRelaxed.FN)
+	}
+}
+
+func TestSpanContainmentDistinguishesExtraFromClippedDetection(t *testing.T) {
+	want := []Span{{RuleID: "rule", Line: 1, Start: 5, End: 10}}
+	containing := []Span{{RuleID: "rule", Line: 1, Start: 3, End: 12}}
+	clipped := []Span{{RuleID: "rule", Line: 1, Start: 6, End: 12}}
+
+	if got, _ := matchSpans(want, containing, spansContainedBy); got.TP != 1 || got.FP != 0 || got.FN != 0 {
+		t.Fatalf("containing score = %+v, want TP=1", got)
+	}
+	if got, _ := matchSpans(want, clipped, spansContainedBy); got.TP != 0 || got.FP != 1 || got.FN != 1 {
+		t.Fatalf("clipped containment score = %+v, want FP=1 FN=1", got)
+	}
+	if got, _ := matchSpans(want, clipped, spansOverlap); got.TP != 1 {
+		t.Fatalf("clipped relaxed score = %+v, want TP=1", got)
+	}
+}
+
+func TestDisabledHighRecallExpectationsDoNotPolluteDefaultProfile(t *testing.T) {
+	name := testfixtures.MustGet(t, "detect.name_full")
+	cases := []Case{{
+		Content: "氏名:\n" + name,
+		Want:    []string{"person-name-structured"},
+		Spans:   []Span{{RuleID: "person-name-structured", Line: 2, Start: 0, End: len([]rune(name))}},
+	}}
+	without, err := EvaluateCases(cases)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range without {
+		if r.RuleID == "person-name-structured" {
+			t.Fatalf("disabled high-recall rule appeared in default profile: %+v", r)
+		}
+	}
+	with, err := EvaluateCasesWithOptions(cases, Options{MinConfidence: "low", HighRecall: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := findResult(t, with, "person-name-structured")
+	if r.TP != 1 || r.SpanContainment.TP != 1 {
+		t.Fatalf("enabled high-recall result = %+v, want row and containment TP", r)
 	}
 }
 
@@ -699,7 +651,7 @@ func TestEvaluateCasesWithOptionsMatchesStratifiedResults(t *testing.T) {
 // knownCaseTagPrefixes は Case.Tags の既知の語彙プレフィックス
 // （docs/development.md にドキュメント化）。
 var knownCaseTagPrefixes = []string{
-	"notation:", "sep:", "format:", "label:", "layout:", "source:", "polarity:", "rule:",
+	"notation:", "sep:", "format:", "file-format:", "label:", "layout:", "source:", "polarity:", "rule:", "scenario:",
 }
 
 // knownCaseTag は tag が既知のケースタグ語彙に従っているかを返す。
@@ -769,6 +721,7 @@ func TestReport(t *testing.T) {
 
 func hasSpanScore(r Result) bool {
 	return r.SpanExact.TP+r.SpanExact.FP+r.SpanExact.FN+
+		r.SpanContainment.TP+r.SpanContainment.FP+r.SpanContainment.FN+
 		r.SpanRelaxed.TP+r.SpanRelaxed.FP+r.SpanRelaxed.FN > 0
 }
 
@@ -782,18 +735,11 @@ func TestGenerateDoc(t *testing.T) {
 		t.Skip("-update 指定時のみ docs/accuracy.md・docs/accuracy.json を再生成する")
 	}
 	corpus := privatecorpus.Require(t)
-	strat, err := EvaluateStratified()
+	profiles, err := EvaluatePublishedProfileCases(corpus.Dataset)
 	if err != nil {
 		t.Fatal(err)
 	}
-	results := strat.Results
 	cases := corpus.Dataset
-	sort.Slice(results, func(i, j int) bool {
-		if results[i].F1 == results[j].F1 {
-			return results[i].RuleID < results[j].RuleID
-		}
-		return results[i].F1 > results[j].F1
-	})
 
 	var b strings.Builder
 	b.WriteString("# 検出精度（評価データセットに対する実測値）\n\n")
@@ -802,54 +748,16 @@ func TestGenerateDoc(t *testing.T) {
 	b.WriteString("`go test ./internal/eval` で検証され（[eval_test.go](../internal/eval/eval_test.go)）、\n")
 	b.WriteString("`-update` で本ファイルを再生成します。\n\n")
 	fmt.Fprintf(&b, "評価コーパスID: `%s`（生データのハッシュや本文は公開しません）。\n\n", corpus.DatasetID)
-	b.WriteString("README バッジと下表の主指標は、ルール自体の検出能力を見るため `min_confidence=low`、\n")
-	b.WriteString("高再現率ルール無効の既存プロファイルで計測しています。評価ケースは単一行（`line`）に加え、\n")
+	b.WriteString("設定の異なるF1を混同しないよう、rule capability（low）、default operational（medium）、\n")
+	b.WriteString("high recall operationalの3プロファイルを別々に計測・CIゲートします。READMEバッジは\n")
+	b.WriteString("利用者の既定運用に対応するmediumプロファイルです。評価ケースは単一行（`line`）に加え、\n")
 	b.WriteString("複数行入力（`content`）と diff hunk（`diff`: 追加行のみを報告）も表現できます。\n\n")
 	b.WriteString("> この数値は、実在しうる PII を含むためリポジトリ外で管理する評価データセット\n")
 	b.WriteString("> （陽性と陰性の代表例と、実運用での限界を表す難ケース）に対する値であり、あらゆる\n")
 	b.WriteString("> 入力での精度を保証するものではありません。データセットの取得方法は\n")
 	b.WriteString("> [docs/development.md](../docs/development.md) を参照してください。\n\n")
-	b.WriteString("| ルール ID | F1 | 適合率 | 再現率 | TP | FP | FN |\n")
-	b.WriteString("|---|:--:|:--:|:--:|--:|--:|--:|\n")
-	for _, r := range results {
-		fmt.Fprintf(&b, "| `%s` | %.2f | %.2f | %.2f | %d | %d | %d |\n",
-			r.RuleID, r.F1, r.Precision, r.Recall, r.TP, r.FP, r.FN)
-	}
-	m := Micro(results)
-	fmt.Fprintf(&b, "| **全体（マイクロ平均）** | **%.2f** | **%.2f** | **%.2f** | %d | %d | %d |\n",
-		m.F1, m.Precision, m.Recall, m.TP, m.FP, m.FN)
-
-	var spanRows []Result
-	for _, r := range results {
-		if hasSpanScore(r) {
-			spanRows = append(spanRows, r)
-		}
-	}
-	if len(spanRows) > 0 {
-		b.WriteString("\n## スパン評価\n\n")
-		b.WriteString("期待スパンが設定されたケースのみを対象にした、行番号とルーンオフセット範囲の評価です。")
-		b.WriteString("exact はルール ID・行番号・範囲の完全一致、relaxed は同じルール ID・同じ行で範囲が重なる場合を一致として数えます。\n\n")
-		b.WriteString("| ルール ID | exact F1 | exact 適合率 | exact 再現率 | exact TP | exact FP | exact FN | relaxed F1 | relaxed 適合率 | relaxed 再現率 | relaxed TP | relaxed FP | relaxed FN |\n")
-		b.WriteString("|---|:--:|:--:|:--:|--:|--:|--:|:--:|:--:|:--:|--:|--:|--:|\n")
-		for _, r := range spanRows {
-			fmt.Fprintf(&b, "| `%s` | %.2f | %.2f | %.2f | %d | %d | %d | %.2f | %.2f | %.2f | %d | %d | %d |\n",
-				r.RuleID,
-				r.SpanExact.F1, r.SpanExact.Precision, r.SpanExact.Recall,
-				r.SpanExact.TP, r.SpanExact.FP, r.SpanExact.FN,
-				r.SpanRelaxed.F1, r.SpanRelaxed.Precision, r.SpanRelaxed.Recall,
-				r.SpanRelaxed.TP, r.SpanRelaxed.FP, r.SpanRelaxed.FN)
-		}
-		exact := MicroSpanExact(results)
-		relaxed := MicroSpanRelaxed(results)
-		fmt.Fprintf(&b, "| **全体（マイクロ平均）** | **%.2f** | **%.2f** | **%.2f** | %d | %d | %d | **%.2f** | **%.2f** | **%.2f** | %d | %d | %d |\n",
-			exact.F1, exact.Precision, exact.Recall, exact.TP, exact.FP, exact.FN,
-			relaxed.F1, relaxed.Precision, relaxed.Recall, relaxed.TP, relaxed.FP, relaxed.FN)
-
-		exactMacro := MacroSpanExact(results)
-		relaxedMacro := MacroSpanRelaxed(results)
-		fmt.Fprintf(&b, "\nスパン評価のマクロ平均: exact F1 %.2f（適合率 %.2f / 再現率 %.2f）、relaxed F1 %.2f（適合率 %.2f / 再現率 %.2f）。\n",
-			exactMacro.F1, exactMacro.Precision, exactMacro.Recall,
-			relaxedMacro.F1, relaxedMacro.Precision, relaxedMacro.Recall)
+	for _, profile := range profiles {
+		writeProfileReport(&b, profile)
 	}
 
 	stats := ComputeDatasetStats(cases)
@@ -860,19 +768,27 @@ func TestGenerateDoc(t *testing.T) {
 	fmt.Fprintf(&b, "- 陽性ケース数: %d（うちスパン付与 %d 件、付与率 %s）\n",
 		stats.PositiveCases, stats.SpanAnnotatedCases, spanCoverageText(stats))
 	fmt.Fprintf(&b, "- 陰性ケース数: %d\n\n", stats.NegativeCases)
+	writeDatasetDimensionTable(&b, "入力種別", stats.PerKind)
+	writeDatasetDimensionTable(&b, "ファイル形式", stats.PerFormat)
+	writeDatasetDimensionTable(&b, "source class", stats.PerSourceClass)
+	b.WriteString("### ルール別陽性件数\n\n")
 	b.WriteString("| ルール ID | 陽性ケース数 |\n|---|--:|\n")
 	for _, rc := range stats.PerRule {
 		fmt.Fprintf(&b, "| `%s` | %d |\n", rc.RuleID, rc.Cases)
 	}
 
-	writeStratifiedTable(&b, "ケース種別別", "ケース種別",
+	defaultProfile, ok := FindProfile(profiles, "medium")
+	if !ok {
+		t.Fatal("medium profile not found")
+	}
+	writeStratifiedTable(&b, "ケース種別別（medium）", "ケース種別",
 		"評価ケースの入力形式（line/content/diff）別の内訳です。行レベル（Result.TP 等と同じ定義）の"+
 			"TP/FP/FN で、1 ケースに複数ルールの期待・検出があれば同じ種別へ合算します。",
-		strat.Kinds, kindOrder(strat.Kinds))
+		defaultProfile.Stratified.Kinds, kindOrder(defaultProfile.Stratified.Kinds))
 
-	if len(strat.Tags) > 0 {
-		tags := make([]string, 0, len(strat.Tags))
-		for tag := range strat.Tags {
+	if len(defaultProfile.Stratified.Tags) > 0 {
+		tags := make([]string, 0, len(defaultProfile.Stratified.Tags))
+		for tag := range defaultProfile.Stratified.Tags {
 			tags = append(tags, tag)
 		}
 		sort.Strings(tags)
@@ -880,18 +796,79 @@ func TestGenerateDoc(t *testing.T) {
 			"評価ケースの `Case.Tags`（表記ゆれ・ラベル語彙・合成データ由来などのメタデータ。"+
 				"語彙は [docs/development.md](../docs/development.md) を参照）別の内訳です。"+
 				"タグ未設定のケースは含まれません。",
-			strat.Tags, tags)
+			defaultProfile.Stratified.Tags, tags)
 	}
 
 	if err := os.WriteFile(accuracyMDPath, []byte(b.String()), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	golden := BuildGoldenForDatasetCases(results, cases, corpus.DatasetID)
+	golden := BuildGolden(profiles, cases, corpus.DatasetID)
 	if err := SaveGolden(accuracyJSONPath, golden); err != nil {
 		t.Fatal(err)
 	}
 	t.Log("docs/accuracy.md と docs/accuracy.json を再生成しました")
+}
+
+func writeDatasetDimensionTable(b *strings.Builder, heading string, counts []DatasetDimensionCount) {
+	fmt.Fprintf(b, "### %s別ケース数\n\n", heading)
+	b.WriteString("| 区分 | ケース数 |\n|---|--:|\n")
+	for _, item := range counts {
+		fmt.Fprintf(b, "| `%s` | %d |\n", item.Name, item.Cases)
+	}
+	b.WriteString("\n")
+}
+
+func writeProfileReport(b *strings.Builder, profile ProfileEvaluation) {
+	results := append([]Result(nil), profile.Stratified.Results...)
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].F1 == results[j].F1 {
+			return results[i].RuleID < results[j].RuleID
+		}
+		return results[i].F1 > results[j].F1
+	})
+	fmt.Fprintf(b, "## プロファイル: %s\n\n%s。\n\n", profile.Spec.ID, profile.Spec.Description)
+	b.WriteString("| ルール ID | F1 | 適合率 | 再現率 | TP | FP | FN | Finding FP | Confidence miss |\n")
+	b.WriteString("|---|:--:|:--:|:--:|--:|--:|--:|--:|--:|\n")
+	for _, r := range results {
+		fmt.Fprintf(b, "| `%s` | %.2f | %.2f | %.2f | %d | %d | %d | %d | %d |\n",
+			r.RuleID, r.F1, r.Precision, r.Recall, r.TP, r.FP, r.FN, r.FindingFP, r.ConfidenceMiss)
+	}
+	m := Micro(results)
+	fmt.Fprintf(b, "| **全体（マイクロ平均）** | **%.2f** | **%.2f** | **%.2f** | %d | %d | %d | %d | %d |\n",
+		m.F1, m.Precision, m.Recall, m.TP, m.FP, m.FN, m.FindingFP, m.ConfidenceMiss)
+	fmt.Fprintf(b, "\n陰性ケース母数: %d。\n", m.Negatives)
+
+	var spanRows []Result
+	for _, r := range results {
+		if hasSpanScore(r) {
+			spanRows = append(spanRows, r)
+		}
+	}
+	if len(spanRows) == 0 {
+		return
+	}
+	b.WriteString("\n### スパン評価\n\n")
+	b.WriteString("exactは完全一致、containmentは検出が期待値全体を含む場合、relaxedは一部でも重なる場合です。\n\n")
+	b.WriteString("| ルール ID | exact F1 | containment F1 | relaxed F1 | exact TP/FP/FN | containment TP/FP/FN | relaxed TP/FP/FN |\n")
+	b.WriteString("|---|:--:|:--:|:--:|:--:|:--:|:--:|\n")
+	for _, r := range spanRows {
+		fmt.Fprintf(b, "| `%s` | %.2f | %.2f | %.2f | %d/%d/%d | %d/%d/%d | %d/%d/%d |\n",
+			r.RuleID, r.SpanExact.F1, r.SpanContainment.F1, r.SpanRelaxed.F1,
+			r.SpanExact.TP, r.SpanExact.FP, r.SpanExact.FN,
+			r.SpanContainment.TP, r.SpanContainment.FP, r.SpanContainment.FN,
+			r.SpanRelaxed.TP, r.SpanRelaxed.FP, r.SpanRelaxed.FN)
+	}
+	exact := MicroSpanExact(results)
+	containment := MicroSpanContainment(results)
+	relaxed := MicroSpanRelaxed(results)
+	fmt.Fprintf(b, "| **全体（マイクロ平均）** | **%.2f** | **%.2f** | **%.2f** | %d/%d/%d | %d/%d/%d | %d/%d/%d |\n",
+		exact.F1, containment.F1, relaxed.F1,
+		exact.TP, exact.FP, exact.FN,
+		containment.TP, containment.FP, containment.FN,
+		relaxed.TP, relaxed.FP, relaxed.FN)
+	fmt.Fprintf(b, "\nマクロ平均F1: exact %.2f / containment %.2f / relaxed %.2f。\n",
+		MacroSpanExact(results).F1, MacroSpanContainment(results).F1, MacroSpanRelaxed(results).F1)
 }
 
 // spanCoverageText は陽性ケースのうちスパンが付与された割合を百分率表記で返す。

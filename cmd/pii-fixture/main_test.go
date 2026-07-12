@@ -6,8 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
+	"github.com/baneido/jp-pii-detector/internal/evalcase"
 	"github.com/baneido/jp-pii-detector/internal/privatecorpus"
 )
 
@@ -55,6 +57,56 @@ func TestMigrateCommandWritesVersionedCorpusWithoutLegacyStrings(t *testing.T) {
 	}
 	if corpus.Strings != nil || corpus.Dataset[0].ID == "" || corpus.Dataset[0].SourceClass != "legacy-curated" {
 		t.Fatal("migration retained legacy strings or omitted anonymous metadata")
+	}
+}
+
+func TestBuildV2CommandProducesCompleteVersionedCorpus(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "v1.json")
+	output := filepath.Join(dir, "v2.json")
+	base := &privatecorpus.Corpus{
+		SchemaVersion: 1,
+		DatasetID:     "private-eval-v1",
+		Dataset: []evalcase.Case{
+			{ID: "legacy-negative-1", SourceClass: "legacy-curated", Line: "識別情報を含まない行"},
+		},
+	}
+	if err := privatecorpus.WriteNew(input, base); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"build-v2", "-input", input, "-output", output}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	got, err := privatecorpus.Load(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DatasetID != "private-eval-v2" || len(got.Dataset) < 200 {
+		t.Fatalf("unexpected v2 metadata: dataset_id=%q cases=%d", got.DatasetID, len(got.Dataset))
+	}
+	if !strings.Contains(stdout.String(), "spanless=0") {
+		t.Fatalf("summary does not prove complete spans: %q", stdout.String())
+	}
+}
+
+func TestBuildV2CommandRejectsUnexpectedBaseDataset(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "other.json")
+	output := filepath.Join(dir, "v2.json")
+	base := &privatecorpus.Corpus{
+		SchemaVersion: 1,
+		DatasetID:     "private-eval-other",
+		Dataset:       []evalcase.Case{{ID: "case-1", Line: "no identifiers"}},
+	}
+	if err := privatecorpus.WriteNew(input, base); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"build-v2", "-input", input, "-output", output}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
+		t.Fatal("build-v2 accepted an unexpected base dataset")
+	}
+	if _, err := os.Stat(output); !os.IsNotExist(err) {
+		t.Fatalf("rejected build created output: %v", err)
 	}
 }
 

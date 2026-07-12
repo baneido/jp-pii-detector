@@ -2,7 +2,7 @@
 
 English | [日本語](README.md)
 
-![PII detection F1](https://img.shields.io/badge/PII%20detection%20F1%20(eval%20dataset)-0.98-brightgreen)
+![PII detection F1](https://img.shields.io/badge/PII%20detection%20F1%20(eval%20dataset)-0.96-brightgreen)
 
 A Japan-specific **static PII detector**. It finds Japanese personal data — My Number,
 Japanese phone numbers, addresses, names, and more — that has leaked into a repository,
@@ -30,7 +30,7 @@ combined-setup guide.
 
 - **19+ built-in rules** with checksum validation (My Number check digit, Luhn for cards, card-brand detection)
 - **Japanese normalization**: folds full-width alphanumerics, hyphen variants, and digit-adjacent long-vowel marks to half-width; handles Japanese-era (和暦) dates
-- **F1 0.98** on a labeled evaluation dataset, gated in CI so accuracy can't silently drift
+- **F1 0.96** under the default medium profile on a labeled evaluation dataset, gated in CI so accuracy can't silently drift
 - **Masked output by default** (`--unmask` for local use only)
 - **Baseline support** to freeze existing findings and fail only on newly added PII
 - **SARIF / JSON / GitHub annotations** output for CI integration
@@ -53,7 +53,12 @@ Examples below are all fictitious dummy values.
 | Basic pension number | 4-digit + 6-digit + nearby context keyword required |
 | Residence card number | 2 letters + 8 digits + 2 letters + context required |
 | Bank account number | 7 digits + context keyword required |
+| Japan Post Bank symbol/number | 5-digit symbol + up-to-8-digit number + Japan Post Bank context required |
 | Health insurance number | 8 digits + context keyword required |
+| Employment insurance number | 4-6-1 digit structure + context keyword required |
+| Long-term care insurance number | 10 digits + context keyword required |
+| Resident record code | 11 digits + context keyword required |
+| Qualified invoice issuer number | `T` + 13 digits + corporate-number checksum |
 | Date of birth | Labeled; supports Western and Japanese-era dates |
 | Person name | Label (e.g. `氏名:`) + surname/given-name dictionary match |
 

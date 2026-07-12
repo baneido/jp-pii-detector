@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/baneido/jp-pii-detector/internal/corpusv2"
 	"github.com/baneido/jp-pii-detector/internal/privatecorpus"
 )
 
@@ -70,13 +71,23 @@ func run(args []string, stdout, stderr io.Writer) error {
 			return usageError()
 		}
 		return migrate(*input, *output, *datasetID, stdout)
+	case "build-v2":
+		fs := flag.NewFlagSet("build-v2", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		input := fs.String("input", "", "private-eval-v1のローカルパス")
+		output := fs.String("output", "", "private-eval-v2の出力先（既存ファイルは上書きしない）")
+		datasetID := fs.String("dataset-id", "private-eval-v2", "新コーパスの安定ID")
+		if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 || *input == "" || *output == "" || *datasetID == "" {
+			return usageError()
+		}
+		return buildV2(*input, *output, *datasetID, stdout)
 	default:
 		return usageError()
 	}
 }
 
 func usageError() error {
-	return errors.New("usage: pii-fixture eval [-cache] | status | purge | migrate -input PATH -output PATH -dataset-id ID")
+	return errors.New("usage: pii-fixture eval [-cache] | status | purge | migrate -input PATH -output PATH -dataset-id ID | build-v2 -input PATH -output PATH [-dataset-id ID]")
 }
 
 func migrate(input, output, datasetID string, stdout io.Writer) error {
@@ -93,6 +104,35 @@ func migrate(input, output, datasetID string, stdout io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "migrated private corpus: dataset_id=%s cases=%d source_class=legacy-curated\n",
 		corpus.DatasetID, len(corpus.Dataset))
+	return nil
+}
+
+func buildV2(input, output, datasetID string, stdout io.Writer) error {
+	base, err := privatecorpus.Load(input)
+	if err != nil {
+		return err
+	}
+	if base.DatasetID != "private-eval-v1" {
+		return fmt.Errorf("private-eval-v1だけをv2へ変換できます: dataset_id=%q", base.DatasetID)
+	}
+	if strings.TrimSpace(datasetID) == "" || datasetID == base.DatasetID {
+		return fmt.Errorf("v1と異なる新しいdataset_idを指定してください")
+	}
+	dataset, summary, err := corpusv2.Build(base.Dataset)
+	if err != nil {
+		return err
+	}
+	corpus := &privatecorpus.Corpus{
+		SchemaVersion: privatecorpus.CurrentSchemaVersion,
+		DatasetID:     datasetID,
+		Dataset:       dataset,
+	}
+	if err := privatecorpus.WriteNew(output, corpus); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "built private corpus: dataset_id=%s base=%d total=%d positive=%d negative=%d added_positive=%d added_negative=%d spanless=%d\n",
+		corpus.DatasetID, summary.BaseCases, summary.TotalCases, summary.PositiveCases,
+		summary.NegativeCases, summary.AddedPositives, summary.AddedNegatives, summary.SpanlessPairs)
 	return nil
 }
 
