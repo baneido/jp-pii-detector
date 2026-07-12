@@ -297,7 +297,7 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 	candidates = filtered
 
 	if d.cooccurrenceBoost {
-		candidates = d.applyCooccurrenceBoost(candidates)
+		candidates = d.applyCooccurrenceBoost(candidates, lineContexts)
 	}
 
 	// Confidence < minConf のふるい落としをここでも行う（cooccurrence_boost 無効時は
@@ -370,20 +370,45 @@ var cooccurrenceAnchorRuleIDs = map[string]bool{
 }
 
 // applyCooccurrenceBoost は、cooccurrenceBoostRuleIDs の候補（Validated または
-// ContextKeywords 有り）を、同一ファイル内の ±cooccurrenceWindowLines 行以内に
-// cooccurrenceAnchorRuleIDs の高信頼（High かつ Validated または RequireContext）
-// 候補があるときだけ 1 段昇格（Low→Medium、Medium→High）させる。
-func (d *Detector) applyCooccurrenceBoost(candidates []Finding) []Finding {
-	var anchorLines []int
+// ContextKeywords 有り）を、cooccurrenceAnchorRuleIDs の高信頼（High かつ
+// Validated または RequireContext）候補と「共起」しているときだけ 1 段昇格
+// （Low→Medium、Medium→High）させる。
+//
+// 共起の判定は、候補行・アンカー行の双方が object_scope.go の RecordID
+// （JSON/YAML のオブジェクト（マッピング）スコープ。0 = レコード情報なし）を
+// 持つ場合は「同一 RecordID かどうか」を唯一の根拠にする（距離を問わない —
+// レコードは ±cooccurrenceWindowLines 行より長く続くことがあるため）。これに
+// より、たまたま近接する別オブジェクトの高信頼 PII が無関係な弱い候補を
+// 道連れに昇格させる事故を防ぐ一方、同一オブジェクト内なら離れた行同士でも
+// 正しく昇格できる。どちらか一方でも RecordID を持たない場合（JSON/YAML
+// 以外のファイル、またはレコード構造の外側の行）は、その組み合わせについてのみ
+// 従来どおり同一ファイル内 ±cooccurrenceWindowLines 行の窓判定へフォールバック
+// する。cooccurrence_boost 自体が opt-in（既定オフ）のため、この拡張は
+// JSON/YAML のレコード構造を持つファイルにだけ作用し、それ以外の（RecordID が
+// 常に 0 の）ファイルでは窓判定のみになり既存挙動を完全に維持する。
+func (d *Detector) applyCooccurrenceBoost(candidates []Finding, lineContexts []lineContext) []Finding {
+	var anchorLinesAll []int
+	// anchorLinesNoRecord は RecordID を持たないアンカーの行番号（候補側が
+	// RecordID を持つ場合の窓フォールバック専用）。anchorRecordIDs は RecordID を
+	// 持つアンカーが属するレコード集合（距離を問わない同一レコード判定用）。
+	var anchorLinesNoRecord []int
+	anchorRecordIDs := map[int]bool{}
 	for _, f := range candidates {
-		if isCooccurrenceAnchor(f) {
-			anchorLines = append(anchorLines, f.Line)
+		if !isCooccurrenceAnchor(f) {
+			continue
+		}
+		anchorLinesAll = append(anchorLinesAll, f.Line)
+		if rid := recordIDForLine(lineContexts, f.Line); rid != 0 {
+			anchorRecordIDs[rid] = true
+		} else {
+			anchorLinesNoRecord = append(anchorLinesNoRecord, f.Line)
 		}
 	}
-	if len(anchorLines) == 0 {
+	if len(anchorLinesAll) == 0 {
 		return candidates
 	}
-	sort.Ints(anchorLines)
+	sort.Ints(anchorLinesAll)
+	sort.Ints(anchorLinesNoRecord)
 
 	for i := range candidates {
 		f := &candidates[i]
@@ -393,7 +418,19 @@ func (d *Detector) applyCooccurrenceBoost(candidates []Finding) []Finding {
 		if !(f.Reason.Validated || len(f.Reason.ContextKeywords) > 0) {
 			continue
 		}
-		if !hasNearbyAnchorLine(anchorLines, f.Line, cooccurrenceWindowLines) {
+		var boosted bool
+		if rid := recordIDForLine(lineContexts, f.Line); rid != 0 {
+			// 候補行がレコードに属する: 同一 RecordID のアンカーは距離を問わず
+			// 昇格根拠にできる。RecordID を持たないアンカーとの組だけ、
+			// 従来どおり行窓へフォールバックする。
+			boosted = anchorRecordIDs[rid] || hasNearbyAnchorLine(anchorLinesNoRecord, f.Line, cooccurrenceWindowLines)
+		} else {
+			// 候補行がどのレコードにも属さない: アンカー側の RecordID の有無を
+			// 問わず、従来どおり全アンカーを対象に行窓で判定する（既存挙動を
+			// 完全に維持する）。
+			boosted = hasNearbyAnchorLine(anchorLinesAll, f.Line, cooccurrenceWindowLines)
+		}
+		if !boosted {
 			continue
 		}
 		f.Confidence++
@@ -414,6 +451,18 @@ func hasNearbyAnchorLine(anchorLines []int, line, window int) bool {
 	lo, hi := line-window, line+window
 	idx := sort.SearchInts(anchorLines, lo)
 	return idx < len(anchorLines) && anchorLines[idx] <= hi
+}
+
+// recordIDForLine は lineContexts[line-1].RecordID を範囲外アクセスを防いで
+// 返す（0 = レコード情報なし）。lineContexts は ScanDiffHunk 経路では常に
+// ゼロ値（RecordID=0）だが、applyCooccurrenceBoost 自体が ScanContent 専用の
+// ため実際には ScanContent が構築した lineContexts しか渡されない。
+func recordIDForLine(lineContexts []lineContext, line int) int {
+	idx := line - 1
+	if idx < 0 || idx >= len(lineContexts) {
+		return 0
+	}
+	return lineContexts[idx].RecordID
 }
 
 // ComputeOffsets は ScanContent に渡したのと同一の content を使い、各 finding に

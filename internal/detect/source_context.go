@@ -32,6 +32,13 @@ type statementContext struct {
 
 type lineContext struct {
 	Statements []statementContext
+	// RecordID は JSON/YAML の「オブジェクト（マッピング）スコープ」単位の
+	// 識別子（0 = どのレコードにも属さない）。object_scope.go
+	// （applyObjectScopeContext）がフル走査時のみ設定する。同一ファイル内で
+	// 1 から連番。detect.go の applyCooccurrenceBoost が、候補行とアンカー行の
+	// 両方に RecordID があるときは同一 RecordID を昇格の必須条件にし、
+	// どちらかに無いときだけ従来の行窓判定へフォールバックする。
+	RecordID int
 }
 
 func (c lineContext) statementFor(start, end int) *statementContext {
@@ -180,6 +187,12 @@ func sourceLineContexts(file string, lines []string) []lineContext {
 	addCrossLineSourceContexts(out, lines, func(_, _ int, tokens []string) string {
 		return sourceNegativeText(tokens)
 	})
+	// オブジェクト（マッピング）スコープ: .json/.yaml/.yml では親キーの文脈と
+	// RecordID をさらに付与する（object_scope.go）。フル走査限定（このパスの
+	// み、sourceLineContextsForDiff からは呼ばない）で、CSV/SQL の列コンテキストと
+	// 同じ理由（diff hunk はファイル冒頭からの相対位置を持たず、深さ・
+	// インデントのスタックを正しく復元できない）による。
+	applyObjectScopeContext(out, file, lines)
 	return out
 }
 
