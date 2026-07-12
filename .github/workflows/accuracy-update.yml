@@ -1,0 +1,152 @@
+name: accuracy-update
+
+# 非公開評価コーパスに対する実測値で、検出精度のゴールデンファイル
+# （docs/accuracy.json）・docs/accuracy.md・README.md のバッジを再生成する。
+#
+# 背景: 検出挙動を変える PR（例: #148/#149）がマージされると実測値とゴールデンが
+# ずれ、ci.yml の private-eval ジョブ（main への push ごとに実測とゴールデンの
+# 完全一致を検証する）が落ち続ける。再生成には非公開コーパスへのアクセスが要るため、
+# 従来メンテナのローカル環境か手作業でしかできなかった。このワークフローで GitHub 上
+# から workflow_dispatch でワンクリック再生成し、差分があれば postal-update.yml /
+# tld-update.yml と同じ方式（作業ブランチへ force-push → PR 作成）で PR を自動作成する。
+#
+# ci.yml の test job（ゴールデン一致・README バッジ・ドッグフードのゲート）とは
+# 完全に独立しており、このワークフローの成否は通常の PR CI に一切影響しない
+# （postal-update.yml と同様の分離方針）。
+on:
+  workflow_dispatch: {}
+
+# 多重実行を避ける（コミット/PR 作成の競合防止）。進行中のランは中断しない。
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+# 既定では権限を与えず、必要な job にのみ最小権限を付与する。
+permissions: {}
+
+env:
+  # PR を載せる作業ブランチ（毎回 force-push して 1 本に集約する）。
+  ACCURACY_BRANCH: automated/accuracy-golden
+
+jobs:
+  update:
+    name: update accuracy golden
+    # workflow_dispatch で任意ブランチの workflow を OIDC 付きで動かせないようにする
+    # （fp-corpus-report.yml と同じ方針）。
+    if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write # 作業ブランチの push に必要
+      pull-requests: write # PR の作成・更新に必要
+      id-token: write # GCP Workload Identity Federation（OIDC）に必要
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # 認証情報を作業ツリーに残さない。push は GITHUB_TOKEN を URL に埋めて行う。
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+
+      # 以下、コーパス取得までは ci.yml の private-eval ジョブと同一の手順。
+      - name: Authenticate to Google Cloud (OIDC / Workload Identity)
+        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
+        with:
+          workload_identity_provider: ${{ vars.JP_PII_FIXTURES_PROVIDER }}
+          service_account: ${{ vars.JP_PII_FIXTURES_SA }}
+      - name: Set up gcloud
+        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
+      - name: Download PII fixtures from GCS
+        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
+        env:
+          FIXTURES_BUCKET: ${{ vars.JP_PII_FIXTURES_BUCKET }}
+          FIXTURES_GENERATION: ${{ vars.JP_PII_FIXTURES_GENERATION }}
+        run: |
+          set -eu
+          dest="$RUNNER_TEMP/pii-fixtures.json"
+          object=$(jq -r '.object' fixtures.lock.json)
+          lock_generation=$(jq -r '.generation' fixtures.lock.json)
+          source="gs://$FIXTURES_BUCKET/$object"
+          if [ -z "${FIXTURES_GENERATION:-}" ]; then
+            FIXTURES_GENERATION="$lock_generation"
+          fi
+          if [ -n "${FIXTURES_GENERATION:-}" ]; then
+            source="${source}#${FIXTURES_GENERATION}"
+          fi
+          gcloud storage cp "$source" "$dest"
+          chmod 600 "$dest"
+          echo "JP_PII_FIXTURES=$dest" >> "$GITHUB_ENV"
+      - name: Remove Google Cloud credentials file
+        if: ${{ always() && vars.JP_PII_FIXTURES_PROVIDER != '' }}
+        run: rm -f "${GOOGLE_GHA_CREDS_PATH:-}"
+
+      - name: Regenerate accuracy golden
+        run: |
+          set -eu
+          test -f "$JP_PII_FIXTURES" || {
+            echo "::error::非公開評価コーパスを取得できませんでした。"
+            exit 1
+          }
+          go test ./internal/eval -run 'TestGenerateDoc|TestReadmeBadges' -update
+
+      - name: Open PR if the golden changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          if git diff --quiet docs/accuracy.md docs/accuracy.json README.md; then
+            {
+              echo "### golden は最新"
+              echo "非公開評価コーパスに対する実測値と \`docs/accuracy.json\` に差分はありませんでした。PR は作成しません。"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "golden は最新。PR は作成しない。"
+            exit 0
+          fi
+
+          generated_at=$(date -u +'%Y-%m-%d %H:%M UTC')
+          today=$(date -u +%Y-%m-%d)
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          title="chore(eval): 検出精度ゴールデンを再生成（${today}）"
+
+          git config user.name "jp-pii-detect-bot"
+          git config user.email "contact@baneido.com" # jp-pii-detector:ignore bot の連絡先
+          git checkout -b "$ACCURACY_BRANCH"
+          # 再生成された精度ドキュメント・ゴールデンファイル・README バッジのみを含める。
+          git add docs/accuracy.md docs/accuracy.json README.md
+          git commit -m "$title"
+          # 同一リポジトリへの push。認証情報は URL に都度埋め、作業ツリーには残さない。
+          git push -f \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "HEAD:${ACCURACY_BRANCH}"
+
+          # PR 本文は静的テンプレート（コミット済み）に実行時情報を sed で埋め込んで作る。
+          body_file=$(mktemp)
+          sed \
+            -e "s/__GENERATED_AT__/${generated_at}/g" \
+            -e "s/__ACTOR__/${GITHUB_ACTOR}/g" \
+            -e "s|__RUN_URL__|${run_url}|g" \
+            .github/accuracy-pr-body.md > "$body_file"
+
+          if gh pr view "$ACCURACY_BRANCH" >/dev/null 2>&1; then
+            gh pr edit "$ACCURACY_BRANCH" --title "$title" --body-file "$body_file"
+            echo "既存 PR を更新した（${ACCURACY_BRANCH}）。"
+            pr_url=$(gh pr view "$ACCURACY_BRANCH" --json url -q .url)
+          else
+            gh pr create --base main --head "$ACCURACY_BRANCH" \
+              --title "$title" --body-file "$body_file"
+            echo "PR を作成した（${ACCURACY_BRANCH}）。"
+            pr_url=$(gh pr view "$ACCURACY_BRANCH" --json url -q .url)
+          fi
+          {
+            echo "### golden の差分を検出、PR を作成/更新しました"
+            echo "${pr_url}"
+            echo ""
+            echo "マージ前に \`docs/accuracy.md\` の差分を確認してください（実測値が想定外に悪化していないか）。"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove private corpus
+        if: ${{ always() }}
+        run: rm -f "${JP_PII_FIXTURES:-}"
