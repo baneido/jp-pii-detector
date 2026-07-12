@@ -328,6 +328,38 @@ func TestPhoneNumberSeparatorVariants(t *testing.T) {
 	}
 }
 
+// TestPhoneLandlineDotSeparated は、実測 FN「電話: 03.1234.5678」を受けて追加した
+// ドット区切り固定電話パターンを検証する。既存の空白・ドット区切り携帯パターンに
+// 倣った形式で、validPhone がハイフン・空白を含まない 10 桁を区切りなし固定電話と
+// 同じ市外局番辞書（dict.ValidAreaCode）照合へ落とすため、実在しない市外局番は
+// 自動的に棄却される。
+func TestPhoneLandlineDotSeparated(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+		conf       rule.Confidence
+	}{
+		{"コンテキストで High に昇格", "電話: 03.1234.5678", []string{"jp-phone-number"}, rule.High},
+		{"コンテキストなしは Medium", "06.6345.1234", []string{"jp-phone-number"}, rule.Medium},
+		{"先頭グループが2桁未満（0のみ）は対象外", "バージョン 0.1234.5678", nil, 0},
+		// "07"/"071" は area_codes.txt のシード辞書に実在しない市外局番のため、
+		// 市外局番辞書照合で棄却される（実測 FN 元の「0999.123.4567」は合計 11 桁に
+		// なり別の理由（携帯・IP 以外の 11 桁は不成立）で棄却されるため、桁数構造を
+		// 10 桁に保ったまま同種の市外局番不在を再現できるこの値を使う）。
+		{"実在しない市外局番は文脈ありでも棄却", "電話: 07.1234.5678", nil, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, tt.want...)
+			if len(fs) == 1 && fs[0].Confidence != tt.conf {
+				t.Errorf("confidence = %v, want %v", fs[0].Confidence, tt.conf)
+			}
+		})
+	}
+}
+
 func TestPostalAndAddress(t *testing.T) {
 	d := newDetector(t, "")
 	postalOsaka := testfixtures.MustGet(t, "detect.postal_osaka")
@@ -347,6 +379,35 @@ func TestPostalAndAddress(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestPostalCodeBareSevenDigit は、ラベル付きコンテキスト下でのハイフンなし裸
+// 7 桁郵便番号パターンを検証する（実測 FN「郵便番号 1000001」の解消。回帰テストは
+// internal/detect/probe_regression_test.go 側）。既存の \d{3}-\d{4} パターンと
+// 同様、Validate（dict.ValidPostalCode）が 7 桁完全一致で実在性を検証するため、
+// 上位 3 桁のみ実在する未割当番号は文脈があっても棄却する。
+func TestPostalCodeBareSevenDigit(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+		conf       rule.Confidence
+	}{
+		{"ラベル付きで検出", "郵便番号: 1500002", []string{"jp-postal-code"}, rule.Medium},
+		{"コンテキストなしは対象外", "1500002", nil, 0},
+		{"未割当7桁は文脈ありでも棄却（上位3桁150は実在するが7桁完全一致は未割当）", "郵便番号: 1509999", nil, 0},
+		{"ハイフンあり表記の同じ未割当番号も棄却（既存パターンの回帰）", "郵便番号: 150-9999", nil, 0},
+		{"カウンタ負文脈（件）で抑制される", "テスト件数: 1500002件", nil, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, tt.want...)
+			if len(fs) == 1 && fs[0].Confidence != tt.conf {
+				t.Errorf("confidence = %v, want %v", fs[0].Confidence, tt.conf)
+			}
 		})
 	}
 }
@@ -2541,6 +2602,33 @@ func TestHighRecallAddressRejectsUnknownMunicipality(t *testing.T) {
 	assertRules(t, d.ScanLine("f.txt", 1, "勤務地: 渋谷区渋谷2-1-1"), "jp-address-high-recall")
 }
 
+// TestHighRecallAddressKanjiNumeralBanchi は、実測 FN「住所: 渋谷区神南一丁目
+// 十九番十一号」（都道府県なし・漢数字番地の組み合わせが --high-recall でも
+// 0 件だった事例）を受けて追加した jp-address-high-recall の漢数字番地
+// エントリを検証する。既定 jp-address の漢数字対応（TestAddressKanjiNumeralBanchi）
+// と同じ banchiKanji を使うため、辞書に無い語尾の棄却も同様に機能する。
+func TestHighRecallAddressKanjiNumeralBanchi(t *testing.T) {
+	d := newDetector(t, highRecallTOML)
+	tests := []struct{ name, line, want string }{
+		{"都道府県なし・漢数字番地", "住所: 渋谷区神南一丁目十九番十一号", "渋谷区神南一丁目十九番十一号"},
+		{"辞書に無い語尾は棄却", "通学区域一丁目五番", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			var got string
+			for _, f := range fs {
+				if f.RuleID == "jp-address-high-recall" {
+					got = f.Match
+				}
+			}
+			if got != tt.want {
+				t.Errorf("ScanLine(%q) jp-address-high-recall = %q, want %q", tt.line, got, tt.want)
+			}
+		})
+	}
+}
+
 // 漢数字番地（神南一丁目十九番十一号 等）。ASCII 数字を含まない行でも
 // PrefilterCJK + 都道府県リテラルで検出する。ダッシュ形は持たない（#55）。
 func TestAddressKanjiNumeralBanchi(t *testing.T) {
@@ -2639,6 +2727,33 @@ func TestBirthdateWinsOverHealthInsuranceOverlap(t *testing.T) {
 	assertRules(t, fs, "jp-birthdate")
 }
 
+// TestBirthdatePostLabelUmare は、実測 FN「1985年1月2日生まれ」（値→ラベル順で
+// 前置ラベルが無いケース）を受けて追加した後置ラベル「生まれ」パターンを検証する。
+// 区切りあり値パターンの捕捉本体を流用しているため、和暦・実在しない暦日の棄却も
+// 前置ラベル版と同じ挙動になる。
+func TestBirthdatePostLabelUmare(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+		conf       rule.Confidence
+	}{
+		{"西暦・後置ラベル", "1985年1月2日生まれ", []string{"jp-birthdate"}, rule.Medium},
+		{"和暦・後置ラベル", "平成2年3月4日生まれ", []string{"jp-birthdate"}, rule.Medium},
+		{"実在しない暦日（閏年でない2月29日）は棄却", "2023年2月29日生まれ", nil, 0},
+		{"年なしは対象外（後置ラベルだけでは不成立）", "8月15日生まれ", nil, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, tt.want...)
+			if len(fs) == 1 && fs[0].Confidence != tt.conf {
+				t.Errorf("confidence = %v, want %v", fs[0].Confidence, tt.conf)
+			}
+		})
+	}
+}
+
 // --- ComputeOffsets（scan --stdin 用の文字オフセット付与）---
 
 // TestComputeOffsets は行・列ベースの検出位置を、テキスト全体先頭からの
@@ -2725,6 +2840,12 @@ func TestComputeOffsetsOutOfRange(t *testing.T) {
 // リテラルで完結させる（testfixtures 不要）。
 
 // TestEmploymentInsuranceRule は雇用保険被保険者番号（4桁-6桁-1桁 / 11桁）を検証する。
+// TestEmploymentInsuranceRule は、実測で確認された FP（「リビジョン
+// 2024-123456-7 をデプロイ」「部品ロット 8907-654321-3」が区切りあり（4-6-1）
+// パターンに誤検出していた事例）を受け、当該パターンへ RequireContext を追加した
+// ことを確認する。以前はコンテキストなしでも High としていたが、書式（4桁-6桁-1桁）
+// だけではリビジョン表記・業務ロット番号と衝突するため、他の桁ベースパターンと
+// 同様にラベル必須へ変更した。
 func TestEmploymentInsuranceRule(t *testing.T) {
 	d := newDetector(t, "")
 	tests := []struct {
@@ -2732,12 +2853,16 @@ func TestEmploymentInsuranceRule(t *testing.T) {
 		want       []string
 		conf       rule.Confidence
 	}{
-		{"区切りあり（4-6-1）はコンテキストなしでも high", "value = 1234-567890-1", []string{"jp-employment-insurance"}, rule.High},
+		{"区切りあり（4-6-1）はラベル付きで high", "雇用保険被保険者番号: 1234-567890-1", []string{"jp-employment-insurance"}, rule.High},
+		{"区切りあり（4-6-1）はラベルなしでは不成立", "value = 1234-567890-1", nil, 0},
+		{"区切りあり（4-6-1）はリビジョン表記と衝突しない（実測FP）", "リビジョン 2024-123456-7 をデプロイ", nil, 0},
+		{"区切りあり（4-6-1）は業務ロット番号と衝突しない（実測FP）", "部品ロット 8907-654321-3", nil, 0},
 		{"区切りなし 11 桁はコンテキストが必要", "雇用保険被保険者番号: 12345678901", []string{"jp-employment-insurance"}, rule.Medium},
 		{"区切りなし 11 桁はコンテキストなしでは不成立", "value = 12345678901", nil, 0},
 		{"英語コンテキスト", "employment insurance no: 12345678901", []string{"jp-employment-insurance"}, rule.Medium},
-		// 全桁同一のダミー値は Validate（validEmploymentInsurance）で棄却される。
-		{"区切りあり全桁同一は棄却", "value = 0000-000000-0", nil, 0},
+		// 全桁同一のダミー値は Validate（validEmploymentInsurance）で棄却される
+		// （ラベルを付けて RequireContext を満たした上で検証する）。
+		{"区切りあり全桁同一は棄却", "雇用保険被保険者番号: 0000-000000-0", nil, 0},
 		{"区切りなし全桁同一は棄却", "雇用保険被保険者番号: 00000000000", nil, 0},
 	}
 	for _, tt := range tests {
