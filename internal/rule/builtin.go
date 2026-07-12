@@ -170,6 +170,41 @@ const (
 		`)`
 )
 
+// jp-address-high-recall の一部パターンは、辞書検証ありの Base High 判定と
+// 従来どおりの Base Medium 判定を同一正規表現の 2 枚組（twin）で持つ
+// （person-name の辞書検証 twin と同じ手法。250 行目付近のコメント参照）。twin 間で
+// 正規表現オブジェクトを共有し、二重コンパイルを避けるためパッケージ変数として
+// 定義する。High 側は、Rule.Validate（dict.MunicipalitySuffixMatch、市区町村マッチ）に
+// 加えて、市区町村マッチ直後のギャップが ABR 町字マスター由来の実在町字名で
+// 始まる場合（dict.MunicipalityThenTownMatch）だけ Pattern.Validate を通過する。
+// 町字辞書は昇格専用のエビデンスであり、不一致は棄却ではなく Medium への
+// 据え置きにしかならないため recall には影響しない。
+//
+// マーカーなしダッシュ連結（banchiDash）用のパターンには twin を追加しない
+// （既存の Medium 単体のまま）。この形は市区町村マッチ直後にラベルなしで
+// 数字列が続くだけの形状のため、TestPromotionContextWindowBoundary
+// （detect_test.go）が「渋谷区道玄坂1-2-3」を固定サンプルにコンテキスト窓 // jp-pii-detector:ignore
+// 境界を検証しており、"道玄坂" が ABR 町字マスターの実在町字名と一致する。
+// twin を追加すると窓の内外を問わず常に High 判定になり、
+// 同テストが検証するコンテキスト窓ちょうど外側での非昇格が壊れる
+// （internal/detect は変更禁止のため、そちらのサンプル値を差し替えて
+// 回避することはできない）。マーカー付き（丁目・番・号）と漢数字番地の
+// 2 形には同種の衝突が無いことを確認済みで、twin を適用している。
+var (
+	addressHighRecallMarkedRe = regexp.MustCompile(
+		`(?:住所|所在地|勤務地|勤務先|自宅|address)?\s*[:=]?\s*(` +
+			`[` + kanji + hiragana + katakana + `]{1,15}[市区町村]` +
+			`[` + kanji + hiragana + katakana + `0-9-]{0,30}?` +
+			banchiMarked + `)`,
+	)
+	addressHighRecallKanjiRe = regexp.MustCompile(
+		`(?:住所|所在地|勤務地|勤務先|自宅|address)?\s*[:=]?\s*(` +
+			`[` + kanji + hiragana + katakana + `]{1,15}[市区町村]` +
+			`[` + kanji + hiragana + katakana + `0-9-]{0,30}?` +
+			banchiKanji + `)`,
+	)
+)
+
 // 氏名ルールで共用する部分パターン。正規化済みの行を前提とする
 // （全角コロン `：`・全角イコール `＝`・全角スペースは正規化で半角になる）。
 var (
@@ -649,12 +684,16 @@ func Builtin() []Rule {
 			// 高再現率でない既定ルールでは相対的に大きいため）。
 			Validate: dict.MunicipalitySuffixMatch,
 			Patterns: []Pattern{
-				{Re: regexp.MustCompile(
-					`(?:住所|所在地|勤務地|勤務先|自宅|address)?\s*[:=]?\s*(` +
-						`[` + kanji + hiragana + katakana + `]{1,15}[市区町村]` +
-						`[` + kanji + hiragana + katakana + `0-9-]{0,30}?` +
-						banchiMarked + `)`,
-				), Base: Medium},
+				// 同一正規表現の 2 枚組（twin）: 市区町村マッチ直後のギャップが
+				// ABR 町字マスター由来の実在町字名で始まれば High、そうでなければ
+				// 従来どおり Medium のまま拾う（resolveOverlaps が同一スパンで
+				// 信頼度の高い High を残す）。町字辞書は昇格専用のエビデンスで
+				// あり、不一致は棄却ではなく Medium への据え置きにしかならない
+				// ため recall には影響しない（dict.MunicipalityThenTownMatch の
+				// コメント参照）。
+				{Re: addressHighRecallMarkedRe, Base: High, Validate: dict.MunicipalityThenTownMatch},
+				{Re: addressHighRecallMarkedRe, Base: Medium},
+				// マーカーなしダッシュ連結は twin にしない（上記コメント参照）。
 				{Re: regexp.MustCompile(
 					`(?:住所|所在地|勤務地|勤務先|自宅|address)?\s*[:=]?\s*(` +
 						`[` + kanji + hiragana + katakana + `]{1,15}[市区町村]` +
@@ -677,12 +716,9 @@ func Builtin() []Rule {
 			Context:           []string{"住所", "所在地", "勤務地", "勤務先", "自宅", "address"},
 			Validate:          dict.MunicipalitySuffixMatch,
 			Patterns: []Pattern{
-				{Re: regexp.MustCompile(
-					`(?:住所|所在地|勤務地|勤務先|自宅|address)?\s*[:=]?\s*(` +
-						`[` + kanji + hiragana + katakana + `]{1,15}[市区町村]` +
-						`[` + kanji + hiragana + katakana + `0-9-]{0,30}?` +
-						banchiKanji + `)`,
-				), Base: Medium},
+				// マーカー付き twin と同じ手法（上記コメント参照）。
+				{Re: addressHighRecallKanjiRe, Base: High, Validate: dict.MunicipalityThenTownMatch},
+				{Re: addressHighRecallKanjiRe, Base: Medium},
 			},
 		},
 		{

@@ -723,6 +723,39 @@ $ go run ./internal/dict/gen \
 コミットしたら eval / バッジの再生成も行ってください（市区町村名一覧は jp-address-high-recall
 のみに使い、eval は既定で high-recall ルールを評価しないため精度ゲートへの影響はありません）。
 
+デジタル庁アドレス・ベース・レジストリ（ABR）「全国 町字マスター」（`mt_town_all.csv`、
+CC BY 4.0）の `oaza_cho` 列（大字・町名。丁目・小字・番地は別列）から、実在する町字名の一覧
+[`internal/dict/towns.txt`](../internal/dict/towns.txt)（1 行 1 エントリ、ソート・重複排除済み）を
+生成し `//go:embed` で取り込みます。`dict.TownPrefixMatch` / `dict.MunicipalityThenTownMatch` は
+jp-address-high-recall の**昇格専用**エビデンスとして使います: 市区町村マッチ直後のギャップが
+実在町字名で始まる場合だけ Base Medium → High へ昇格させる twin パターン（同一正規表現を
+共有する 2 枚組、person-name の辞書検証 twin と同じ手法）を、マーカー付き番地・漢数字番地の
+2 形に適用しています。町字辞書に不一致でも棄却はされず Medium のまま検出され続けるため、
+recall には影響しません。マーカーなしダッシュ連結（`2-1-5` 等）には twin を適用していません
+（`TestPromotionContextWindowBoundary` が固定サンプル「渋谷区道玄坂1-2-3」でコンテキスト窓の
+境界を検証しており、"道玄坂" が実在町字名と一致するため、twin を追加するとコンテキスト窓の
+内外を問わず常に昇格してしまい同テストと衝突する。詳細は `internal/rule/builtin.go` の
+jp-address-high-recall 節のコメントを参照）。ヶ→ケ の正規化は市区町村名辞書と同じ
+`dict.NormalizeMunicipalityKa` を使い、加えて NFKC 正規化（全角英数字・CJK 互換漢字の
+統一漢字面への畳み込み）を適用します。北海道の開拓地割に由来する 1 文字だけの町字名
+（"イ" "上" 等）は、ありふれた書き出しの語への偶然の前方一致を避けるため収録から除外します
+（詳細は `internal/dict/gen/towns.go` を参照）。
+
+postal-update.yml のような定期自動更新は用意していません（手動更新のみ）。更新する場合は
+「全国 町字マスター」の CSV（または zip）を
+[アドレス・ベース・レジストリ Datasets](https://dataset.address-br.digital.go.jp/) から取得し、
+次のコマンドで再生成してから `go test ./internal/dict ./internal/rule ./internal/detect` で
+検証してください。
+
+```console
+$ go run ./internal/dict/gen -towns \
+    -input /path/to/mt_town_all.csv.zip \
+    -output internal/dict/towns.txt
+```
+
+出典 URL・データ版・取得日・SHA-256・ライセンスは `internal/dict/towns.txt` 冒頭のコメントに
+記録するので、再生成のたびに更新してください。
+
 姓名辞書（[`internal/dict/surnames.txt`](../internal/dict/surnames.txt) /
 [`given_names.txt`](../internal/dict/given_names.txt)）のカタカナ読みと、ローマ字姓名辞書
 （[`romaji_surnames.txt`](../internal/dict/romaji_surnames.txt) /
