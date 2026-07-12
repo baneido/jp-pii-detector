@@ -371,7 +371,7 @@ func (d *Detector) scanSQLNameColumns(file string, lines []string) []Finding {
 				if re > len(origRunes) {
 					continue
 				}
-				out = append(out, Finding{
+				finding := Finding{
 					RuleID:      d.crossLineName.ID,
 					Description: d.crossLineName.Description,
 					File:        file,
@@ -384,9 +384,12 @@ func (d *Detector) scanSQLNameColumns(file string, lines []string) []Finding {
 						FinalConfidence: rule.Medium.String(),
 						Validated:       true,
 					},
-					start: rs,
-					end:   re,
-				})
+					start:         rs,
+					end:           re,
+					scoreEvidence: confidenceScoreEvidence{structuredPair: true},
+				}
+				finalizeFindingScore(&finding)
+				out = append(out, finding)
 			}
 		}
 	}
