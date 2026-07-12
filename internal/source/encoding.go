@@ -277,28 +277,40 @@ func isJapaneseRune(r rune) bool {
 	return unicode.Is(unicode.Hiragana, r) || unicode.Is(unicode.Katakana, r) || unicode.Is(unicode.Han, r)
 }
 
-// ---- JSON \uXXXX エスケープの復号ビュー ----
+// ---- エスケープ表記の復号ビュー ----
 //
 // json.dumps(ensure_ascii=True) の出力・.ipynb・各種ログでは、日本語を含む
 // 文字列が "山田..." のように JSON の \uXXXX エスケープで ASCII 化
-// される。電話番号のような ASCII の値は既存ルールでそのまま検出できるが、
-// 氏名・住所など非 ASCII の値はエスケープの中に隠れて正規表現から完全に
-// すり抜ける。これは decodeUTF16/decodeLegacyJapanese が対象とするバイト列
-// レベルの文字コードとは別種の問題（既に正当な UTF-8 のテキストの中の
-// ASCII エスケープ表記）のため、それらの後段・最終的な UTF-8 テキストに
-// 対して独立に適用する。
+// される。同様に、URL クエリパラメータやアクセスログでは %XX%XX%XX...
+// のようなパーセントエンコードが、HTML/XML を経由したデータでは
+// &#十進数; / &#x十六進数; のような数値文字参照が、同じ非 ASCII 文字を
+// 別方式で ASCII 化する。電話番号のような ASCII の値は既存ルールでそのまま
+// 検出できるが、氏名・住所など非 ASCII の値はこれらのエスケープ表記の中に
+// 隠れて正規表現から完全にすり抜ける。これは decodeUTF16/decodeLegacyJapanese
+// が対象とするバイト列レベルの文字コードとは別種の問題（既に正当な UTF-8 の
+// テキストの中の ASCII エスケープ表記）のため、それらの後段・最終的な
+// UTF-8 テキストに対して独立に適用する。
+//
+// JSON \uXXXX・HTML 数値文字参照・URL パーセントエンコードの 3 種類は
+// それぞれ独立した節で実装し、decodeEscapedViews がこの順に直列適用する
+// （適用順の理由は decodeEscapedViews の doc コメントを参照）。いずれも
+// decodeUTF16 と同じ「疑わしければ復号しない」設計方針を踏襲する。
 
-// DecodeEscapedView は decodeJSONUnicodeEscapes の薄いエクスポートラッパ。
+// DecodeEscapedView は decodeEscapedViews（JSON \uXXXX エスケープ → HTML
+// 数値文字参照 → URL パーセントエンコードの直列デコードチェーン）の薄い
+// エクスポートラッパ。
 //
 // 用途: scan --stdin 経路（外部連携用、cmd/jp-pii-detect/main.go）から呼ぶ
 // ためにエクスポートしている。フルスキャン（scanFiles）は同一パッケージ内
-// なので decodeJSONUnicodeEscapes を直接呼ぶが、cmd パッケージから package
-// 外の非公開関数は呼べない。stdin はまさに JSON をそのままパイプで流し
-// 込む用途（json.dumps(ensure_ascii=True) の出力や CI/エージェント連携）が
-// 多く、\uXXXX エスケープに隠れた氏名・住所等の PII を検出できる価値が
-// 高いため、フルスキャン専用だったこの復号ビューを stdin 経路にも広げる。
+// なので decodeEscapedViews を直接呼ぶが、cmd パッケージから package 外の
+// 非公開関数は呼べない。stdin はまさに JSON をそのままパイプで流し込む
+// 用途（json.dumps(ensure_ascii=True) の出力や CI/エージェント連携）や、
+// URL・HTML を経由したログの貼り付けが多く、これらのエスケープ表記に
+// 隠れた氏名・住所等の PII を検出できる価値が高いため、フルスキャン専用
+// だったこの復号ビューを stdin 経路にも広げる。
 //
-// 位置セマンティクス: decodeJSONUnicodeEscapes の doc comment を参照。
+// 位置セマンティクス: decodeJSONUnicodeEscapes の doc comment を参照
+// （decodeHTMLNumericEntities・decodePercentEncoding も同じ性質を持つ）。
 // ok == true の場合、呼び出し側は以後の走査・オフセット計算（例:
 // detect.ScanContent と detect.ComputeOffsets）を必ず戻り値の text（復号後
 // テキスト）に対して行うこと。行番号は元テキストと一致するが、エスケープを
@@ -312,7 +324,54 @@ func isJapaneseRune(r rune) bool {
 // フラグを追加し本関数の呼び出し自体を条件分岐でスキップさせる形で拡張
 // できる。
 func DecodeEscapedView(text string) (string, bool) {
-	return decodeJSONUnicodeEscapes(text)
+	return decodeEscapedViews(text)
+}
+
+// decodeEscapedViews は decodeJSONUnicodeEscapes → decodeHTMLNumericEntities
+// → decodePercentEncoding の順に、前段の出力を次段の入力として直列に適用
+// する。フルスキャン（internal/source の scanFiles）と DecodeEscapedView
+// （scan --stdin 経由、cmd/jp-pii-detect/main.go）の両方が本関数を通ることで、
+// 2 つの呼び出し経路が常に同じ復号チェーンを持つことを保証する（どちらか
+// 一方だけを更新して連鎖がずれる事故を防ぐ）。
+//
+// 段の順序には理由がある。JSON エスケープの中には、HTML 数値文字参照や
+// パーセントエンコードを構成する文字（&・#・;・% はいずれも ASCII なので
+// \uXXXX で表現しうる）がさらに隠れているケースがある。\uXXXX を最初に
+// 展開しておくことで、そこで新たに現れた数値文字参照やパーセントエンコード
+// を後段の HTML・パーセント段が発見できる。逆順では JSON エスケープの中に
+// 隠れたそれらはそもそも文字列内に現れず、後段で見つけられない。同様の
+// 理由で HTML 数値文字参照はパーセントエンコードより先に展開する（% 自体を
+// 数値文字参照で表現した上でパーセントエンコードを組む、という二重の
+// 難読化を想定する）。
+//
+// 各段は独立に「疑わしければ復号しない」判断をするため、ある段が 1 箇所も
+// 復号できなくても後続の段は（その段にとっての）元のテキストに対してそのまま
+// 試みる。1 段でも復号が成立すれば ok=true を返す（呼び出し側の契約は
+// decodeJSONUnicodeEscapes 単体と同じ）。3 段とも復号箇所が無ければ ok=false
+// を返し、呼び出し側は元のテキストをそのまま使う。
+//
+// 注意: 各段は 1 パスずつしか適用されない。後段が新たに生み出した \uXXXX ・
+// 数値文字参照・パーセントエンコードを、さらに前段へ戻して再帰的に展開する
+// ことはしない（多段ネストの徹底的な展開より、無限ループ回避と実装の単純さ
+// を優先する割り切り）。
+func decodeEscapedViews(text string) (string, bool) {
+	decoded := false
+	if unescaped, ok := decodeJSONUnicodeEscapes(text); ok {
+		text = unescaped
+		decoded = true
+	}
+	if unescaped, ok := decodeHTMLNumericEntities(text); ok {
+		text = unescaped
+		decoded = true
+	}
+	if unescaped, ok := decodePercentEncoding(text); ok {
+		text = unescaped
+		decoded = true
+	}
+	if !decoded {
+		return "", false
+	}
+	return text, true
 }
 
 // decodeJSONUnicodeEscapes は text（正当な UTF-8 のテキストであることを
@@ -349,9 +408,9 @@ func DecodeEscapedView(text string) (string, bool) {
 // PII は復号後も変わらず見える。つまりこの層を追加しても既存の検出が
 // 失われることはない。
 //
-// 適用条件・パフォーマンス: フルスキャン（scanFiles）から直接、および
-// scan --stdin から DecodeEscapedView 経由（cmd/jp-pii-detect/main.go）で
-// 呼ばれる（git diff はこれらのエスケープも普通の ASCII テキストとして扱う
+// 適用条件・パフォーマンス: フルスキャン（scanFiles）・scan --stdin
+// （cmd/jp-pii-detect/main.go）のいずれも decodeEscapedViews 経由で本関数を
+// 呼ぶ（git diff はこれらのエスケープも普通の ASCII テキストとして扱う
 // ため、既存のバイト列レベルのエンコーディング層と異なり技術的には diff
 // 走査でも動作しうるが、位置セマンティクスの割り切りを diff 走査に持ち込ま
 // ない設計とするため、呼び出しをフルスキャンと --stdin に限定する）。
@@ -463,4 +522,281 @@ func hexDigitValue(c byte) (uint16, bool) {
 	default:
 		return 0, false
 	}
+}
+
+// ---- HTML 数値文字参照の復号ビュー ----
+//
+// decodeJSONUnicodeEscapes と同じ「既に正当な UTF-8 のテキストの中の ASCII
+// エスケープ表記」を対象にする独立した復号ビュー。decodeEscapedViews から
+// decodeJSONUnicodeEscapes の後段として呼ばれる（適用順の理由は
+// decodeEscapedViews の doc コメントを参照）。
+
+// htmlEntityMaxDecimalDigits と htmlEntityMaxHexDigits は
+// decodeOneHTMLNumericEntity が受理する最長の桁数。Unicode の最大コード
+// ポイント U+10FFFF を表すのに十分な桁数（10 進 1114111 は 7 桁、16 進
+// 10FFFF は 6 桁）に合わせてあり、これを超えて数字が続く参照は誤爆リスクの
+// 高い長大な数字列とみなして対象外にする。
+const (
+	htmlEntityMaxDecimalDigits = 7
+	htmlEntityMaxHexDigits     = 6
+)
+
+// decodeHTMLNumericEntities は text に含まれる HTML の数値文字参照
+// （&#十進数; ・ &#x十六進数; 、x は大文字小文字どちらも可）を実際の文字へ
+// 復号したビューを返す。
+//
+// 名前実体（&amp; ・ &nbsp; 等）は対象外とする。名前実体は HTML5 仕様上
+// 数百種類あり、網羅すれば辞書の保守コストが高いうえ、セミコロン省略を
+// 許すレガシー仕様もあって構文もあいまいなため、通常の英単語（&amp のような
+// 途中経過等）を誤って実体の一部と誤認するリスクが数値文字参照より高い。
+// 数値文字参照は構文が厳密（&# の直後が数字、セミコロン終端必須）で
+// コードポイントを直接表すため、誤爆リスクが低く実装も単純である。この
+// 費用対効果の差から数値文字参照だけを対象にする。
+//
+// decodeJSONUnicodeEscapes と同じ「疑わしければ復号しない」方針
+// （decodeOneHTMLNumericEntity の doc コメント参照）に従う。
+//
+// 位置セマンティクス: 復号は U+0020 未満の文字（改行を含む）を新たに
+// 生み出さないため、復号後テキストの行数・各行番号は元テキストと厳密に
+// 一致する。列（Column）は参照を含む行でのみ復号後の文字列上の位置になる
+// （decodeJSONUnicodeEscapes と同じ性質）。
+//
+// 1 箇所も復号できなければ ok=false を返し、呼び出し側は元のテキストを
+// そのまま使う。大多数を占める "&#" を含まないテキストは、strings.Contains
+// によるバイト走査 1 回で早期リターンする。
+func decodeHTMLNumericEntities(text string) (string, bool) {
+	if !strings.Contains(text, "&#") {
+		return "", false
+	}
+
+	var b strings.Builder
+	b.Grow(len(text))
+	decoded := false
+	for i := 0; i < len(text); {
+		if text[i] == '&' {
+			if r, width, ok := decodeOneHTMLNumericEntity(text, i); ok {
+				b.WriteRune(r)
+				i += width
+				decoded = true
+				continue
+			}
+		}
+		b.WriteByte(text[i])
+		i++
+	}
+	if !decoded {
+		return "", false
+	}
+	return b.String(), true
+}
+
+// decodeOneHTMLNumericEntity は text[i] を先頭とする &#十進数; または
+// &#x十六進数;（x は大文字小文字どちらも可）を解釈する。呼び出し側は
+// text[i] == '&' であることを確認済みとする。名前実体（&amp; 等）は対象外
+// （decodeHTMLNumericEntities の doc コメント参照）。
+//
+// 復号しない（ok=false）と判断するケース:
+//   - "&#" の直後が 10 進数字でも 'x'/'X' でもない（名前実体・単なる & 等）
+//   - 数字が 1 つも無い、または上限桁数（htmlEntityMaxDecimalDigits /
+//     htmlEntityMaxHexDigits）を超えて数字が続く
+//   - セミコロンで終端していない
+//   - コードポイントが U+0020 未満（制御文字。行構造を壊さないため）
+//   - コードポイントがサロゲート範囲（U+D800〜U+DFFF）または U+10FFFF 超
+//
+// 戻り値の width は '&' から ';' まで（';' を含む）消費したバイト数。
+func decodeOneHTMLNumericEntity(text string, i int) (rune, int, bool) {
+	if i+1 >= len(text) || text[i] != '&' || text[i+1] != '#' {
+		return 0, 0, false
+	}
+	j := i + 2
+	hex := j < len(text) && (text[j] == 'x' || text[j] == 'X')
+	if hex {
+		j++
+	}
+	maxDigits, base := htmlEntityMaxDecimalDigits, uint32(10)
+	if hex {
+		maxDigits, base = htmlEntityMaxHexDigits, uint32(16)
+	}
+
+	start := j
+	var v uint32
+	for j < len(text) && j-start < maxDigits {
+		d, ok := htmlDigitValue(text[j], hex)
+		if !ok {
+			break
+		}
+		v = v*base + d
+		j++
+	}
+	if j == start {
+		return 0, 0, false // 数字が 1 つも無い
+	}
+	// 上限桁数ちょうどで打ち切った直後も同じ基数の数字が続く場合は、上限
+	// 超過の数値列（誤爆リスクが高い）として非対象にする。
+	if j < len(text) {
+		if _, ok := htmlDigitValue(text[j], hex); ok {
+			return 0, 0, false
+		}
+	}
+	if j >= len(text) || text[j] != ';' {
+		return 0, 0, false
+	}
+	if v < 0x20 || (v >= 0xD800 && v <= 0xDFFF) || v > 0x10FFFF {
+		return 0, 0, false
+	}
+	return rune(v), j + 1 - i, true
+}
+
+// htmlDigitValue は c を、hex が真なら 16 進数、偽なら 10 進数の 1 桁として
+// 解釈する。範囲外の文字であれば ok=false。10 進側は hexDigitValue を使わず
+// 独立させることで、10 進コンテキストで 'a'〜'f' を桁として誤って受理しない
+// ようにする。
+func htmlDigitValue(c byte, hex bool) (uint32, bool) {
+	if !hex {
+		if c >= '0' && c <= '9' {
+			return uint32(c - '0'), true
+		}
+		return 0, false
+	}
+	d, ok := hexDigitValue(c)
+	return uint32(d), ok
+}
+
+// ---- URL パーセントエンコードの復号ビュー ----
+//
+// decodeJSONUnicodeEscapes・decodeHTMLNumericEntities と同じ「既に正当な
+// UTF-8 のテキストの中の ASCII エスケープ表記」を対象にする独立した復号
+// ビュー。decodeEscapedViews から HTML 数値文字参照の後段として呼ばれる
+// （適用順の理由は decodeEscapedViews の doc コメントを参照）。
+
+// percentEncodingMinTriplets は decodePercentEncoding が復号を検討する
+// 連続 %XX 列の最小個数。単発の %XX を対象外にする理由は
+// decodePercentEncoding の doc コメントを参照。
+const percentEncodingMinTriplets = 2
+
+// decodePercentEncoding は text に含まれる URL パーセントエンコード
+// （%XX、16 進数は大文字小文字どちらも可）の連続列を実際の文字列へ復号
+// したビューを返す。
+//
+// 対象にするのは「%XX が 2 個以上切れ目なく連続し、かつその連続列全体を
+// まとめてデコードしたバイト列が正当な UTF-8 を成し、かつマルチバイト
+// 文字（U+0080 以上、UTF-8 で 2 バイト以上になる文字）を 1 つ以上含む」
+// 場合だけである。それ以外（連続列全体が不正な UTF-8、連続列が ASCII の
+// みで構成される、%XX が単発）は一切復号しない。
+//
+// 単発の %XX（%20 の半角スペース、%2F の / 等）を意図的に対象外とする
+// 理由: これらは URL/パスの構造文字であり ASCII なので、%XX に包まれて
+// いなくても既存の正規表現ルールから隠れているわけではなく、復号する
+// 検出価値が低い。一方、任意の位置の単発 %XX を無条件に復号してしまうと、
+// URL 中の構造的な区切り文字を書き換えて本来別々だったトークンを結合・
+// 分断し、無関係な文字列を誤って PII らしく見せる（あるいはその逆で本来
+// 検出すべき値を隠す）リスクがある。%40（@ 単体）も同じ理由で対象外と
+// する。マルチバイト文字を 1 つ以上含む連続列だけに対象を絞ることで、
+// 「複数の %XX が組になってひとまとまりの非 ASCII 文字列を意図的に表現
+// している」という誤爆リスクの低い強いシグナルがある場合だけ復号する。
+//
+// decodeJSONUnicodeEscapes・decodeHTMLNumericEntities と同じ「疑わしければ
+// 復号しない」方針: 連続列をまとめて復号した結果に U+0020 未満の制御文字が
+// 1 つでも含まれる場合は、その連続列全体を復号しない（行構造保存。一部だけ
+// 復号し残りをリテラルに戻す、という中途半端なことはしない — 連続列の
+// 途中の %XX から再走査して部分的に復号することも含めて避ける。詳細は
+// decodePercentRun の doc コメントを参照）。
+//
+// 位置セマンティクス: 復号は U+0020 未満の文字を新たに生み出さないため、
+// 復号後テキストの行数・各行番号は元テキストと厳密に一致する。列
+// （Column）はパーセントエンコードを含む行でのみ復号後の文字列上の位置に
+// なる（decodeJSONUnicodeEscapes と同じ性質）。
+//
+// 1 箇所も復号できなければ ok=false を返し、呼び出し側は元のテキストを
+// そのまま使う。大多数を占める "%" を含まないテキストは、strings.Contains
+// によるバイト走査 1 回で早期リターンする。
+func decodePercentEncoding(text string) (string, bool) {
+	if !strings.Contains(text, "%") {
+		return "", false
+	}
+
+	var b strings.Builder
+	b.Grow(len(text))
+	decoded := false
+	for i := 0; i < len(text); {
+		if text[i] == '%' {
+			repl, runLen, ok := decodePercentRun(text, i)
+			if ok {
+				b.WriteString(repl)
+				i += runLen
+				decoded = true
+				continue
+			}
+			if runLen > 0 {
+				// 連続列全体（非復号と判定された分も含む）を単位として
+				// リテラルのままコピーする。runLen 未満の途中位置（連続列の
+				// 内側の %XX）から再走査してしまうと、一度「全体として
+				// 非復号」と判定した連続列の後半だけが独立に条件を満たして
+				// 部分的に復号される事故が起きる（decodePercentRun の doc
+				// コメント参照）。
+				b.WriteString(text[i : i+runLen])
+				i += runLen
+				continue
+			}
+		}
+		b.WriteByte(text[i])
+		i++
+	}
+	if !decoded {
+		return "", false
+	}
+	return b.String(), true
+}
+
+// decodePercentRun は text[i] を先頭に切れ目なく続く %XX の連続列を走査
+// する。呼び出し側は text[i] == '%' を確認済みとする。
+//
+// 戻り値の runLen は、復号の成否によらず、連続列（%XX が 1 個以上、切れ目
+// なく続く限り）が占める text のバイト数（%XX の個数 × 3）。呼び出し側は
+// runLen 分をひとまとまりの単位として扱い、非復号時も i を必ず i+runLen
+// まで一括で進めること。連続列の途中の %XX から再走査すると、例えば
+// 「制御文字 + 日本語」の連続列（全体としては非復号のはず）で、制御文字を
+// 含まない後半部分だけが独立に条件を満たしてしまい、「一部だけ復号し残りを
+// リテラルに戻す」という中途半端な結果になる（decodePercentEncoding が
+// 意図的に避けている挙動）。runLen == 0 は、text[i] は '%' だが有効な
+// %XX が 1 つも続かない（末尾で桁が足りない・16 進数として不正）ことを
+// 意味し、呼び出し側は通常どおり 1 バイトだけ進める。
+//
+// decoded（3 番目の戻り値）が false になるケースは decodePercentEncoding
+// の doc コメントのとおり: 連続列が 2 個未満、連続列全体が不正な UTF-8、
+// マルチバイト文字を 1 つも含まない、制御文字（U+0020 未満）を含む。
+// decoded が true のとき repl に復号後の文字列が入る。
+func decodePercentRun(text string, i int) (repl string, runLen int, decoded bool) {
+	raw := make([]byte, 0, (len(text)-i)/3)
+	j := i
+	for j+3 <= len(text) && text[j] == '%' {
+		hi, ok1 := hexDigitValue(text[j+1])
+		lo, ok2 := hexDigitValue(text[j+2])
+		if !ok1 || !ok2 {
+			break
+		}
+		raw = append(raw, byte(hi<<4|lo))
+		j += 3
+	}
+	runLen = j - i
+	if len(raw) < percentEncodingMinTriplets {
+		return "", runLen, false
+	}
+	if !utf8.Valid(raw) {
+		return "", runLen, false
+	}
+	decodedStr := string(raw)
+	hasMultibyte := false
+	for _, r := range decodedStr {
+		if r < 0x20 {
+			return "", runLen, false // 制御文字は連続列全体を非復号
+		}
+		if r > 0x7F {
+			hasMultibyte = true
+		}
+	}
+	if !hasMultibyte {
+		return "", runLen, false
+	}
+	return decodedStr, runLen, true
 }

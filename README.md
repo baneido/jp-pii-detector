@@ -229,9 +229,10 @@ high_recall = false
 # あるときだけ 1 段昇格（low→medium、まれに medium→high）させる。CSV/DB ダンプ監査など、
 # 強めの検出をしたい場合のみ opt-in する（既定では既存の出力に影響しない）
 cooccurrence_boost = false
-# 電話番号ルール（jp-phone-number）が付与する下位種別（Reason.kind。service=フリーダイヤル等・
-# ip・mobile・fixed・international）のうち、指定した種別を検出結果から除外する（既定は未設定＝
-# 全種別検出。詳細は docs/detection-methods.md の「電話番号の下位種別分類」を参照）
+# ルール横断の下位種別（Reason.kind）のうち、指定した種別を検出結果から除外する（既定は未設定＝
+# 全種別検出）。電話番号ルール（jp-phone-number）は service=フリーダイヤル等・ip・mobile・fixed・
+# international、インボイス登録番号ルール（jp-invoice-number）は国税庁公表の公開情報であることを示す
+# public-business を付与する。詳細は docs/detection-methods.md の「電話番号の下位種別分類」を参照
 exclude_kinds = ["service"]
 
 [allowlist]
@@ -253,6 +254,24 @@ TEST_PHONE = "090-XXXX-XXXX"  # jp-pii-detector:ignore テスト用ダミー
 ```
 
 旧マーカー `pii-allow` も互換性のため引き続き利用できます。
+
+### 外部レコグナイザ連携（`external_recognizer`、opt-in）
+
+軽量 NER（GiNZA/BERT 等）による氏名検出などを、Go バイナリに依存を足さずに接続できます。
+既定は未設定＝完全に無効です:
+
+```toml
+[external_recognizer]
+command = ["python3", "my_ner.py"]  # argv 配列。シェル解釈はしない
+timeout_seconds = 30                # 既定 30
+max_findings = 1000                 # 既定 1000
+```
+
+プロトコル仕様・動くデモ（[integrations/external-recognizer/](integrations/external-recognizer/)）・
+**セキュリティ上の注意**（設定ファイルに書かれた任意コマンドを実行する機能のため、
+リポジトリ内の `.jp-pii.toml` を信用できない環境では使わないこと等）は
+[docs/detection-methods.md の「4.8 外部レコグナイザ連携」](docs/detection-methods.md#48-外部レコグナイザ連携external_recognizeropt-in)
+を参照してください。
 
 ## ベースライン（既存の検出を凍結して新規のみ fail させる）
 

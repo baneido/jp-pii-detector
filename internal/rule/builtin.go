@@ -170,6 +170,41 @@ const (
 		`)`
 )
 
+// jp-address-high-recall の一部パターンは、辞書検証ありの Base High 判定と
+// 従来どおりの Base Medium 判定を同一正規表現の 2 枚組（twin）で持つ
+// （person-name の辞書検証 twin と同じ手法。250 行目付近のコメント参照）。twin 間で
+// 正規表現オブジェクトを共有し、二重コンパイルを避けるためパッケージ変数として
+// 定義する。High 側は、Rule.Validate（dict.MunicipalitySuffixMatch、市区町村マッチ）に
+// 加えて、市区町村マッチ直後のギャップが ABR 町字マスター由来の実在町字名で
+// 始まる場合（dict.MunicipalityThenTownMatch）だけ Pattern.Validate を通過する。
+// 町字辞書は昇格専用のエビデンスであり、不一致は棄却ではなく Medium への
+// 据え置きにしかならないため recall には影響しない。
+//
+// マーカーなしダッシュ連結（banchiDash）用のパターンには twin を追加しない
+// （既存の Medium 単体のまま）。この形は市区町村マッチ直後にラベルなしで
+// 数字列が続くだけの形状のため、TestPromotionContextWindowBoundary
+// （detect_test.go）が「渋谷区道玄坂1-2-3」を固定サンプルにコンテキスト窓 // jp-pii-detector:ignore
+// 境界を検証しており、"道玄坂" が ABR 町字マスターの実在町字名と一致する。
+// twin を追加すると窓の内外を問わず常に High 判定になり、
+// 同テストが検証するコンテキスト窓ちょうど外側での非昇格が壊れる
+// （internal/detect は変更禁止のため、そちらのサンプル値を差し替えて
+// 回避することはできない）。マーカー付き（丁目・番・号）と漢数字番地の
+// 2 形には同種の衝突が無いことを確認済みで、twin を適用している。
+var (
+	addressHighRecallMarkedRe = regexp.MustCompile(
+		`(?:住所|所在地|勤務地|勤務先|自宅|address)?\s*[:=]?\s*(` +
+			`[` + kanji + hiragana + katakana + `]{1,15}[市区町村]` +
+			`[` + kanji + hiragana + katakana + `0-9-]{0,30}?` +
+			banchiMarked + `)`,
+	)
+	addressHighRecallKanjiRe = regexp.MustCompile(
+		`(?:住所|所在地|勤務地|勤務先|自宅|address)?\s*[:=]?\s*(` +
+			`[` + kanji + hiragana + katakana + `]{1,15}[市区町村]` +
+			`[` + kanji + hiragana + katakana + `0-9-]{0,30}?` +
+			banchiKanji + `)`,
+	)
+)
+
 // 氏名ルールで共用する部分パターン。正規化済みの行を前提とする
 // （全角コロン `：`・全角イコール `＝`・全角スペースは正規化で半角になる）。
 var (
@@ -649,12 +684,16 @@ func Builtin() []Rule {
 			// 高再現率でない既定ルールでは相対的に大きいため）。
 			Validate: dict.MunicipalitySuffixMatch,
 			Patterns: []Pattern{
-				{Re: regexp.MustCompile(
-					`(?:住所|所在地|勤務地|勤務先|自宅|address)?\s*[:=]?\s*(` +
-						`[` + kanji + hiragana + katakana + `]{1,15}[市区町村]` +
-						`[` + kanji + hiragana + katakana + `0-9-]{0,30}?` +
-						banchiMarked + `)`,
-				), Base: Medium},
+				// 同一正規表現の 2 枚組（twin）: 市区町村マッチ直後のギャップが
+				// ABR 町字マスター由来の実在町字名で始まれば High、そうでなければ
+				// 従来どおり Medium のまま拾う（resolveOverlaps が同一スパンで
+				// 信頼度の高い High を残す）。町字辞書は昇格専用のエビデンスで
+				// あり、不一致は棄却ではなく Medium への据え置きにしかならない
+				// ため recall には影響しない（dict.MunicipalityThenTownMatch の
+				// コメント参照）。
+				{Re: addressHighRecallMarkedRe, Base: High, Validate: dict.MunicipalityThenTownMatch},
+				{Re: addressHighRecallMarkedRe, Base: Medium},
+				// マーカーなしダッシュ連結は twin にしない（上記コメント参照）。
 				{Re: regexp.MustCompile(
 					`(?:住所|所在地|勤務地|勤務先|自宅|address)?\s*[:=]?\s*(` +
 						`[` + kanji + hiragana + katakana + `]{1,15}[市区町村]` +
@@ -677,12 +716,9 @@ func Builtin() []Rule {
 			Context:           []string{"住所", "所在地", "勤務地", "勤務先", "自宅", "address"},
 			Validate:          dict.MunicipalitySuffixMatch,
 			Patterns: []Pattern{
-				{Re: regexp.MustCompile(
-					`(?:住所|所在地|勤務地|勤務先|自宅|address)?\s*[:=]?\s*(` +
-						`[` + kanji + hiragana + katakana + `]{1,15}[市区町村]` +
-						`[` + kanji + hiragana + katakana + `0-9-]{0,30}?` +
-						banchiKanji + `)`,
-				), Base: Medium},
+				// マーカー付き twin と同じ手法（上記コメント参照）。
+				{Re: addressHighRecallKanjiRe, Base: High, Validate: dict.MunicipalityThenTownMatch},
+				{Re: addressHighRecallKanjiRe, Base: Medium},
 			},
 		},
 		{
@@ -827,15 +863,17 @@ func Builtin() []Rule {
 				{Re: dgNoAlnumHyphen(`1\d{4}-\d{6,7}1`), Base: High, RequireContext: true, Validate: validYuchoAccount},
 				// 記号・番号のラベルが同一行で別々に書かれる形式（"記号 11111
 				// 番号 11111111" 相当の並び。ラベル直結・コロン・スペース区切り
-				// いずれも許容）。同一行のラベル形式は対応済み。別行のラベル形式
-				// （記号: … の次行に番号: … が続く表記）はレコードスコープ実装後の
-				// 拡張対象とする。捕捉値（グループ1）は記号側の数字先頭から番号側の
-				// 数字末尾まで（間の「番号」ラベルを含む）とし、ラベル語「記号」
-				// 自体はグループ外に置く。間に非数字のラベルを挟むため dg ヘルパーは
-				// グループを二重にしてしまい使えず、境界ガード（前後が数字で
-				// ないこと）を自前で書く。このコメント自体が dogfooding で自己検出
-				// されないよう、上の例は全桁同一のダミー値（Validate で棄却される
-				// 形）だけを書く。
+				// いずれも許容）。同一行のラベル形式は対応済み。別行形式も
+				// ScanContent の専用ペア走査で対応済み（internal/detect/yucho_pair.go
+				// の scanCrossLineYuchoPairs。rule.CrossLineYuchoSymbolRe /
+				// CrossLineYuchoNumberRe / ValidCrossLineYuchoPair を使用。diff 走査の
+				// ScanDiffHunk は未対応で将来課題）。捕捉値（グループ1）は記号側の
+				// 数字先頭から番号側の数字末尾まで（間の「番号」ラベルを含む）とし、
+				// ラベル語「記号」自体はグループ外に置く。間に非数字のラベルを挟む
+				// ため dg ヘルパーはグループを二重にしてしまい使えず、境界ガード
+				// （前後が数字でないこと）を自前で書く。このコメント自体が
+				// dogfooding で自己検出されないよう、上の例は全桁同一のダミー値
+				// （Validate で棄却される形）だけを書く。
 				{Re: regexp.MustCompile(
 					`(?:^|[^0-9])記号\s*[:=]?\s*(1\d{4}\s*[:=]?\s*番号\s*[:=]?\s*\d{6,7}1)(?:[^0-9]|$)`,
 				), Base: High, RequireContext: true, Validate: validYuchoLabeledAccount},
@@ -959,6 +997,10 @@ func Builtin() []Rule {
 			Validate: func(m string) bool {
 				return checksum.CorporateNumber(strings.TrimPrefix(m, "T"))
 			},
+			// 登録番号は国税庁の適格請求書発行事業者公表サイトで公開される情報のため
+			// kind=public-business を付与する（PublicBusinessKind、identifier_kind.go）。
+			// ノイズになる場合は [rules] exclude_kinds = ["public-business"] で除外可能。
+			Kind: PublicBusinessKind,
 			Patterns: []Pattern{
 				// T + 13 桁（法人は法人番号と同一の 13 桁、個人事業主等は
 				// 別途 13 桁が採番される）。

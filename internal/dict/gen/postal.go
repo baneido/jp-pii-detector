@@ -38,6 +38,13 @@
 // 形式の一覧を生成する（詳細は phone.go を参照）。
 //
 //	go run ./internal/dict/gen -phone -input area_codes_raw.csv -output internal/dict/area_codes.txt
+//
+// -towns を指定すると、デジタル庁アドレス・ベース・レジストリ（ABR）の
+// 「全国 町字マスター」CSV（mt_town_all.csv、または それを含む zip）から
+// internal/dict/towns.txt 形式の大字・町名一覧を生成する
+// （詳細は towns.go を参照）。
+//
+//	go run ./internal/dict/gen -towns -input mt_town_all.csv.zip -output internal/dict/towns.txt
 package main
 
 import (
@@ -68,12 +75,13 @@ const (
 )
 
 func main() {
-	input := flag.String("input", "", "input path for -phone (area-code CSV)")
+	input := flag.String("input", "", "input path for -phone (area-code CSV) / -towns (ABR mt_town_all CSV or zip)")
 	kenAllInput := flag.String("ken-all-input", "", "Japan Post UTF-8 KEN_ALL (住所の郵便番号) CSV or zip path")
 	jigyosyoInput := flag.String("jigyosyo-input", "", "Japan Post Shift_JIS jigyosyo (事業所の個別郵便番号) CSV or zip path")
-	output := flag.String("output", "", "output path (postal: postal_codes.bitset / -phone: area_codes.txt); omit to skip postal bitset")
+	output := flag.String("output", "", "output path (postal: postal_codes.bitset / -phone: area_codes.txt / -towns: towns.txt); omit to skip postal bitset")
 	municipalitiesOutput := flag.String("municipalities-output", "", "output path for municipalities.txt (実在市区町村名の一覧、-ken-all-input が必須); omit to skip")
 	phone := flag.Bool("phone", false, "generate internal/dict/area_codes.txt from an area-code CSV instead of the postal bitset")
+	towns := flag.Bool("towns", false, "generate internal/dict/towns.txt from an ABR mt_town_all (町字マスター) CSV or zip instead of the postal bitset")
 	flag.Parse()
 
 	if *phone {
@@ -82,6 +90,18 @@ func main() {
 			os.Exit(2)
 		}
 		if err := generatePhone(*input, *output); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if *towns {
+		if *input == "" || *output == "" || flag.NArg() != 0 {
+			flag.Usage()
+			os.Exit(2)
+		}
+		if err := generateTowns(*input, *output); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}

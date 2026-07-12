@@ -3,6 +3,7 @@ package source
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io/fs"
 	"os"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/baneido/jp-pii-detector/internal/config"
 	"github.com/baneido/jp-pii-detector/internal/detect"
+	"github.com/baneido/jp-pii-detector/internal/external"
 )
 
 // MaxFileSize を超えるファイルは走査しない。
@@ -47,7 +49,7 @@ func ScanPaths(d *detect.Detector, cfg *config.Config, paths []string) ([]detect
 	if err != nil {
 		return nil, nil, err
 	}
-	findings, readWarnings := scanFiles(d, files)
+	findings, readWarnings := scanFiles(d, cfg, files)
 	warnings = append(warnings, readWarnings...)
 	return findings, warnings, nil
 }
@@ -142,19 +144,32 @@ func gitRoot() string {
 // 継続する（セキュリティツールとして、1 ファイルのエラーで収集済みの他
 // findings を握りつぶさないため）。呼び出し元（ScanPaths）が warnings の
 // 有無を呼び出し元にさらに伝える。
-func scanFiles(d *detect.Detector, files []string) ([]detect.Finding, []error) {
+//
+// 読み取り・デコードと走査を 2 段の並列フェーズに分けている。cfg.ExternalRecognizerEnabled()
+// の場合、その間に runExternalRecognizer が全ファイルのテキストをまとめて
+// internal/external.Run へ 1 回だけ渡す（ファイルごとに子プロセスを起動する
+// コストを避けるため。詳細は internal/external のパッケージコメントと CLAUDE.md を
+// 参照）。未設定時は runExternalRecognizer が即座に nil を返すため、この構造化に
+// よる追加コストは 2 つ目の jobs チャネルのセットアップ程度で無視できる。
+func scanFiles(d *detect.Detector, cfg *config.Config, files []string) ([]detect.Finding, []error) {
 	workers := max(min(runtime.GOMAXPROCS(0), len(files)), 1)
+	texts := make([]string, len(files))
+	// skip[i] はバイナリ判定・読み取りエラーで走査対象外になったファイルを表す
+	// （テキストが空文字列の 0 バイトファイルと区別するために必要）。
+	skip := make([]bool, len(files))
 	results := make([][]detect.Finding, len(files))
 	errs := make([]error, len(files))
-	jobs := make(chan int)
+
+	readJobs := make(chan int)
 	var wg sync.WaitGroup
 	for range workers {
 		wg.Go(func() {
-			for i := range jobs {
+			for i := range readJobs {
 				path := files[i]
 				data, err := os.ReadFile(path)
 				if err != nil {
 					errs[i] = fmt.Errorf("read %s: %w", path, err)
+					skip[i] = true
 					continue
 				}
 				text, ok := decodeUTF16(data)
@@ -163,25 +178,55 @@ func scanFiles(d *detect.Detector, files []string) ([]detect.Finding, []error) {
 				}
 				if !ok {
 					if isBinary(data) {
+						skip[i] = true
 						continue
 					}
 					text = string(data)
 				}
 				// 上記いずれの経路で得た最終的な UTF-8 テキストに対しても、
-				// 後段として JSON の \uXXXX エスケープ（ensure_ascii=True 出力・
-				// .ipynb 等）の復号ビューを適用する。1 箇所も復号できなければ
-				// text はそのまま変わらない。
-				if unescaped, ok := decodeJSONUnicodeEscapes(text); ok {
+				// 後段として \uXXXX エスケープ（ensure_ascii=True 出力・.ipynb
+				// 等）→ HTML 数値文字参照（&#...; 等）→ URL パーセントエンコード
+				// （%XX の連続列）の順に適用する復号ビューの直列チェーン
+				// （decodeEscapedViews）を適用する。DecodeEscapedView（scan
+				// --stdin 経路、cmd/jp-pii-detect/main.go）も同じ
+				// decodeEscapedViews を呼ぶため、フルスキャンと stdin の両経路は
+				// 常に同じ復号チェーンを通る。1 箇所も復号できなければ text は
+				// そのまま変わらない。
+				if unescaped, ok := decodeEscapedViews(text); ok {
 					text = unescaped
 				}
-				results[i] = d.ScanContent(filepath.ToSlash(path), text)
+				texts[i] = text
 			}
 		})
 	}
 	for i := range files {
-		jobs <- i
+		readJobs <- i
 	}
-	close(jobs)
+	close(readJobs)
+	wg.Wait()
+
+	extByFile := runExternalRecognizer(cfg, files, texts, skip)
+
+	scanJobs := make(chan int)
+	for range workers {
+		wg.Go(func() {
+			for i := range scanJobs {
+				if skip[i] {
+					continue
+				}
+				path := filepath.ToSlash(files[i])
+				findings := d.ScanContent(path, texts[i])
+				if cand := extByFile[path]; len(cand) > 0 {
+					findings = d.MergeExternalFindings(path, texts[i], findings, cand)
+				}
+				results[i] = findings
+			}
+		})
+	}
+	for i := range files {
+		scanJobs <- i
+	}
+	close(scanJobs)
 	wg.Wait()
 
 	var findings []detect.Finding
@@ -194,6 +239,44 @@ func scanFiles(d *detect.Detector, files []string) ([]detect.Finding, []error) {
 		findings = append(findings, results[i]...)
 	}
 	return findings, warnings
+}
+
+// runExternalRecognizer は cfg.ExternalRecognizerEnabled() の場合のみ、読み取り済みの
+// 全ファイルのテキストを 1 回の子プロセス起動（internal/external.Run）にまとめて渡す。
+// 戻り値は走査時のパス表記（filepath.ToSlash 済み、scanFiles の scanJobs フェーズが
+// d.ScanContent に渡すのと同じキー）でグループ化した候補。未設定時・対象ファイルが
+// 無い場合は nil を返し、呼び出し側はそれを「外部候補なし」として扱う。
+//
+// 診断メッセージ（タイムアウト・異常終了・不正 JSON 行での破棄、子プロセスの
+// 標準エラー出力）は標準エラーへログとして出力するだけで、戻り値には含めない
+// （呼び出し元 scanFiles/ScanPaths の warnings ＝ exit code 2 判定には使わない。
+// 外部レコグナイザの不調で通常の検出そのものを失敗させないため）。
+func runExternalRecognizer(cfg *config.Config, files, texts []string, skip []bool) map[string][]external.Candidate {
+	if !cfg.ExternalRecognizerEnabled() {
+		return nil
+	}
+	inputs := make([]external.FileInput, 0, len(files))
+	for i, path := range files {
+		if skip[i] {
+			continue
+		}
+		inputs = append(inputs, external.FileInput{File: filepath.ToSlash(path), Text: texts[i]})
+	}
+	if len(inputs) == 0 {
+		return nil
+	}
+	candidates, diagnostics := external.Run(context.Background(), cfg.ExternalRecognizerConfig(), inputs)
+	for _, msg := range diagnostics {
+		fmt.Fprintln(os.Stderr, "jp-pii-detect: external-recognizer:", msg)
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	byFile := make(map[string][]external.Candidate, len(candidates))
+	for _, c := range candidates {
+		byFile[c.File] = append(byFile[c.File], c)
+	}
+	return byFile
 }
 
 // isBinary は先頭 8KB に NUL バイトが含まれるかで判定する。

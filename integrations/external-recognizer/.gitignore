@@ -1,0 +1,4 @@
+# Python キャッシュ（コミットしない）。demo_recognizer.py は標準ライブラリのみに
+# 依存するため .venv/ は不要（integrations/presidio/ と異なり仮想環境は作らない）。
+__pycache__/
+*.pyc

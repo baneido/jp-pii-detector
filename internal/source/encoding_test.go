@@ -252,6 +252,36 @@ func jsonEscapeAll(s string) string {
 	return b.String()
 }
 
+// htmlEntityDecimal は r を HTML の 10 進数値文字参照（&#NNN;）へ変換する
+// （テスト専用ヘルパー。decodeHTMLNumericEntities の復号対象を手打ちの
+// 16進/10進変換なしで組み立てるため）。
+func htmlEntityDecimal(r rune) string {
+	return fmt.Sprintf("&#%d;", r)
+}
+
+// htmlEscapeAllDecimal は s の全文字を HTML の 10 進数値文字参照へ変換する
+// （テスト専用ヘルパー。本体コードでは使わない）。
+func htmlEscapeAllDecimal(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		b.WriteString(htmlEntityDecimal(r))
+	}
+	return b.String()
+}
+
+// percentEscapeAll は s の UTF-8 バイト列を全バイト %XX（大文字 16 進数）で
+// パーセントエンコードする（テスト専用ヘルパー）。net/url の既存関数は
+// ASCII 文字をエンコードせず残す・スペースを + にする等の差異があり、
+// 「対象バイトを漏れなく %XX 化する」というテスト意図に対して不透明なため、
+// 意図が一目でわかる最小実装を自前で用意する。本体コードでは使わない。
+func percentEscapeAll(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		fmt.Fprintf(&b, "%%%02X", s[i])
+	}
+	return b.String()
+}
+
 // decodeJSONUnicodeEscapes の単体テスト。復号規則を 1 つずつ確認する。
 // 入力はテスト対象そのものである \uXXXX エスケープ表記（バックティック
 // 文字列リテラルなので Go コンパイラによる解釈は受けず、そのままのバイト列
@@ -353,13 +383,244 @@ func TestDecodeJSONUnicodeEscapes(t *testing.T) {
 	})
 }
 
-// TestDecodeEscapedView は DecodeEscapedView が decodeJSONUnicodeEscapes への
-// 薄いラッパとして委譲していることだけを確認する（scan --stdin 経路
-// （cmd/jp-pii-detect/main.go）からの利用を想定した公開関数）。復号規則
-// そのものの網羅的なケースは TestDecodeJSONUnicodeEscapes を参照。
+// decodeHTMLNumericEntities の単体テスト。復号規則を 1 つずつ確認する。
+// 復号先のサンプル値は検出対象にならない一般語（あ・@ 等）のみを使う
+// （TestDecodeJSONUnicodeEscapes と同じ方針。本ファイル自体は
+// .jp-pii.toml で allowlist 済みだが、念のため踏襲する）。
+func TestDecodeHTMLNumericEntities(t *testing.T) {
+	t.Run("基本_10進", func(t *testing.T) {
+		got, ok := decodeHTMLNumericEntities("&#12354;") // U+3042 あ
+		if !ok {
+			t.Fatal("ok = false, want true")
+		}
+		if got != "あ" {
+			t.Fatalf("got = %q, want %q", got, "あ")
+		}
+	})
+
+	t.Run("16進_小文字x", func(t *testing.T) {
+		got, ok := decodeHTMLNumericEntities("&#x3042;") // U+3042 あ
+		if !ok {
+			t.Fatal("ok = false, want true")
+		}
+		if got != "あ" {
+			t.Fatalf("got = %q, want %q", got, "あ")
+		}
+	})
+
+	t.Run("16進_大文字X", func(t *testing.T) {
+		got, ok := decodeHTMLNumericEntities("&#X3042;") // U+3042 あ
+		if !ok {
+			t.Fatal("ok = false, want true")
+		}
+		if got != "あ" {
+			t.Fatalf("got = %q, want %q", got, "あ")
+		}
+	})
+
+	t.Run("セミコロン欠落は非復号", func(t *testing.T) {
+		text := "&#12354" // セミコロン無しのまま文字列が終わる
+		if got, ok := decodeHTMLNumericEntities(text); ok {
+			t.Fatalf("ok = true, got = %q, want false（セミコロン終端が無いので非復号のはず）", got)
+		}
+	})
+
+	t.Run("制御文字非復号", func(t *testing.T) {
+		// U+000A（改行）は行構造を壊すため復号しない。直後の &#64;（@）は
+		// 独立に復号されることも合わせて確認する。
+		got, ok := decodeHTMLNumericEntities("&#10;&#64;")
+		if !ok {
+			t.Fatal("ok = false, want true（後続の &#64; は復号されるはず）")
+		}
+		want := "&#10;" + "@"
+		if got != want {
+			t.Fatalf("got = %q, want %q（制御文字はリテラルのまま残るはず）", got, want)
+		}
+	})
+
+	t.Run("サロゲート値非復号", func(t *testing.T) {
+		// 55296 = 0xD800（孤立サロゲート値）は復号しない。直後の &#64; は
+		// 独立に復号される。
+		got, ok := decodeHTMLNumericEntities("&#55296;&#64;")
+		if !ok {
+			t.Fatal("ok = false, want true（後続の &#64; は復号されるはず）")
+		}
+		want := "&#55296;" + "@"
+		if got != want {
+			t.Fatalf("got = %q, want %q（サロゲート値はリテラルのまま残るはず）", got, want)
+		}
+	})
+
+	t.Run("U+10FFFF超は非復号", func(t *testing.T) {
+		// 1114112 = 0x110000（Unicode の最大コードポイントの 1 つ上）。
+		got, ok := decodeHTMLNumericEntities("&#1114112;&#64;")
+		if !ok {
+			t.Fatal("ok = false, want true（後続の &#64; は復号されるはず）")
+		}
+		want := "&#1114112;" + "@"
+		if got != want {
+			t.Fatalf("got = %q, want %q（U+10FFFF 超はリテラルのまま残るはず）", got, want)
+		}
+	})
+
+	t.Run("桁数上限超過は非復号", func(t *testing.T) {
+		// 10進の上限は 7 桁。8 桁の数字列は上限超過として非対象。
+		got, ok := decodeHTMLNumericEntities("&#12345678;&#64;")
+		if !ok {
+			t.Fatal("ok = false, want true（後続の &#64; は復号されるはず）")
+		}
+		want := "&#12345678;" + "@"
+		if got != want {
+			t.Fatalf("got = %q, want %q（上限桁数超過はリテラルのまま残るはず）", got, want)
+		}
+	})
+
+	t.Run("名前実体は対象外", func(t *testing.T) {
+		text := "&amp;&nbsp;"
+		if got, ok := decodeHTMLNumericEntities(text); ok {
+			t.Fatalf("ok = true, got = %q, want false（名前実体は対象外のはず）", got)
+		}
+	})
+
+	t.Run("&#を含まないテキストは早期リターンし追加確保なし", func(t *testing.T) {
+		text := "plain ascii text without any html entities at all, here to give the fast path something to scan."
+		if _, ok := decodeHTMLNumericEntities(text); ok {
+			t.Fatal("ok = true, want false（&# を含まないので復号対象なしのはず）")
+		}
+		allocs := testing.AllocsPerRun(100, func() {
+			decodeHTMLNumericEntities(text)
+		})
+		if allocs != 0 {
+			t.Fatalf("allocs/op = %v, want 0（早期リターンで確保が発生しないこと）", allocs)
+		}
+	})
+}
+
+// decodePercentEncoding の単体テスト。復号規則を 1 つずつ確認する。
+// 復号先のサンプル値は検出対象にならない一般語（あ 等）のみを使う
+// （TestDecodeJSONUnicodeEscapes と同じ方針）。
+func TestDecodePercentEncoding(t *testing.T) {
+	t.Run("日本語3バイト列の復号", func(t *testing.T) {
+		// "あ"（U+3042）の UTF-8 バイト列は E3 81 82。
+		got, ok := decodePercentEncoding("%E3%81%82")
+		if !ok {
+			t.Fatal("ok = false, want true")
+		}
+		if got != "あ" {
+			t.Fatalf("got = %q, want %q", got, "あ")
+		}
+	})
+
+	t.Run("単発_%20は非復号", func(t *testing.T) {
+		text := "a%20b"
+		if got, ok := decodePercentEncoding(text); ok {
+			t.Fatalf("ok = true, got = %q, want false（単発の %%20 は非復号のはず）", got)
+		}
+	})
+
+	t.Run("単発_%40は非復号", func(t *testing.T) {
+		text := "user%40example"
+		if got, ok := decodePercentEncoding(text); ok {
+			t.Fatalf("ok = true, got = %q, want false（単発の %%40 は非復号のはず）", got)
+		}
+	})
+
+	t.Run("ASCIIのみの連続列は非復号", func(t *testing.T) {
+		// %41%42 は "AB"。2 個以上連続するがマルチバイト文字を含まない。
+		text := "%41%42"
+		if got, ok := decodePercentEncoding(text); ok {
+			t.Fatalf("ok = true, got = %q, want false（マルチバイト文字を含まない連続列は非復号のはず）", got)
+		}
+	})
+
+	t.Run("不正UTF8列は非復号", func(t *testing.T) {
+		text := "%FF%FE"
+		if got, ok := decodePercentEncoding(text); ok {
+			t.Fatalf("ok = true, got = %q, want false（不正な UTF-8 列は非復号のはず）", got)
+		}
+	})
+
+	t.Run("不正バイトの直後に正当な多バイト列が続いても連続列全体が非復号", func(t *testing.T) {
+		// %FF は単独で常に不正な UTF-8 先頭バイト。直後の %E3%81%82（あ）は
+		// 単体では正当なマルチバイト列だが、%FF と切れ目なく連続している
+		// ため 1 つの連続列として扱われ、全体が不正 UTF-8 と判定されて
+		// 非復号になる。連続列の内側の %E3 から再走査して "あ" だけを
+		// 部分的に復号してしまわないことの回帰確認（decodePercentRun の
+		// doc コメント参照）。
+		text := "%FF%E3%81%82"
+		if got, ok := decodePercentEncoding(text); ok {
+			t.Fatalf("ok = true, got = %q, want false（連続列全体が非復号のはず。部分復号は不可）", got)
+		}
+	})
+
+	t.Run("大文字小文字hex", func(t *testing.T) {
+		lower, ok := decodePercentEncoding("%e3%81%82")
+		if !ok {
+			t.Fatal("ok = false, want true")
+		}
+		if lower != "あ" {
+			t.Fatalf("got = %q, want %q", lower, "あ")
+		}
+		upper, ok := decodePercentEncoding("%E3%81%82")
+		if !ok || upper != lower {
+			t.Fatalf("大文字 hex の結果 = (%q, %v), want (%q, true)", upper, ok, lower)
+		}
+	})
+
+	t.Run("制御文字を含む列は非復号", func(t *testing.T) {
+		// %0A（U+000A 改行）+ "あ" の UTF-8 列。連続列全体が非復号になる
+		// こと（部分復号はしないこと）を確認する。
+		text := "%0A%E3%81%82"
+		if got, ok := decodePercentEncoding(text); ok {
+			t.Fatalf("ok = true, got = %q, want false（制御文字を含む連続列は全体が非復号のはず）", got)
+		}
+	})
+
+	t.Run("%を含まないテキストは早期リターンし追加確保なし", func(t *testing.T) {
+		text := "plain ascii text without any percent encoding at all, here to give the fast path something to scan."
+		if _, ok := decodePercentEncoding(text); ok {
+			t.Fatal("ok = true, want false（% を含まないので復号対象なしのはず）")
+		}
+		allocs := testing.AllocsPerRun(100, func() {
+			decodePercentEncoding(text)
+		})
+		if allocs != 0 {
+			t.Fatalf("allocs/op = %v, want 0（早期リターンで確保が発生しないこと）", allocs)
+		}
+	})
+}
+
+// TestDecodeEscapedView は DecodeEscapedView が decodeEscapedViews（JSON
+// \uXXXX エスケープ → HTML 数値文字参照 → URL パーセントエンコードの直列
+// デコードチェーン）への薄いラッパとして委譲していることだけを確認する
+// （scan --stdin 経路（cmd/jp-pii-detect/main.go）からの利用を想定した
+// 公開関数）。復号規則そのものの網羅的なケースは TestDecodeJSONUnicodeEscapes・
+// TestDecodeHTMLNumericEntities・TestDecodePercentEncoding を、3 段の連鎖
+// そのものは TestDecodeEscapedViewsChain を参照。
 func TestDecodeEscapedView(t *testing.T) {
-	t.Run("委譲: 復号成立", func(t *testing.T) {
+	t.Run("委譲: 復号成立(JSON)", func(t *testing.T) {
 		got, ok := DecodeEscapedView("\\u3042")
+		if !ok {
+			t.Fatal("ok = false, want true")
+		}
+		if got != "あ" {
+			t.Fatalf("got = %q, want %q", got, "あ")
+		}
+	})
+
+	t.Run("委譲: 復号成立(HTML数値文字参照・パーセントエンコードも含む)", func(t *testing.T) {
+		// JSON だけの薄いラッパだった頃からの回帰確認: DecodeEscapedView が
+		// decodeJSONUnicodeEscapes だけでなく decodeEscapedViews のチェイン
+		// 全体に委譲していることを、HTML・パーセントそれぞれ単体でも確認する。
+		got, ok := DecodeEscapedView(htmlEntityDecimal('あ'))
+		if !ok {
+			t.Fatal("ok = false, want true")
+		}
+		if got != "あ" {
+			t.Fatalf("got = %q, want %q", got, "あ")
+		}
+
+		got, ok = DecodeEscapedView(percentEscapeAll("あ"))
 		if !ok {
 			t.Fatal("ok = false, want true")
 		}
@@ -376,6 +637,88 @@ func TestDecodeEscapedView(t *testing.T) {
 		}
 		if got != "" {
 			t.Fatalf("ok=false 時の戻り値 = %q, want \"\"（decodeJSONUnicodeEscapes と同じ契約）", got)
+		}
+	})
+}
+
+// TestDecodeEscapedViewsChain は decodeEscapedViews が JSON \uXXXX エスケープ
+// → HTML 数値文字参照 → URL パーセントエンコードの順に直列適用すること、
+// および前段が展開した結果を後段が発見できる（適用順に意味がある）ことを
+// 確認する。各段それぞれの復号規則の網羅的なケースは
+// TestDecodeJSONUnicodeEscapes・TestDecodeHTMLNumericEntities・
+// TestDecodePercentEncoding を参照。
+func TestDecodeEscapedViewsChain(t *testing.T) {
+	t.Run("独立した3種が混在", func(t *testing.T) {
+		// \uXXXX・HTML 数値文字参照・パーセントエンコードをそれぞれ独立した
+		// 箇所に 1 つずつ含むテキストで、3 段すべてが適用されることを確認
+		// する。
+		text := jsonEscapeAll("あ") + " " + htmlEntityDecimal('い') + " " + percentEscapeAll("う")
+		got, ok := decodeEscapedViews(text)
+		if !ok {
+			t.Fatal("ok = false, want true")
+		}
+		want := "あ い う"
+		if got != want {
+			t.Fatalf("got = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("JSONエスケープがパーセントエンコードを明かす", func(t *testing.T) {
+		// % は '%' の JSON エスケープ。JSON 段を展開すると
+		// percentEscapeAll("あ") と同じ "%E3%81%82" が新たに現れ、後段の
+		// パーセント段がそれを発見して復号できることを確認する（\uXXXX が
+		// パーセントより先に展開される設計になっている証拠）。
+		percentEscaped := percentEscapeAll("あ") // "%E3%81%82"
+		var nested strings.Builder
+		for i := 0; i < len(percentEscaped); i++ {
+			if percentEscaped[i] == '%' {
+				fmt.Fprintf(&nested, `\u%04x`, '%')
+				continue
+			}
+			nested.WriteByte(percentEscaped[i])
+		}
+
+		got, ok := decodeEscapedViews(nested.String())
+		if !ok {
+			t.Fatal("ok = false, want true")
+		}
+		if got != "あ" {
+			t.Fatalf("got = %q, want %q", got, "あ")
+		}
+	})
+
+	t.Run("HTML数値文字参照がパーセントエンコードを明かす", func(t *testing.T) {
+		// &#37; は '%' の HTML 10進数値文字参照。HTML 段を展開すると
+		// percentEscapeAll("あ") と同じ "%E3%81%82" が新たに現れ、後段の
+		// パーセント段がそれを発見して復号できることを確認する（HTML 数値
+		// 文字参照がパーセントより先に展開される設計になっている証拠）。
+		percentEscaped := percentEscapeAll("あ") // "%E3%81%82"
+		var nested strings.Builder
+		for i := 0; i < len(percentEscaped); i++ {
+			if percentEscaped[i] == '%' {
+				nested.WriteString(htmlEntityDecimal('%'))
+				continue
+			}
+			nested.WriteByte(percentEscaped[i])
+		}
+
+		got, ok := decodeEscapedViews(nested.String())
+		if !ok {
+			t.Fatal("ok = false, want true")
+		}
+		if got != "あ" {
+			t.Fatalf("got = %q, want %q", got, "あ")
+		}
+	})
+
+	t.Run("いずれも含まなければ非復号", func(t *testing.T) {
+		text := "plain text without any escapes"
+		got, ok := decodeEscapedViews(text)
+		if ok {
+			t.Fatalf("ok = true, got = %q, want false", got)
+		}
+		if got != "" {
+			t.Fatalf("ok=false 時の戻り値 = %q, want \"\"", got)
 		}
 	})
 }
@@ -417,6 +760,106 @@ func TestScanPathsDecodesJSONUnicodeEscapes(t *testing.T) {
 			hasName = true
 		case "jp-address":
 			hasAddress = true
+		}
+	}
+	if !hasName {
+		t.Errorf("findings = %+v, want person-name の検出を含む", findings)
+	}
+	if !hasAddress {
+		t.Errorf("findings = %+v, want jp-address の検出を含む", findings)
+	}
+}
+
+// ScanPaths が HTML の数値文字参照（&#23665; / &#x5c71; 等、HTML/XML を経由
+// したデータに頻出）に隠れた日本語 PII を復号して検出できること（フル走査の
+// end-to-end）。氏名（person-name）・住所（jp-address）の双方が検出され、
+// 行番号が原文と一致することを確認する。TestScanPathsDecodesJSONUnicodeEscapes
+// と対になる。
+func TestScanPathsDecodesHTMLNumericEntities(t *testing.T) {
+	name := testfixtures.MustGet(t, "detect.name_sato_hanako")
+	addr := testfixtures.MustGet(t, "detect.address_shibuya")
+	content := "氏名: " + htmlEscapeAllDecimal(name) + "\n" +
+		"住所: " + htmlEscapeAllDecimal(addr) + "\n"
+
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "escaped.html"), []byte(content))
+
+	cfg := config.Default()
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, warnings, err := ScanPaths(d, cfg, []string{tmp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v, want none", warnings)
+	}
+
+	var hasName, hasAddress bool
+	for _, f := range findings {
+		switch f.RuleID {
+		case "person-name":
+			hasName = true
+			if f.Line != 1 {
+				t.Errorf("finding = %+v, want line 1（氏名行）", f)
+			}
+		case "jp-address":
+			hasAddress = true
+			if f.Line != 2 {
+				t.Errorf("finding = %+v, want line 2（住所行）", f)
+			}
+		}
+	}
+	if !hasName {
+		t.Errorf("findings = %+v, want person-name の検出を含む", findings)
+	}
+	if !hasAddress {
+		t.Errorf("findings = %+v, want jp-address の検出を含む", findings)
+	}
+}
+
+// ScanPaths が URL パーセントエンコード（%E5%B1%B1 等、URL クエリパラメータや
+// アクセスログに頻出）に隠れた日本語 PII を復号して検出できること（フル走査の
+// end-to-end）。氏名（person-name）・住所（jp-address）の双方が検出され、
+// 行番号が原文と一致することを確認する。TestScanPathsDecodesJSONUnicodeEscapes
+// と対になる。
+func TestScanPathsDecodesPercentEncoding(t *testing.T) {
+	name := testfixtures.MustGet(t, "detect.name_suzuki_hanako")
+	addr := testfixtures.MustGet(t, "detect.address_umeda")
+	content := "氏名: " + percentEscapeAll(name) + "\n" +
+		"住所: " + percentEscapeAll(addr) + "\n"
+
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "escaped.url"), []byte(content))
+
+	cfg := config.Default()
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, warnings, err := ScanPaths(d, cfg, []string{tmp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v, want none", warnings)
+	}
+
+	var hasName, hasAddress bool
+	for _, f := range findings {
+		switch f.RuleID {
+		case "person-name":
+			hasName = true
+			if f.Line != 1 {
+				t.Errorf("finding = %+v, want line 1（氏名行）", f)
+			}
+		case "jp-address":
+			hasAddress = true
+			if f.Line != 2 {
+				t.Errorf("finding = %+v, want line 2（住所行）", f)
+			}
 		}
 	}
 	if !hasName {

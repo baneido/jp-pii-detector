@@ -26,9 +26,13 @@ import (
 // 頼るより遥かに強い、構造（列位置）に基づく証拠になる。
 //
 // スコープは意図的に狭い（「レコードスコープ第一歩」）:
-//   - フル走査限定（sourceLineContexts 経由。diff 走査では使わない。CSV と同じ
-//     理由: git diff の hunk は列リストを含まない断片だけのことが多く、
-//     誤帰属のリスクが高いため）。
+//   - フル走査（sourceLineContexts）・diff 走査（sourceLineContextsForDiff）の
+//     両方から呼ばれる。CSV は diff hunk がヘッダ行を含まないことが多いため
+//     diff 走査を対象外にしている（csv_context.go 先頭のコメント参照）が、
+//     対象の単一行 INSERT は列リストと値が同一物理行で自己完結するため、その
+//     事情は当てはまらない。値を含む行には常にその行自身の列リストが一緒に
+//     含まれるので、diff 走査でも外部からのヘッダ取得なしに安全に列
+//     コンテキストを割り当てられる。
 //   - 単一物理行に完結する
 //     `INSERT INTO <table> (<col1>, ...) VALUES (<v1>, ...)[, (<v2>, ...)]*`
 //     （大文字小文字不問）だけを対象にする。
@@ -286,11 +290,13 @@ func sqlStatementContextsForLine(norm string) []statementContext {
 	return stmts
 }
 
-// sqlLineContexts は .sql ファイル（フル走査限定）の各行を独立に解析し、
-// INSERT INTO ... VALUES (...) 文の列名を、同位置の値の statementContext に
-// 割り当てる（sourceLineContexts からのみ呼ばれる）。CSV と異なりヘッダ行の
-// ような行をまたぐ状態は持たない。1 つの INSERT 文が列名（列リスト）と値
-// （VALUES 句）の両方を単一行内に持つため、行ごとに独立して解析できる。
+// sqlLineContexts は .sql ファイルの各行を独立に解析し、INSERT INTO ...
+// VALUES (...) 文の列名を、同位置の値の statementContext に割り当てる
+// （sourceLineContexts・sourceLineContextsForDiff の双方から、フル走査・diff
+// 走査を区別せず同じ形で呼ばれる）。CSV と異なりヘッダ行のような行をまたぐ
+// 状態は持たない。1 つの INSERT 文が列名（列リスト）と値（VALUES 句）の両方を
+// 単一行内に持つため、行ごとに独立して解析できる（diff 走査で hunk が一部の
+// 行だけを含んでいても、行同士の依存が無いため問題にならない）。
 func sqlLineContexts(_ string, lines []string) []lineContext {
 	out := make([]lineContext, len(lines))
 	for i, line := range lines {

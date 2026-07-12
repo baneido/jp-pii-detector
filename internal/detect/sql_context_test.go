@@ -1,6 +1,7 @@
 package detect
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -403,12 +404,16 @@ func TestSQLContextDoesNotApplyToOtherExtensions(t *testing.T) {
 	}
 }
 
-// diff 走査（sourceLineContextsForDiff の基盤である baseSourceLineContexts）は
-// .sql を対象外にする（CSV と同じ理由。フル走査限定）。
+// baseSourceLineContexts（汎用のコード文パーサ）自体は .sql を対象外にし
+// 続ける（CSV と同じ理由）。ただし diff 走査全体としては列コンテキストを
+// 失わない — sourceLineContextsForDiff は baseSourceLineContexts に渡す前に
+// sourceKindSQL を専用の sqlLineContexts へ分岐させるため（Part E 参照）。
+// このテストは baseSourceLineContexts 自身の分類がフル走査時から変わって
+// いないことだけを確認する。
 func TestSQLContextDoesNotApplyToDiffScanBase(t *testing.T) {
 	_, ok := baseSourceLineContexts("dump.sql", []string{"INSERT INTO t (phone) VALUES ('03-1234-5678');"}) // jp-pii-detector:ignore
 	if ok {
-		t.Fatal("baseSourceLineContexts が .sql を通した（diff 走査に列コンテキストが漏れる）")
+		t.Fatal("baseSourceLineContexts が .sql を通した（汎用コード文パーサへ誤って分岐する）")
 	}
 }
 
@@ -622,5 +627,148 @@ func TestSQLInsertNameColumnMultipleTuples(t *testing.T) {
 		if !got[name] {
 			t.Errorf("%s が検出されない: %+v", name, fs)
 		}
+	}
+}
+
+// --- Part E: diff 走査（sourceLineContextsForDiff / ScanDiffHunk） ---
+//
+// .sql の INSERT 列コンテキストは CSV と異なり、列リスト（ヘッダ相当）と値が
+// 同一物理行に同居するため、外部からのヘッダ取得を必要とせずに --staged /
+// --diff でも働く（sourceLineContextsForDiff の sourceKindSQL 分岐は
+// sqlLineContexts をそのまま呼ぶだけ）。以下は Part B・Part C のフル走査向け
+// テストと同じ振る舞いが diff 経路でも成立することの確認。
+
+// sourceLineContextsForDiff の .sql 分岐は sqlLineContexts をそのまま呼ぶ
+// だけで成立する: added・csvHeader の値に関わらず結果がフル走査
+// （sqlLineContexts）と完全に一致する（先頭行を文脈行にし、csvHeader に
+// 無関係な文字列を渡しても結果が変わらないことで、.sql が両方の引数を
+// 無視することも合わせて確認する）。あわせて name/phone 列それぞれの値が
+// 対応する statementContext（PositiveText）を得ることも直接確認する
+// （TestSQLStatementContextsNameColumnPositiveText の diff 版）。
+func TestSQLDiffLineContextsMatchesFullScanAndAssignsColumnContext(t *testing.T) {
+	const phoneValue = "090-1111-2222" // jp-pii-detector:ignore
+	line := "INSERT INTO users (name, phone) VALUES ('架空花子', '" + phoneValue + "');"
+	lines := []string{line}
+
+	want := sqlLineContexts("dump.sql", lines)
+	got := sourceLineContextsForDiff("dump.sql", lines, []bool{false}, "not-a-real-csv-header")
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("sourceLineContextsForDiff = %+v, want == sqlLineContexts = %+v", got, want)
+	}
+	if len(got) != 1 {
+		t.Fatalf("ctxs = %d 行, want 1", len(got))
+	}
+
+	nameValue := `'架空花子'`
+	nameStart := strings.Index(line, nameValue) + 1 // 開き引用符の直後
+	nameEnd := nameStart + len("架空花子")
+	if st := got[0].statementFor(nameStart, nameEnd); st == nil || st.PositiveText != "name" {
+		t.Errorf("name 列の statementContext = %+v, want PositiveText=name", st)
+	}
+
+	phoneStart := strings.Index(line, phoneValue)
+	phoneEnd := phoneStart + len(phoneValue)
+	if st := got[0].statementFor(phoneStart, phoneEnd); st == nil || st.PositiveText != "phone" {
+		t.Errorf("phone 列の statementContext = %+v, want PositiveText=phone", st)
+	}
+}
+
+// 追加行の INSERT は、ScanDiffHunk（フル走査の ScanContent と同じ列
+// コンテキストの仕組みが diff 走査にも配線されていること）経由でも、40 ルーン
+// 窓を超えた列位置からの構造的な文脈で High へ昇格する
+// （TestSQLInsertPhoneColumnPromotesBeyondFortyRuneWindow の diff 版）。
+func TestSQLScanDiffHunkPhoneColumnPromotesBeyondFortyRuneWindow(t *testing.T) {
+	d := newDetector(t, "")
+	const testPhone = "03-1234-5678"   // jp-pii-detector:ignore
+	padding := strings.Repeat("x", 80) // phone ラベルを 40 ルーン窓の外へ押し出す埋め草
+	line := "INSERT INTO t (padding, phone) VALUES ('" + padding + "', '" + testPhone + "');"
+	fs := d.ScanDiffHunk("dump.sql", []DiffLine{{Text: line, Added: true}})
+
+	var found *Finding
+	for i := range fs {
+		if fs[i].RuleID == "jp-phone-number" && fs[i].Match == testPhone {
+			found = &fs[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("jp-phone-number が検出されない: %+v", fs)
+	}
+	if found.Confidence != rule.High {
+		t.Errorf("confidence = %v, want High（構造的な列コンテキストで昇格するはず）", found.Confidence)
+	}
+	if !found.Reason.ContextPromoted {
+		t.Errorf("ContextPromoted = false, want true")
+	}
+	if found.Line != 1 {
+		t.Errorf("Line = %d, want 1（ウィンドウ内 1 始まり）", found.Line)
+	}
+}
+
+// order_id 列の 7 桁の値は、追加行の INSERT でも列コンテキストの負文脈
+// （「注文 ID」を意味する order/id）によって銀行口座番号として誤検出
+// されない。同じ行の kouza 列自身の値は通常どおり検出されることも確認し、
+// 負文脈が列単位で正しく効いている（ルールそのものを無効化しているのではない）
+// ことを示す（TestSQLInsertOrderIDColumnSuppressesBankAccountFalsePositive の
+// diff 版）。
+func TestSQLScanDiffHunkOrderIDColumnSuppressesBankAccountFalsePositive(t *testing.T) {
+	d := newDetector(t, "")
+	line := "INSERT INTO t (kouza,order_id) VALUES ('1234567',7654321);" // jp-pii-detector:ignore
+	fs := d.ScanDiffHunk("dump.sql", []DiffLine{{Text: line, Added: true}})
+
+	gotBankAccountValue, gotOrderIDFalsePositive := false, false
+	for _, f := range fs {
+		if f.RuleID != "jp-bank-account" {
+			continue
+		}
+		switch f.Match {
+		case "1234567":
+			gotBankAccountValue = true
+		case "7654321":
+			gotOrderIDFalsePositive = true
+		}
+	}
+	if !gotBankAccountValue {
+		t.Fatalf("kouza 列自身の口座番号が検出されない（前提条件が崩れている）: %+v", fs)
+	}
+	if gotOrderIDFalsePositive {
+		t.Fatalf("order_id 列の値が銀行口座番号として誤検出された（負文脈が効いていない）: %+v", fs)
+	}
+}
+
+// 文脈行（Added=false）の INSERT は、sqlLineContexts がその行の
+// statementContext を計算していても、検出値そのものは報告されない
+// （ScanDiffHunk は検出値が追加行に乗る finding だけを返す設計のため。
+// 単独走査ループは Added な行しか走査せず、隣接行ペア走査
+// （scanAdjacentLinesDiff）も値が乗る側の行の Added フラグで最終的に
+// ふるい落とすため、値そのものが文脈行にある限り列コンテキストの有無に
+// 関わらず報告され得ない）。追加行の INSERT は通常どおり報告されることと
+// 対比する。
+func TestSQLScanDiffHunkContextLineInsertValueNotReported(t *testing.T) {
+	d := newDetector(t, "")
+	const contextPhone = "03-1111-1111" // jp-pii-detector:ignore
+	const addedPhone = "03-2222-2222"   // jp-pii-detector:ignore
+	contextLine := "INSERT INTO t (phone) VALUES ('" + contextPhone + "');"
+	addedLine := "INSERT INTO t (phone) VALUES ('" + addedPhone + "');"
+	fs := d.ScanDiffHunk("dump.sql", []DiffLine{
+		{Text: contextLine, Added: false},
+		{Text: addedLine, Added: true},
+	})
+
+	for _, f := range fs {
+		if f.Match == contextPhone {
+			t.Fatalf("文脈行由来の値が報告された: %+v", f)
+		}
+	}
+	found := false
+	for _, f := range fs {
+		if f.RuleID == "jp-phone-number" && f.Match == addedPhone {
+			found = true
+			if f.Line != 2 {
+				t.Errorf("finding = %+v, want line 2（追加行）", f)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("追加行の値が検出されない: %+v", fs)
 	}
 }
