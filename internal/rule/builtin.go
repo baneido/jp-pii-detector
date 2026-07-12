@@ -97,15 +97,18 @@ func rejectSeparatedDigitGroup(separators string, widths ...int) func(string, in
 }
 
 // stripSeparators は番号表記の区切り文字（ハイフン・半角スペース・ドット・
-// 丸括弧）を除去する。マイナンバー・クレジットカードの呼び出しはこれらの
-// 区切り文字を元々捕捉しない（正規表現側にハイフン・空白しか含まない）ため、
-// ドット・丸括弧の追加は無効化に影響しない。電話番号（括弧市外局番・
-// ドット区切り携帯）と運転免許（ハイフン区切り 4-4-4）の新パターンが
-// この拡張に依存する。
+// 丸括弧・スラッシュ）を除去する。マイナンバー・クレジットカードの呼び出しは
+// これらの区切り文字を元々捕捉しない（正規表現側にハイフン・空白しか
+// 含まない）ため、ドット・丸括弧・スラッシュの追加は無効化に影響しない。
+// 電話番号（括弧市外局番・ドット区切り携帯）と運転免許（ハイフン区切り
+// 4-4-4）の新パターンがドット・丸括弧の拡張に依存する。スラッシュは
+// マイナンバーのスラッシュ区切り 6-6 と電話番号のスラッシュ区切り携帯の
+// 新パターンが依存する（区切りを除いた 12 桁 / 10-11 桁でチェックディジット・
+// 市外局番辞書照合が成立するようにするため）。
 func stripSeparators(s string) string {
 	return strings.Map(func(r rune) rune {
 		switch r {
-		case '-', ' ', '.', '(', ')':
+		case '-', ' ', '.', '(', ')', '/':
 			return -1
 		}
 		return r
@@ -229,6 +232,57 @@ var (
 			banchiDash + `)`,
 	)
 )
+
+// addressLabeledPrefix は jp-address 第 3 エントリ（都道府県なし・ラベル必須）の
+// 必須プレフィクス。jp-address-high-recall（上記 addressHighRecall*Re）はここが
+// `(?:…)?` の任意だが、この第 3 エントリは既定プロファイルでも安全に使えるよう
+// ラベルを必須にする。語彙は既定 jp-address の Context と揃え、
+// jp-address-high-recall にだけある勤務地・勤務先は含めない
+// （TestHighRecallRulesDisabledByDefault 等が「勤務地: …」を jp-address 側の
+// 非検出として固定しているため、この語彙差自体が既存動作の保護になる）。
+const addressLabeledPrefix = `(?:住所|所在地|自宅|居住|address)\s*[:=]?\s*`
+
+// jp-address 第 3 エントリが使う部分パターン。市区町村部分・番地部分の文字
+// クラス/ギャップは addressHighRecallMarkedRe / addressHighRecallDashRe の定義を
+// そのまま再利用し、先頭にだけ addressLabeledPrefix（ラベル必須）を焼き込む。
+// キャプチャグループ 1 にはラベルを含めない（値は市区町村から番地まで）。
+var (
+	// addressLabeledPrefectureAnchoredRe は値が都道府県名で始まるかどうかの判定
+	// （addressLabeledMunicipalityValid 専用）。既存 2 エントリ（都道府県あり）が
+	// 既に検出する値とこの第 3 エントリが重複して検出しないようにする。重複すると、
+	// 同一スパンの複数候補を resolveOverlaps が集約する際にこの新エントリ
+	// （Validated な分だけ内部スコアが高い）が既存エントリより優先されてしまい、
+	// TestReasonNotValidatedWhenNoValidator 等「マーカー付き番地パターンに
+	// Validate は無い」ことを前提にした既存テストを壊す。
+	addressLabeledPrefectureAnchoredRe = regexp.MustCompile(
+		`^(?:北海道|東京都|京都府|大阪府|[` + kanji + `]{2,3}県)`,
+	)
+	addressLabeledMarkedRe = regexp.MustCompile(
+		addressLabeledPrefix + `(` +
+			`[` + kanji + hiragana + katakana + `]{1,15}[市区町村]` +
+			`[` + kanji + hiragana + katakana + `0-9-]{0,30}?` +
+			banchiMarked + `)`,
+	)
+	// addressLabeledDashRe はマーカーなしダッシュ連結（banchiDash）用。ギャップは
+	// addressHighRecallDashRe と同じ hiraganaNoParticle（助詞抜き）に制限する。
+	addressLabeledDashRe = regexp.MustCompile(
+		addressLabeledPrefix + `(` +
+			`[` + kanji + hiragana + katakana + `]{1,15}[市区町村]` +
+			`[` + kanji + hiraganaNoParticle + katakana + `0-9-]{0,30}?` +
+			banchiDash + `)`,
+	)
+)
+
+// addressLabeledMunicipalityValid は jp-address 第 3 エントリのルールレベル
+// Validate。値が都道府県名で始まる場合（既存 2 エントリの担当領域）を棄却してから
+// dict.MunicipalitySuffixMatch（実在市区町村ゲート。jp-address-high-recall と
+// 同じ）を適用する。
+func addressLabeledMunicipalityValid(v string) bool {
+	if addressLabeledPrefectureAnchoredRe.MatchString(v) {
+		return false
+	}
+	return dict.MunicipalitySuffixMatch(v)
+}
 
 // 氏名ルールで共用する部分パターン。正規化済みの行を前提とする
 // （全角コロン `：`・全角イコール `＝`・全角スペースは正規化で半角になる）。
@@ -584,6 +638,21 @@ func Builtin() []Rule {
 					ValidateLine: rejectSeparatedDigitGroup(" ", 4)},
 				{Re: dgNoAlnumHyphen(`\d{6} \d{6}`), Base: Medium,
 					ValidateLine: rejectSeparatedDigitGroup(" ", 6)},
+				// ドット区切り（6-6）。「値 = 123456.000007」のような小数リテラルと
+				// 区別できないため、上の空白区切りと異なり RequireContext を必須に
+				// する（以下のスラッシュ・括弧区切りも同じ理由で必須にする）。Base は
+				// 新表記ゆれとして Medium に据え置く。
+				{Re: dgNoAlnumHyphen(`\d{6}\.\d{6}`), Base: Medium, RequireContext: true, RequireContextWindow: digitRuleRequireContextWindow,
+					ValidateLine: rejectSeparatedDigitGroup(".", 6)},
+				// スラッシュ区切り（6-6）。stripSeparators にスラッシュを追加済み
+				// なので、区切りを除いた 12 桁でそのまま検査用数字が検証される。
+				{Re: dgNoAlnumHyphen(`\d{6}/\d{6}`), Base: Medium, RequireContext: true, RequireContextWindow: digitRuleRequireContextWindow,
+					ValidateLine: rejectSeparatedDigitGroup("/", 6)},
+				// 括弧区切り（前半 6 桁を丸括弧書き）。dgNoAlnumHyphen の境界ガードが
+				// 開き括弧の直前の英数字（"func(123456)000007" のような関数呼び出し
+				// 風の表記）を除外するため、数式・関数呼び出しとの衝突は構造的に
+				// 避けられる。
+				{Re: dgNoAlnumHyphen(`\(\d{6}\)\d{6}`), Base: Medium, RequireContext: true, RequireContextWindow: digitRuleRequireContextWindow},
 			},
 		},
 		{
@@ -592,8 +661,12 @@ func Builtin() []Rule {
 			Prefilter:   PrefilterDigit,
 			Context:     []string{"電話", "携帯", "連絡先", "tel", "phone", "fax", "mobile", "denwa"},
 			// 桁ベースの区切りなし固定電話パターンは業務 ID・型番等と衝突しやすいため、
-			// 金額・数量・連番 ID 文脈で棄却する。既存パターンは従来の検出挙動を
-			// 維持するため IgnoreNegativeContext で適用対象から外す。
+			// 金額・数量・連番 ID 文脈で棄却する。区切りあり携帯・区切りなし携帯・
+			// 区切りあり固定・国際表記の 4 パターンは、汎用の負文脈クラス（金額・
+			// カウンタ・汎用窓語）まで適用すると既存の検出挙動を落としかねないため
+			// NegativeContextAdjacentLabelOnly に限定し、採番ラベル（型番・SKU 等）が
+			// 値に直接隣接する場合だけ棄却する（既知FP: 「電話機SKU: 090-...」
+			// 「電話API version: 03-...」。それ以外の検出挙動は維持する）。
 			NegativeContext:      digitRuleNegativeContext,
 			RequireContextWindow: digitRuleRequireContextWindow,
 			Validate:             validPhone,
@@ -604,15 +677,21 @@ func Builtin() []Rule {
 			Kind: PhoneKind,
 			Patterns: []Pattern{
 				// 区切りあり携帯・IP 電話（060/070/080/090/050）
-				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0-\d{4}-\d{4}`), Base: High, IgnoreNegativeContext: true},
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0-\d{4}-\d{4}`), Base: High, NegativeContextMode: NegativeContextAdjacentLabelOnly},
 				// 空白・ドット区切り携帯・IP 電話
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0[ .]\d{4}[ .]\d{4}`), Base: Medium,
 					ValidateLine: rejectSeparatedDigitGroup(" .", 1)},
+				// スラッシュ区切り携帯・IP 電話。スラッシュは URL パス区切りとしても
+				// 一般的で桁形状だけでは判別できないため（"https://.../090/1234/5678"
+				// 「api/v2/090/1234/5678」等）、他の区切りあり携帯パターンと異なり
+				// RequireContext を必須にして構造的に FP を避ける。
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0/\d{4}/\d{4}`), Base: Medium, RequireContext: true,
+					ValidateLine: rejectSeparatedDigitGroup("/", 1)},
 				// 区切りなし携帯・IP 電話
-				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0\d{8}`), Base: Medium, IgnoreNegativeContext: true},
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0\d{8}`), Base: Medium, NegativeContextMode: NegativeContextAdjacentLabelOnly},
 				// 区切りあり固定電話（市外局番 2〜5 桁）。末尾は 3〜4 桁を許容し、
 				// フリーダイヤル・ナビダイヤル等の末尾 3 桁表記も拾う。
-				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}-\d{1,4}-\d{3,4}`), Base: Medium, IgnoreNegativeContext: true},
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}-\d{1,4}-\d{3,4}`), Base: Medium, NegativeContextMode: NegativeContextAdjacentLabelOnly},
 				// ドット区切り固定電話（携帯のドット区切りパターン、上の
 				// 空白・ドット区切り携帯・IP 電話に倣う）。validPhone は 10 桁で
 				// ハイフン・空白のいずれも含まない場合、区切りなし固定電話と同じ
@@ -622,6 +701,20 @@ func Builtin() []Rule {
 				// 表記は自動的に市外局番の実在性検証がかかる。
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}\.\d{1,4}\.\d{3,4}`), Base: Medium,
 					ValidateLine: rejectSeparatedDigitGroup(" .", 1)},
+				// 混在区切り固定電話（ドット+ハイフン、ハイフン+ドット）。上の
+				// ドット単独区切りパターンに倣い RequireContext なし・Base Medium と
+				// する。ただし、上のコメントにある「ドット単独区切りは自動的に
+				// 市外局番辞書照合がかかる」仕組みには乗らない: validPhone は
+				// strings.ContainsAny(m, "- ") でハイフン・空白の有無だけを見て
+				// 経路を分けるため、この混在形は必ずハイフンを含み、区切りあり
+				// 表記と同じ緩い判定（2 桁目が 0 でないことのみ）の経路になる
+				// （dict.ValidAreaCode は通らない）。桁構造自体が既に情報量の
+				// 高いシグナルであるため、他の区切りあり電話パターンと同水準の
+				// 検証で許容する。
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}\.\d{1,4}-\d{3,4}`), Base: Medium,
+					ValidateLine: rejectSeparatedDigitGroup(" .-", 1)},
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}-\d{1,4}\.\d{3,4}`), Base: Medium,
+					ValidateLine: rejectSeparatedDigitGroup(" .-", 1)},
 				// 括弧市外局番（市外局番の直後に市内局番を括弧書き、または
 				// 市外局番全体を括弧で囲む表記）。
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}\(\d{1,4}\)\d{4}`), Base: Medium},
@@ -632,7 +725,7 @@ func Builtin() []Rule {
 				// （dict.ValidAreaCode）で先頭一致の実在性を検証する。
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{9}`), Base: Medium, RequireContext: true},
 				// 国際表記 +81
-				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`\+81[- ]?\d{1,4}[- ]?\d{1,4}[- ]?\d{3,4}`), Base: High, IgnoreNegativeContext: true},
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`\+81[- ]?\d{1,4}[- ]?\d{1,4}[- ]?\d{3,4}`), Base: High, NegativeContextMode: NegativeContextAdjacentLabelOnly},
 			},
 		},
 		{
@@ -651,7 +744,10 @@ func Builtin() []Rule {
 			Validate: dict.ValidPostalCode,
 			Patterns: []Pattern{
 				{Re: dg(`〒\s?\d{3}-?\d{4}`), Base: High},
-				{Re: dg(`\d{3}-\d{4}`), Base: Medium, RequireContext: true},
+				// dgNoAlnumHyphen で英数字・ハイフン連結トークンの内部を除外する
+				// （型番やリビジョン番号のような、英数字とハイフンで連結された長い
+				// トークンから 3-4 桁部分だけを郵便番号として切り出さないため）。
+				{Re: dgNoAlnumHyphen(`\d{3}-\d{4}`), Base: Medium, RequireContext: true},
 				// ハイフンなし裸 7 桁。桁数のみでは業務 ID 等と衝突しやすいため
 				// コンテキストを必須とし、Validate（dict.ValidPostalCode）が
 				// 7 桁完全一致でビットセットに対して実在性を検証するため、
@@ -705,6 +801,47 @@ func Builtin() []Rule {
 						`[` + kanji + hiragana + katakana + `0-9-]{0,30}?` +
 						banchiKanji + `)`,
 				), Base: High},
+			},
+		},
+		{
+			// 都道府県なしラベル付き住所（jp-address 第 3 エントリ）。既定プロファイル
+			// 唯一の住所 FN（例:「住所: 渋谷区神南1-2-3」）を解消する。jp-pii-detector:ignore
+			// 都道府県プレフィクス必須の上記 2 エントリでは拾えず、high-recall 限定の
+			// jp-address-high-recall でしか拾えなかった。jp-address-high-recall を参考にしつつ
+			// ラベル必須化・市区町村辞書ゲートで既定プロファイルでも安全に使えるよう
+			// 厳しくする（設計の詳細は addressLabeledPrefix 等のコメント参照）。
+			//
+			// twin パターン（マーカー付き番地形・ダッシュ番地形の両方に High/Medium
+			// の 2 枚組）が必須である理由: high-recall プロファイルでは同じ入力に
+			// jp-address-high-recall の High twin も発火しうる。resolveOverlaps の
+			// 優先順位は (1)Confidence → (2)内部スコア（高再現率ルールは
+			// finalizeFindingScore で -20 の prior）の順であるため、この新エントリも
+			// High まで昇格できる twin にしておけば、High 同士の比較で prior の無い
+			// jp-address 側が常に勝ち、low/medium/high-recall の 3 プロファイル全部で
+			// ルール帰属が安定する。この新エントリが Medium 止まりだと、high-recall
+			// プロファイルでの帰属が jp-address-high-recall に化けてしまい評価が壊れる
+			// （corpusv2 側の対応する合成ポジティブは、この第 3 エントリと重複しない
+			// ラベルなし形へ変更済み。internal/corpusv2/corpusv2.go 参照）。
+			ID:                "jp-address",
+			Description:       "住所（都道府県〜番地）",
+			Prefilter:         PrefilterDigit,
+			PrefilterLiterals: []string{"住所", "所在地", "自宅", "居住", "address"},
+			Context:           []string{"住所", "所在地", "自宅", "address", "居住"},
+			Validate:          addressLabeledMunicipalityValid,
+			Patterns: []Pattern{
+				// マーカー付き番地（丁目/番/号）。High 側は市区町村マッチ直後の
+				// ギャップが ABR 町字マスター由来の実在町字名で始まる場合だけ
+				// Pattern.Validate を通過する（jp-address-high-recall と同じ
+				// 町字辞書昇格 twin）。
+				{Re: addressLabeledMarkedRe, Base: High, Validate: dict.MunicipalityThenTownMatch},
+				{Re: addressLabeledMarkedRe, Base: Medium},
+				// マーカーなしダッシュ連結。High/Medium 双方に notCalendarDateBanchi
+				// （ISO 日付誤検出の棄却）を適用し、High 側だけはさらに
+				// dict.MunicipalityThenTownMatch も満たす場合に限る
+				// （notCalendarDateBanchiAndRealTown、jp-address-high-recall と
+				// 同じ AND 合成。理由は同関数のコメント参照）。
+				{Re: addressLabeledDashRe, Base: High, Validate: notCalendarDateBanchiAndRealTown},
+				{Re: addressLabeledDashRe, Base: Medium, Validate: notCalendarDateBanchi},
 			},
 		},
 		{
@@ -830,6 +967,14 @@ func Builtin() []Rule {
 				// ハイフン区切り（4-4-4）。dgNoAlnumHyphen で UUID 等のハイフン区切り
 				// トークンの内部を除外する（dg ではなく my-number と同じ境界ガード）。
 				{Re: dgNoAlnumHyphen(`\d{4}-\d{4}-\d{4}`), Base: High, RequireContext: true},
+				// ドット区切り（4-4-4）。このルールは Base High だが、新表記ゆれ形は
+				// Base Medium に据え置き、High帯キャリブレーション（validate だけで
+				// 精度が出る場合に限り High とする方針）を守る。ValidateLine は
+				// 自身の内部グループと同じ幅（4 桁）の隣接ドット区切りグループが
+				// あれば、より長い数字列の一部とみなして棄却する
+				// （my-number の 4-4-4 空白区切りパターンと同じ手法）。
+				{Re: dg(`\d{4}\.\d{4}\.\d{4}`), Base: Medium, RequireContext: true,
+					ValidateLine: rejectSeparatedDigitGroup(".", 4)},
 			},
 		},
 		{
@@ -859,6 +1004,13 @@ func Builtin() []Rule {
 				// stripSeparators で区切り文字を除いた上で判定する）。
 				{Re: dg(`\d{4}[- ]?\d{6}`), Base: High, RequireContext: true,
 					ValidateLine: rejectSeparatedDigitGroup(" ", 1)},
+				// ドット区切り（4-6）。既存のハイフン・空白区切りは書式自体の
+				// 情報量が高く Base High だが、ドット区切りは小数点のようにも
+				// 見えるため新表記ゆれとして Base Medium に据え置く。
+				// stripSeparators は既にドットを除去するため validPensionNumber の
+				// AllSame 判定はそのまま効く。
+				{Re: dg(`\d{4}\.\d{6}`), Base: Medium, RequireContext: true,
+					ValidateLine: rejectSeparatedDigitGroup(".", 1)},
 			},
 		},
 		{
@@ -899,6 +1051,16 @@ func Builtin() []Rule {
 			Validate:             validBankAccount,
 			Patterns: []Pattern{
 				{Re: dg(`\d{7}`), Base: Medium, RequireContext: true, ValidateLine: rejectYuchoAccountSuffix},
+				// 空白・スラッシュ区切り（3+4）。normalize.Line が全角スラッシュ
+				// 「／」を半角へ畳むため、この 1 パターンで両表記に対応する。
+				// validBankAccount は区切り文字を含む生のマッチ文字列に対して
+				// AllSame を判定するため、区切りを挟むと全桁同一ダミー
+				// （"口座番号 000 0000" 等）を取りこぼす。区切りを除いてから
+				// 同じ判定を行う Pattern.Validate を追加する
+				// （validPensionNumber 等と同じ手法）。
+				{Re: dg(`\d{3}[ /]\d{4}`), Base: Medium, RequireContext: true,
+					Validate:     func(m string) bool { return !checksum.AllSame(stripSeparators(m)) },
+					ValidateLine: rejectSeparatedDigitGroup(" /", 3, 4)},
 			},
 		},
 		{
@@ -984,6 +1146,15 @@ func Builtin() []Rule {
 			Validate:             validHealthInsurance,
 			Patterns: []Pattern{
 				{Re: dg(`\d{8}`), Base: Medium, RequireContext: true},
+				// 空白区切り8桁（4+4）。8桁連結時と同じ RequireContext・窓
+				// （ルール既定の 40 ルーン）を使う。validHealthInsurance は区切り
+				// 文字を含む生のマッチ文字列に対して AllSame を判定するため、
+				// 空白を挟むと全桁同一ダミー（"保険者番号 0000 0000" 等）を
+				// 取りこぼす。区切りを除いてから同じ判定を行う Pattern.Validate を
+				// 追加する。
+				{Re: dg(`\d{4} \d{4}`), Base: Medium, RequireContext: true,
+					Validate:     func(m string) bool { return !checksum.AllSame(stripSeparators(m)) },
+					ValidateLine: rejectSeparatedDigitGroup(" ", 4)},
 				// 国民健康保険の保険者番号は 6 桁。日常的な数字との衝突が大きい
 				// ため、既存の広い文脈語（「保険証」「被保険者」等）だけでは
 				// 発火させず、正規表現自体にも強ラベル「保険者番号」と通常の

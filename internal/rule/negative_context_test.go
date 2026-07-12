@@ -39,6 +39,10 @@ func TestClassifyNegativeKeyword(t *testing.T) {
 		{"品番", NegativeKeywordLabelPrefix},
 		{"図面", NegativeKeywordLabelPrefix},
 		{"追跡番号", NegativeKeywordLabelPrefix},
+		{"トランザクション", NegativeKeywordLabelPrefix},
+		{"sku", NegativeKeywordLabelPrefix},
+		{"version", NegativeKeywordLabelPrefix},
+		{"ver", NegativeKeywordLabelPrefix},
 		// 汎用窓語（既存 4 ルール専用）。ラベル接頭クラスの語と紛らわしい
 		// 「伝票」（≠伝票番号）が誤って LabelPrefix に分類されないことも確認する。
 		{"注文", NegativeKeywordGeneric},
@@ -57,10 +61,12 @@ func TestClassifyNegativeKeyword(t *testing.T) {
 	}
 }
 
-// digitRuleNegativeContext（jp-drivers-license 等 4 ルール）と
-// digitRuleUnitAdjacentNegativeContext（jp-my-number 等 5 ルール）で、
-// 汎用窓語・採番ラベル接頭語の混入がないことを確認する
-// （P05 の変更対象: 汎用窓語は 5 ルールに適用しない）。
+// digitRuleNegativeContext（jp-drivers-license 等）と
+// digitRuleUnitAdjacentNegativeContext（jp-my-number 等）で、汎用窓語の
+// 混入がないこと・採番ラベル接頭語と通貨接頭語が両方の語彙に含まれることを
+// 確認する（P05 の変更対象: 汎用窓語は my-number 等の語彙に適用しない。採番
+// ラベル接頭語は値への直接隣接でしか効かない隣接判定限定クラスのため、
+// 汎用窓語と異なり両方の語彙に加えても誤爆リスクが小さい）。
 func TestDigitRuleNegativeContextVocabSeparation(t *testing.T) {
 	for _, w := range genericNegativeWords {
 		if !slices.Contains(digitRuleNegativeContext, w) {
@@ -74,8 +80,8 @@ func TestDigitRuleNegativeContextVocabSeparation(t *testing.T) {
 		if !slices.Contains(digitRuleUnitAdjacentNegativeContext, w) {
 			t.Errorf("digitRuleUnitAdjacentNegativeContext は採番ラベル %q を含むべき", w)
 		}
-		if slices.Contains(digitRuleNegativeContext, w) {
-			t.Errorf("digitRuleNegativeContext は採番ラベル %q を含むべきではない", w)
+		if !slices.Contains(digitRuleNegativeContext, w) {
+			t.Errorf("digitRuleNegativeContext は採番ラベル %q を含むべき", w)
 		}
 	}
 	for _, w := range currencyPrefixWords {

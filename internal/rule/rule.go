@@ -40,6 +40,35 @@ func ParseConfidence(s string) (Confidence, error) {
 	return 0, fmt.Errorf("invalid confidence %q (low|medium|high)", s)
 }
 
+// NegativeContextMode は Pattern が Rule.NegativeContext による棄却判定を
+// どのクラスまで適用するかを表す（internal/detect が解釈する）。
+type NegativeContextMode int
+
+const (
+	// NegativeContextAll はゼロ値（既定）。Rule.NegativeContext の全クラス
+	// （汎用窓語・通貨接頭/接尾・カウンタ接尾・採番ラベル接頭、および採番
+	// ラベル接頭クラスが 1 語でもあれば働く採番ラベル接尾辞ヒューリスティック）
+	// を従来どおり適用する。既存パターンの挙動を変えない後方互換の既定値。
+	NegativeContextAll NegativeContextMode = iota
+	// NegativeContextAdjacentLabelOnly は、Rule.NegativeContext のうち
+	// 採番ラベル接頭クラス（ClassifyNegativeKeyword が
+	// NegativeKeywordLabelPrefix と分類する語）の**明示語彙**が値に直接隣接
+	// する場合（internal/detect の hasLabelBefore。助詞・コロン・イコールの
+	// グルーは許容）だけ棄却する。汎用窓語・通貨・カウンタの各クラスと、
+	// 採番ラベル接尾辞ヒューリスティック（hasNumberingSuffixBefore）は
+	// 適用しない。後者を適用しない理由: 「お客様番号 090-XXXX-XXXX」の
+	// ような正当な電話番号のラベルは「番号」で終わることが多く、接尾辞の
+	// 形状だけで判定すると実電話番号まで誤って棄却（FN 化）してしまう。
+	// 明示語彙（sku・型番等）への直接隣接に限定すれば、既存の高精度
+	// パターンの検出挙動を変えずに既知の誤検出だけを狙い撃ちできる。
+	// 同一ルール内で高精度パターンと高偽陽性パターンが混在し、後者にだけ
+	// 限定的に負文脈を適用したい場合に使う。
+	NegativeContextAdjacentLabelOnly
+	// NegativeContextIgnore は Rule.NegativeContext による棄却をこの
+	// パターンには一切適用しない（旧 IgnoreNegativeContext: true 相当）。
+	NegativeContextIgnore
+)
+
 // Pattern は 1 つの正規表現パターン。
 // 正規表現にキャプチャグループがある場合、グループ 1 を検出対象とする
 // （境界ガード `(?:^|[^0-9])` などをグループ外に置くため）。
@@ -56,10 +85,12 @@ type Pattern struct {
 	// ルール側の値を継承する。同一ルール内の低エントロピーな形式だけを、既存形式
 	// より狭い文脈へ限定したい場合に使う。
 	RequireContextWindow int
-	// IgnoreNegativeContext が true の場合、Rule.NegativeContext による
-	// 棄却をこのパターンには適用しない。同一ルール内で既存の高精度パターンと
-	// 負文脈を必要とする高偽陽性パターンが混在する場合に使う。
-	IgnoreNegativeContext bool
+	// NegativeContextMode は Rule.NegativeContext による棄却判定をこの
+	// パターンにどう適用するかを表す（既定はゼロ値の NegativeContextAll）。
+	// 同一ルール内で既存の高精度パターンと負文脈を必要とする高偽陽性
+	// パターンが混在する場合や、汎用の負文脈クラスは誤爆リスクが高いが
+	// 明示的な採番ラベルの直接隣接だけは安全に抑制したい場合に使う。
+	NegativeContextMode NegativeContextMode
 	// Validate はこのパターン固有の追加検証（nil なら検証なし）。
 	// ルール全体の Rule.Validate に加えて適用され、パターンごとに
 	// 異なる検証（例: 氏名の弱いラベルだけ姓名辞書で照合する）を

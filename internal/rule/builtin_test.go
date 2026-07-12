@@ -783,3 +783,67 @@ func TestValidRomajiFullName(t *testing.T) {
 		})
 	}
 }
+
+// NegativeContextMode のゼロ値が NegativeContextAll であることを固定する
+// 安全網テスト。Pattern に NegativeContextMode を指定しなければ従来どおり
+// Rule.NegativeContext の全クラスが適用される後方互換を保証する。
+func TestNegativeContextModeZeroValueIsAll(t *testing.T) {
+	var m NegativeContextMode
+	if m != NegativeContextAll {
+		t.Errorf("NegativeContextMode のゼロ値 = %v, want NegativeContextAll", m)
+	}
+}
+
+// TestPhoneNumberPatternsUseAdjacentLabelOnlyMode は jp-phone-number の
+// 区切りあり携帯・区切りなし携帯・区切りあり固定電話・+81 国際表記の 4
+// パターン（旧 IgnoreNegativeContext: true）が NegativeContextAdjacentLabelOnly
+// へ移行し、それ以外のパターンは既定（ゼロ値 NegativeContextAll）のままで
+// あることを固定する安全網テスト。挙動の詳細（採番ラベル明示語彙の直接隣接
+// だけ抑制し、「お客様番号」のような正当なラベルは誤って抑制しない）は
+// internal/detect/detect_test.go 側で確認する。
+func TestPhoneNumberPatternsUseAdjacentLabelOnlyMode(t *testing.T) {
+	// キーは実際にパターン生成に使うのと同じ境界ガードヘルパー呼び出しの
+	// 結果（Re.String()）そのもの。builtin.go 側でヘルパーが変われば
+	// このテストも検出漏れ（下の「想定パターンが見つからない」失敗）で
+	// 追随を促される。
+	wantAdjacentLabelOnly := map[string]bool{
+		dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0-\d{4}-\d{4}`).String():                      true,
+		dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0[ .]\d{4}[ .]\d{4}`).String():                false,
+		dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0/\d{4}/\d{4}`).String():                      false,
+		dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0\d{8}`).String():                             true,
+		dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}-\d{1,4}-\d{3,4}`).String():                 true,
+		dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}\.\d{1,4}\.\d{3,4}`).String():               false,
+		dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}\.\d{1,4}-\d{3,4}`).String():                false,
+		dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}-\d{1,4}\.\d{3,4}`).String():                false,
+		dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}\(\d{1,4}\)\d{4}`).String():                 false,
+		dgNoDigitBeforeNoAlnumHyphenAfter(`\(0\d{1,4}\)\s?\d{1,4}-?\d{4}`).String():            false,
+		dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{9}`).String():                                   false,
+		dgNoDigitBeforeNoAlnumHyphenAfter(`\+81[- ]?\d{1,4}[- ]?\d{1,4}[- ]?\d{3,4}`).String(): true,
+	}
+	found := map[string]bool{}
+	for _, r := range Builtin() {
+		if r.ID != "jp-phone-number" {
+			continue
+		}
+		for _, p := range r.Patterns {
+			src := p.Re.String()
+			wantALO, ok := wantAdjacentLabelOnly[src]
+			if !ok {
+				t.Fatalf("正規表現 %q が想定リストにありません（新規パターン追加時はこのテストも更新すること）", src)
+			}
+			found[src] = true
+			want := NegativeContextAll
+			if wantALO {
+				want = NegativeContextAdjacentLabelOnly
+			}
+			if p.NegativeContextMode != want {
+				t.Errorf("パターン %q の NegativeContextMode = %v, want %v", src, p.NegativeContextMode, want)
+			}
+		}
+	}
+	for src := range wantAdjacentLabelOnly {
+		if !found[src] {
+			t.Errorf("想定していたパターン %q が jp-phone-number に見つかりません", src)
+		}
+	}
+}

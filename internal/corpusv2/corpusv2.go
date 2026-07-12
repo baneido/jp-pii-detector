@@ -441,7 +441,14 @@ func positiveCandidates(id string, seed int) []evalcase.Case {
 		casePrefix := fmt.Sprintf("case_id=%02d ", i+1)
 		switch id {
 		case "jp-my-number":
-			out = append(out, lineCase("マイナンバー: "+myNumber(seed+i)))
+			switch i {
+			case 0:
+				// ドット区切り6-6（区切り表記ゆれ新パターンの合成ポジティブ）。
+				num := myNumber(seed + i)
+				out = append(out, lineCase("マイナンバー: "+num[:6]+"."+num[6:]))
+			default:
+				out = append(out, lineCase("マイナンバー: "+myNumber(seed+i)))
+			}
 		case "jp-phone-number":
 			value := "090-" + d[:4] + "-" + d[4:8]
 			switch i {
@@ -449,6 +456,13 @@ func positiveCandidates(id string, seed int) []evalcase.Case {
 				out = append(out, evalcase.Case{File: "added.txt", Diff: []evalcase.DiffLine{{Text: "TEL: " + value, Added: true}}, Tags: []string{"layout:diff"}})
 			case 1:
 				out = append(out, evalcase.Case{File: "user.json", Content: "{\n  \"phone\": \"" + value + "\"\n}", Tags: []string{"file-format:json", "layout:content"}})
+			case 2:
+				// 保護系ポジティブ（NegativeContextAdjacentLabelOnly の保護規則
+				// 固定）。「お客様番号」は「番号」で終わるが numberingLabelPrefixes
+				// の明示語彙のどれとも完全一致しないため、採番ラベル接尾辞
+				// ヒューリスティックを適用しない AdjacentLabelOnly では誤って
+				// 抑制されない、採番風だが電話の実値。
+				out = append(out, lineCase("お客様番号 "+value))
 			default:
 				out = append(out, lineCase("TEL: "+value))
 			}
@@ -458,7 +472,21 @@ func positiveCandidates(id string, seed int) []evalcase.Case {
 				out = append(out, lineCase("郵便番号: "+code[:3]+"-"+code[3:]))
 			}
 		case "jp-address":
-			out = append(out, lineCase(fmt.Sprintf("住所: 東京都渋谷区神南%d丁目%d番%d号", i%9+1, i%20+1, i%15+1)))
+			switch i {
+			case 0:
+				// ラベル付き都道府県なし形（jp-address 第 3 エントリの合成ポジティブ）。
+				// 神南は実在町字（dict.MunicipalityThenTownMatch）のため High twin が
+				// 成立するはず。
+				out = append(out, lineCase("住所: 渋谷区神南1-2-3")) // jp-pii-detector:ignore
+			case 1:
+				// 同じくラベル付き都道府県なし形だが、市区町村直後が ABR 町字マスターに
+				// 存在しない語（架空坂。TestPromotionContextWindowBoundary と同じ、
+				// 町字マスターに前方一致しない架空の町名）で、町字辞書昇格 twin ではなく
+				// 市区町村レベルの辞書ゲートだけに依存する形をあわせて確認する。
+				out = append(out, lineCase("住所: 渋谷区架空坂1-2-3")) // jp-pii-detector:ignore
+			default:
+				out = append(out, lineCase(fmt.Sprintf("住所: 東京都渋谷区神南%d丁目%d番%d号", i%9+1, i%20+1, i%15+1)))
+			}
 		case "email-address":
 			out = append(out, lineCase("連絡先: corpusv2-"+digitRun(seed+i+90, 8)+"@baneido.com"))
 		case "email-address-eai":
@@ -479,7 +507,13 @@ func positiveCandidates(id string, seed int) []evalcase.Case {
 		case "jp-residence-card":
 			out = append(out, lineCase("在留カード番号: AB"+d[:8]+"CD"))
 		case "jp-bank-account":
-			out = append(out, lineCase("口座番号: "+d[:7]))
+			switch i {
+			case 0:
+				// 空白区切り（3+4、区切り表記ゆれ新パターンの合成ポジティブ）。
+				out = append(out, lineCase("口座番号: "+d[:3]+" "+d[3:7]))
+			default:
+				out = append(out, lineCase("口座番号: "+d[:7]))
+			}
 		case "jp-yucho-account":
 			number := d[4:10] + "1"
 			symbol := yuchoSymbol("1"+d[:2], number)
@@ -499,7 +533,13 @@ func positiveCandidates(id string, seed int) []evalcase.Case {
 		case "person-name":
 			out = append(out, lineCase(casePrefix+"氏名: "+name))
 		case "jp-address-high-recall":
-			out = append(out, lineCase(fmt.Sprintf("住所: 渋谷区神南%d-%d-%d", i%9+1, i%20+1, i%15+1)))
+			// ラベルなし形（jp-address 第 3 エントリはラベル必須のため、この形には
+			// 発火しない）。ラベル付きのまま（旧「住所: 渋谷区神南N-N-N」）だと、
+			// 新しい jp-address 第 3 エントリが同じ値を検出し、high-recall
+			// プロファイルで Want=jp-address-high-recall のケースに jp-address が
+			// 帰属して row FP/FN が発生する（internal/rule/builtin.go の jp-address
+			// 第 3 エントリのコメント参照）。
+			out = append(out, lineCase(fmt.Sprintf("渋谷区神南%d-%d-%d", i%9+1, i%20+1, i%15+1)))
 		case "person-name-high-recall":
 			out = append(out, lineCase(casePrefix+"担当: "+name))
 		case "person-name-structured":
@@ -547,6 +587,15 @@ func hardNegativeCases(seed int) []evalcase.Case {
 		// 12桁業務IDが偶然マイナンバーの検査数字を満たす既知FP系統。
 		add("business-id", label+" "+myNumber(seed+500+i)+" を処理")
 	}
+	// 負文脈「隣接ラベル」判定のグルー許容（hasLabelBefore）と採番ラベル
+	// 接尾辞ヒューリスティック（hasNumberingSuffixBefore）が対象とする
+	// 表記ゆれ（助詞・コロン・イコールでラベルと値が途切れる形）を、上の
+	// 空白区切り系統に加えて評価コーパスにも反映する。
+	add("business-id", "受付番号は"+myNumber(seed+920)+"です")
+	add("business-id", "ジョブID: "+myNumber(seed+921))
+	add("business-id", "発注コード="+myNumber(seed+922))
+	add("business-id", "管理キー: "+myNumber(seed+923))
+	add("model", "海外パスポート対応 型番: TK"+digitRun(seed+924, 7))
 	testPANs := wellKnownTestPANs()
 	for i, label := range []string{"決済sandboxのテストカード", "payment fixture", "QA用PAN", "テスト決済", "カードブランド試験"} {
 		add("test-pan", label+" "+testPANs[i])
@@ -589,6 +638,17 @@ func hardNegativeCases(seed int) []evalcase.Case {
 	add("address-like", fmt.Sprintf("バージョン東京都版%d-%d-%d", 1, 2, 3))
 	add("reserved-email", "連絡先 "+"user@"+"example.com")
 	add("reserved-email", "メール "+"user@"+"foo.invalid")
+	// #46 と同型の区切り表記ゆれ追加対応（本タスク）で導入した新パターンに
+	// 対応する hard negative。RequireContext・NegativeContext・ValidateLine の
+	// いずれかで正しく非検出になることを固定する。
+	add("phone-url-slash", "https://example.com/090/"+digitRun(seed+940, 4)+"/"+digitRun(seed+941, 4))
+	add("phone-url-slash", "api/v2/090/"+digitRun(seed+942, 4)+"/"+digitRun(seed+943, 4))
+	add("phone-date-slash", fmt.Sprintf("更新日: %d/%02d/%02d", 2024, 4, 1))
+	add("phone-version-mixed", "バージョン 0."+digitRun(seed+944, 4)+"-"+digitRun(seed+945, 4))
+	add("mynumber-decimal", "value = "+digitRun(seed+946, 6)+"."+digitRun(seed+947, 6))
+	add("mynumber-decimal", "個人番号"+digitRun(seed+948, 6)+"."+digitRun(seed+949, 6)+"円")
+	add("bank-space-chain", "口座番号 "+digitRun(seed+950, 3)+" "+digitRun(seed+951, 4)+" "+digitRun(seed+952, 4))
+	add("health-insurance-space-chain", "保険者番号 "+digitRun(seed+953, 4)+" "+digitRun(seed+954, 4)+" "+digitRun(seed+955, 4))
 	return out
 }
 

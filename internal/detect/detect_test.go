@@ -104,6 +104,39 @@ func TestMyNumberSeparatorVariants(t *testing.T) {
 	}
 }
 
+// TestMyNumberDotSlashParenVariants はドット・スラッシュ・括弧区切りの 6-6
+// マイナンバー表記をカバーする（#46 と同型の作業）。小数リテラル・URL・関数
+// 呼び出し風の表記と衝突しないよう、3 形とも RequireContext を必須にしている。
+func TestMyNumberDotSlashParenVariants(t *testing.T) {
+	d := newDetector(t, "")
+	mynum := testfixtures.MustGet(t, "detect.mynumber_valid")
+	sep := func(c string) string { return mynum[:6] + c + mynum[6:] }
+	paren := "(" + mynum[:6] + ")" + mynum[6:]
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"ドット区切り コンテキストあり", "個人番号：" + sep("."), []string{"jp-my-number"}},
+		{"スラッシュ区切り コンテキストあり", "my_number: " + sep("/"), []string{"jp-my-number"}},
+		{"括弧区切り コンテキストあり", "mynumber: " + paren, []string{"jp-my-number"}},
+		{"ドット区切り コンテキストなしは対象外（小数リテラルと区別できない）", "値 = " + sep("."), nil},
+		{"スラッシュ区切り コンテキストなしは対象外", sep("/"), nil},
+		{"括弧区切り コンテキストなしは対象外", paren, nil},
+		{"文脈ありでも金額サフィックス（負文脈）があれば抑制", "個人番号" + sep(".") + "円", nil},
+		// 数式・関数呼び出し風は境界ガードで自然に非対象になる。
+		{"関数呼び出し風（開き括弧の直前が英字）は対象外", "mynumber: func" + paren, nil},
+		{"数式風（閉じ括弧の直後に空白と演算子）は対象外", "mynumber: (" + mynum[:6] + ") + " + mynum[6:], nil},
+		// 部分一致防止（隣接する同幅グループがあれば全体を棄却）。
+		{"ドット区切りの直後にさらに同幅のドット区切り数字が続く場合は対象外", "個人番号：" + sep(".") + "." + mynum[6:], nil},
+		{"スラッシュ区切りの直前にさらに同幅のスラッシュ区切り数字がある場合は対象外", "個人番号：" + mynum[6:] + "/" + sep("/"), nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
 func TestNumericSeparatorVariantsRejectLongTokenPrefixes(t *testing.T) {
 	d := newDetector(t, "")
 	tests := []struct {
@@ -286,6 +319,97 @@ func TestPhoneSepAllowsAreaCodeMissingFromSeedDictionary(t *testing.T) {
 	assertRules(t, d.ScanLine("f.txt", 1, "電話番号：04992-2-1234"), "jp-phone-number")
 }
 
+// TestPhoneAdjacentLabelOnlySuppressesExplicitNumberingLabels は、区切りあり
+// 携帯・区切りなし携帯・区切りあり固定電話（旧 IgnoreNegativeContext: true、現
+// NegativeContextAdjacentLabelOnly）が、採番ラベル接頭クラスの明示語彙
+// （sku・version・型番・シリアル番号等）に値が直接隣接する場合は抑制する
+// ことを確認する。既知FP: 「電話機SKU: 090-...」「電話API version: 03-...」
+// （internal/corpusv2/corpusv2.go の hard-negative "phone-like"）。
+func TestPhoneAdjacentLabelOnlySuppressesExplicitNumberingLabels(t *testing.T) {
+	d := newDetector(t, "")
+	mobileSep := testfixtures.MustGet(t, "detect.phone_mobile_sep")
+	mobileNoSep := testfixtures.MustGet(t, "detect.phone_mobile_nosep")
+	fixedSep := testfixtures.MustGet(t, "detect.phone_fixed_tokyo")
+	tests := []struct{ name, line string }{
+		{"SKU（区切りあり携帯、コロン+空白のグルー）", "電話機SKU: " + mobileSep + " (test model)"},
+		{"version（区切りあり固定電話、コロン+空白のグルー）", "電話API version: " + fixedSep + " (alpha)"},
+		{"型番（区切りあり携帯、コロン+空白のグルー）", "型番: " + mobileSep},
+		{"シリアル番号（区切りなし携帯、空白のみ）", "シリアル番号 " + mobileNoSep},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line))
+		})
+	}
+}
+
+// TestPhoneAdjacentLabelOnlyPreservesNonExplicitLabels は
+// NegativeContextAdjacentLabelOnly が採番ラベル接尾辞ヒューリスティック
+// （hasNumberingSuffixBefore）を呼ばないことを確認する最重要ガード。
+// 「お客様番号」は「番号」で終わるが numberingLabelPrefixes の明示語彙
+// （伝票番号・受付番号 等）のどれとも完全一致しないため、接尾辞の形状だけで
+// 判定する接尾辞ヒューリスティックが働くと実電話番号を誤って棄却（FN 化）
+// してしまう。明示語彙への直接隣接に限定した AdjacentLabelOnly では、この
+// ような正当な電話ラベルを誤って抑制しないことを確認する。
+func TestPhoneAdjacentLabelOnlyPreservesNonExplicitLabels(t *testing.T) {
+	d := newDetector(t, "")
+	mobileSep := testfixtures.MustGet(t, "detect.phone_mobile_sep")
+	fixedSep := testfixtures.MustGet(t, "detect.phone_fixed_tokyo")
+	intl := testfixtures.MustGet(t, "detect.phone_intl_mobile")
+	tests := []struct{ name, line string }{
+		{"お客様番号（最重要ガード: 番号で終わるが明示語彙に非一致）", "お客様番号 " + mobileSep},
+		{"連絡先（ラベルは正文脈語で負文脈語ではない）", "連絡先 " + mobileSep},
+		{"TEL", "TEL: " + fixedSep},
+		{"+81 国際表記（負文脈語なし）", intl},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), "jp-phone-number")
+		})
+	}
+}
+
+// TestPhoneAdjacentLabelOnlyCrossLineBehavior は、ラベルだけの行「SKU:」と
+// 電話番号だけの次行という論理隣接ペアに対する hasCrossLineNegativeContext の
+// 実挙動を固定する。cross-line 経路は前後の論理隣接行を結合してから同じ
+// hasNegativeContextNear（AdjacentLabelOnly）を評価するため、単一行の
+// 「SKU: 090-...」と同様に抑制される（cross-line 経路にも AdjacentLabelOnly
+// の制限をそのまま適用しただけで、抑制させるための追加改修はしていない）。
+func TestPhoneAdjacentLabelOnlyCrossLineBehavior(t *testing.T) {
+	d := newDetector(t, "")
+	mobileSep := testfixtures.MustGet(t, "detect.phone_mobile_sep")
+	assertRules(t, d.ScanContent("f.txt", "SKU:\n"+mobileSep))
+}
+
+// TestPhoneAdjacentLabelOnlyBypassesSourceContextNegativeTokens は統合前検証で
+// 実測された回帰の再発防止テスト。モードの契約: NegativeContextAdjacentLabelOnly
+// で抑制に使えるのは採番ラベル明示語彙（numberingLabelPrefixes）の隣接一致
+// **だけ**で、それ以外の抑制経路は旧 IgnoreNegativeContext: true と同一（＝無効）。
+// 構造化 source context の NegativeText（キー名 phone_id / phoneID をトークン化
+// した id 等）は明示語彙の隣接判定ではないため、このモードではバイパスされ、
+// .yaml のキーや .go の変数代入にある正当な電話番号は旧挙動どおり Base の High
+// のまま検出される（一時 hasSourceNegativeForFinding と hasNegativeNear の
+// st.NegativeText 判定を AdjacentLabelOnly にも適用したことで、キー名の id が
+// 負文脈として効いてこの 2 ケースが抑制される回帰が起きた）。
+func TestPhoneAdjacentLabelOnlyBypassesSourceContextNegativeTokens(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, file, content string
+	}{
+		{"yaml キー phone_id（id が source negative トークン）", "a.yaml", `phone_id: "090-2345-6789"`},
+		{"go 変数 phoneID（id が source negative トークン）", "b.go", `phoneID := "090-2345-6789"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanContent(tt.file, tt.content)
+			assertRules(t, fs, "jp-phone-number")
+			if fs[0].Confidence != rule.High {
+				t.Errorf("confidence = %v, want high", fs[0].Confidence)
+			}
+		})
+	}
+}
+
 // TestPhoneNumberSeparatorVariants は issue #46 で追加した区切り表記ゆれ
 // （区切りなし固定電話・空白/ドット区切り携帯・括弧市外局番・フリーダイヤル）を
 // カバーする。既存 4 パターン（区切りあり携帯・区切りなし携帯・区切りあり固定・
@@ -348,6 +472,60 @@ func TestPhoneLandlineDotSeparated(t *testing.T) {
 		// なり別の理由（携帯・IP 以外の 11 桁は不成立）で棄却されるため、桁数構造を
 		// 10 桁に保ったまま同種の市外局番不在を再現できるこの値を使う）。
 		{"実在しない市外局番は文脈ありでも棄却", "電話: 07.1234.5678", nil, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, tt.want...)
+			if len(fs) == 1 && fs[0].Confidence != tt.conf {
+				t.Errorf("confidence = %v, want %v", fs[0].Confidence, tt.conf)
+			}
+		})
+	}
+}
+
+// TestPhoneSlashSeparatedMobile はスラッシュ区切り携帯番号（例:「連絡先
+// 090/1234/5678」）をカバーする。スラッシュは URL パス区切りとしても一般的で
+// 桁形状だけでは判別できないため、他の区切りあり携帯パターンと異なり
+// RequireContext を必須にして URL パス風の表記を構造的に避ける。
+func TestPhoneSlashSeparatedMobile(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"コンテキストあり", "連絡先 090/1234/5678", []string{"jp-phone-number"}},
+		{"コンテキストなしは対象外", "090/1234/5678", nil},
+		{"携帯プレフィックスでないスラッシュ区切りは対象外", "連絡先 030/1234/5678", nil},
+		{"URLパス風は対象外（コンテキストなし）", "https://example.com/090/1234/5678", nil},
+		{"URLパス風は対象外（APIパス）", "api/v2/090/1234/5678", nil},
+		{"日付風は対象外（桁形状不一致）", "更新日: 2024/04/01", nil},
+		{"直後にさらにスラッシュ数字が続く場合は対象外", "連絡先 090/1234/5678/9", nil},
+		{"直前にさらにスラッシュ数字がある場合は対象外", "連絡先 9/090/1234/5678", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestPhoneMixedSeparatorLandline は混在区切り固定電話（ドット+ハイフン、
+// ハイフン+ドット）をカバーする。既存のドット単独区切りパターンに倣い
+// RequireContext なし・Base Medium とする。
+func TestPhoneMixedSeparatorLandline(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+		conf       rule.Confidence
+	}{
+		{"ドット+ハイフン", "本社: 03.1234-5678", []string{"jp-phone-number"}, rule.Medium},
+		{"ハイフン+ドット", "本社: 03-1234.5678", []string{"jp-phone-number"}, rule.Medium},
+		{"コンテキストなしでも検出（Base Medium のまま）", "03.1234-5678", []string{"jp-phone-number"}, rule.Medium},
+		{"バージョン風（先頭グループが数字を持たない）は対象外", "バージョン 0.1234-5678", nil, 0},
+		{"直後にさらにドット数字が続く場合は対象外", "本社: 03.1234-5678.9", nil, 0},
+		{"直前にさらにハイフン数字がある場合は対象外", "本社: 9-03.1234-5678", nil, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -636,6 +814,36 @@ func TestDriversLicenseHyphenVariant(t *testing.T) {
 	}
 }
 
+// TestDriversLicenseDotSeparated はドット区切り（4-4-4）の運転免許証番号
+// 表記をカバーする。このルールは Base High だが、新表記ゆれ形は High帯
+// キャリブレーション（validate だけで精度が出る場合に限り High とする方針）を
+// 守るため Base Medium に据え置く。
+func TestDriversLicenseDotSeparated(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+		conf       rule.Confidence
+	}{
+		{"ドット区切り コンテキストあり", "免許 1234.5678.9012", []string{"jp-drivers-license"}, rule.Medium},
+		{"ドット区切り コンテキストなし", "1234.5678.9012", nil, 0},
+		{"プレースホルダ（全桁同一）はドット区切りでも棄却", "免許 0000.0000.0000", nil, 0},
+		{"プレースホルダ（全桁同一・非ゼロ）はドット区切りでも棄却", "免許 1111.1111.1111", nil, 0},
+		{"先頭が0の場合はドット区切りでも棄却", "免許 0501.2345.6789", nil, 0},
+		{"直後にさらに同幅のドット区切り数字が続く場合は対象外", "免許 1234.5678.9012.3456", nil, 0},
+		{"直前にさらに同幅のドット区切り数字がある場合は対象外", "免許 3456.1234.5678.9012", nil, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, tt.want...)
+			if len(fs) == 1 && fs[0].Confidence != tt.conf {
+				t.Errorf("confidence = %v, want %v", fs[0].Confidence, tt.conf)
+			}
+		})
+	}
+}
+
 // TestPassportSpaceVariant は issue #46 で追加した英字・数字間の半角スペース
 // 任意表記（AB 1234567）をカバーする。
 func TestPassportSpaceVariant(t *testing.T) {
@@ -677,6 +885,35 @@ func TestPensionNumberSpaceVariant(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestPensionNumberDotSeparated はドット区切り（4-6）の基礎年金番号表記を
+// カバーする。既存のハイフン・空白区切りは書式自体の情報量が高く Base High
+// だが、ドット区切りは小数点のようにも見えるため新表記ゆれとして Base Medium
+// に据え置く。
+func TestPensionNumberDotSeparated(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+		conf       rule.Confidence
+	}{
+		{"ドット区切り", "年金 1234.567890", []string{"jp-pension-number"}, rule.Medium},
+		{"コンテキストなし", "1234.567890", nil, 0},
+		{"より長い数字列の一部は対象外", "年金 1234.5678901", nil, 0},
+		{"全桁同一のダミー値は棄却", "年金 0000.000000", nil, 0},
+		{"直後にさらにドット数字が続く場合は対象外", "年金 1234.567890.1", nil, 0},
+		{"直前にさらにドット数字がある場合は対象外", "年金 1.1234.567890", nil, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, tt.want...)
+			if len(fs) == 1 && fs[0].Confidence != tt.conf {
+				t.Errorf("confidence = %v, want %v", fs[0].Confidence, tt.conf)
+			}
 		})
 	}
 }
@@ -899,6 +1136,130 @@ func TestNumberingLabelPrefixIgnoresDistantLabel(t *testing.T) {
 	d := newDetector(t, "")
 	line := "マイナンバー: " + mynumValid + " を伝票番号に転記"
 	assertRules(t, d.ScanLine("f.txt", 1, line), "jp-my-number")
+}
+
+// TestNumberingLabelPrefixToleratesGlue は hasLabelBefore（negative_context.go）
+// のグルー許容を確認する。旧来の hasUnitBefore は値の直前で半角スペース・
+// タブしか読み飛ばさないため、助詞（は/が/を/も）やコロン・イコールで
+// ラベルと値が途切れると抑制できなかった（既知FP: 「受付番号は…です」
+// 「型番: …」等）。hasLabelBefore はこれらを最大 2 個までグルーとして
+// 読み飛ばしてから採番ラベルと比較する。値は checksum が成立する
+// mynumValid2（100000000013）を使う。
+func TestNumberingLabelPrefixToleratesGlue(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+	}{
+		{"助詞「は」", "伝票番号は" + mynumValid2 + "です"},
+		{"助詞「が」", "伝票番号が" + mynumValid2 + "と判明"},
+		{"助詞「を」", "伝票番号を" + mynumValid2 + "に更新"},
+		{"助詞「も」", "伝票番号も" + mynumValid2 + "です"},
+		{"コロン+空白", "型番: " + mynumValid2},
+		{"イコール", "型番=" + mynumValid2},
+		{"新語彙 トランザクション（空白区切り）", "トランザクション " + mynumValid2},
+		{"新語彙 sku（大文字・コロン+空白）", "SKU: " + mynumValid2},
+		{"新語彙 version（コロン+空白）", "version: " + mynumValid2},
+		{"新語彙 ver（コロン+空白）", "ver: " + mynumValid2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line))
+		})
+	}
+}
+
+// TestNumberingSuffixHeuristicSuppressesUnknownLabels は採番ラベル接尾辞
+// ヒューリスティック（hasNumberingSuffixBefore、negative_context.go）を
+// 確認する。numberingLabelPrefixes の明示語彙に完全一致しない未知のラベル
+// （ASCII 語や省略形が挟まって直接一致に届かないもの）でも、「番号/コード/
+// キー/id/code/key/sku/no」で終わる形状だけで抑制することを確認する。
+// 値は checksum が成立する mynumValid2（100000000013）/mynumValid
+// （123456789018）を使う。
+func TestNumberingSuffixHeuristicSuppressesUnknownLabels(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+	}{
+		// ASCII 語「ID」＋助詞・区切りで明示語彙「伝票番号」等に一致しない
+		// ラベルだが、"...ID" の接尾辞形状で拾う。
+		{"受注ID+空白", "受注ID " + mynumValid2 + " を処理"},
+		{"受注ID+助詞「は」", "受注ID は" + mynumValid + "です"},
+		{"受注ID+助詞「が」", "受注ID が" + mynumValid + "と判明"},
+		{"受注ID+コロン(区切りなし)", "受注ID:" + mynumValid2},
+		{"受注ID+イコール(区切りなし)", "受注ID=" + mynumValid2},
+		// アンダースコア境界（camelCase 境界規則: 直前が `_` なら成立）。
+		{"snake_case の shipment_id+イコール", "shipment_id= " + mynumValid2},
+		{"snake_case の shipment_id+コロン+空白", "shipment_id: " + mynumValid},
+		// 日本語接尾辞「キー」「コード」。
+		{"管理キー+空白", "管理キー " + mynumValid2},
+		{"発注コード+コロン+空白", "発注コード: " + mynumValid2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line))
+		})
+	}
+}
+
+// TestNumberingSuffixHeuristicASCIIBoundaryRule は asciiSuffixBoundaryOK
+// （negative_context.go）の camelCase 境界規則を確認する。ASCII 接尾辞
+// （id/no 等）の直前が ASCII 小文字の場合、接尾辞自体が大文字始まりの
+// camelCase 境界でない限り不成立とし、"casino"/"userid" のような偶然の
+// 語尾一致を採番ラベルと誤認しない。直前が `_`・非 ASCII・トークン先頭の
+// 場合や、接尾辞が大文字始まり（camelCase）の場合は成立する。
+func TestNumberingSuffixHeuristicASCIIBoundaryRule(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		wantRule   string
+	}{
+		// 直前が ASCII 小文字＋接尾辞も小文字 → 不成立（検出は維持される）。
+		{"casino の \"no\" は境界不成立", "casino: " + mynumValid2, "jp-my-number"},
+		{"userid の \"id\" は境界不成立", "userid: " + mynumValid, "jp-my-number"},
+		// camelCase 境界（接尾辞が大文字始まり）→ 成立（抑制される）。
+		{"orderNo は camelCase 境界で成立", "orderNo: " + mynumValid2, ""},
+		{"orderId は camelCase 境界で成立", "orderId: " + mynumValid, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.wantRule == "" {
+				assertRules(t, d.ScanLine("f.txt", 1, tt.line))
+			} else {
+				assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.wantRule)
+			}
+		})
+	}
+}
+
+// TestNumberingSuffixHeuristicProtectsLegitimateLabels は接尾辞
+// ヒューリスティックの保護規則（hasNumberingSuffixBefore が d.containsAnyContext
+// で posCtx = Rule.Context を判定する）を確認する。ラベル自体がそのルール
+// 本来の正しい肯定文脈語を含む場合（免許証番号・基礎年金番号・在留カード
+// 番号・パスポート番号・郵便番号）は、「番号」で終わる形状だけで誤って
+// 抑制しないことを確認する。
+func TestNumberingSuffixHeuristicProtectsLegitimateLabels(t *testing.T) {
+	d := newDetector(t, "")
+	license := testfixtures.MustGet(t, "detect.drivers_license")
+	tests := []struct {
+		name, line string
+		wantRule   string
+		wantConf   rule.Confidence
+	}{
+		{"運転免許証番号（免許を含む）", "運転免許証番号: " + license, "jp-drivers-license", rule.High},
+		{"基礎年金番号（年金を含む）", "基礎年金番号: 1234-567890", "jp-pension-number", rule.High},
+		{"在留カード番号（在留を含む）", "在留カード番号: AB12345678CD", "jp-residence-card", rule.High},
+		{"パスポート番号（パスポートを含む）", "パスポート番号: AB1234567", "jp-passport", rule.High},
+		{"郵便番号（郵便を含む・実在コード）", "郵便番号: " + shibuyaPostal, "jp-postal-code", rule.Medium},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, tt.wantRule)
+			if fs[0].Confidence != tt.wantConf {
+				t.Errorf("confidence = %v, want %v", fs[0].Confidence, tt.wantConf)
+			}
+		})
+	}
 }
 
 // hasUnitAfter の requireBoundary（issue #53 (2)）: 修正前は単位直後が
@@ -1852,8 +2213,13 @@ func TestPromotionContextWindowBoundary(t *testing.T) {
 		{
 			name: "jp-address-high-recall",
 			toml: "[rules]\nhigh_recall = true\n",
-			// 都道府県を含まない住所（jp-address ではなく high-recall 版のみが
-			// マッチする。jp-address の方は常に Base: High で昇格判定を経由しない）。
+			// 都道府県を含まない住所（jp-address の都道府県あり 2 エントリはここに
+			// マッチしない。「住所: 渋谷区…」のようなラベル付き都道府県なし形は、
+			// jp-address のラベル必須・市区町村辞書ゲート付き第 3 エントリ
+			// （internal/rule/builtin.go）にもマッチしてしまうため、ラベルには
+			// あえてその第 3 エントリの語彙（住所|所在地|自宅|居住|address）に
+			// 含まれない「勤務地」を使い、この jp-address-high-recall 単独の
+			// 昇格挙動だけを切り分けて観測する）。
 			// 町名には「架空坂」という架空の町名を使う。ABR 町字マスター
 			// （internal/dict/towns.txt）に前方一致しないことを go run で機械確認済み
 			// （dict.MunicipalityThenTownMatch("渋谷区架空坂1-2-3") == false）。
@@ -1867,7 +2233,7 @@ func TestPromotionContextWindowBoundary(t *testing.T) {
 			// コンテキスト窓による昇格だけに限定する。町字辞書 twin 自体の検証は
 			// internal/detect/address_town_promotion_test.go
 			// （TestAddressHighRecallDashFormPromotesWithRealTown 等）が担う。
-			label:      "住所",
+			label:      "勤務地",
 			value:      "渋谷区架空坂1-2-3",
 			wantRuleID: "jp-address-high-recall",
 		},
@@ -2230,6 +2596,52 @@ func TestBankCodeContextEnablesDetection(t *testing.T) {
 		{"未収録コード", "9999-123-7654321", nil},
 		{"5桁コードの一部", "10005-123-7654321", nil},
 		{"コードだけでは文脈にしない", "銀行コード0005 7654321", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestBankAccountSpaceSlashSeparatedVariant は空白・スラッシュ区切り（3+4）の
+// 銀行口座番号表記をカバーする。normalize.Line が全角スラッシュ「／」を半角へ
+// 畳むため、この 1 パターンで両方の表記に対応する。
+func TestBankAccountSpaceSlashSeparatedVariant(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"空白区切り", "口座番号 123 4567", []string{"jp-bank-account"}},
+		{"全角スラッシュ区切り", "口座番号 123／4567", []string{"jp-bank-account"}},
+		{"半角スラッシュ区切り", "口座番号 123/4567", []string{"jp-bank-account"}},
+		{"コンテキストなしは対象外", "123 4567", nil},
+		{"全桁同一（空白区切り）ダミーは棄却", "口座番号 000 0000", nil},
+		{"直後にさらに空白数字が続く場合は対象外", "口座番号 123 4567 8888", nil},
+		{"直前にさらに空白数字がある場合は対象外", "口座番号 8888 123 4567", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestHealthInsuranceSpaceSeparated8Digit は空白区切り8桁（4+4）の健康保険
+// 番号表記をカバーする。8桁連結パターンと同じ RequireContext・窓（ルール既定
+// の40ルーン）を使う。
+func TestHealthInsuranceSpaceSeparated8Digit(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"コンテキストあり", "保険者番号 1234 5678", []string{"jp-health-insurance"}},
+		{"コンテキストなしは対象外", "1234 5678", nil},
+		{"全桁同一ダミーは棄却", "保険者番号 0000 0000", nil},
+		{"直後にさらに空白数字が続く場合は対象外", "保険者番号 1234 5678 9999", nil},
+		{"直前にさらに空白数字がある場合は対象外", "保険者番号 9999 1234 5678", nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -2788,6 +3200,82 @@ func TestAddressKanjiNumeralBanchi(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestAddressLabeledMissingPrefecture は jp-address の第 3 エントリ（都道府県なし・
+// ラベル必須・市区町村辞書ゲート）を検証する。既定プロファイル唯一の住所 FN
+// （probe-fn:address-missing-prefecture、TestProbeResolvedAddressMissingPrefecture
+// 参照）を解消する新エントリで、jp-address-high-recall と異なりラベルを必須にする
+// ことで既定プロファイルでも安全に使える。
+func TestAddressLabeledMissingPrefecture(t *testing.T) {
+	d := newDetector(t, "")
+
+	t.Run("マーカーなしダッシュ形（神南は実在町字）", func(t *testing.T) {
+		fs := d.ScanLine("f.txt", 1, "住所: 渋谷区神南1-2-3")
+		assertRules(t, fs, "jp-address")
+		if fs[0].Match != "渋谷区神南1-2-3" {
+			t.Errorf("match = %q, want 渋谷区神南1-2-3", fs[0].Match)
+		}
+		// 神南は実在町字（dict.MunicipalityThenTownMatch）に加え、ラベルが値へ
+		// 直結しているためコンテキスト昇格でも High に達する（実挙動確認済み）。
+		if fs[0].Confidence != rule.High {
+			t.Errorf("confidence = %v, want %v", fs[0].Confidence, rule.High)
+		}
+	})
+
+	t.Run("マーカー付き番地形（丸の内は実在町字）", func(t *testing.T) {
+		fs := d.ScanLine("f.txt", 1, "所在地: 千代田区丸の内2丁目7番")
+		assertRules(t, fs, "jp-address")
+		if fs[0].Match != "千代田区丸の内2丁目7番" {
+			t.Errorf("match = %q, want 千代田区丸の内2丁目7番", fs[0].Match)
+		}
+		if fs[0].Confidence != rule.High {
+			t.Errorf("confidence = %v, want %v", fs[0].Confidence, rule.High)
+		}
+	})
+
+	negatives := []struct{ name, line string }{
+		// ラベルが必須のため、ラベルなしの都道府県なし住所は既定では検出しない
+		// （jp-address-high-recall 限定。TestHighRecallRulesOptIn 参照）。
+		{"ラベルなしは非検出", "渋谷区神南1-2-3"},
+		// 「通学区」は市区町村として辞書に実在しないため、辞書ゲート
+		// （addressLabeledMunicipalityValid、dict.MunicipalitySuffixMatch）で棄却する。
+		{"実在しない市区町村は非検出", "住所: 通学区1-2-3"},
+		// 「大手町」は町名であって市区町村そのものではない
+		// （dict.MunicipalitySuffixMatch は市区町村名だけを見るため一致しない）。
+		{"町名は市区町村ではないため非検出", "住所: 大手町2-1-1"},
+		// 末尾が実在する暦日形（YYYY-MM-DD）のダッシュ番地は notCalendarDateBanchi で
+		// 棄却する（既存 jp-address / jp-address-high-recall と同じ日付誤検出対策）。
+		{"実在暦日形は非検出", "住所: 渋谷区2024-04-01"},
+	}
+	for _, tt := range negatives {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line))
+		})
+	}
+}
+
+// TestAddressLabeledMissingPrefectureHighRecallAttribution は、high-recall
+// プロファイルで「住所: 渋谷区神南1-2-3」のようなラベル付き都道府県なし住所が、
+// jp-address-high-recall ではなく jp-address（第 3 エントリ）として 1 件だけ
+// 報告されることを確認する（帰属テスト）。jp-address-high-recall の High twin も
+// 同じ値に発火しうるが、resolveOverlaps の優先順位（confidence → 内部スコア。
+// 高再現率ルールは finalizeFindingScore で -20 の prior）により、prior の無い
+// jp-address 側が常に勝つ設計（internal/rule/builtin.go の jp-address 第 3
+// エントリのコメント参照）。ラベルなしの同じ住所は、従来どおり
+// jp-address-high-recall として検出される。
+func TestAddressLabeledMissingPrefectureHighRecallAttribution(t *testing.T) {
+	d := newDetector(t, highRecallTOML)
+
+	t.Run("ラベル付きは jp-address に帰属する", func(t *testing.T) {
+		fs := d.ScanLine("f.txt", 1, "住所: 渋谷区神南1-2-3")
+		assertRules(t, fs, "jp-address")
+	})
+
+	t.Run("ラベルなしは jp-address-high-recall のまま", func(t *testing.T) {
+		fs := d.ScanLine("f.txt", 1, "渋谷区神南1-2-3")
+		assertRules(t, fs, "jp-address-high-recall")
+	})
 }
 
 // jp-birthdate ルール全体として、無効な暦日が検出されないことを確認する

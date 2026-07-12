@@ -105,9 +105,10 @@ type Finding struct {
 	// 対象外にする。jp-birthdate のようにラベル埋め込み正規表現でクロスライン
 	// 検出するルールには、この越境情報を理由とした一律抑制を適用しない。
 	matchStart, matchEnd int
-	// ignoreNegativeContext はマッチしたパターンが Rule.NegativeContext の
-	// 適用対象外であることを表す。隣接行の負文脈フィルタにも引き継ぐ。
-	ignoreNegativeContext bool
+	// negativeContextMode はマッチしたパターンの rule.NegativeContextMode
+	// （このパターンに Rule.NegativeContext をどこまで適用するか）を表す。
+	// 隣接行の負文脈フィルタ（hasCrossLineNegativeContext）にも引き継ぐ。
+	negativeContextMode rule.NegativeContextMode
 	// scoreEvidence は ConfidenceScore の計算にだけ使う非公開の構造証拠。
 	scoreEvidence confidenceScoreEvidence
 }
@@ -910,7 +911,15 @@ func (d *Detector) scanAdjacentLinesDiff(file string, firstLineNo int, first str
 }
 
 func (d *Detector) hasSourceNegativeForFinding(f Finding, line string, lineCtx lineContext) bool {
-	if f.ignoreNegativeContext || len(lineCtx.Statements) == 0 || !d.ruleHasNegativeContext(f.RuleID) {
+	// モードの契約: NegativeContextAdjacentLabelOnly で抑制に使えるのは採番
+	// ラベル明示語彙（numberingLabelPrefixes）の隣接一致だけで、それ以外の
+	// 抑制経路は旧 IgnoreNegativeContext: true と同一（＝無効）。この構造化
+	// source context の NegativeText（phone_id / phoneID のようなキー名の
+	// id・version 等のトークン）は明示語彙の隣接判定ではないため、
+	// NegativeContextAll のときだけ適用する。AdjacentLabelOnly にも適用すると
+	// `phone_id: "090-..."`（.yaml）や `phoneID := "090-..."`（.go）のような
+	// 正当な電話番号キーの検出が旧挙動から回帰する（統合前検証で実測）。
+	if f.negativeContextMode != rule.NegativeContextAll || len(lineCtx.Statements) == 0 || !d.ruleHasNegativeContext(f.RuleID) {
 		return false
 	}
 	norm := normalize.Line(line)
@@ -1054,12 +1063,27 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 			}
 			return kws, structured
 		}
-		hasNegativeNear := func(start, end int) bool {
+		// hasNegativeNear は mode（呼び出し元のパターンの NegativeContextMode）が
+		// NegativeContextIgnore なら呼び出し側で既に呼ばれない前提（下の
+		// パターンループ参照）。ここに来る mode は NegativeContextAll /
+		// NegativeContextAdjacentLabelOnly のいずれかで、語彙クラスの分岐は
+		// hasNegativeContextNear 内で行う。
+		hasNegativeNear := func(start, end int, mode rule.NegativeContextMode) bool {
 			if len(r.NegativeContext) == 0 {
 				return false
 			}
 			st := lineCtx.statementFor(start, end)
-			if st != nil && st.NegativeText != "" {
+			// モードの契約: NegativeContextAdjacentLabelOnly で抑制に使える
+			// のは採番ラベル明示語彙の隣接一致だけで、それ以外の抑制経路は
+			// 旧 IgnoreNegativeContext: true と同一（＝無効）。構造化 source
+			// context の NegativeText（phone_id / phoneID のようなキー名の
+			// id 等のトークン）は明示語彙の隣接判定ではないため、
+			// NegativeContextAll のときだけ見る（適用すると正当な電話番号
+			// キーの検出が旧挙動から回帰する。hasSourceNegativeForFinding の
+			// コメントも参照）。statementHasCleanPositiveLabel（正ラベル優先）
+			// は抑制ではなく保護（検出維持方向にしか働かない）のため、
+			// 両モード共通に適用してよい。
+			if mode == rule.NegativeContextAll && st != nil && st.NegativeText != "" {
 				return true
 			}
 			if d.statementHasCleanPositiveLabel(st, r.Context) {
@@ -1068,7 +1092,7 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 				// 件数等）で誤って棄却しない（正ラベル優先。issue #68 段階1(a)）。
 				return false
 			}
-			return d.hasNegativeContextNear(norm, start, end, negativeContextWindowRunes, &normRunes, r.NegativeContext)
+			return d.hasNegativeContextNear(norm, start, end, negativeContextWindowRunes, &normRunes, r.NegativeContext, r.Context, mode)
 		}
 		for _, p := range r.Patterns {
 			requireContextWindow := r.RequireContextWindow
@@ -1126,7 +1150,7 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 					contextEvidence.patternBoundContext = scoreEvidence.patternBoundContext
 					scoreEvidence = contextEvidence
 				}
-				if !p.IgnoreNegativeContext && hasNegativeNear(start, end) {
+				if p.NegativeContextMode != rule.NegativeContextIgnore && hasNegativeNear(start, end, p.NegativeContextMode) {
 					if d.collectDropped {
 						d.recordDroppedMatch(r.ID, file, lineNo, norm, start, DropReasonNegativeContext, p.Base)
 					}
@@ -1222,20 +1246,20 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 					origRunes = []rune(line)
 				}
 				finding := Finding{
-					RuleID:                r.ID,
-					Description:           r.Description,
-					File:                  file,
-					Line:                  lineNo,
-					Column:                rs + 1,
-					Match:                 string(origRunes[rs:re]),
-					Confidence:            conf,
-					Reason:                reason,
-					start:                 rs,
-					end:                   re,
-					matchStart:            mrs,
-					matchEnd:              mre,
-					ignoreNegativeContext: p.IgnoreNegativeContext,
-					scoreEvidence:         scoreEvidence,
+					RuleID:              r.ID,
+					Description:         r.Description,
+					File:                file,
+					Line:                lineNo,
+					Column:              rs + 1,
+					Match:               string(origRunes[rs:re]),
+					Confidence:          conf,
+					Reason:              reason,
+					start:               rs,
+					end:                 re,
+					matchStart:          mrs,
+					matchEnd:            mre,
+					negativeContextMode: p.NegativeContextMode,
+					scoreEvidence:       scoreEvidence,
 				}
 				finalizeFindingScore(&finding)
 				found = append(found, finding)
