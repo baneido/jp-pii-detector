@@ -796,3 +796,71 @@ func TestVersionCommand(t *testing.T) {
 		t.Errorf("version: exit=%d out=%q", code, out)
 	}
 }
+
+// explainDroppedDir は口座番号（jp-bank-account、コンテキスト "口座" あり）と
+// 同じ 7 桁を共有するが郵便番号としてはコンテキスト不足で棄却される値を持つ
+// 作業ディレクトリを作る（--explain-dropped の require-context-missing 確認用。
+// 実在しうる番号形式を含まない合成データのためフィクスチャ不要）。
+func explainDroppedDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	content := "口座番号: 1234567 (手数料300円)\n"
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// TestScanJSONExplainDropped は --explain-dropped 指定時のみ JSON 出力に
+// dropped 配列（rule_id/reason 等）が追加され、生の検出値を含まないことを
+// 確認する。未指定時は "dropped" キー自体が出力に現れないこと（出力スキーマが
+// 完全に不変であること）も確認する。
+func TestScanJSONExplainDropped(t *testing.T) {
+	dir := explainDroppedDir(t)
+
+	without, code := run(t, dir, "scan", "--format", "json", ".")
+	if code != 1 {
+		t.Errorf("exit = %d, want 1", code)
+	}
+	if strings.Contains(without, `"dropped"`) {
+		t.Errorf("--explain-dropped 未指定では dropped キーを出すべきではない: %s", without)
+	}
+
+	out, code := run(t, dir, "scan", "--format", "json", "--explain-dropped", ".")
+	if code != 1 {
+		t.Errorf("exit = %d, want 1", code)
+	}
+	if !strings.Contains(out, `"dropped"`) || !strings.Contains(out, `"jp-postal-code"`) ||
+		!strings.Contains(out, `"require-context-missing"`) {
+		t.Fatalf("--explain-dropped should list the dropped candidate with its reason: %s", out)
+	}
+	if strings.Contains(out, "1234567") {
+		t.Fatalf("--explain-dropped leaked a raw value: %s", out)
+	}
+}
+
+// TestScanTextExplainDropped は --explain-dropped 指定時のみ text 出力に
+// 「棄却候補」セクションが追加されることを確認する（未指定時は追加されない）。
+func TestScanTextExplainDropped(t *testing.T) {
+	dir := explainDroppedDir(t)
+
+	without, code := run(t, dir, "scan", ".")
+	if code != 1 {
+		t.Errorf("exit = %d, want 1", code)
+	}
+	if strings.Contains(without, "棄却候補") {
+		t.Errorf("--explain-dropped 未指定では棄却候補セクションを出すべきではない: %s", without)
+	}
+
+	out, code := run(t, dir, "scan", "--explain-dropped", ".")
+	if code != 1 {
+		t.Errorf("exit = %d, want 1", code)
+	}
+	if !strings.Contains(out, "棄却候補") || !strings.Contains(out, "jp-postal-code") ||
+		!strings.Contains(out, "require-context-missing") {
+		t.Fatalf("--explain-dropped should annotate text output with dropped candidates: %s", out)
+	}
+	if strings.Contains(out, "1234567") {
+		t.Fatalf("--explain-dropped leaked a raw value: %s", out)
+	}
+}

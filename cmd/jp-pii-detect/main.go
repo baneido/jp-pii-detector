@@ -91,6 +91,8 @@ Scan flags:
                            分離するためのフラグ)
   --unmask                 検出値をマスクせず出力
   --explain                text/json 出力に検出理由（コンテキスト昇格・検証有無等）を含める
+  --explain-dropped        検出候補がどの段階で棄却されたかを text/json 出力に追加する
+                           （FN 分析用。json 出力の dropped 配列に生の値は含めない）
   --high-recall            偽陽性リスクの高い再現率重視ルールを有効化
   --exit-zero              検出があっても終了コード 0 を返す
   --baseline <path>        ベースラインファイルを読み込み、記録済み（fingerprint が
@@ -141,6 +143,7 @@ func runScan(args []string) int {
 	failOn := fs.String("fail-on", "", "")
 	unmask := fs.Bool("unmask", false, "")
 	explain := fs.Bool("explain", false, "")
+	explainDropped := fs.Bool("explain-dropped", false, "")
 	highRecall := fs.Bool("high-recall", false, "")
 	exitZero := fs.Bool("exit-zero", false, "")
 	baselinePath := fs.String("baseline", "", "")
@@ -183,6 +186,13 @@ func runScan(args []string) int {
 	det, err := detect.New(cfg)
 	if err != nil {
 		return fail(err)
+	}
+	// --explain-dropped 指定時のみ棄却候補の記録を有効化する。既定では
+	// CollectDropped を呼ばないため、Detector.TakeDropped/DroppedTruncated は
+	// 常にゼロ値（nil/false）を返し、後段の report.Text/JSON の出力は
+	// 従来と完全に不変になる。
+	if *explainDropped {
+		det.CollectDropped(true)
 	}
 
 	var findings []detect.Finding
@@ -249,12 +259,17 @@ func runScan(args []string) int {
 	if fpSalt != "" {
 		fpArgs = []string{fpSalt}
 	}
+	// --explain-dropped 未指定時は CollectDropped が一度も呼ばれていないため、
+	// dropped は常に nil・droppedTruncated は常に false になる
+	// （report.Text/JSON の出力が従来と完全に不変であることの根拠）。
+	dropped := det.TakeDropped()
+	droppedTruncated := det.DroppedTruncated()
 
 	switch *format {
 	case "text":
-		report.Text(os.Stdout, reportFindings, *unmask, *explain)
+		report.Text(os.Stdout, reportFindings, *unmask, *explain, dropped, droppedTruncated)
 	case "json":
-		if err := report.JSON(os.Stdout, reportFindings, *unmask, *explain, fpArgs...); err != nil {
+		if err := report.JSON(os.Stdout, reportFindings, *unmask, *explain, dropped, droppedTruncated, fpArgs...); err != nil {
 			return fail(err)
 		}
 	case "sarif":

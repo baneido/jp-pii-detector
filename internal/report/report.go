@@ -39,7 +39,13 @@ func display(f detect.Finding, unmask bool) string {
 // Text は人間向けのプレーンテキストを出力する。explain が true の場合、
 // json 出力の --explain 同様に検出理由（コンテキスト昇格・検証有無等）を
 // 各検出の下に付与する（偽陽性の切り分け根拠）。
-func Text(w io.Writer, findings []detect.Finding, unmask, explain bool) {
+//
+// dropped は --explain-dropped 指定時のみ非空になる棄却候補
+// （detect.Detector.CollectDropped(true) 有効時に detect.Detector.TakeDropped
+// で回収したもの）。空（既定・未指定時）なら通常の findings 出力の後に
+// 何も追加しない＝出力は従来と完全に不変。droppedTruncated は
+// detect.Detector.DroppedTruncated の値をそのまま渡す。
+func Text(w io.Writer, findings []detect.Finding, unmask, explain bool, dropped []detect.DroppedCandidate, droppedTruncated bool) {
 	for _, f := range findings {
 		fmt.Fprintf(w, "%s:%d:%d\t[%s]\t%s\t%s\t%s\n",
 			f.File, f.Line, f.Column, f.Confidence, f.RuleID, f.Description, display(f, unmask))
@@ -53,6 +59,15 @@ func Text(w io.Writer, findings []detect.Finding, unmask, explain bool) {
 		fmt.Fprintf(w, "\n%d 件の個人情報らしき記述を検出しました。誤検出の場合は行末コメントに %q を付けるか、設定ファイルの allowlist に追加してください。\n"+
 			"意図的に許容する既存の検出は --update-baseline でベースラインファイルに記録すると、以降のスキャンでは新規追加分のみが検出されます。\n",
 			len(findings), detect.IgnoreMarker)
+	}
+	if len(dropped) > 0 {
+		fmt.Fprintf(w, "\n--- 棄却候補（--explain-dropped、FN 分析用。%d 件）---\n", len(dropped))
+		for _, c := range dropped {
+			fmt.Fprintf(w, "%s:%d:%d\t[%s]\t%s\t理由=%s\n", c.File, c.Line, c.Column, c.PatternBase, c.RuleID, c.Reason)
+		}
+		if droppedTruncated {
+			fmt.Fprintln(w, "（上限に達したため一部の棄却候補は記録されていません）")
+		}
 	}
 }
 
@@ -108,17 +123,37 @@ type jsonFinding struct {
 	Fingerprint string `json:"fingerprint,omitempty"`
 }
 
+// jsonDropped は --explain-dropped 指定時の JSON dropped 配列 1 件分。
+// detect.DroppedCandidate 同様、生の検出値は一切含まない
+// （位置とルール・理由のみで FN 分析には十分という安全境界）。
+type jsonDropped struct {
+	RuleID         string `json:"rule_id"`
+	File           string `json:"file"`
+	Line           int    `json:"line"`
+	Column         int    `json:"column"`
+	Reason         string `json:"reason"`
+	BaseConfidence string `json:"base_confidence"`
+}
+
 // JSON は機械可読な JSON を出力する。salt を渡すと（後方互換のため可変長引数、
 // 1 つ目のみ使用）各 finding に baseline fingerprint を付与する。省略時
 // （既存呼び出し）は今までどおり fingerprint フィールドを出力しない。
-func JSON(w io.Writer, findings []detect.Finding, unmask, explain bool, salt ...string) error {
+//
+// dropped/droppedTruncated は --explain-dropped 指定時のみ Text と同様に渡す
+// （detect.Detector.CollectDropped(true) 有効時に detect.Detector.TakeDropped /
+// DroppedTruncated で回収したもの）。dropped が空（既定・未指定時）なら
+// out.Dropped は nil のままで、omitempty により "dropped" キー自体が出力に
+// 現れない＝出力スキーマは従来と完全に不変。
+func JSON(w io.Writer, findings []detect.Finding, unmask, explain bool, dropped []detect.DroppedCandidate, droppedTruncated bool, salt ...string) error {
 	var fpSalt string
 	if len(salt) > 0 {
 		fpSalt = salt[0]
 	}
 	out := struct {
-		Findings []jsonFinding `json:"findings"`
-		Count    int           `json:"count"`
+		Findings         []jsonFinding `json:"findings"`
+		Count            int           `json:"count"`
+		Dropped          []jsonDropped `json:"dropped,omitempty"`
+		DroppedTruncated bool          `json:"dropped_truncated,omitempty"`
 	}{Findings: []jsonFinding{}, Count: len(findings)}
 	for _, f := range findings {
 		jf := jsonFinding{
@@ -142,6 +177,17 @@ func JSON(w io.Writer, findings []detect.Finding, unmask, explain bool, salt ...
 		}
 		out.Findings = append(out.Findings, jf)
 	}
+	for _, c := range dropped {
+		out.Dropped = append(out.Dropped, jsonDropped{
+			RuleID:         c.RuleID,
+			File:           c.File,
+			Line:           c.Line,
+			Column:         c.Column,
+			Reason:         c.Reason,
+			BaseConfidence: c.PatternBase.String(),
+		})
+	}
+	out.DroppedTruncated = droppedTruncated
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(out)

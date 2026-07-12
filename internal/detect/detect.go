@@ -6,6 +6,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"unicode"
 	"unicode/utf8"
 
@@ -153,6 +154,16 @@ type Detector struct {
 	// cooccurrenceBoost は [rules] cooccurrence_boost の opt-in フラグ。
 	// ScanContent のみで使う（ScanLine/ScanDiffHunk の既定挙動は変えない）。
 	cooccurrenceBoost bool
+	// collectDropped 以下は棄却候補記録（DroppedCandidate、--explain-dropped
+	// 用）の opt-in 状態。既定 false で、無効時は各記録箇所の bool 分岐 1 個
+	// 以外のコストがない（詳細は dropped.go）。droppedMu は internal/source の
+	// 並列フルスキャンで同一 Detector の ScanContent が複数ゴルーチンから
+	// 呼ばれても dropped への追記が安全になるよう保護する（collectDropped が
+	// false の間は一切使わない）。
+	collectDropped   bool
+	droppedMu        sync.Mutex
+	dropped          []DroppedCandidate
+	droppedTruncated bool
 }
 
 // New は設定に基づいて Detector を構築する。
@@ -264,6 +275,7 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 	filtered := candidates[:0]
 	for _, f := range candidates {
 		if d.hasCrossLineNegativeContext(f, lines, lineContexts, f.Line-1) {
+			d.recordDropped(f.RuleID, f.File, f.Line, f.Column, DropReasonCrossLineNegativeContext, f.Confidence)
 			continue
 		}
 		filtered = append(filtered, f)
@@ -280,6 +292,7 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 	filtered = candidates[:0]
 	for _, f := range candidates {
 		if f.Confidence < d.minConf {
+			d.recordDropped(f.RuleID, f.File, f.Line, f.Column, DropReasonBelowMinConfidence, f.Confidence)
 			continue
 		}
 		filtered = append(filtered, f)
@@ -299,6 +312,7 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 	// 再適用し、パスをまたいだ重複を統合する。共起昇格とパス降格の適用後の
 	// 信頼度を重複解決のタイブレークに反映させる。
 	resolved := resolveOverlapsPerLine(demoted)
+	d.recordOverlapLosses(demoted, resolved)
 	return dedupAndSortFindings(resolved)
 }
 
@@ -531,6 +545,7 @@ func (d *Detector) ScanDiffHunk(file string, lines []DiffLine) []Finding {
 	filtered := candidates[:0]
 	for _, f := range candidates {
 		if d.hasCrossLineNegativeContext(f, maskedTexts, lineContexts, f.Line-1) {
+			d.recordDropped(f.RuleID, f.File, f.Line, f.Column, DropReasonCrossLineNegativeContext, f.Confidence)
 			continue
 		}
 		filtered = append(filtered, f)
@@ -542,6 +557,7 @@ func (d *Detector) ScanDiffHunk(file string, lines []DiffLine) []Finding {
 	// ScanContent と同様、単行パスと隣接行ペアパスをまたいだ重複を統合する
 	// （cross-line names は diff 走査では実行されないため対象は 2 系統のみ）。
 	resolved := resolveOverlapsPerLine(demoted)
+	d.recordOverlapLosses(demoted, resolved)
 	return dedupAndSortFindings(resolved)
 }
 
@@ -928,6 +944,9 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 				pos = next
 				entity := norm[start:end]
 				if insideUUIDv4Token(norm, start, end) {
+					if d.collectDropped {
+						d.recordDroppedMatch(r.ID, file, lineNo, norm, start, DropReasonUUIDToken, p.Base)
+					}
 					continue
 				}
 				reason := DetectReason{
@@ -938,32 +957,50 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 				if p.RequireContext {
 					kws := ctxForMatch(start, end, r.RequireContextWindow)
 					if len(kws) == 0 {
+						if d.collectDropped {
+							d.recordDroppedMatch(r.ID, file, lineNo, norm, start, DropReasonRequireContextMissing, p.Base)
+						}
 						continue
 					}
 					reason.ContextKeywords = kws
 				}
 				if !p.IgnoreNegativeContext && hasNegativeNear(start, end) {
+					if d.collectDropped {
+						d.recordDroppedMatch(r.ID, file, lineNo, norm, start, DropReasonNegativeContext, p.Base)
+					}
 					continue
 				}
 				if r.Validate != nil {
 					if !r.Validate(entity) {
+						if d.collectDropped {
+							d.recordDroppedMatch(r.ID, file, lineNo, norm, start, DropReasonValidateFailed, p.Base)
+						}
 						continue
 					}
 					reason.Validated = true
 				}
 				if p.Validate != nil {
 					if !p.Validate(entity) {
+						if d.collectDropped {
+							d.recordDroppedMatch(r.ID, file, lineNo, norm, start, DropReasonValidateFailed, p.Base)
+						}
 						continue
 					}
 					reason.Validated = true
 				}
 				if p.ValidateLine != nil {
 					if !p.ValidateLine(norm, start, end) {
+						if d.collectDropped {
+							d.recordDroppedMatch(r.ID, file, lineNo, norm, start, DropReasonValidateLineFailed, p.Base)
+						}
 						continue
 					}
 					reason.Validated = true
 				}
 				if d.allowlisted(entity) {
+					if d.collectDropped {
+						d.recordDroppedMatch(r.ID, file, lineNo, norm, start, DropReasonAllowlisted, p.Base)
+					}
 					continue
 				}
 				// r.Kind は Validate 群通過後に確定した検出値へ適用する下位種別
@@ -975,6 +1012,9 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 				if r.Kind != nil {
 					reason.Kind = r.Kind(entity)
 					if slices.Contains(d.cfg.Rules.ExcludeKinds, reason.Kind) {
+						if d.collectDropped {
+							d.recordDroppedMatch(r.ID, file, lineNo, norm, start, DropReasonKindExcluded, p.Base)
+						}
 						continue
 					}
 				}
@@ -999,6 +1039,9 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 					}
 				}
 				if conf < d.minConf && !retainForCooccurrenceBoost(retainBudget, r.ID, reason) {
+					if d.collectDropped {
+						d.recordDroppedMatch(r.ID, file, lineNo, norm, start, DropReasonBelowMinConfidence, conf)
+					}
 					continue
 				}
 				reason.FinalConfidence = conf.String()
@@ -1031,7 +1074,9 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 			}
 		}
 	}
-	return resolveOverlaps(found)
+	resolved := resolveOverlaps(found)
+	d.recordOverlapLosses(found, resolved)
+	return resolved
 }
 
 // retainForCooccurrenceBoost は minConf 未満の候補を、cooccurrence_boost の
