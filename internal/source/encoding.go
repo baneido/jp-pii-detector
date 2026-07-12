@@ -288,6 +288,33 @@ func isJapaneseRune(r rune) bool {
 // ASCII エスケープ表記）のため、それらの後段・最終的な UTF-8 テキストに
 // 対して独立に適用する。
 
+// DecodeEscapedView は decodeJSONUnicodeEscapes の薄いエクスポートラッパ。
+//
+// 用途: scan --stdin 経路（外部連携用、cmd/jp-pii-detect/main.go）から呼ぶ
+// ためにエクスポートしている。フルスキャン（scanFiles）は同一パッケージ内
+// なので decodeJSONUnicodeEscapes を直接呼ぶが、cmd パッケージから package
+// 外の非公開関数は呼べない。stdin はまさに JSON をそのままパイプで流し
+// 込む用途（json.dumps(ensure_ascii=True) の出力や CI/エージェント連携）が
+// 多く、\uXXXX エスケープに隠れた氏名・住所等の PII を検出できる価値が
+// 高いため、フルスキャン専用だったこの復号ビューを stdin 経路にも広げる。
+//
+// 位置セマンティクス: decodeJSONUnicodeEscapes の doc comment を参照。
+// ok == true の場合、呼び出し側は以後の走査・オフセット計算（例:
+// detect.ScanContent と detect.ComputeOffsets）を必ず戻り値の text（復号後
+// テキスト）に対して行うこと。行番号は元テキストと一致するが、エスケープを
+// 含む行の列・オフセットは復号後テキスト上の位置になり、元テキスト（stdin
+// の生バイト列）上の位置とは対応しない。ok == false の場合は 1 箇所も
+// 復号できなかったことを意味し、呼び出し側は元の text をそのまま使ってよい
+// （decodeUTF16 と同じ「置き換え」方式で、変更なしを表す）。
+//
+// 復号を無効にする opt-out フラグは現時点では設けない（フルスキャン側にも
+// 無く、両経路の対称性を保つため）。将来的に必要になれば、呼び出し側で
+// フラグを追加し本関数の呼び出し自体を条件分岐でスキップさせる形で拡張
+// できる。
+func DecodeEscapedView(text string) (string, bool) {
+	return decodeJSONUnicodeEscapes(text)
+}
+
 // decodeJSONUnicodeEscapes は text（正当な UTF-8 のテキストであることを
 // 呼び出し側は問わないが、本関数内で確認する）に含まれる JSON の \uXXXX
 // エスケープ（u は小文字、XXXX は 16 進数 4 桁）を実際の文字へ復号した
@@ -322,13 +349,14 @@ func isJapaneseRune(r rune) bool {
 // PII は復号後も変わらず見える。つまりこの層を追加しても既存の検出が
 // 失われることはない。
 //
-// 適用条件・パフォーマンス: フルスキャン（scanFiles）経由でのみ呼ばれる
-// （git diff はこれらのエスケープも普通の ASCII テキストとして扱うため、
-// 既存のバイト列レベルのエンコーディング層と異なり技術的には diff 走査でも
-// 動作しうるが、位置セマンティクスの割り切りを diff 走査に持ち込まない
-// 設計とするため、呼び出しをフルスキャンに限定する）。大多数を占める \u を
-// 含まないファイルは、strings.Contains によるバイト走査 1 回で早期
-// リターンする（既存の valid UTF-8 fast path と同じ思想）。
+// 適用条件・パフォーマンス: フルスキャン（scanFiles）から直接、および
+// scan --stdin から DecodeEscapedView 経由（cmd/jp-pii-detect/main.go）で
+// 呼ばれる（git diff はこれらのエスケープも普通の ASCII テキストとして扱う
+// ため、既存のバイト列レベルのエンコーディング層と異なり技術的には diff
+// 走査でも動作しうるが、位置セマンティクスの割り切りを diff 走査に持ち込ま
+// ない設計とするため、呼び出しをフルスキャンと --stdin に限定する）。
+// 大多数を占める \u を含まないファイルは、strings.Contains によるバイト
+// 走査 1 回で早期リターンする（既存の valid UTF-8 fast path と同じ思想）。
 func decodeJSONUnicodeEscapes(text string) (string, bool) {
 	// 高速パス: \u（バックスラッシュ + 小文字 u）を含まないテキストは
 	// 1 回のバイト走査で早期リターンする。

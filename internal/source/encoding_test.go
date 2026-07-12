@@ -353,6 +353,33 @@ func TestDecodeJSONUnicodeEscapes(t *testing.T) {
 	})
 }
 
+// TestDecodeEscapedView は DecodeEscapedView が decodeJSONUnicodeEscapes への
+// 薄いラッパとして委譲していることだけを確認する（scan --stdin 経路
+// （cmd/jp-pii-detect/main.go）からの利用を想定した公開関数）。復号規則
+// そのものの網羅的なケースは TestDecodeJSONUnicodeEscapes を参照。
+func TestDecodeEscapedView(t *testing.T) {
+	t.Run("委譲: 復号成立", func(t *testing.T) {
+		got, ok := DecodeEscapedView("\\u3042")
+		if !ok {
+			t.Fatal("ok = false, want true")
+		}
+		if got != "あ" {
+			t.Fatalf("got = %q, want %q", got, "あ")
+		}
+	})
+
+	t.Run("委譲: \\u を含まない入力は復号なし（元テキストは変更されない）", func(t *testing.T) {
+		text := "plain text without escapes"
+		got, ok := DecodeEscapedView(text)
+		if ok {
+			t.Fatalf("ok = true, got = %q, want false", got)
+		}
+		if got != "" {
+			t.Fatalf("ok=false 時の戻り値 = %q, want \"\"（decodeJSONUnicodeEscapes と同じ契約）", got)
+		}
+	})
+}
+
 // ScanPaths が JSON の \uXXXX エスケープ（json.dumps(ensure_ascii=True) 等の
 // 出力・.ipynb・各種ログに頻出）に隠れた日本語 PII を復号して検出できること
 // （フル走査の end-to-end）。氏名（person-name）・住所（jp-address）の

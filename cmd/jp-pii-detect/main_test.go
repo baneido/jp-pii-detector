@@ -2,6 +2,7 @@ package main_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -456,6 +457,142 @@ func TestScanStdinNoFindings(t *testing.T) {
 			t.Errorf("count = %d, want 0 for %q: %s", doc.Count, in, out)
 		}
 	}
+}
+
+// stdinJSONFinding は scan --stdin --format json の findings 配列 1 要素分の
+// 部分デコード先（TestScanStdinDecodesJSONUnicodeEscapes 系のテストで共有）。
+type stdinJSONFinding struct {
+	RuleID    string `json:"rule_id"`
+	Match     string `json:"match"`
+	Offset    *int   `json:"offset"`
+	EndOffset *int   `json:"end_offset"`
+}
+
+// runStdinJSON は jp-pii-detect scan --stdin --format json --unmask を input
+// に対して実行し、パース済みの findings と終了コードを返す（TestScanStdinOffsets
+// と同じ流儀。t.TempDir() で実行することでリポジトリの .jp-pii.toml を拾わず
+// 既定設定で走査する）。
+func runStdinJSON(t *testing.T, input string) ([]stdinJSONFinding, int) {
+	t.Helper()
+	cmd := exec.Command(binPath, "scan", "--stdin", "--format", "json", "--unmask")
+	cmd.Dir = t.TempDir()
+	cmd.Stdin = strings.NewReader(input)
+	out, err := cmd.Output()
+	code := 0
+	if err != nil {
+		ee, ok := err.(*exec.ExitError)
+		if !ok {
+			t.Fatalf("run --stdin: %v", err)
+		}
+		code = ee.ExitCode()
+	}
+	var doc struct {
+		Findings []stdinJSONFinding `json:"findings"`
+	}
+	if err := json.Unmarshal(out, &doc); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, out)
+	}
+	return doc.Findings, code
+}
+
+// jsonEscapeAll は s の非 ASCII ルーンを JSON の \uXXXX エスケープ表記へ変換
+// する（json.dumps(s, ensure_ascii=True) の非 ASCII 部分相当を手組みするテスト
+// ヘルパー）。internal/source の同名の非公開テストヘルパーとは独立（package
+// main_test からは呼べないため）。本テストで使うフィクスチャ値（氏名）は
+// BMP 内に収まるためサロゲートペア対応は省略する。
+func jsonEscapeAll(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r < 0x80 {
+			b.WriteRune(r)
+			continue
+		}
+		fmt.Fprintf(&b, `\u%04x`, r)
+	}
+	return b.String()
+}
+
+// TestScanStdinDecodesJSONUnicodeEscapes は scan --stdin が、フルスキャン
+// （internal/source の scanFiles）の最終段と同じ JSON \uXXXX エスケープの
+// 復号ビュー（internal/source.DecodeEscapedView）を適用することを確認する。
+func TestScanStdinDecodesJSONUnicodeEscapes(t *testing.T) {
+	name := testfixtures.MustGet(t, "detect.name_sato_hanako")
+
+	// エスケープあり: json.dumps({"customer_name": name}, ensure_ascii=True)
+	// 相当の入力から氏名（person-name）が検出され、offset/end_offset は
+	// エスケープ済みの元 stdin ではなく復号後テキスト上のルーンオフセットに
+	// なることを確認する。
+	t.Run("エスケープあり", func(t *testing.T) {
+		input := `{"customer_name": "` + jsonEscapeAll(name) + `"}` + "\n"
+		// decodeJSONUnicodeEscapes は改行を生まないため行数は不変、\uXXXX
+		// （6 ルーン）は名前の実ルーン数へ縮む。オフセット検証の期待値として
+		// 復号後テキストを手組みする。
+		decodedRunes := []rune(`{"customer_name": "` + name + `"}` + "\n")
+
+		findings, code := runStdinJSON(t, input)
+		if code != 1 {
+			t.Fatalf("exit = %d, want 1（検出あり）", code)
+		}
+
+		var found bool
+		for _, f := range findings {
+			if f.RuleID != "person-name" {
+				continue
+			}
+			found = true
+			if f.Offset == nil || f.EndOffset == nil {
+				t.Fatalf("offset/end_offset が無い: %+v", f)
+			}
+			if *f.Offset < 0 || *f.EndOffset > len(decodedRunes) || *f.Offset > *f.EndOffset {
+				t.Fatalf("offset 範囲外: [%d, %d) len=%d", *f.Offset, *f.EndOffset, len(decodedRunes))
+			}
+			if got := string(decodedRunes[*f.Offset:*f.EndOffset]); got != f.Match {
+				t.Errorf("復号後テキスト[%d:%d] = %q, want match %q", *f.Offset, *f.EndOffset, got, f.Match)
+			}
+			if f.Match != name {
+				t.Errorf("match = %q, want %q", f.Match, name)
+			}
+		}
+		if !found {
+			t.Fatalf("person-name が検出されなかった: %+v", findings)
+		}
+	})
+
+	// エスケープなし: \u を含まない入力は DecodeEscapedView が ok=false を返し
+	// text を変更しないため、出力（offset を含む）は本機能追加前と不変である
+	// はず。TestScanStdinOffsets と同じ入力・期待値を使った回帰確認。
+	t.Run("エスケープなし_出力不変", func(t *testing.T) {
+		input := "連絡先一覧\n担当: test.user@kaisha.co.jp まで\n"
+		runes := []rune(input)
+
+		findings, code := runStdinJSON(t, input)
+		if code != 1 {
+			t.Fatalf("exit = %d, want 1（検出あり）", code)
+		}
+
+		var found bool
+		for _, f := range findings {
+			if f.RuleID != "email-address" {
+				continue
+			}
+			found = true
+			if f.Offset == nil || f.EndOffset == nil {
+				t.Fatalf("offset/end_offset が無い: %+v", f)
+			}
+			if *f.Offset < 0 || *f.EndOffset > len(runes) || *f.Offset > *f.EndOffset {
+				t.Fatalf("offset 範囲外: [%d, %d) len=%d", *f.Offset, *f.EndOffset, len(runes))
+			}
+			if got := string(runes[*f.Offset:*f.EndOffset]); got != f.Match {
+				t.Errorf("input[%d:%d] = %q, want match %q", *f.Offset, *f.EndOffset, got, f.Match)
+			}
+			if f.Match != "test.user@kaisha.co.jp" {
+				t.Errorf("match = %q, want %q", f.Match, "test.user@kaisha.co.jp")
+			}
+		}
+		if !found {
+			t.Fatalf("email-address が検出されなかった: %+v", findings)
+		}
+	})
 }
 
 // baselineJSON は scan --baseline --format json を実行し、パース済みの
