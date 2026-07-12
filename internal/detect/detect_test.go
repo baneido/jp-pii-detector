@@ -2213,8 +2213,13 @@ func TestPromotionContextWindowBoundary(t *testing.T) {
 		{
 			name: "jp-address-high-recall",
 			toml: "[rules]\nhigh_recall = true\n",
-			// 都道府県を含まない住所（jp-address ではなく high-recall 版のみが
-			// マッチする。jp-address の方は常に Base: High で昇格判定を経由しない）。
+			// 都道府県を含まない住所（jp-address の都道府県あり 2 エントリはここに
+			// マッチしない。「住所: 渋谷区…」のようなラベル付き都道府県なし形は、
+			// jp-address のラベル必須・市区町村辞書ゲート付き第 3 エントリ
+			// （internal/rule/builtin.go）にもマッチしてしまうため、ラベルには
+			// あえてその第 3 エントリの語彙（住所|所在地|自宅|居住|address）に
+			// 含まれない「勤務地」を使い、この jp-address-high-recall 単独の
+			// 昇格挙動だけを切り分けて観測する）。
 			// 町名には「架空坂」という架空の町名を使う。ABR 町字マスター
 			// （internal/dict/towns.txt）に前方一致しないことを go run で機械確認済み
 			// （dict.MunicipalityThenTownMatch("渋谷区架空坂1-2-3") == false）。
@@ -2228,7 +2233,7 @@ func TestPromotionContextWindowBoundary(t *testing.T) {
 			// コンテキスト窓による昇格だけに限定する。町字辞書 twin 自体の検証は
 			// internal/detect/address_town_promotion_test.go
 			// （TestAddressHighRecallDashFormPromotesWithRealTown 等）が担う。
-			label:      "住所",
+			label:      "勤務地",
 			value:      "渋谷区架空坂1-2-3",
 			wantRuleID: "jp-address-high-recall",
 		},
@@ -3195,6 +3200,82 @@ func TestAddressKanjiNumeralBanchi(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestAddressLabeledMissingPrefecture は jp-address の第 3 エントリ（都道府県なし・
+// ラベル必須・市区町村辞書ゲート）を検証する。既定プロファイル唯一の住所 FN
+// （probe-fn:address-missing-prefecture、TestProbeResolvedAddressMissingPrefecture
+// 参照）を解消する新エントリで、jp-address-high-recall と異なりラベルを必須にする
+// ことで既定プロファイルでも安全に使える。
+func TestAddressLabeledMissingPrefecture(t *testing.T) {
+	d := newDetector(t, "")
+
+	t.Run("マーカーなしダッシュ形（神南は実在町字）", func(t *testing.T) {
+		fs := d.ScanLine("f.txt", 1, "住所: 渋谷区神南1-2-3")
+		assertRules(t, fs, "jp-address")
+		if fs[0].Match != "渋谷区神南1-2-3" {
+			t.Errorf("match = %q, want 渋谷区神南1-2-3", fs[0].Match)
+		}
+		// 神南は実在町字（dict.MunicipalityThenTownMatch）に加え、ラベルが値へ
+		// 直結しているためコンテキスト昇格でも High に達する（実挙動確認済み）。
+		if fs[0].Confidence != rule.High {
+			t.Errorf("confidence = %v, want %v", fs[0].Confidence, rule.High)
+		}
+	})
+
+	t.Run("マーカー付き番地形（丸の内は実在町字）", func(t *testing.T) {
+		fs := d.ScanLine("f.txt", 1, "所在地: 千代田区丸の内2丁目7番")
+		assertRules(t, fs, "jp-address")
+		if fs[0].Match != "千代田区丸の内2丁目7番" {
+			t.Errorf("match = %q, want 千代田区丸の内2丁目7番", fs[0].Match)
+		}
+		if fs[0].Confidence != rule.High {
+			t.Errorf("confidence = %v, want %v", fs[0].Confidence, rule.High)
+		}
+	})
+
+	negatives := []struct{ name, line string }{
+		// ラベルが必須のため、ラベルなしの都道府県なし住所は既定では検出しない
+		// （jp-address-high-recall 限定。TestHighRecallRulesOptIn 参照）。
+		{"ラベルなしは非検出", "渋谷区神南1-2-3"},
+		// 「通学区」は市区町村として辞書に実在しないため、辞書ゲート
+		// （addressLabeledMunicipalityValid、dict.MunicipalitySuffixMatch）で棄却する。
+		{"実在しない市区町村は非検出", "住所: 通学区1-2-3"},
+		// 「大手町」は町名であって市区町村そのものではない
+		// （dict.MunicipalitySuffixMatch は市区町村名だけを見るため一致しない）。
+		{"町名は市区町村ではないため非検出", "住所: 大手町2-1-1"},
+		// 末尾が実在する暦日形（YYYY-MM-DD）のダッシュ番地は notCalendarDateBanchi で
+		// 棄却する（既存 jp-address / jp-address-high-recall と同じ日付誤検出対策）。
+		{"実在暦日形は非検出", "住所: 渋谷区2024-04-01"},
+	}
+	for _, tt := range negatives {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line))
+		})
+	}
+}
+
+// TestAddressLabeledMissingPrefectureHighRecallAttribution は、high-recall
+// プロファイルで「住所: 渋谷区神南1-2-3」のようなラベル付き都道府県なし住所が、
+// jp-address-high-recall ではなく jp-address（第 3 エントリ）として 1 件だけ
+// 報告されることを確認する（帰属テスト）。jp-address-high-recall の High twin も
+// 同じ値に発火しうるが、resolveOverlaps の優先順位（confidence → 内部スコア。
+// 高再現率ルールは finalizeFindingScore で -20 の prior）により、prior の無い
+// jp-address 側が常に勝つ設計（internal/rule/builtin.go の jp-address 第 3
+// エントリのコメント参照）。ラベルなしの同じ住所は、従来どおり
+// jp-address-high-recall として検出される。
+func TestAddressLabeledMissingPrefectureHighRecallAttribution(t *testing.T) {
+	d := newDetector(t, highRecallTOML)
+
+	t.Run("ラベル付きは jp-address に帰属する", func(t *testing.T) {
+		fs := d.ScanLine("f.txt", 1, "住所: 渋谷区神南1-2-3")
+		assertRules(t, fs, "jp-address")
+	})
+
+	t.Run("ラベルなしは jp-address-high-recall のまま", func(t *testing.T) {
+		fs := d.ScanLine("f.txt", 1, "渋谷区神南1-2-3")
+		assertRules(t, fs, "jp-address-high-recall")
+	})
 }
 
 // jp-birthdate ルール全体として、無効な暦日が検出されないことを確認する

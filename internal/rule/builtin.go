@@ -233,6 +233,57 @@ var (
 	)
 )
 
+// addressLabeledPrefix は jp-address 第 3 エントリ（都道府県なし・ラベル必須）の
+// 必須プレフィクス。jp-address-high-recall（上記 addressHighRecall*Re）はここが
+// `(?:…)?` の任意だが、この第 3 エントリは既定プロファイルでも安全に使えるよう
+// ラベルを必須にする。語彙は既定 jp-address の Context と揃え、
+// jp-address-high-recall にだけある勤務地・勤務先は含めない
+// （TestHighRecallRulesDisabledByDefault 等が「勤務地: …」を jp-address 側の
+// 非検出として固定しているため、この語彙差自体が既存動作の保護になる）。
+const addressLabeledPrefix = `(?:住所|所在地|自宅|居住|address)\s*[:=]?\s*`
+
+// jp-address 第 3 エントリが使う部分パターン。市区町村部分・番地部分の文字
+// クラス/ギャップは addressHighRecallMarkedRe / addressHighRecallDashRe の定義を
+// そのまま再利用し、先頭にだけ addressLabeledPrefix（ラベル必須）を焼き込む。
+// キャプチャグループ 1 にはラベルを含めない（値は市区町村から番地まで）。
+var (
+	// addressLabeledPrefectureAnchoredRe は値が都道府県名で始まるかどうかの判定
+	// （addressLabeledMunicipalityValid 専用）。既存 2 エントリ（都道府県あり）が
+	// 既に検出する値とこの第 3 エントリが重複して検出しないようにする。重複すると、
+	// 同一スパンの複数候補を resolveOverlaps が集約する際にこの新エントリ
+	// （Validated な分だけ内部スコアが高い）が既存エントリより優先されてしまい、
+	// TestReasonNotValidatedWhenNoValidator 等「マーカー付き番地パターンに
+	// Validate は無い」ことを前提にした既存テストを壊す。
+	addressLabeledPrefectureAnchoredRe = regexp.MustCompile(
+		`^(?:北海道|東京都|京都府|大阪府|[` + kanji + `]{2,3}県)`,
+	)
+	addressLabeledMarkedRe = regexp.MustCompile(
+		addressLabeledPrefix + `(` +
+			`[` + kanji + hiragana + katakana + `]{1,15}[市区町村]` +
+			`[` + kanji + hiragana + katakana + `0-9-]{0,30}?` +
+			banchiMarked + `)`,
+	)
+	// addressLabeledDashRe はマーカーなしダッシュ連結（banchiDash）用。ギャップは
+	// addressHighRecallDashRe と同じ hiraganaNoParticle（助詞抜き）に制限する。
+	addressLabeledDashRe = regexp.MustCompile(
+		addressLabeledPrefix + `(` +
+			`[` + kanji + hiragana + katakana + `]{1,15}[市区町村]` +
+			`[` + kanji + hiraganaNoParticle + katakana + `0-9-]{0,30}?` +
+			banchiDash + `)`,
+	)
+)
+
+// addressLabeledMunicipalityValid は jp-address 第 3 エントリのルールレベル
+// Validate。値が都道府県名で始まる場合（既存 2 エントリの担当領域）を棄却してから
+// dict.MunicipalitySuffixMatch（実在市区町村ゲート。jp-address-high-recall と
+// 同じ）を適用する。
+func addressLabeledMunicipalityValid(v string) bool {
+	if addressLabeledPrefectureAnchoredRe.MatchString(v) {
+		return false
+	}
+	return dict.MunicipalitySuffixMatch(v)
+}
+
 // 氏名ルールで共用する部分パターン。正規化済みの行を前提とする
 // （全角コロン `：`・全角イコール `＝`・全角スペースは正規化で半角になる）。
 var (
@@ -750,6 +801,47 @@ func Builtin() []Rule {
 						`[` + kanji + hiragana + katakana + `0-9-]{0,30}?` +
 						banchiKanji + `)`,
 				), Base: High},
+			},
+		},
+		{
+			// 都道府県なしラベル付き住所（jp-address 第 3 エントリ）。既定プロファイル
+			// 唯一の住所 FN（例:「住所: 渋谷区神南1-2-3」）を解消する。jp-pii-detector:ignore
+			// 都道府県プレフィクス必須の上記 2 エントリでは拾えず、high-recall 限定の
+			// jp-address-high-recall でしか拾えなかった。jp-address-high-recall を参考にしつつ
+			// ラベル必須化・市区町村辞書ゲートで既定プロファイルでも安全に使えるよう
+			// 厳しくする（設計の詳細は addressLabeledPrefix 等のコメント参照）。
+			//
+			// twin パターン（マーカー付き番地形・ダッシュ番地形の両方に High/Medium
+			// の 2 枚組）が必須である理由: high-recall プロファイルでは同じ入力に
+			// jp-address-high-recall の High twin も発火しうる。resolveOverlaps の
+			// 優先順位は (1)Confidence → (2)内部スコア（高再現率ルールは
+			// finalizeFindingScore で -20 の prior）の順であるため、この新エントリも
+			// High まで昇格できる twin にしておけば、High 同士の比較で prior の無い
+			// jp-address 側が常に勝ち、low/medium/high-recall の 3 プロファイル全部で
+			// ルール帰属が安定する。この新エントリが Medium 止まりだと、high-recall
+			// プロファイルでの帰属が jp-address-high-recall に化けてしまい評価が壊れる
+			// （corpusv2 側の対応する合成ポジティブは、この第 3 エントリと重複しない
+			// ラベルなし形へ変更済み。internal/corpusv2/corpusv2.go 参照）。
+			ID:                "jp-address",
+			Description:       "住所（都道府県〜番地）",
+			Prefilter:         PrefilterDigit,
+			PrefilterLiterals: []string{"住所", "所在地", "自宅", "居住", "address"},
+			Context:           []string{"住所", "所在地", "自宅", "address", "居住"},
+			Validate:          addressLabeledMunicipalityValid,
+			Patterns: []Pattern{
+				// マーカー付き番地（丁目/番/号）。High 側は市区町村マッチ直後の
+				// ギャップが ABR 町字マスター由来の実在町字名で始まる場合だけ
+				// Pattern.Validate を通過する（jp-address-high-recall と同じ
+				// 町字辞書昇格 twin）。
+				{Re: addressLabeledMarkedRe, Base: High, Validate: dict.MunicipalityThenTownMatch},
+				{Re: addressLabeledMarkedRe, Base: Medium},
+				// マーカーなしダッシュ連結。High/Medium 双方に notCalendarDateBanchi
+				// （ISO 日付誤検出の棄却）を適用し、High 側だけはさらに
+				// dict.MunicipalityThenTownMatch も満たす場合に限る
+				// （notCalendarDateBanchiAndRealTown、jp-address-high-recall と
+				// 同じ AND 合成。理由は同関数のコメント参照）。
+				{Re: addressLabeledDashRe, Base: High, Validate: notCalendarDateBanchiAndRealTown},
+				{Re: addressLabeledDashRe, Base: Medium, Validate: notCalendarDateBanchi},
 			},
 		},
 		{

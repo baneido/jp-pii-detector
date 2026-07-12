@@ -472,7 +472,21 @@ func positiveCandidates(id string, seed int) []evalcase.Case {
 				out = append(out, lineCase("郵便番号: "+code[:3]+"-"+code[3:]))
 			}
 		case "jp-address":
-			out = append(out, lineCase(fmt.Sprintf("住所: 東京都渋谷区神南%d丁目%d番%d号", i%9+1, i%20+1, i%15+1)))
+			switch i {
+			case 0:
+				// ラベル付き都道府県なし形（jp-address 第 3 エントリの合成ポジティブ）。
+				// 神南は実在町字（dict.MunicipalityThenTownMatch）のため High twin が
+				// 成立するはず。
+				out = append(out, lineCase("住所: 渋谷区神南1-2-3")) // jp-pii-detector:ignore
+			case 1:
+				// 同じくラベル付き都道府県なし形だが、市区町村直後が ABR 町字マスターに
+				// 存在しない語（架空坂。TestPromotionContextWindowBoundary と同じ、
+				// 町字マスターに前方一致しない架空の町名）で、町字辞書昇格 twin ではなく
+				// 市区町村レベルの辞書ゲートだけに依存する形をあわせて確認する。
+				out = append(out, lineCase("住所: 渋谷区架空坂1-2-3")) // jp-pii-detector:ignore
+			default:
+				out = append(out, lineCase(fmt.Sprintf("住所: 東京都渋谷区神南%d丁目%d番%d号", i%9+1, i%20+1, i%15+1)))
+			}
 		case "email-address":
 			out = append(out, lineCase("連絡先: corpusv2-"+digitRun(seed+i+90, 8)+"@baneido.com"))
 		case "email-address-eai":
@@ -519,7 +533,13 @@ func positiveCandidates(id string, seed int) []evalcase.Case {
 		case "person-name":
 			out = append(out, lineCase(casePrefix+"氏名: "+name))
 		case "jp-address-high-recall":
-			out = append(out, lineCase(fmt.Sprintf("住所: 渋谷区神南%d-%d-%d", i%9+1, i%20+1, i%15+1)))
+			// ラベルなし形（jp-address 第 3 エントリはラベル必須のため、この形には
+			// 発火しない）。ラベル付きのまま（旧「住所: 渋谷区神南N-N-N」）だと、
+			// 新しい jp-address 第 3 エントリが同じ値を検出し、high-recall
+			// プロファイルで Want=jp-address-high-recall のケースに jp-address が
+			// 帰属して row FP/FN が発生する（internal/rule/builtin.go の jp-address
+			// 第 3 エントリのコメント参照）。
+			out = append(out, lineCase(fmt.Sprintf("渋谷区神南%d-%d-%d", i%9+1, i%20+1, i%15+1)))
 		case "person-name-high-recall":
 			out = append(out, lineCase(casePrefix+"担当: "+name))
 		case "person-name-structured":

@@ -49,10 +49,6 @@ func TestProbeRegressionKnownFalseNegatives(t *testing.T) {
 	tests := []struct {
 		name, line string
 	}{
-		// 都道府県名を伴わない市区町村＋番地は、既定プロファイルでは
-		// jp-address-high-recall（高再現率限定）でしか拾えない（既定は非検出）。
-		{"probe-fn:address-missing-prefecture known-limitation", "住所: 渋谷区神南1-2-3"},
-
 		// jp-drivers-license: RequireContextWindow（40 ルーン）を超えて
 		// コンテキスト語から離れると昇格せず検出されない
 		// （CLAUDE.md に明記済みの距離窓アーキテクチャの限界）。
@@ -69,6 +65,18 @@ func TestProbeRegressionKnownFalseNegatives(t *testing.T) {
 func TestProbeResolvedAddressKanjiNumeralFalseNegative(t *testing.T) {
 	d := newDetector(t, "")
 	assertRules(t, d.ScanLine("f.txt", 1, "住所: 東京都渋谷区神南二丁目十番七号"), "jp-address")
+}
+
+// TestProbeResolvedAddressMissingPrefecture は、都道府県名を伴わない市区町村＋
+// 番地のうちラベル付きの形（「住所: 渋谷区神南1-2-3」）が、既定プロファイルでは
+// jp-address-high-recall（高再現率限定）でしか拾えなかった系統を固定化する。元は
+// TestProbeRegressionKnownFalseNegatives に "known-limitation" として並んでいた
+// ものだが、jp-address にラベル必須・市区町村辞書ゲート付きの第 3 エントリ
+// （internal/rule/builtin.go）を追加したことで検出に転じた（回帰データセットとして
+// 機能している証拠。期待値を反転した）。
+func TestProbeResolvedAddressMissingPrefecture(t *testing.T) {
+	d := newDetector(t, "")
+	assertRules(t, d.ScanLine("f.txt", 1, "住所: 渋谷区神南1-2-3"), "jp-address")
 }
 
 // TestProbeResolvedLowercaseLetterFalseNegatives は、jp-residence-card /
