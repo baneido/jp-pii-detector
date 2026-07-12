@@ -97,9 +97,8 @@ func TestProbeResolvedAddressKanjiNumeralFalseNegative(t *testing.T) {
 // jp-passport の英字部分を小文字表記（ab12345678cd / ab1234567 等）にも
 // 対応させたことで偽陰性から検出に転じた系統を固定化する。元は
 // TestProbeRegressionKnownFalseNegatives に「検出なし」として並んでいたもので、
-// パターンの [A-Z] を [A-Za-z] へ拡張し（validResidenceCard の I/O 除外判定も
-// 大小文字を区別しないよう合わせて拡張した）、ルール改善に伴い期待値を
-// 反転した（回帰データセットとして機能している証拠）。
+// パターンの [A-Z] を [A-Za-z] へ拡張し、ルール改善に伴い期待値を反転した
+// （回帰データセットとして機能している証拠）。
 func TestProbeResolvedLowercaseLetterFalseNegatives(t *testing.T) {
 	d := newDetector(t, "")
 	tests := []struct{ name, line, want string }{
