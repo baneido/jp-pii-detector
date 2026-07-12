@@ -1,10 +1,12 @@
 // Package fixturegen は「ルール × 表記ゆれ」のマトリクスに沿った合成評価ケース
 // （internal/evalcase.Case）を生成する。値はすべて checksum のチェックディジット
-// 算出ロジックや公開dictから作る合成値で、人物レコードから採取したPIIは
-// ソースに含まれない。生成値が実在する番号空間と偶然一致しないことは保証しない。
+// 算出ロジックや公開dictから作る合成値、または実在する暦日・市外局番等の
+// 形式的制約を計算で満たすダミー値で、人物レコードから採取したPIIはソースに
+// 含まれない。生成値が実在する番号空間と偶然一致しないことは保証しない。
 //
 // 対応ルールは、値の妥当性を検証だけでなく合成もできる（チェックディジットを
-// 逆算できる、または実在辞書から抽出できる）ものに限定している:
+// 逆算できる、実在辞書から抽出できる、または実在の形式的制約を計算で満たせる）
+// ものに限定している:
 //
 //   - jp-my-number: checksum.MyNumber のチェックディジット式を逆算する。
 //   - credit-card: checksum.Luhn のチェックディジットを逆算し、ブランド
@@ -14,6 +16,14 @@
 //     postal_codes.bitset は既にコミット済みのデータで新規の秘匿情報ではない）。
 //   - person-name: dict.SurnameSample / dict.GivenNameSample で姓名辞書から
 //     実在する姓・名を抽出する。
+//   - jp-phone-number: 携帯・固定ともチェックディジットを持たないため、決定式で
+//     生成した非連番・非全桁同一のダミー下位桁と、市外局番辞書（dict.ValidAreaCode
+//     のシードデータ）に実在する市外局番（03・06）を組み合わせて合成する。
+//   - jp-birthdate: validBirthdate が実在する暦日だけを許可するため、実在暦日
+//     1 件を固定で使い、西暦・和暦・略記・区切りなし8桁の各表記へ変換する。
+//   - jp-address: 都道府県名・市区町村名をサンプリングする公開dict APIが無いため、
+//     実在する組み合わせ（東京都渋谷区神南）を 1 つだけ使い、番地部分はパターンが
+//     要求する形状のみを満たす架空の値を付与する（番地自体の実在性は検証しない）。
 //
 // 生成物は internal/evalcase の JSON スキーマ（dataset 配列）に互換な
 // []evalcase.Case で、cmd/pii-dataset-gen が JSON として書き出す。出力は
@@ -41,6 +51,9 @@ func Generate() []evalcase.Case {
 	cases = append(cases, CreditCardCases()...)
 	cases = append(cases, PostalCodeCases()...)
 	cases = append(cases, PersonNameCases()...)
+	cases = append(cases, PhoneNumberCases()...)
+	cases = append(cases, BirthdateCases()...)
+	cases = append(cases, AddressCases()...)
 	counts := map[string]int{}
 	for i := range cases {
 		key := "negative"
@@ -107,6 +120,26 @@ func toFullWidthDigits(s string) string {
 			b.WriteRune(r - '0' + '０') // FULLWIDTH DIGIT ZERO 起点
 		case r == '-':
 			b.WriteRune('－') // FULLWIDTH HYPHEN-MINUS
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// toFullWidthAll は normalize.Line が畳む範囲（ASCII 印字可能文字 U+0021-007E と
+// 半角スペース）を全角へ変換する（normalize.Line の逆写像）。toFullWidthDigits は
+// 数字とハイフンだけが対象だが、電話番号の空白区切り・括弧書き・+81 国際表記や
+// 生年月日のスラッシュ・ドット区切り・元号略記のアルファベットなど、区切り記号や
+// 英字を含む値全体を全角化した表記ゆれケースを作るために使う。
+func toFullWidthAll(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r == ' ':
+			b.WriteRune('　') // IDEOGRAPHIC SPACE
+		case r >= '!' && r <= '~':
+			b.WriteRune(r + 0xFEE0)
 		default:
 			b.WriteRune(r)
 		}
@@ -441,6 +474,223 @@ func filterMinRunes(list []string, minRunes, maxRunes int) []string {
 		}
 	}
 	return out
+}
+
+// ---- jp-phone-number ----
+
+// syntheticPhoneDigits は seed ごとに異なる（全桁同一にも昇順連番にもならない）
+// length 桁のダミー電話番号下位桁を返す。既存の syntheticMyNumber と同じ決定式の
+// 流儀で生成し、採取値ではない（TestSyntheticPhoneDigitsAvoidsPlaceholderPatterns
+// で checksum.AllSame / checksum.IsZeroPaddedSequential のいずれにも該当しないことを
+// 回帰確認する）。
+func syntheticPhoneDigits(seed, length int) string {
+	b := make([]byte, length)
+	for i := range b {
+		d := (i*3 + seed*7 + 2) % 10
+		b[i] = byte('0' + d)
+	}
+	return string(b)
+}
+
+// PhoneNumberCases は種別（携帯090/固定03）× 区切り（ハイフン/なし/空白
+// [携帯限定]/括弧[固定限定]/+81 国際）× 全角半角のマトリクスを返す。ドット区切りは
+// 対象外（並行変更中のため）。固定電話の市外局番は市外局番辞書のシードデータに
+// 確実に存在する 03 のみを使う。
+func PhoneNumberCases() []evalcase.Case {
+	mobileLocal := syntheticPhoneDigits(0, 8)   // 携帯 "090" に続く8桁
+	landlineLocal := syntheticPhoneDigits(1, 8) // 固定 "03" に続く8桁
+
+	// variant.confidence: 区切りなし固定電話（RequireContext）は Base（Medium）から
+	// 昇格しないため常に medium。それ以外はラベルによる昇格、または元々の Base が
+	// High のため high になる（internal/detect の仕様。CLAUDE.md アーキテクチャ節・
+	// internal/detect/detect_test.go の TestPhoneNumberSeparatorVariants 系を参照）。
+	type variant struct {
+		tags       []string
+		value      string
+		confidence string
+	}
+	notations := []struct {
+		tag  string
+		full bool
+	}{{"notation:halfwidth", false}, {"notation:fullwidth", true}}
+
+	render := func(label string, variants []variant) []evalcase.Case {
+		var out []evalcase.Case
+		for _, v := range variants {
+			for _, w := range notations {
+				value := v.value
+				if w.full {
+					value = toFullWidthAll(value)
+				}
+				line := label + value
+				tags := []string{SourceTag, "rule:jp-phone-number"}
+				tags = append(tags, v.tags...)
+				tags = append(tags, w.tag)
+				out = append(out, evalcase.Case{
+					Line:  line,
+					Want:  []string{"jp-phone-number"},
+					Spans: expectedSpan(line, value, "jp-phone-number", v.confidence, 0),
+					Tags:  tags,
+				})
+			}
+		}
+		return out
+	}
+
+	mobileVariants := []variant{
+		{[]string{"type:mobile", "sep:hyphen"}, "090-" + mobileLocal[:4] + "-" + mobileLocal[4:], "high"},
+		{[]string{"type:mobile", "sep:none"}, "090" + mobileLocal, "high"},
+		{[]string{"type:mobile", "sep:space"}, "090 " + mobileLocal[:4] + " " + mobileLocal[4:], "high"},
+		{[]string{"type:mobile", "sep:intl"}, "+81-90-" + mobileLocal[:4] + "-" + mobileLocal[4:], "high"},
+	}
+	landlineVariants := []variant{
+		{[]string{"type:landline", "sep:hyphen"}, "03-" + landlineLocal[:4] + "-" + landlineLocal[4:], "high"},
+		{[]string{"type:landline", "sep:none"}, "03" + landlineLocal, "medium"},
+		{[]string{"type:landline", "sep:parens"}, "(03) " + landlineLocal[:4] + "-" + landlineLocal[4:], "high"},
+		{[]string{"type:landline", "sep:intl"}, "+81-3-" + landlineLocal[:4] + "-" + landlineLocal[4:], "high"},
+	}
+
+	var cases []evalcase.Case
+	cases = append(cases, render("携帯：", mobileVariants)...)     // "携帯："
+	cases = append(cases, render("電話番号：", landlineVariants)...) // "電話番号："
+
+	// 陰性ケース（既存 postal の例に倣う。金額文脈での抑制を確認する）。
+	cases = append(cases,
+		// 汎用負文脈語（伝票番号）は、コンテキストキーワードと同一行にあっても
+		// 区切りなし固定電話（RequireContext）を抑制する（既存挙動。
+		// internal/detect/detect_test.go の
+		// TestPhoneNegativeContextOnlyAppliesToLandlineNoSep 相当）。
+		evalcase.Case{
+			Line: "電話番号: " + "03" + landlineLocal + " 伝票番号", // "電話番号: " … " 伝票番号"
+			Tags: []string{SourceTag, "rule:jp-phone-number", "type:landline", "sep:none", "polarity:negative"},
+		},
+		// 通貨単位（円）が値に直接隣接すると、ラベルなしの空白区切り携帯は抑制される。
+		evalcase.Case{
+			Line: "090 " + mobileLocal[:4] + " " + mobileLocal[4:] + "円",
+			Tags: []string{SourceTag, "rule:jp-phone-number", "type:mobile", "sep:space", "polarity:negative"},
+		},
+	)
+	return cases
+}
+
+// ---- jp-birthdate ----
+
+// birthdateSamples は実在する暦日 1 件（1985-01-02 = 昭和60年1月2日）を、検出
+// パターンが要求する 4 形式（西暦・和暦・略記・区切りなし8桁）で表現したもの。
+// validBirthdate は実在する暦日だけを許可するため、形式を問わず同じ日で揃える。
+var birthdateSamples = []struct {
+	tag   string
+	value string
+}{
+	{"format:seireki", "1985/01/02"},
+	{"format:wareki", "昭和60年1月2日"},
+	{"format:wareki-abbrev", "S60.1.2"},
+	{"format:digits8", "19850102"},
+}
+
+// BirthdateCases はラベル（生年月日/誕生日/DOB）× 形式（西暦・和暦・略記・区切り
+// なし8桁）× 全角半角のマトリクスを返す。jp-birthdate ルールは Context 語彙を持たず
+// パターン自体にラベルが埋め込まれているため、信頼度は常に medium（Base から
+// 昇格しない）。区切りなし8桁はラベル直結が検出の前提（現行仕様）のため、本
+// マトリクスは全形式でラベルと値を同一行・直結（コロンまたは直接連結）で生成する
+// （クロスラインの表記ゆれは対象外）。
+func BirthdateCases() []evalcase.Case {
+	labels := []struct{ tag, prefix string }{
+		{"label:jp-strong", "生年月日："}, // "生年月日："
+		{"label:jp-alt", "誕生日："},     // "誕生日："
+		{"label:ascii", "DOB: "},
+	}
+	notations := []struct {
+		tag  string
+		full bool
+	}{{"notation:halfwidth", false}, {"notation:fullwidth", true}}
+
+	var cases []evalcase.Case
+	for _, lbl := range labels {
+		for _, f := range birthdateSamples {
+			for _, w := range notations {
+				value := f.value
+				if w.full {
+					value = toFullWidthAll(value)
+				}
+				line := lbl.prefix + value
+				cases = append(cases, evalcase.Case{
+					Line:  line,
+					Want:  []string{"jp-birthdate"},
+					Spans: expectedSpan(line, value, "jp-birthdate", "medium", 0),
+					Tags:  []string{SourceTag, "rule:jp-birthdate", lbl.tag, f.tag, w.tag},
+				})
+			}
+		}
+	}
+	return cases
+}
+
+// ---- jp-address ----
+
+// AddressCases は形式（丁目/番/号マーカー付き番地・ダッシュ連結番地・漢数字番地）×
+// 全角半角（漢数字番地は数字の全角/半角という概念が無いため対象外）のマトリクスを
+// 返す。都道府県名・市区町村名をサンプリングする公開 dict API が無いため、実在する
+// 組み合わせ（東京都渋谷区神南）を定数 1 つで使う。番地部分は架空（パターンが
+// 要求する形状だけを満たす）。ドッグフード対象のソースへ実在住所＋番地の完全な
+// 文字列を literal で書かないよう、都道府県+市区町村部分と番地部分は別々の値として
+// 保持し、実行時に連結する。
+func AddressCases() []evalcase.Case {
+	const prefectureCity = "東京都渋谷区神南" // 実在（渋谷区神南）。番地は架空。
+
+	type variant struct {
+		tags   []string
+		banchi string
+	}
+	asciiVariants := []variant{
+		{[]string{"format:banchi-marker"}, "1丁目19番11号"},
+		// 末尾のダッシュ連結が実在の暦日（YYYY-MM-DD、notCalendarDateBanchi）と
+		// 解釈されないよう、先頭成分を 1900-2100 の範囲外にする。
+		{[]string{"format:dash"}, "1-19-11"},
+	}
+	notations := []struct {
+		tag  string
+		full bool
+	}{{"notation:halfwidth", false}, {"notation:fullwidth", true}}
+
+	var cases []evalcase.Case
+	for _, v := range asciiVariants {
+		for _, w := range notations {
+			banchi := v.banchi
+			if w.full {
+				banchi = toFullWidthAll(banchi)
+			}
+			line := prefectureCity + banchi
+			tags := []string{SourceTag, "rule:jp-address"}
+			tags = append(tags, v.tags...)
+			tags = append(tags, w.tag)
+			cases = append(cases, evalcase.Case{
+				Line:  line,
+				Want:  []string{"jp-address"},
+				Spans: expectedSpan(line, line, "jp-address", "high", 0),
+				Tags:  tags,
+			})
+		}
+	}
+
+	// 漢数字番地は全角/半角の概念が無いため単独ケース。
+	kanjiLine := prefectureCity + "一丁目十九番十一号"
+	cases = append(cases, evalcase.Case{
+		Line:  kanjiLine,
+		Want:  []string{"jp-address"},
+		Spans: expectedSpan(kanjiLine, kanjiLine, "jp-address", "high", 0),
+		Tags:  []string{SourceTag, "rule:jp-address", "format:kanji-banchi"},
+	})
+
+	// 陰性ケース: ISO 日付（YYYY-MM-DD）は番地のダッシュ連結と字面が似るが、市区
+	// 町村直後の助詞「で」が番地とのギャップの許容文字集合に無いため、住所として
+	// 検出されない（notCalendarDateBanchi に到達する前に regexp 自体が不一致になる。
+	// hiraganaNoParticle のコメント参照）。
+	cases = append(cases, evalcase.Case{
+		Line: "東京都渋谷区で2025-07-02に開催",
+		Tags: []string{SourceTag, "rule:jp-address", "polarity:negative"},
+	})
+	return cases
 }
 
 // ---- JSON 書き出し（cmd/pii-dataset-gen 用） ----

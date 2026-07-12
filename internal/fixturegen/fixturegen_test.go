@@ -121,7 +121,7 @@ func TestPersonNameCasesUseDictionaryNames(t *testing.T) {
 }
 
 // TestGenerateProducesTaggedSyntheticCases は Generate() が返す全ケースに
-// SourceTag（source:synthetic）が付いていること、対応 4 ルールぶんの内容が
+// SourceTag（source:synthetic）が付いていること、対応 7 ルールぶんの内容が
 // あることを検証する。
 func TestGenerateProducesTaggedSyntheticCases(t *testing.T) {
 	cases := Generate()
@@ -130,6 +130,7 @@ func TestGenerateProducesTaggedSyntheticCases(t *testing.T) {
 	}
 	wantRules := map[string]bool{
 		"jp-my-number": false, "credit-card": false, "jp-postal-code": false, "person-name": false,
+		"jp-phone-number": false, "jp-birthdate": false, "jp-address": false,
 	}
 	for _, c := range cases {
 		if c.ID == "" || c.SourceClass != "algorithmic" {
@@ -158,6 +159,114 @@ func TestSurnameSampleFilterHasEnoughUsableNames(t *testing.T) {
 	names := filterMinRunes(dict.SurnameSample(60), 2, 4)
 	if len(names) < 4 {
 		t.Fatalf("filterMinRunes(SurnameSample(60), 2, 4) = %d usable surnames, want at least 4", len(names))
+	}
+}
+
+// TestToFullWidthAllConvertsAllASCIIAndSpace は toFullWidthAll が数字・記号・
+// 半角スペース・英字を含む値全体を全角化することを検証する（toFullWidthDigits は
+// 数字とハイフンのみが対象のため、電話番号の空白・括弧・+81 国際表記や生年月日の
+// スラッシュ・ドット区切り・元号略記のアルファベットには使えない）。
+func TestToFullWidthAllConvertsAllASCIIAndSpace(t *testing.T) {
+	got := toFullWidthAll("+81-90 (1) S.2")
+	want := "＋８１－９０　（１）　Ｓ．２"
+	if got != want {
+		t.Errorf("toFullWidthAll(...) = %q, want %q", got, want)
+	}
+}
+
+// TestSyntheticPhoneDigitsAvoidsPlaceholderPatterns は syntheticPhoneDigits が
+// 全桁同一にも昇順・降順連番にもならないことを、実際に使う seed・桁数を含む
+// 組み合わせで検証する（validPhone の checksum.AllSame 棄却と、ダミー値としての
+// 見た目の両方を回帰確認する）。
+func TestSyntheticPhoneDigitsAvoidsPlaceholderPatterns(t *testing.T) {
+	for seed := 0; seed < 4; seed++ {
+		for _, length := range []int{4, 8} {
+			got := syntheticPhoneDigits(seed, length)
+			if len(got) != length {
+				t.Fatalf("syntheticPhoneDigits(%d, %d) = %q, want length %d", seed, length, got, length)
+			}
+			if checksum.AllSame(got) {
+				t.Errorf("syntheticPhoneDigits(%d, %d) = %q must not be all-same digits", seed, length, got)
+			}
+			if checksum.IsZeroPaddedSequential(got) {
+				t.Errorf("syntheticPhoneDigits(%d, %d) = %q must not be a sequential run", seed, length, got)
+			}
+		}
+	}
+}
+
+// TestPhoneNumberCasesMatrixShape は PhoneNumberCases() の件数（種別2 × 区切り4 ×
+// 表記2 の陽性ケース + 陰性ケース2件）とタグ付与を検証する。
+func TestPhoneNumberCasesMatrixShape(t *testing.T) {
+	cases := PhoneNumberCases()
+	positives, negatives := 0, 0
+	for _, c := range cases {
+		if !hasTagPrefix(c.Tags, SourceTag) {
+			t.Errorf("case %q missing %s tag", caseLine(c), SourceTag)
+		}
+		if !hasTagPrefix(c.Tags, "rule:jp-phone-number") {
+			t.Errorf("case %q missing rule:jp-phone-number tag", caseLine(c))
+		}
+		if len(c.Want) > 0 {
+			positives++
+		} else {
+			negatives++
+		}
+	}
+	const wantPositives = 2 * 4 * 2 // 種別(携帯/固定)2 × 区切り4 × 表記2
+	if positives != wantPositives {
+		t.Errorf("PhoneNumberCases() positive count = %d, want %d", positives, wantPositives)
+	}
+	if negatives != 2 {
+		t.Errorf("PhoneNumberCases() negative count = %d, want 2", negatives)
+	}
+}
+
+// TestBirthdateCasesMatrixShape は BirthdateCases() の件数（ラベル3 × 形式4 ×
+// 表記2、すべて陽性）とタグ付与を検証する。
+func TestBirthdateCasesMatrixShape(t *testing.T) {
+	cases := BirthdateCases()
+	const want = 3 * 4 * 2 // ラベル(生年月日/誕生日/DOB)3 × 形式4 × 表記2
+	if len(cases) != want {
+		t.Fatalf("BirthdateCases() = %d cases, want %d", len(cases), want)
+	}
+	for _, c := range cases {
+		if !hasTagPrefix(c.Tags, SourceTag) {
+			t.Errorf("case %q missing %s tag", caseLine(c), SourceTag)
+		}
+		if !hasTagPrefix(c.Tags, "rule:jp-birthdate") {
+			t.Errorf("case %q missing rule:jp-birthdate tag", caseLine(c))
+		}
+		if len(c.Want) == 0 {
+			t.Errorf("case %q should be positive (BirthdateCases has no negative cases)", caseLine(c))
+		}
+	}
+}
+
+// TestAddressCasesMatrixShape は AddressCases() の件数（(形式2 × 表記2) + 漢数字
+// 番地1 の陽性ケース + 陰性ケース1件）とタグ付与を検証する。
+func TestAddressCasesMatrixShape(t *testing.T) {
+	cases := AddressCases()
+	positives, negatives := 0, 0
+	for _, c := range cases {
+		if !hasTagPrefix(c.Tags, SourceTag) {
+			t.Errorf("case %q missing %s tag", caseLine(c), SourceTag)
+		}
+		if !hasTagPrefix(c.Tags, "rule:jp-address") {
+			t.Errorf("case %q missing rule:jp-address tag", caseLine(c))
+		}
+		if len(c.Want) > 0 {
+			positives++
+		} else {
+			negatives++
+		}
+	}
+	const wantPositives = 2*2 + 1 // (形式:banchi-marker/dash 2 × 表記2) + 漢数字番地1
+	if positives != wantPositives {
+		t.Errorf("AddressCases() positive count = %d, want %d", positives, wantPositives)
+	}
+	if negatives != 1 {
+		t.Errorf("AddressCases() negative count = %d, want 1", negatives)
 	}
 }
 
