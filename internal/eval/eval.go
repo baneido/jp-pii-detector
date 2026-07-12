@@ -13,6 +13,7 @@ import (
 	"github.com/baneido/jp-pii-detector/internal/detect"
 	"github.com/baneido/jp-pii-detector/internal/evalcase"
 	"github.com/baneido/jp-pii-detector/internal/privatecorpus"
+	"github.com/baneido/jp-pii-detector/internal/rule"
 )
 
 // Case / Span はデータの取得方法に依存しない評価モデル。
@@ -34,6 +35,7 @@ type Result struct {
 	TP, FP, FN            int
 	Precision, Recall, F1 float64
 	SpanExact             Score
+	SpanContainment       Score
 	SpanRelaxed           Score
 	// Negatives はデータセット全体で Want・Spans が両方とも空の「陰性ケース」の
 	// 総数（全ルール共通の母数で、FP を正規化した偽陽性率などに使う）。
@@ -44,7 +46,7 @@ type Result struct {
 	// （そのルールが期待されていないケースでの finding 数の合計）。
 	FindingFP int
 	// ConfidenceMiss は、期待スパンに WantConfidence が設定されているケースで、
-	// 検出はできた（span exact 一致）ものの実際の最終信頼度が期待未満だった件数。
+	// 検出が期待値全体を包含したものの実際の最終信頼度が期待未満だった件数。
 	// 既定設定（min_confidence=medium 等）で黙って埋もれる「実質検出漏れ」を表す。
 	ConfidenceMiss int
 }
@@ -67,9 +69,8 @@ func Evaluate() ([]Result, error) {
 }
 
 // EvaluateWithOptions はデータセット全体を指定オプションで走査し、ルールごとの
-// 指標を返す。README の既存バッジは Evaluate の low 閾値評価を使い続けるが、
-// 開発時には既定 CLI 相当（medium）や high-recall 有効時の指標も同じハーネスで
-// 計測できる。
+// 指標を返す。公開・CIゲートする3設定は PublishedProfiles が定義し、READMEは
+// mediumプロファイルを使う。
 func EvaluateWithOptions(opts Options) ([]Result, error) {
 	corpus, configured, err := privatecorpus.FromEnv()
 	if err != nil {
@@ -150,11 +151,12 @@ func EvaluateCasesStratifiedWithOptions(cases []Case, opts Options) (Stratified,
 	}
 
 	type counts struct {
-		row            Score
-		spanExact      Score
-		spanRelaxed    Score
-		findingFP      int
-		confidenceMiss int
+		row             Score
+		spanExact       Score
+		spanContainment Score
+		spanRelaxed     Score
+		findingFP       int
+		confidenceMiss  int
 	}
 	stat := map[string]*counts{}
 	at := func(id string) *counts {
@@ -167,6 +169,11 @@ func EvaluateCasesStratifiedWithOptions(cases []Case, opts Options) (Stratified,
 	kindStat := map[string]*Score{}
 
 	negatives := 0
+	highRecallIDs := map[string]bool{}
+	for _, id := range rule.HighRecallRuleIDs() {
+		highRecallIDs[id] = true
+	}
+	activeRule := func(id string) bool { return opts.HighRecall || !highRecallIDs[id] }
 	for _, c := range cases {
 		// Want・Spans がともに空のケースは陰性（何も検出されないべき）として
 		// 母数に数える。全ルール共通の母数のため、ケースループの外で
@@ -177,10 +184,16 @@ func EvaluateCasesStratifiedWithOptions(cases []Case, opts Options) (Stratified,
 
 		want := map[string]bool{}
 		for _, id := range c.Want {
+			if !activeRule(id) {
+				continue
+			}
 			want[id] = true
 			at(id) // 母数 0 のルールも結果に出す
 		}
 		for _, s := range c.Spans {
+			if !activeRule(s.RuleID) {
+				continue
+			}
 			if s.RuleID == "" {
 				return Stratified{}, fmt.Errorf("span rule id is empty for case %q", caseLabel(c))
 			}
@@ -206,7 +219,7 @@ func EvaluateCasesStratifiedWithOptions(cases []Case, opts Options) (Stratified,
 			findingCounts[f.RuleID]++
 		}
 		// 期待・検出の和集合でルールごとに TP/FP/FN を加算する（行レベル、
-		// low プロファイルのゴールデン値に使う既存の集計で、互換のため定義は変更しない）。
+		// 3プロファイルのゴールデンに使う既存集計で、定義は変更しない）。
 		// ケース単位のタグ・種別バケツにも同じ加算結果をまとめて足し、ケース内で
 		// 複数ルールの期待・検出があれば層別スコアへ合算する。
 		var caseScore Score
@@ -248,6 +261,9 @@ func EvaluateCasesStratifiedWithOptions(cases []Case, opts Options) (Stratified,
 		if len(c.Spans) > 0 {
 			wantSpans := map[string][]Span{}
 			for _, s := range c.Spans {
+				if !activeRule(s.RuleID) {
+					continue
+				}
 				wantSpans[s.RuleID] = append(wantSpans[s.RuleID], s)
 			}
 			gotSpans := map[string][]Span{}
@@ -261,13 +277,15 @@ func EvaluateCasesStratifiedWithOptions(cases []Case, opts Options) (Stratified,
 			for id, spans := range wantSpans {
 				gotForRule := gotSpans[id]
 				confForRule := gotConf[id]
-				exact, exactPairs := matchSpans(spans, gotForRule, spansEqual)
+				exact, _ := matchSpans(spans, gotForRule, spansEqual)
+				containment, containmentPairs := matchSpans(spans, gotForRule, spansContainedBy)
 				relaxed, _ := matchSpans(spans, gotForRule, spansOverlap)
 				addScore(&at(id).spanExact, exact)
+				addScore(&at(id).spanContainment, containment)
 				addScore(&at(id).spanRelaxed, relaxed)
-				// want_confidence: exact 一致（位置の対応が一意）した検出だけを対象に、
+				// want_confidence: 期待値全体を包含した検出を対象に、
 				// 実際の最終信頼度が期待未満なら ConfidenceMiss に数える。
-				for wi, gi := range exactPairs {
+				for wi, gi := range containmentPairs {
 					if gi < 0 {
 						continue // 未検出（FN）は対象外
 					}
@@ -285,6 +303,7 @@ func EvaluateCasesStratifiedWithOptions(cases []Case, opts Options) (Stratified,
 			for id, spans := range gotSpans {
 				missed := Score{FP: len(spans)}
 				addScore(&at(id).spanExact, missed)
+				addScore(&at(id).spanContainment, missed)
 				addScore(&at(id).spanRelaxed, missed)
 			}
 		}
@@ -294,20 +313,22 @@ func EvaluateCasesStratifiedWithOptions(cases []Case, opts Options) (Stratified,
 	for id, c := range stat {
 		fillScore(&c.row)
 		fillScore(&c.spanExact)
+		fillScore(&c.spanContainment)
 		fillScore(&c.spanRelaxed)
 		r := Result{
-			RuleID:         id,
-			TP:             c.row.TP,
-			FP:             c.row.FP,
-			FN:             c.row.FN,
-			Precision:      c.row.Precision,
-			Recall:         c.row.Recall,
-			F1:             c.row.F1,
-			SpanExact:      c.spanExact,
-			SpanRelaxed:    c.spanRelaxed,
-			Negatives:      negatives,
-			FindingFP:      c.findingFP,
-			ConfidenceMiss: c.confidenceMiss,
+			RuleID:          id,
+			TP:              c.row.TP,
+			FP:              c.row.FP,
+			FN:              c.row.FN,
+			Precision:       c.row.Precision,
+			Recall:          c.row.Recall,
+			F1:              c.row.F1,
+			SpanExact:       c.spanExact,
+			SpanContainment: c.spanContainment,
+			SpanRelaxed:     c.spanRelaxed,
+			Negatives:       negatives,
+			FindingFP:       c.findingFP,
+			ConfidenceMiss:  c.confidenceMiss,
 		}
 		results = append(results, r)
 	}
@@ -467,6 +488,14 @@ func spansOverlap(a, b Span) bool {
 	return a.RuleID == b.RuleID && spanLine(a) == spanLine(b) && a.Start < b.End && b.Start < a.End
 }
 
+// spansContainedBy は、検出スパン b が期待スパン a の全体を含む場合に一致する。
+// exactより緩くoverlapより厳しいため、「値は欠かしていないが余分に拾った」を
+// 「途中で切れた」検出から分離できる。
+func spansContainedBy(a, b Span) bool {
+	return a.RuleID == b.RuleID && spanLine(a) == spanLine(b) &&
+		b.Start <= a.Start && b.End >= a.End
+}
+
 func spanLine(s Span) int {
 	if s.Line <= 0 {
 		return 1
@@ -498,11 +527,13 @@ func fillScore(s *Score) {
 func Micro(results []Result) Result {
 	var s Score
 	var findingFP int
+	var confidenceMiss int
 	for _, r := range results {
 		s.TP += r.TP
 		s.FP += r.FP
 		s.FN += r.FN
 		findingFP += r.FindingFP
+		confidenceMiss += r.ConfidenceMiss
 	}
 	fillScore(&s)
 	var negatives int
@@ -512,15 +543,16 @@ func Micro(results []Result) Result {
 		negatives = results[0].Negatives
 	}
 	return Result{
-		RuleID:    "micro",
-		TP:        s.TP,
-		FP:        s.FP,
-		FN:        s.FN,
-		Precision: s.Precision,
-		Recall:    s.Recall,
-		F1:        s.F1,
-		Negatives: negatives,
-		FindingFP: findingFP,
+		RuleID:         "micro",
+		TP:             s.TP,
+		FP:             s.FP,
+		FN:             s.FN,
+		Precision:      s.Precision,
+		Recall:         s.Recall,
+		F1:             s.F1,
+		Negatives:      negatives,
+		FindingFP:      findingFP,
+		ConfidenceMiss: confidenceMiss,
 	}
 }
 
@@ -546,6 +578,16 @@ func MicroSpanRelaxed(results []Result) Score {
 	return s
 }
 
+// MicroSpanContainment は期待値全体を包含する検出のマイクロ平均を返す。
+func MicroSpanContainment(results []Result) Score {
+	var s Score
+	for _, r := range results {
+		addScore(&s, r.SpanContainment)
+	}
+	fillScore(&s)
+	return s
+}
+
 // MacroSpanExact は期待スパンが付いたルールごとの完全一致指標を平均する。
 func MacroSpanExact(results []Result) Score {
 	return macroSpan(results, func(r Result) Score { return r.SpanExact })
@@ -554,6 +596,11 @@ func MacroSpanExact(results []Result) Score {
 // MacroSpanRelaxed は期待スパンが付いたルールごとの重なり一致指標を平均する。
 func MacroSpanRelaxed(results []Result) Score {
 	return macroSpan(results, func(r Result) Score { return r.SpanRelaxed })
+}
+
+// MacroSpanContainment はルールごとのcontainment指標を平均する。
+func MacroSpanContainment(results []Result) Score {
+	return macroSpan(results, func(r Result) Score { return r.SpanContainment })
 }
 
 func macroSpan(results []Result, pick func(Result) Score) Score {

@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"sort"
 	"testing"
 
 	"github.com/baneido/jp-pii-detector/internal/privatecorpus"
@@ -27,26 +28,54 @@ func TestDatasetQuality(t *testing.T) {
 		t.Error(problem)
 	}
 
-	// (c) ルール別の陽性ケース数が少ない場合は警告に留める。既存データセットは
-	// ほぼ全ルールで 10 件を下回るため、エラー昇格はデータセット拡充（P07/P27）後に行う。
+	// v2の契約: 高再現率を含む全ルールに10件以上の陽性を必須とする。
 	const minPositiveCases = 10
 	stats := ComputeDatasetStats(cases)
+	perRule := map[string]int{}
 	for _, rc := range stats.PerRule {
-		if rc.Cases < minPositiveCases {
-			t.Logf("警告: ルール %q の陽性ケース数が %d 件（目安 %d 件未満）", rc.RuleID, rc.Cases, minPositiveCases)
+		perRule[rc.RuleID] = rc.Cases
+	}
+	ids := make([]string, 0, len(knownRules))
+	for id := range knownRules {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		if perRule[id] < minPositiveCases {
+			t.Errorf("ルール %q の陽性ケース数が %d 件（最低 %d 件）", id, perRule[id], minPositiveCases)
 		}
 	}
 
-	// (d) スパン未付与の陽性 (ケース, ルール) 組の件数をラチェット監視する。
-	// 増加のみエラーにする（減少は -update で docs/accuracy.json へ自動反映される）。
-	golden, err := LoadGolden(accuracyJSONPath)
-	if err != nil {
-		t.Fatalf("docs/accuracy.json を読み込めません: %v（`go test ./internal/eval -run 'TestGenerateDoc|TestReadmeBadges' -update` で生成してください）", err)
+	if spanless := SpanlessPositiveCount(cases); spanless != 0 {
+		t.Errorf("全陽性にspansが必要です: 未付与の(case, rule)が%d件", spanless)
 	}
-	if spanless := SpanlessPositiveCount(cases); SpanlessPositiveIncreased(cases, golden.DatasetQuality.SpanlessPositiveCount) {
-		t.Errorf(
-			"スパン未付与の陽性件数が増加しました: 実測 %d 件 > docs/accuracy.json の %d 件。"+
-				"新しいケースに spans を付与するか、増加が既知・許容できるなら `go test ./internal/eval -run 'TestGenerateDoc|TestReadmeBadges' -update` で docs/accuracy.json を更新してください",
-			spanless, golden.DatasetQuality.SpanlessPositiveCount)
+
+	for i, c := range cases {
+		if c.ID == "" {
+			t.Errorf("dataset[%d]のidが空です", i)
+		}
+		if c.SourceClass == "" {
+			t.Errorf("dataset[%d]のsource_classが空です", i)
+		}
+	}
+
+	requireDimension(t, stats.PerKind, map[string]int{"line": 1, "content": 1, "diff": 1})
+	requireDimension(t, stats.PerFormat, map[string]int{"csv": 1, "sql": 1, "json": 1})
+	requireDimension(t, stats.PerSourceClass, map[string]int{"hard-negative": 40})
+	if stats.NegativeCases < 100 {
+		t.Errorf("陰性ケース数が%d件です（最低100件）", stats.NegativeCases)
+	}
+}
+
+func requireDimension(t *testing.T, got []DatasetDimensionCount, minimum map[string]int) {
+	t.Helper()
+	counts := map[string]int{}
+	for _, item := range got {
+		counts[item.Name] = item.Cases
+	}
+	for name, want := range minimum {
+		if counts[name] < want {
+			t.Errorf("データセット区分 %q が%d件です（最低%d件）", name, counts[name], want)
+		}
 	}
 }
