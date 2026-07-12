@@ -11,6 +11,7 @@ paths = [
   "^internal/checksum/checksum_test\\.go$",
   "^internal/dict/phone_test\\.go$",
   "^internal/rule/builtin_test\\.go$",
+  "^internal/rule/phone_kind_test\\.go$",
   "^internal/detect/(detect|probe_regression|csv_context)_test\\.go$",
   "^internal/fixturegen/.*_test\\.go$",
   "^cmd/jp-pii-detect/main_test\\.go$",

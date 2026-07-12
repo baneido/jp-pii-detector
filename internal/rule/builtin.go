@@ -528,6 +528,11 @@ func Builtin() []Rule {
 			NegativeContext:      digitRuleNegativeContext,
 			RequireContextWindow: digitRuleRequireContextWindow,
 			Validate:             validPhone,
+			// PhoneKind はフリーダイヤル等のサービス番号(0120/0800/0570/0990/0180)・
+			// IP電話(050)・携帯(060/070/080/090)・国際表記・固定電話を判別し、
+			// Reason.Kind に記録する（内訳は internal/rule/phone_kind.go）。
+			// [rules] exclude_kinds で下位種別ごとに除外できる（既定は全種別検出）。
+			Kind: PhoneKind,
 			Patterns: []Pattern{
 				// 区切りあり携帯・IP 電話（060/070/080/090/050）
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0-\d{4}-\d{4}`), Base: High, IgnoreNegativeContext: true},

@@ -199,6 +199,29 @@ cooccurrence_boost = true
 	}
 }
 
+func TestParseExcludeKindsDefaultsEmpty(t *testing.T) {
+	cfg, err := Parse("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Rules.ExcludeKinds) != 0 {
+		t.Errorf("ExcludeKinds = %v, want empty by default (既定は空で挙動不変)", cfg.Rules.ExcludeKinds)
+	}
+}
+
+func TestParseExcludeKinds(t *testing.T) {
+	cfg, err := Parse(`
+[rules]
+exclude_kinds = ["service"]
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsString(cfg.Rules.ExcludeKinds, "service") {
+		t.Errorf("ExcludeKinds = %v, want it to contain %q", cfg.Rules.ExcludeKinds, "service")
+	}
+}
+
 func TestDefault(t *testing.T) {
 	cfg := Default()
 	if cfg.MinConfidence != "medium" {

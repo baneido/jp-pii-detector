@@ -360,6 +360,43 @@ func TestPhoneLandlineDotSeparated(t *testing.T) {
 	}
 }
 
+// TestPhoneKindDefaultReportsBothWithReasonKind は、docs/detection-methods.md の
+// 対象外表とルール実装の不整合（フリーダイヤル等のサービス番号も実際には
+// jp-phone-number として検出される）を踏まえて追加した下位種別分類（Rule.Kind /
+// PhoneKind）の既定挙動を確認する。exclude_kinds 未設定の既定では、サービス番号・
+// 携帯番号のどちらも従来どおり検出され、Reason.Kind にそれぞれ判定結果が記録される。
+func TestPhoneKindDefaultReportsBothWithReasonKind(t *testing.T) {
+	d := newDetector(t, "")
+
+	fs := d.ScanLine("f.txt", 1, "0120-333-906")
+	assertRules(t, fs, "jp-phone-number")
+	if fs[0].Reason.Kind != "service" {
+		t.Errorf("Reason.Kind = %q, want %q", fs[0].Reason.Kind, "service")
+	}
+
+	fs = d.ScanLine("f.txt", 1, "090-1234-5678")
+	assertRules(t, fs, "jp-phone-number")
+	if fs[0].Reason.Kind != "mobile" {
+		t.Errorf("Reason.Kind = %q, want %q", fs[0].Reason.Kind, "mobile")
+	}
+}
+
+// TestPhoneKindExcludeKinds は [rules] exclude_kinds = ["service"] を設定すると
+// フリーダイヤル等のサービス番号（Reason.Kind="service"）だけが検出結果から除かれ、
+// 携帯番号（Reason.Kind="mobile"）は従来どおり検出されることを確認する。
+func TestPhoneKindExcludeKinds(t *testing.T) {
+	d := newDetector(t, `
+[rules]
+exclude_kinds = ["service"]
+`)
+
+	fs := d.ScanLine("f.txt", 1, "0120-333-906")
+	assertRules(t, fs) // service は除外され検出なし
+
+	fs = d.ScanLine("f.txt", 1, "090-1234-5678")
+	assertRules(t, fs, "jp-phone-number") // mobile は既定どおり検出
+}
+
 func TestPostalAndAddress(t *testing.T) {
 	d := newDetector(t, "")
 	postalOsaka := testfixtures.MustGet(t, "detect.postal_osaka")

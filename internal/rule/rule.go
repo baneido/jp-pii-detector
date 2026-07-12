@@ -143,5 +143,13 @@ type Rule struct {
 	// Validate はマッチ文字列の追加検証（チェックディジット等）。
 	// nil の場合は常に有効。引数は正規化済みのマッチ文字列。
 	Validate func(match string) bool
+	// Kind は Validate 群を通過した検出値を下位種別に分類する関数
+	// （例: jp-phone-number の PhoneKind が返す service/ip/mobile/fixed/
+	// international）。nil なら未分類で Finding.Reason.Kind は設定されない。
+	// 設定すると internal/detect が検出直後に Reason.Kind へ結果を記録し、
+	// 値が設定ファイルの [rules] exclude_kinds（internal/config）に列挙された
+	// 種別と一致する場合はその finding を破棄する。検出可否・信頼度そのものには
+	// 影響しない補助分類フック。
+	Kind     func(match string) string
 	Patterns []Pattern
 }

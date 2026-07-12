@@ -114,6 +114,33 @@ func TestTextExplainIncludesReason(t *testing.T) {
 	}
 }
 
+// TestTextExplainIncludesKind は Reason.Kind（jp-phone-number の PhoneKind 等、
+// Rule.Kind が設定されたルールの下位種別）が --explain 相当の text 出力に
+// 含まれることを確認する最小ケース。フィクスチャ不要（実在しうる PII 形式を
+// 含まない合成データのため）。
+func TestTextExplainIncludesKind(t *testing.T) {
+	fs := []detect.Finding{{
+		RuleID:      "jp-phone-number",
+		Description: "電話番号",
+		File:        "users.csv",
+		Line:        4,
+		Column:      6,
+		Match:       "ABCDEFGHIJK",
+		Confidence:  rule.Medium,
+		Reason: detect.DetectReason{
+			BaseConfidence:  "medium",
+			FinalConfidence: "medium",
+			Kind:            "service",
+		},
+	}}
+
+	var buf bytes.Buffer
+	Text(&buf, fs, false, true)
+	if !strings.Contains(buf.String(), "種別=service") {
+		t.Errorf("--explain 相当の text 出力に種別(Kind)が無い: %s", buf.String())
+	}
+}
+
 // TestTextIncludesBaselineHint はサマリ行に --update-baseline の案内が
 // 含まれることを確認する（IgnoreMarker の案内と同様の形式）。フィクスチャ不要。
 func TestTextIncludesBaselineHint(t *testing.T) {

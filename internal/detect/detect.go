@@ -3,6 +3,7 @@ package detect
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -128,6 +129,11 @@ type DetectReason struct {
 	// （internal/detect/path_profile.go）。true の場合、Confidence は既に
 	// 降格後の値（Low）になっている。
 	PathDemoted bool `json:"path_demoted,omitempty"`
+	// Kind はルール固有の下位種別（Rule.Kind が設定されている場合のみ設定される。
+	// internal/rule/rule.go 参照）。現状は jp-phone-number の PhoneKind が返す
+	// service/ip/mobile/fixed/international のいずれか。設定ファイルの
+	// [rules] exclude_kinds（internal/config）でこの値ごとに検出を除外できる。
+	Kind string `json:"kind,omitempty"`
 }
 
 // Detector は設定を適用済みの検出エンジン。
@@ -959,6 +965,18 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 				}
 				if d.allowlisted(entity) {
 					continue
+				}
+				// r.Kind は Validate 群通過後に確定した検出値へ適用する下位種別
+				// 分類（例: jp-phone-number の PhoneKind）。Reason.Kind への記録は
+				// 常に行うが、その種別が設定ファイルの [rules] exclude_kinds に
+				// 含まれる場合は、信頼度や minConf の判定を待たずにここで
+				// finding を破棄する。既定の exclude_kinds は空のため、
+				// これまでの検出結果は変わらない。
+				if r.Kind != nil {
+					reason.Kind = r.Kind(entity)
+					if slices.Contains(d.cfg.Rules.ExcludeKinds, reason.Kind) {
+						continue
+					}
 				}
 				// RequireContext のパターンはキーワードの存在が検出の前提
 				// であり昇格の根拠にならないため、Base の信頼度のまま報告する
