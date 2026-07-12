@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/baneido/jp-pii-detector/internal/corpusv2"
 	"github.com/baneido/jp-pii-detector/internal/evalcase"
 )
 
@@ -62,6 +63,16 @@ func Decode(r io.Reader) (*Corpus, error) {
 	}
 	if err := evalcase.Validate(c.Dataset); err != nil {
 		return nil, err
+	}
+	// 固定済みの初期v2 generationには、後から公知sandbox PANと判明した
+	// credit-card正例が含まれる。GCS本文を書き換えず、決定的な互換migrationで
+	// 陰性への再分類と不足正例の補完を行う。
+	if c.DatasetID == "private-eval-v2" {
+		upgraded, err := corpusv2.UpgradePublishedV2(c.Dataset)
+		if err != nil {
+			return nil, fmt.Errorf("private-eval-v2 の互換migrationに失敗しました: %w", err)
+		}
+		c.Dataset = upgraded
 	}
 	return &c, nil
 }

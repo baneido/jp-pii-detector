@@ -169,17 +169,10 @@ func luhnComplete(prefix string) string {
 	panic("unreachable")
 }
 
-// TestCreditCard は「フォーマット妥当性」（Luhn + ブランドプレフィックス +
-// 桁数）のみを検証する。決済処理業者が公開するテスト用 PAN も、実在番号と
-// 値だけでは安全に区別できないため検出対象とする。
+// TestCreditCard は公知テストPANを除く「フォーマット妥当性」
+// （Luhn + ブランドプレフィックス + 桁数）を検証する。
 func TestCreditCard(t *testing.T) {
 	valid := []string{
-		"4111111111111111",                 // Visa 16 桁テスト番号
-		"5555555555554444",                 // Mastercard テスト番号
-		"3530111333300000",                 // JCB 16 桁テスト番号
-		"378282246310005",                  // Amex テスト番号
-		"30569309025904",                   // Diners 14 桁テスト番号
-		"6011111111111117",                 // Discover テスト番号
 		luhnComplete("400000123456789"),    // Visa 16 桁（合成番号。旧 13 桁形式は非対応）
 		luhnComplete("422222222222222222"), // Visa 19 桁
 		luhnComplete("222100000000000"),    // Mastercard 2-series 下限
@@ -213,6 +206,34 @@ func TestCreditCard(t *testing.T) {
 		if CreditCard(v) {
 			t.Errorf("CreditCard(%q) = true, want false", v)
 		}
+	}
+}
+
+func TestKnownTestPANsAreRejectedByCreditCard(t *testing.T) {
+	known := []string{
+		"4111111111111111",
+		"4242424242424242",
+		"5555555555554444",
+		"378282246310005",
+		"371449635398431",
+		"6011111111111117",
+		"6011000990139424",
+		"30569309025904",
+		"3530111333300000",
+	}
+	if len(knownTestPANHashes) != len(known) {
+		t.Fatalf("denylist digest数 = %d, want %d", len(knownTestPANHashes), len(known))
+	}
+	for _, pan := range known {
+		if !Luhn(pan) || !KnownTestPAN(pan) {
+			t.Errorf("公知テストPANがLuhn妥当なdenylist要素として認識されない")
+		}
+		if CreditCard(pan) {
+			t.Errorf("CreditCard(公知テストPAN) = true, want false")
+		}
+	}
+	if KnownTestPAN("4111111111111112") {
+		t.Error("1桁異なるPANまでdenylistに一致した")
 	}
 }
 

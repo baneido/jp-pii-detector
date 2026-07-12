@@ -189,10 +189,36 @@ func TestProbeResolvedCSVColumnContext(t *testing.T) {
 	}
 }
 
+// TestProbeResolvedKnownTestPANFalsePositives は、公知の決済sandbox用PANを
+// SHA-256 denylistで棄却するようになったことを固定する。値はLuhnとブランド
+// 条件を満たすため、区切り除去後のValidateで明示集合だけを判定する。
+func TestProbeResolvedKnownTestPANFalsePositives(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+	}{
+		{"visa-1", "テストカード番号: 4111111111111111"},
+		{"visa-2", "Stripe test card: 4242424242424242"},
+		{"visa-separated", "Stripe test card: 4242-4242-4242-4242"},
+		{"mastercard", "Mastercard test: 5555555555554444"},
+		{"amex-1", "Amex test: 378282246310005"},
+		{"amex-2", "Amex sample: 371449635398431"},
+		{"discover-1", "Discover test card: 6011111111111117"},
+		{"discover-2", "Discover sample: 6011000990139424"},
+		{"diners", "Diners test card: 30569309025904"},
+		{"jcb", "JCB test card: 3530111333300000"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line))
+		})
+	}
+}
+
 // TestProbeRegressionKnownFalsePositives は、実験プローブで確認された偽陽性の
 // うち再現を確認できた系統を固定化する。ここでの「検出あり」は望ましくない
-// 現状の挙動であり、将来の Validate 強化（例: #04 公知テスト PAN denylist、
-// #53 業務ID語彙拡張）で意図的に解消されうる。解消された場合はこのテストを
+// 現状の挙動であり、将来の Validate 強化（例: #53 業務ID語彙拡張）で
+// 意図的に解消されうる。解消された場合はこのテストを
 // 更新し、pii-fixtures.json 側にも反映すること。
 func TestProbeRegressionKnownFalsePositives(t *testing.T) {
 	d := newDetector(t, "")
@@ -207,19 +233,6 @@ func TestProbeRegressionKnownFalsePositives(t *testing.T) {
 		// issue 記載の「12桁ジョブID」系統。
 		{"probe-fp:mynumber-lookalike-job-id", "ジョブID: 202507000004", "jp-my-number", rule.Medium},
 		{"probe-fp:mynumber-lookalike-ticket-id", "受付番号は123456000007です", "jp-my-number", rule.Medium},
-
-		// credit-card: 公知のテストカード番号（Stripe/PayPal 等のサンプルで
-		// 広く使われる値）は Luhn とブランド桁数を満たすため検出されるが、
-		// 実在の個人 PII ではない。issue 記載の「テストカード」系統。
-		{"probe-fp:creditcard-wellknown-test-visa-1", "テストカード番号: 4111111111111111", "credit-card", rule.High},
-		{"probe-fp:creditcard-wellknown-test-visa-2", "Stripe test card: 4242424242424242", "credit-card", rule.High},
-		{"probe-fp:creditcard-wellknown-test-mastercard", "Mastercard test: 5555555555554444", "credit-card", rule.High},
-		{"probe-fp:creditcard-wellknown-test-amex-1", "Amex test: 378282246310005", "credit-card", rule.High},
-		{"probe-fp:creditcard-wellknown-test-amex-2", "Amex sample: 371449635398431", "credit-card", rule.High},
-		{"probe-fp:creditcard-wellknown-test-discover-1", "Discover test card: 6011111111111117", "credit-card", rule.High},
-		{"probe-fp:creditcard-wellknown-test-discover-2", "Discover sample: 6011000990139424", "credit-card", rule.High},
-		{"probe-fp:creditcard-wellknown-test-diners", "Diners test card: 30569309025904", "credit-card", rule.High},
-		{"probe-fp:creditcard-wellknown-test-jcb", "JCB test card: 3530111333300000", "credit-card", rule.High},
 
 		// jp-passport: 「パスポート」等の文脈語がたまたま同じ行にあると、
 		// それと無関係な英字2桁+数字7桁の型番も旅券番号として検出される。

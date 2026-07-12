@@ -28,9 +28,9 @@ combined-setup guide.
 
 ## Key features
 
-- **19+ built-in rules** with checksum validation (My Number check digit, Luhn for cards, card-brand detection)
+- **19+ built-in rules** with checksum validation (My Number check digit, Luhn and brand detection for cards, known sandbox PAN exclusion)
 - **Japanese normalization**: folds full-width alphanumerics, hyphen variants, and digit-adjacent long-vowel marks to half-width; handles Japanese-era (和暦) dates
-- **F1 0.96** under the default medium profile on a labeled evaluation dataset, gated in CI so accuracy can't silently drift
+- **F1 0.97** under the default medium profile on a labeled evaluation dataset, gated in CI so accuracy can't silently drift
 - **Masked output by default** (`--unmask` for local use only)
 - **Baseline support** to freeze existing findings and fail only on newly added PII
 - **SARIF / JSON / GitHub annotations** output for CI integration
@@ -43,7 +43,7 @@ Examples below are all fictitious dummy values.
 | Type | How it is detected |
 |---|---|
 | My Number (individual number) | 12 digits + check digit (statutory algorithm) |
-| Credit card number | Luhn + brand detection (Visa/Master/JCB/Amex, etc.) |
+| Credit card number | Luhn + brand detection (Visa/Master/JCB/Amex, etc.) + known sandbox PAN exclusion |
 | Email address | Pattern + IANA TLD existence check + reserved-domain exclusion |
 | Phone number | Mobile / IP / landline / +81 + digit-count validation |
 | Postal code | Exact 7-digit match against real Japan-Post codes |
