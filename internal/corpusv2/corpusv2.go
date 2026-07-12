@@ -441,7 +441,14 @@ func positiveCandidates(id string, seed int) []evalcase.Case {
 		casePrefix := fmt.Sprintf("case_id=%02d ", i+1)
 		switch id {
 		case "jp-my-number":
-			out = append(out, lineCase("マイナンバー: "+myNumber(seed+i)))
+			switch i {
+			case 0:
+				// ドット区切り6-6（区切り表記ゆれ新パターンの合成ポジティブ）。
+				num := myNumber(seed + i)
+				out = append(out, lineCase("マイナンバー: "+num[:6]+"."+num[6:]))
+			default:
+				out = append(out, lineCase("マイナンバー: "+myNumber(seed+i)))
+			}
 		case "jp-phone-number":
 			value := "090-" + d[:4] + "-" + d[4:8]
 			switch i {
@@ -486,7 +493,13 @@ func positiveCandidates(id string, seed int) []evalcase.Case {
 		case "jp-residence-card":
 			out = append(out, lineCase("在留カード番号: AB"+d[:8]+"CD"))
 		case "jp-bank-account":
-			out = append(out, lineCase("口座番号: "+d[:7]))
+			switch i {
+			case 0:
+				// 空白区切り（3+4、区切り表記ゆれ新パターンの合成ポジティブ）。
+				out = append(out, lineCase("口座番号: "+d[:3]+" "+d[3:7]))
+			default:
+				out = append(out, lineCase("口座番号: "+d[:7]))
+			}
 		case "jp-yucho-account":
 			number := d[4:10] + "1"
 			symbol := yuchoSymbol("1"+d[:2], number)
@@ -605,6 +618,17 @@ func hardNegativeCases(seed int) []evalcase.Case {
 	add("address-like", fmt.Sprintf("バージョン東京都版%d-%d-%d", 1, 2, 3))
 	add("reserved-email", "連絡先 "+"user@"+"example.com")
 	add("reserved-email", "メール "+"user@"+"foo.invalid")
+	// #46 と同型の区切り表記ゆれ追加対応（本タスク）で導入した新パターンに
+	// 対応する hard negative。RequireContext・NegativeContext・ValidateLine の
+	// いずれかで正しく非検出になることを固定する。
+	add("phone-url-slash", "https://example.com/090/"+digitRun(seed+940, 4)+"/"+digitRun(seed+941, 4))
+	add("phone-url-slash", "api/v2/090/"+digitRun(seed+942, 4)+"/"+digitRun(seed+943, 4))
+	add("phone-date-slash", fmt.Sprintf("更新日: %d/%02d/%02d", 2024, 4, 1))
+	add("phone-version-mixed", "バージョン 0."+digitRun(seed+944, 4)+"-"+digitRun(seed+945, 4))
+	add("mynumber-decimal", "value = "+digitRun(seed+946, 6)+"."+digitRun(seed+947, 6))
+	add("mynumber-decimal", "個人番号"+digitRun(seed+948, 6)+"."+digitRun(seed+949, 6)+"円")
+	add("bank-space-chain", "口座番号 "+digitRun(seed+950, 3)+" "+digitRun(seed+951, 4)+" "+digitRun(seed+952, 4))
+	add("health-insurance-space-chain", "保険者番号 "+digitRun(seed+953, 4)+" "+digitRun(seed+954, 4)+" "+digitRun(seed+955, 4))
 	return out
 }
 
