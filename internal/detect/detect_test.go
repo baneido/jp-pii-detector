@@ -1769,8 +1769,21 @@ func TestPromotionContextWindowBoundary(t *testing.T) {
 			toml: "[rules]\nhigh_recall = true\n",
 			// 都道府県を含まない住所（jp-address ではなく high-recall 版のみが
 			// マッチする。jp-address の方は常に Base: High で昇格判定を経由しない）。
+			// 町名には「架空坂」という架空の町名を使う。ABR 町字マスター
+			// （internal/dict/towns.txt）に前方一致しないことを go run で機械確認済み
+			// （dict.MunicipalityThenTownMatch("渋谷区架空坂1-2-3") == false）。
+			// jp-address-high-recall のマーカーなしダッシュ形には、コンテキスト窓とは
+			// 独立に Base: High を返す町字辞書昇格 twin（dict.MunicipalityThenTownMatch）が
+			// 別途あり、これはこのテストが検証したい「コンテキスト窓ちょうど外側では
+			// 昇格しない」を混乱させる（twin が効くと窓の外でも Confidence が High に
+			// なるが、Reason.ContextPromoted は false のままなので、このテストの
+			// 昇格経路＝コンテキスト窓によるものだけを切り分けて見られなくなる）。
+			// そのため、町字辞書に存在しない架空の町名を使い、このテストの対象を
+			// コンテキスト窓による昇格だけに限定する。町字辞書 twin 自体の検証は
+			// internal/detect/address_town_promotion_test.go
+			// （TestAddressHighRecallDashFormPromotesWithRealTown 等）が担う。
 			label:      "住所",
-			value:      "渋谷区道玄坂1-2-3",
+			value:      "渋谷区架空坂1-2-3",
 			wantRuleID: "jp-address-high-recall",
 		},
 	}

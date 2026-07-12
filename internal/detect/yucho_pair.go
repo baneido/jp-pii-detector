@@ -54,10 +54,10 @@ import (
 // 一方だけが該当する場合はその値の finding だけを落とす（もう一方は検証済みの
 // 正当な検出のため出す）。
 //
-// diff 走査（ScanDiffHunk）へは未対応（将来の拡張対象）。ハンクは変更行前後の
-// 数行の文脈しか含まないため、記号・番号ラベルの一方だけが変更行に乗る
-// ケースの扱い（追加行のみ報告する既存方針との整合）を別途検討する必要があり、
-// 現時点では ScanContent（フルスキャン）専用とする。
+// diff 走査は scanCrossLineYuchoPairsDiff（本ファイル下部、issue #134）が、この
+// 関数を hunk のテキスト列に対してそのまま実行した上で、検出値が追加行に乗る
+// finding だけを残す形（最小案）で対応する。詳細・設計判断は
+// scanCrossLineYuchoPairsDiff のコメントを参照。
 func (d *Detector) scanCrossLineYuchoPairs(file string, lines []string) []Finding {
 	yuchoRule, ok := yuchoAccountRule(d.rules)
 	if !ok {
@@ -138,4 +138,45 @@ func crossLineYuchoFinding(r rule.Rule, file string, lineNo int, origLine, normL
 		start: rs,
 		end:   re,
 	}
+}
+
+// scanCrossLineYuchoPairsDiff は scanCrossLineYuchoPairs の diff 版（最小案、
+// issue #134）。hunk のテキスト列全体（文脈行＋追加行）に対して
+// scanCrossLineYuchoPairs をそのまま実行し（ラベル探索・検証ロジックは一切
+// 変更しない）、結果から検出値が追加行（added[i]==true）に乗る finding だけを
+// 残す。他の diff 走査経路（scanAdjacentLinesDiff 等）と同じ「文脈行上で
+// 完結する検出は新規追加ではないため報告しない」原則に従う。
+//
+// 設計判断（最小案）:
+//
+//   - 記号・番号ラベルの一方が文脈行（未変更）、もう一方が追加行という
+//     ケース（例: 既存の「記号: …」行の直後に新規の「番号: …」行を追加）でも、
+//     scanCrossLineYuchoPairs 自体はペアとして検証（ValidCrossLineYuchoPair）まで
+//     通す。ここでのフィルタにより追加行側の値だけが finding として残る
+//     （文脈行側の既存の記号値は「新規追加」ではないため報告しない）。
+//
+//   - ignore マーカーの扱いは scanCrossLineYuchoPairs の実装をそのまま使う
+//     （変更しない）。CrossLineYuchoSymbolRe/CrossLineYuchoNumberRe が行全体を
+//     `^...$` でアンカーするため、記号行・番号行のどちらにマーカー等の
+//     余分な文字列が付いてもその行の正規表現マッチ自体が失敗し、ペア全体が
+//     不成立になる（scanAdjacentLinesDiff のように scanLineNoIgnore 経由で
+//     値の行だけを厳密に見る分離走査ではなく、姓名ペア structured_pair.go と
+//     同じ「ラベル行全体を正規表現でアンカーする」専用スキャナのため）。
+//     これは「値が乗る行のマーカーだけが抑制する」という diff 経路の他ルールより
+//     粗い（文脈行に残った古いマーカーが結果的にペア全体の検出を止めうる）が、
+//     既存のフル走査実装を変更せずそのまま再利用する最小案として許容する。
+//
+//   - 記号行・番号行の両方が文脈行（どちらも未変更）のペアは、検証まで通っても
+//     双方とも報告しない（「文脈行に乗る値は報告しない」という diff 走査全体の
+//     原則どおり）。
+func (d *Detector) scanCrossLineYuchoPairsDiff(file string, texts []string, added []bool) []Finding {
+	var out []Finding
+	for _, f := range d.scanCrossLineYuchoPairs(file, texts) {
+		idx := f.Line - 1
+		if idx < 0 || idx >= len(added) || !added[idx] {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
 }

@@ -64,7 +64,9 @@ func TestAddressHighRecallPromotesWithRealTown(t *testing.T) {
 // ABR 町字マスターに存在しない住所（通学区域・団地名等の一般語）が、
 // 昇格せず Medium のまま検出される（＝棄却されない）ことを確認する。
 // 町字辞書は昇格専用のエビデンスであり、不一致は Medium への据え置きに
-// しかならない（recall には影響しない）という設計を直接検証する。
+// しかならない（recall には影響しない）という設計を直接検証する。マーカー付き
+// 番地・漢数字番地・マーカーなしダッシュ連結の 3 形すべてを対象にする
+// （3 形とも同じ twin 方式のため）。
 func TestAddressHighRecallUnknownTownStaysMedium(t *testing.T) {
 	d := newDetector(t, highRecallTOML)
 
@@ -75,6 +77,7 @@ func TestAddressHighRecallUnknownTownStaysMedium(t *testing.T) {
 		{"マーカー付き番地・辞書にない語（通学区域）", "渋谷区通学区域1丁目2番3号"},     // jp-pii-detector:ignore
 		{"マーカー付き番地・辞書にない語（ニュータウン）", "渋谷区ニュータウン1丁目2番3号"}, // jp-pii-detector:ignore
 		{"漢数字番地・辞書にない語（ニュータウン）", "渋谷区ニュータウン一丁目十九番十一号"},  // jp-pii-detector:ignore
+		{"ダッシュ形・辞書にない語（ニュータウン）", "渋谷区ニュータウン2-1-5"},      // jp-pii-detector:ignore
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -89,25 +92,56 @@ func TestAddressHighRecallUnknownTownStaysMedium(t *testing.T) {
 	}
 }
 
-// TestAddressHighRecallDashFormNotPromoted は、マーカーなしダッシュ連結の番地
-// （banchiDash）には町字辞書の昇格 twin を適用していないことを記録する
-// 回帰テスト。実在町字名（神南）であっても Medium のまま昇格しない。
+// TestAddressHighRecallDashFormPromotesWithRealTown は、マーカーなしダッシュ
+// 連結の番地（banchiDash）にも町字辞書の昇格 twin が適用され、市区町村マッチ
+// 直後が ABR 町字マスターの実在町字名（神南）で始まる場合は Medium ではなく
+// High で検出されることを確認する（TestAddressHighRecallPromotesWithRealTown の
+// マーカー付き・漢数字番地の 2 形と同じ性質を、ダッシュ形についても検証する）。
 //
-// 理由: このダッシュ形パターンに twin を追加すると、
-// TestPromotionContextWindowBoundary（detect_test.go）が固定サンプルに使う
-// 住所の町字部分が ABR 町字マスターの実在町字名と一致し、
-// コンテキスト窓の内外を問わず常に High へ昇格してしまう。同テストはコンテキスト
-// 窓のちょうど外側で「昇格しない」ことを検証しており、internal/detect は変更禁止
-// のためサンプル値の差し替えによる回避もできない。マーカー付き番地・漢数字番地の
-// 2 形には同種の衝突がないことを確認済みで、双方には twin を適用している
-// （internal/rule/builtin.go の該当コメントも参照）。
-func TestAddressHighRecallDashFormNotPromoted(t *testing.T) {
+// 背景（旧 TestAddressHighRecallDashFormNotPromoted からの反転）: PR #127
+// 時点ではこのダッシュ形 twin は意図的に見送られていた。
+// TestPromotionContextWindowBoundary（detect_test.go）がコンテキスト窓境界の
+// 検証に使う固定サンプルの町字部分（旧サンプルの町名）が ABR 町字マスターの
+// 実在町字名と偶然一致しており、無条件の辞書昇格を追加すると、同テストが
+// 検証する「窓のちょうど外側では昇格しない」が辞書昇格経路の混入で壊れて
+// いたためである。同テストのサンプル値を、町字マスターに前方一致しない架空の
+// 町名（「架空坂」。go run で機械確認済み）へ差し替えたことでこの衝突が解消され、
+// 他の 2 形と同じ twin をダッシュ形にも適用できるようになった
+// （internal/rule/builtin.go の addressHighRecallDashRe 節のコメントも参照）。
+func TestAddressHighRecallDashFormPromotesWithRealTown(t *testing.T) {
 	d := newDetector(t, highRecallTOML)
 	line := "渋谷区神南2-1-5" // jp-pii-detector:ignore
 	fs := d.ScanLine("f.txt", 1, line)
 	assertRules(t, fs, "jp-address-high-recall")
-	if fs[0].Confidence != rule.Medium {
-		t.Errorf("confidence = %v, want %v（ダッシュ形は twin 非適用のため、実在町字名でも Medium のまま）",
-			fs[0].Confidence, rule.Medium)
+	if fs[0].Confidence != rule.High {
+		t.Errorf("confidence = %v, want %v（神南は実在町字名のため、ダッシュ形でも昇格するはず）",
+			fs[0].Confidence, rule.High)
+	}
+}
+
+// TestAddressHighRecallDashFormRejectsCalendarDateDespiteRealTown は、末尾が
+// 実在暦日形（notCalendarDateBanchi が棄却する「YYYY-MM-DD」形）のダッシュ形
+// 番地は、市区町村マッチ直後が実在町字名（神南）であっても High へ昇格しない
+// （＝棄却され続ける）ことを確認する固定テスト。
+//
+// ダッシュ形 High 側の Validate は notCalendarDateBanchiAndRealTown
+// （internal/rule/builtin.go）で、notCalendarDateBanchi と
+// dict.MunicipalityThenTownMatch を AND 合成している。もし誤って
+// dict.MunicipalityThenTownMatch 単体を High 側の Validate にしていた場合、
+// 「渋谷区神南2025-07-02」のように市区町村直後が実在町字名（神南）で始まり
+// つつ番地部分が実在暦日形（2025-07-02）の値が、ISO 日付棄却をすり抜けて
+// High と誤検出されてしまう。Medium 側は元々 notCalendarDateBanchi 単体で
+// 同じ値を棄却しているため、この AND 合成が抜けると High 側「だけ」
+// 日付棄却が効かなくなる非対称なリグレッションになる。この値は
+// jp-address-high-recall のどのパターンにも一致しない（Medium 側も同じ理由で
+// 棄却されるため）ことをあわせて確認する。
+func TestAddressHighRecallDashFormRejectsCalendarDateDespiteRealTown(t *testing.T) {
+	d := newDetector(t, highRecallTOML)
+	line := "渋谷区神南2025-07-02" // jp-pii-detector:ignore
+	fs := d.ScanLine("f.txt", 1, line)
+	for _, f := range fs {
+		if f.RuleID == "jp-address-high-recall" {
+			t.Errorf("jp-address-high-recall が検出された: confidence = %v, want 非検出（実在暦日形は棄却されるはず）", f.Confidence)
+		}
 	}
 }

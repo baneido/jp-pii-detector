@@ -44,12 +44,18 @@ import (
 //     RecordID があるときは同一 RecordID を必須にし、どちらかに無いときだけ
 //     従来の行窓へフォールバックする判定に使う。
 //
-// フル走査（sourceLineContexts）限定で、diff 走査（sourceLineContextsForDiff）
-// では使わない。CSV/SQL の列コンテキストと同じ理由: git diff の hunk は
-// ファイル冒頭からの相対位置を含まない断片で、そこから深さ・インデントの
-// スタックを正しく復元できない（hunk の先頭がオブジェクト途中のことが多く、
-// 深さ 0 からの誤った再スタートで誤帰属するリスクが高い）ため、cooccurrence_boost
-// 自体が ScanContent 専用（docs/detection-methods.md）であることとも整合する。
+// フル走査（sourceLineContexts）は applyObjectScopeContext が親キーと RecordID の
+// 両方を求める。diff 走査（ScanDiffHunkOpts）でも、hunk 断片単体からは深さ・
+// インデントのスタックを正しく復元できない（hunk の先頭がオブジェクト途中の
+// ことが多く、深さ 0 からの誤った再スタートで誤帰属するリスクが高い）という
+// 制約は変わらないが、呼び出し側（internal/source/gitdiff.go）が git show で
+// 取得した post-image 全文を使えば、ファイル先頭から通しで親キーを再構成できる
+// （CSV ヘッダを post-image から個別取得する既存の fetchCSVHeader と同じ発想）。
+// applyObjectScopeContextForDiff（本ファイル下部）がこれを行う（issue #134）。
+// ただし RecordID は diff 走査では一切設定しない — cooccurrence_boost 自体が
+// ScanContent 専用（docs/detection-methods.md）のため、diff 側に RecordID を
+// 持たせても applyCooccurrenceBoost から参照されず意味を持たない
+// （detect.go の recordIDForLine のコメントを参照）。
 
 // applyObjectScopeContext は、file が JSON/YAML であれば各行の親キー文脈と
 // RecordID を ctxs へ書き込む（それ以外の拡張子では何もしない）。
@@ -92,6 +98,16 @@ func objectScopeKindForPath(file string) objectScopeKind {
 	return objectScopeNone
 }
 
+// IsObjectScopePath は path がオブジェクトスコープ処理の対象（.json/.yaml/.yml）
+// かを返す。internal/source/gitdiff.go が diff hunk 用の post-image 全文を
+// `git show` で取得するかどうかの判定に使う（取得は対象拡張子だけに意味があり、
+// それ以外の拡張子で無駄な git 呼び出しをしないため）。csv_context.go の
+// IsCSVOrTSVPath と対称で、拡張子リストを再定義せず objectScopeKindForPath に
+// 委譲する。
+func IsObjectScopePath(path string) bool {
+	return objectScopeKindForPath(path) != objectScopeNone
+}
+
 // mergeObjectScope は parents/recordIDs（lines と同じ添字、jsonObjectScope /
 // yamlObjectScope の戻り値）を ctxs へ反映する。RecordID は無条件に設定する
 // （その行に statementContext が 1 つも無くても、cooccurrence_boost はどのみち
@@ -105,23 +121,90 @@ func mergeObjectScope(ctxs []lineContext, parents []string, recordIDs []int) {
 		if i < len(recordIDs) {
 			ctxs[i].RecordID = recordIDs[i]
 		}
-		if i >= len(parents) || parents[i] == "" {
-			continue
+		if i < len(parents) {
+			mergeParentKeyIntoStatements(ctxs[i].Statements, parents[i])
 		}
-		// csvColumnSignal（csv_context.go）を再利用する: ASCII ラベルは
-		// identifier トークン化、日本語等の非 ASCII ラベルは本文をそのまま
-		// PositiveText に使う（matchingContexts の部分一致で照合できる）という、
-		// CSV ヘッダ・SQL 列名とまったく同じ変換。正負の実際の判定はルール
-		// 語彙（Context/NegativeContext）に委ねる。
-		positive, negative, ok := csvColumnSignal(parents[i])
-		if !ok {
-			continue
+	}
+}
+
+// mergeParentKeyIntoStatements は parentKey（空なら何もしない）を
+// csvColumnSignal（csv_context.go）で正負文脈へ変換し、stmts の各 statement
+// （同一行の key=value 抽出由来。既存 statement が 1 つもない行には何も
+// 発明しない安全側 — 値の範囲を親キー側の情報だけから決め打ちしない）へ
+// 追記する。ASCII ラベルは identifier トークン化、日本語等の非 ASCII ラベルは
+// 本文をそのまま PositiveText に使う（matchingContexts の部分一致で照合できる）
+// という、CSV ヘッダ・SQL 列名とまったく同じ変換。正負の実際の判定はルール
+// 語彙（Context/NegativeContext）に委ねる。
+//
+// mergeObjectScope（フル走査、RecordID も設定）と applyObjectScopeContextForDiff
+// （diff、RecordID は設定しない）の共通部分。
+func mergeParentKeyIntoStatements(stmts []statementContext, parentKey string) {
+	if parentKey == "" {
+		return
+	}
+	positive, negative, ok := csvColumnSignal(parentKey)
+	if !ok {
+		return
+	}
+	for j := range stmts {
+		st := &stmts[j]
+		st.PositiveText = joinContextText(st.PositiveText, positive)
+		st.NegativeText = joinContextText(st.NegativeText, negative)
+	}
+}
+
+// applyObjectScopeContextForDiff は diff hunk 版の applyObjectScopeContext
+// （issue #134）。hunk 自体（文脈行＋追加行の断片）は、ファイル冒頭からの
+// 相対位置を持たないため単体では深さ・インデントのスタックを復元できないが
+// （本ファイル冒頭のコメント参照）、呼び出し側（internal/source/gitdiff.go）が
+// git show で取得した postImage（対象ファイルの post-image 全文）があれば、
+// ファイル先頭から通しで親キー列を再構成し、hunk 側の行へ写像できる。
+//
+// hunkStartLine は hunk の新ファイル側開始行（unified diff の
+// `@@ -a,b +c,d @@` の c、1 始まり）。hunkLines[i]（0 始まり）は postImage の
+// 行 postLines[hunkStartLine+i-1]（0 始まり）に対応する。postImage が空文字列
+// （呼び出し側の取得失敗・サイズ上限超過・バイナリ・対象拡張子でない等）、または
+// hunkStartLine が 1 未満（未設定のゼロ値を含む）の場合は何もしない（安全側 =
+// 親キー文脈なしの従来どおりのフォールバック）。
+//
+// 安全弁: 対応する postImage 側の行テキストが hunkLines 側の行テキストと
+// 一致しない場合（呼び出し側の取得ずれ・作業ツリーと index の乖離など、diff
+// 生成時点と post-image 取得時点の間でファイルが変化した場合等）、その行以降は
+// 一切マージしない。誤ったオフセットのまま先へ進むと、無関係な行の親キー
+// 文脈を誤って値へ付与しかねないため、1 行でも対応が崩れた時点で安全側に
+// 倒す（jsonObjectScope の broken フラグと同じ「不整合を検出したらそこで打ち切る」
+// 方針）。RecordID は付与しない（本ファイル冒頭のコメント参照。cooccurrence_boost
+// は ScanContent 専用のため diff 側では意味を持たない）。
+func applyObjectScopeContextForDiff(ctxs []lineContext, file string, hunkLines []string, postImage string, hunkStartLine int) {
+	if postImage == "" || hunkStartLine < 1 {
+		return
+	}
+	kind := objectScopeKindForPath(file)
+	if kind == objectScopeNone {
+		return
+	}
+	var postLines []string
+	for line := range strings.SplitSeq(postImage, "\n") {
+		postLines = append(postLines, strings.TrimSuffix(line, "\r"))
+	}
+	var parents []string
+	switch kind {
+	case objectScopeJSON:
+		parents, _ = jsonObjectScope(postLines)
+	case objectScopeYAML:
+		parents, _ = yamlObjectScope(postLines)
+	}
+	for i := range hunkLines {
+		postIdx := hunkStartLine + i - 1
+		if postIdx < 0 || postIdx >= len(postLines) || postLines[postIdx] != hunkLines[i] {
+			// 対応する postImage 側の行が存在しない、またはテキストが食い違う:
+			// これ以降は行の対応関係を信頼できないため打ち切る。
+			return
 		}
-		for j := range ctxs[i].Statements {
-			st := &ctxs[i].Statements[j]
-			st.PositiveText = joinContextText(st.PositiveText, positive)
-			st.NegativeText = joinContextText(st.NegativeText, negative)
+		if i >= len(ctxs) {
+			return
 		}
+		mergeParentKeyIntoStatements(ctxs[i].Statements, parents[postIdx])
 	}
 }
 

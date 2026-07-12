@@ -764,3 +764,255 @@ func TestFirstLine(t *testing.T) {
 		}
 	}
 }
+
+// --- .json/.yaml/.yml のオブジェクトスコープ親キー文脈を --staged / --diff でも
+// 効かせる機能 ---
+//
+// internal/detect/object_scope.go の親キー文脈（applyObjectScopeContext）は
+// フルスキャン限定だったが、post-image 全文を `git show` で個別取得すること
+// （fetchPostImage）で --staged / --diff でも働くようになった
+// （detect.ScanDiffHunkOpts 経由）。以下は internal/source/gitdiff.go 側の配線
+// （fetchPostImage・cachedPostImage・scanHunk からの呼び出し、fileHunk.NewStart
+// の受け渡し）の end-to-end 確認。csvColumnContextFixtureCSV と同じ発想で、
+// ヘッダ相当の親キーをわざと -U3 の文脈行ウィンドウの外へ押し出す。
+
+// 親キー "phone:" が hunk の外（変更行から 4 行以上手前）にあっても、
+// git show で取得した post-image から親キー文脈が追加行まで届くこと。
+func TestScanStagedYAMLObjectScopeParentKeyOutsideHunk(t *testing.T) {
+	repo := initTestRepo(t)
+	name := "config.yaml"
+	// 区切りなし固定電話（10 桁）。RequireContext のパターンが対象なので、
+	// 親キー文脈が届かない限り検出されない（csvColumnContextFixtureCSV と同じ理由）。
+	phone := strings.ReplaceAll(testfixtures.MustGet(t, "detect.phone_fixed_tokyo"), "-", "")
+
+	base := "phone:\n" + strings.Repeat("  filler: x\n", 5)
+	if err := os.WriteFile(filepath.Join(repo, name), []byte(base), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, "add", ".")
+	git(t, "commit", "-q", "-m", "base")
+
+	// ヘッダ（1 行目の "phone:"）から離れた末尾（7 行目）に値を追加する。
+	content := base + "  home: " + phone + "\n"
+	if err := os.WriteFile(filepath.Join(repo, name), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, "add", ".")
+
+	cfg := config.Default()
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, err := ScanStaged(d, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("findings = %+v, want 1 件（親キー phone が hunk 外でも post-image から復元されて検出）", findings)
+	}
+	if f := findings[0]; f.File != name || f.RuleID != "jp-phone-number" || f.Line != 7 {
+		t.Errorf("finding = %+v, want %s:7 jp-phone-number", f, name)
+	}
+}
+
+// ScanDiff（コミット範囲）でも同じ親キー文脈が働くこと。diffRangePostRevision が
+// "A...B" 形式から post-image（B 側）を正しく解決できることの確認を兼ねる
+// （TestScanDiffRangeCSVColumnContext と対称）。
+func TestScanDiffRangeYAMLObjectScopeParentKeyOutsideHunk(t *testing.T) {
+	repo := initTestRepo(t)
+	name := "config.yaml"
+	phone := strings.ReplaceAll(testfixtures.MustGet(t, "detect.phone_fixed_tokyo"), "-", "")
+
+	base := "phone:\n" + strings.Repeat("  filler: x\n", 5)
+	if err := os.WriteFile(filepath.Join(repo, name), []byte(base), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, "add", ".")
+	git(t, "commit", "-q", "-m", "base")
+
+	content := base + "  home: " + phone + "\n"
+	if err := os.WriteFile(filepath.Join(repo, name), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, "add", ".")
+	git(t, "commit", "-q", "-m", "add")
+
+	cfg := config.Default()
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, err := ScanDiff(d, cfg, "HEAD~1...HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("findings = %+v, want 1 件", findings)
+	}
+	if f := findings[0]; f.File != name || f.RuleID != "jp-phone-number" || f.Line != 7 {
+		t.Errorf("finding = %+v, want %s:7 jp-phone-number", f, name)
+	}
+}
+
+// --- ゆうちょ別行ペアを --staged でも効かせる機能 ---
+//
+// internal/detect/yucho_pair.go の scanCrossLineYuchoPairsDiff（最小案、
+// issue #134）の end-to-end 確認。記号・番号ラベルの一方が既存（未変更）行、
+// もう一方が追加行というケースを含めて確認する。
+
+// 記号・番号の両方を新規追加した場合、両方とも検出される。
+func TestScanStagedYuchoPairBothAdded(t *testing.T) {
+	repo := initTestRepo(t)
+	name := "pii.txt"
+	content := []byte("記号: 14040\n番号: 12345671\n") // jp-pii-detector:ignore
+	if err := os.WriteFile(filepath.Join(repo, name), content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, "add", name)
+
+	cfg := config.Default()
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, err := ScanStaged(d, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 2 {
+		t.Fatalf("findings = %+v, want 2 件（記号・番号ともに新規追加）", findings)
+	}
+	if f := findings[0]; f.File != name || f.RuleID != "jp-yucho-account" || f.Line != 1 {
+		t.Errorf("findings[0] = %+v, want %s:1 jp-yucho-account", f, name)
+	}
+	if f := findings[1]; f.File != name || f.RuleID != "jp-yucho-account" || f.Line != 2 {
+		t.Errorf("findings[1] = %+v, want %s:2 jp-yucho-account", f, name)
+	}
+}
+
+// 記号行が既存（未変更）、番号行だけを新規追加した場合、番号側の値だけが
+// 検出される（記号側は「既存 PII」として報告しない。ScanContent 側の
+// jp-pii-detector:ignore 抑制と対称的に、diff 走査は追加行のみ報告するという
+// 原則そのものが記号側を除外する）。
+func TestScanStagedYuchoPairOnlyAddedSideReported(t *testing.T) {
+	repo := initTestRepo(t)
+	name := "pii.txt"
+	if err := os.WriteFile(filepath.Join(repo, name), []byte("記号: 14040\n"), 0o644); err != nil { // jp-pii-detector:ignore
+		t.Fatal(err)
+	}
+	git(t, "add", ".")
+	git(t, "commit", "-q", "-m", "base")
+	if err := os.WriteFile(filepath.Join(repo, name), []byte("記号: 14040\n番号: 12345671\n"), 0o644); err != nil { // jp-pii-detector:ignore
+		t.Fatal(err)
+	}
+	git(t, "add", ".")
+
+	cfg := config.Default()
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, err := ScanStaged(d, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("findings = %+v, want 1 件（番号のみ新規追加、記号は既存の文脈行）", findings)
+	}
+	if f := findings[0]; f.File != name || f.RuleID != "jp-yucho-account" || f.Line != 2 || f.Match != "12345671" {
+		t.Errorf("finding = %+v, want %s:2 jp-yucho-account match=12345671", f, name)
+	}
+}
+
+// --- .json/.yaml/.yml の post-image 全文を git show で取得する fetchPostImage ---
+
+// fetchPostImage の取得失敗（存在しないパス・存在しないリビジョン）・サイズ
+// 上限超過が、パニックせず "" にフォールバックすること、および --staged
+// （revSpec=""）・コミット済み（revSpec="HEAD"）の双方で post-image全文を
+// 取得できることを直接確認する（TestFetchCSVHeader と同じ発想。scanHunk 経由の
+// end-to-end テストとは別に、この関数単体の境界条件を確認する）。
+func TestFetchPostImage(t *testing.T) {
+	repo := initTestRepo(t)
+	name := "data.yaml"
+	const content = "phone:\n  home: dummy\n"
+	if err := os.WriteFile(filepath.Join(repo, name), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, "add", name)
+	git(t, "commit", "-q", "-m", "base")
+
+	if got := fetchPostImage("HEAD", name); got != content {
+		t.Errorf("fetchPostImage(HEAD, %q) = %q, want %q", name, got, content)
+	}
+	if got := fetchPostImage("", name); got != content {
+		t.Errorf("fetchPostImage(\"\", %q) = %q, want %q (index stage 0)", name, got, content)
+	}
+	if got := fetchPostImage("HEAD", "does-not-exist.yaml"); got != "" {
+		t.Errorf("fetchPostImage for a missing path = %q, want empty (git show failure falls back safely)", got)
+	}
+	if got := fetchPostImage("no-such-rev", name); got != "" {
+		t.Errorf("fetchPostImage for a missing revision = %q, want empty", got)
+	}
+
+	// MaxFileSize（files.go）を超えるファイルは "" にフォールバックする
+	// （通常のフルスキャン走査と同じサイズ上限を流用しているため）。
+	bigName := "big.yaml"
+	big := bigYAMLOverMaxFileSize()
+	if err := os.WriteFile(filepath.Join(repo, bigName), []byte(big), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, "add", bigName)
+	git(t, "commit", "-q", "-m", "big")
+	if got := fetchPostImage("HEAD", bigName); got != "" {
+		t.Errorf("fetchPostImage for a file over MaxFileSize (%d bytes) = %d bytes, want empty (safe fallback)", len(big), len(got))
+	}
+}
+
+// サイズ上限超過時、ScanStaged 経由でも安全にフォールバックする（親キー文脈
+// なしとなり、home の値は自己文脈だけでは検出されないが、クラッシュしたり
+// 誤って検出されたりしない）ことを end-to-end で確認する。
+func TestScanStagedObjectScopePostImageSizeLimitFallback(t *testing.T) {
+	repo := initTestRepo(t)
+	name := "big.yaml"
+	phone := strings.ReplaceAll(testfixtures.MustGet(t, "detect.phone_fixed_tokyo"), "-", "")
+
+	base := bigYAMLOverMaxFileSize()
+	if err := os.WriteFile(filepath.Join(repo, name), []byte(base), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, "add", ".")
+	git(t, "commit", "-q", "-m", "base")
+
+	content := base + "  home: " + phone + "\n"
+	if err := os.WriteFile(filepath.Join(repo, name), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, "add", ".")
+
+	cfg := config.Default()
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, err := ScanStaged(d, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 0 {
+		t.Fatalf("findings = %+v, want 0 件（post-image がサイズ上限超過でフォールバックし、親キー phone を復元できない）", findings)
+	}
+}
+
+// bigYAMLOverMaxFileSize は MaxFileSize（files.go）を超える YAML テキストを
+// 生成する。"phone:" トップレベルキー配下に PII を含まない filler 行を必要な
+// だけ繰り返すだけの、サイズ上限超過フォールバック専用の固定データ。
+func bigYAMLOverMaxFileSize() string {
+	line := "  filler: " + strings.Repeat("x", 100) + "\n"
+	var b strings.Builder
+	b.WriteString("phone:\n")
+	for b.Len() <= MaxFileSize {
+		b.WriteString(line)
+	}
+	return b.String()
+}
