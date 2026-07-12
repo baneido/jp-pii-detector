@@ -19,6 +19,31 @@ func TestRunRejectsUnknownCommand(t *testing.T) {
 	}
 }
 
+func TestCollectNameHomographsUsesNegativeCasesOnly(t *testing.T) {
+	cases := []evalcase.Case{
+		{ID: "negative-1", Line: "酒米の山田錦と山田錦"},
+		{ID: "negative-2", Content: "候補は山田太郎\n"},
+		{ID: "positive", Line: "氏名: 山田太郎", Want: []string{"person-name"}}, // jp-pii-detector:ignore
+	}
+	got := collectNameHomographs(cases, 1, 8)
+	find := func(value string) (homographCandidate, bool) {
+		for _, c := range got {
+			if c.Value == value {
+				return c, true
+			}
+		}
+		return homographCandidate{}, false
+	}
+	yamadaNishiki, ok := find("山田錦")
+	if !ok || yamadaNishiki.Count != 2 || yamadaNishiki.Surname != "山田" || yamadaNishiki.Given != "錦" {
+		t.Fatalf("山田錦 candidate = %+v, present=%v", yamadaNishiki, ok)
+	}
+	yamadaTaro, ok := find("山田太郎")
+	if !ok || yamadaTaro.Count != 1 {
+		t.Fatalf("山田太郎 candidate = %+v, present=%v（陽性ケースは数えない）", yamadaTaro, ok)
+	}
+}
+
 func TestGcloudCopyArgsAreNonInteractiveAndExplicitlyScoped(t *testing.T) {
 	t.Setenv(gcloudAccountEnv, "fixture-reader@example.invalid")
 	t.Setenv(projectEnv, "fixture-project")

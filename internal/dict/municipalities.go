@@ -3,6 +3,8 @@ package dict
 import (
 	_ "embed"
 	"strings"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // municipalities.txt は日本郵便 KEN_ALL（住所の郵便番号 UTF-8 版）由来の
@@ -23,17 +25,41 @@ func loadMunicipalitySet(raw string) map[string]bool {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		out[line] = true
+		out[NormalizeMunicipalityKa(line)] = true
 	}
 	return out
 }
 
-// NormalizeMunicipalityKa は市区町村名の「ヶ」を「ケ」に正規化する
-// （鶴ヶ島市 ⇔ 鶴ケ島市 のような表記揺れを 1 つに畳む）。internal/dict/gen が
-// 辞書生成時に、MunicipalitySuffixMatch が照合時に、同じ正規化を両側へ適用する
-// ことで、生成側と実行側の乖離なくどちらの表記の住所も一致させる。
+// municipalityVariants は KEN_ALL の市区町村名に実在する旧字体と、その一般的な
+// 新字体の対応。市区町村・町字の実在性検証だけに使い、検出位置を決める
+// internal/normalize.Line には適用しない。
+//
+// いずれも 1 ルーンから 1 ルーンへの置換に限定する。NormalizeMunicipalityKa は
+// 生成側と照合側の両方で呼ばれ、TownPrefixMatch は一致したルーン数を元入力の
+// バイト位置へ戻すため、この不変条件を保つ必要がある。
+var municipalityVariants = strings.NewReplacer(
+	"ヶ", "ケ",
+	"龍", "竜",
+	"竈", "釜",
+	"嶋", "島",
+	"條", "条",
+	"惠", "恵",
+	"檜", "桧",
+	// NFKC で統合されない Unicode 互換漢字も明示しておく。NFKC で既に
+	// 統合される Go/Unicode 版では no-op になる。
+	"﨑", "崎",
+	"髙", "高",
+	"神", "神",
+	"塚", "塚",
+)
+
+// NormalizeMunicipalityKa は市区町村・町字名の表記揺れを正規化する。
+// 関数名は既存 API との互換のため残しているが、ヶ/ケ に加えて NFKC の CJK
+// 互換漢字と、KEN_ALL の公式名に実在する旧字体（龍/竈/嶋/條/惠/檜）を
+// 一般的な新字体へ畳む。internal/dict/gen が辞書生成時に、各照合器が実行時に
+// 同じ関数を両側へ適用することで、公式表記と一般表記のどちらも一致させる。
 func NormalizeMunicipalityKa(s string) string {
-	return strings.ReplaceAll(s, "ヶ", "ケ")
+	return municipalityVariants.Replace(norm.NFKC.String(s))
 }
 
 // MunicipalitySuffixMatch は s（住所候補の全体文字列）の中に、実在する

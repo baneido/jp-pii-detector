@@ -729,7 +729,8 @@ PR タイトルに `[要レビュー]` を付与し、本文に削除された T
 （既定の `jp-address` には付けません。郡・表記揺れによる FN リスクが高再現率でない
 既定ルールでは相対的に大きいためです）。郡付きエントリ（石狩郡当別町）は郡を省いた
 省略形（当別町）も、政令指定都市の区（札幌市中央区）は市単独形（札幌市）も併録し、
-`ヶ`/`ケ` の表記揺れは生成側・照合側の両方で `ケ` に正規化します
+`ヶ`/`ケ` に加え、NFKC の CJK 互換漢字と KEN_ALL の公式名に実在する旧字体
+（`龍/竈/嶋/條/惠/檜`）は、生成側・照合側の両方で一般的な新字体へ正規化します
 （詳細は `internal/dict/gen/postal.go` の `addMunicipalityVariants` を参照してください）。
 
 更新は通常 [`.github/workflows/postal-update.yml`](../.github/workflows/postal-update.yml) が
@@ -811,22 +812,48 @@ $ go run ./internal/dict/gen-names \
     -last-names last_name_org.csv \
     -given-names-man first_name_man_opti.csv \
     -given-names-woman first_name_woman_opti.csv \
+    -given-names-org-man first_name_man_org.csv \
+    -given-names-org-woman first_name_woman_org.csv \
+    -extended-given-names-out internal/dict/given_names_katakana_org.txt \
+    -source-revision c5220278652e7bae05b06cfaf527f1b09a100de6 \
+    -ipadic-names Noun.name.csv \
     -surnames-out internal/dict/surnames.txt \
     -given-names-out internal/dict/given_names.txt \
     -romaji-surnames-out internal/dict/romaji_surnames.txt \
     -romaji-given-names-out internal/dict/romaji_given_names.txt
 ```
 
-名側は同データセットが提供する「curated popular names」サブセット（`*_opti.csv`）に限定して
-いる。カタカナ・ローマ字表記の氏名はサービス名・製品名や辞書外の英単語と同形になりやすく
-（さくら・ひかり型、Ken/Kai/Mori 型の誤検出）、全件（`*_org.csv`、数千〜1 万件規模）を
-無条件に取り込むと適合率への影響が大きいおそれがあるため、代表的な部分集合から始め、外部
-評価データセット（`$JP_PII_FIXTURES`）で適合率を確認してから拡大する方針をとっている
-（issue #58）。姓は全件（`last_name_org.csv`、1999 件）を使っている。4 文字姓
-（勅使河原・小比類巻 等）は同データセットに収録が無いため、`surnames.txt` に人手で追加した
-小さな代表集合を個別に参照している。辞書を拡張したら
-`go test ./internal/dict ./internal/detect ./internal/eval` で検証し、person-name /
-jp-address の精度が動く場合は eval / バッジの再生成も行うこと。
+既定の名辞書とローマ字名辞書には引き続き「curated popular names」サブセット
+（`*_opti.csv`）だけを使う。`*_org.csv` のカタカナ読み 7,636 件（opti・姓との重複を除く）は
+[`given_names_katakana_org.txt`](../internal/dict/given_names_katakana_org.txt) へ分離し、
+`person-name-high-recall` の敬称アンカーと `person-name-structured` / CSV 列文脈だけで照合する。
+この段階分離により既定 low/medium プロファイルの判定集合を変えず、high-recall プロファイルで
+precision/recall を独立に測定できる。3 つの org 用フラグは全て指定するか、全て省略する。
+
+生成元は `shuheilocale/japanese-personal-name-dataset` の commit
+`c5220278652e7bae05b06cfaf527f1b09a100de6` に固定する。この commit の入力 SHA-256 は
+`first_name_man_org.csv=c14a67047f6101fa3234e87c3f643f68ec1807f3fdb545855e57ab9bd5cd5a3b`、
+`first_name_woman_org.csv=de8ce6f8f430e14e0036ca209656a1ec06e9bcd83e9defffe1b0654dc636f9a9`、
+`first_name_man_opti.csv=c7ef947f334daa84b66f7cb5f3f42641a9919bdf35faa2d70b6275d833dcfe0c`、
+`first_name_woman_opti.csv=43a3a7412f0e358d0810fcd618b94750ec773d17f44284a7fc119fa667683dee`、
+`last_name_org.csv=02706bd06932d6bde121e6fbaf9bc2a88c43e6f015128215eecb213223523d30`。
+
+4 文字姓は公開固定版の IPADIC `2.7.0-20070801` `Noun.name.csv`（EUC-JP）から、品詞が
+`名詞,固有名詞,人名,姓` かつ漢字 4 文字の行だけを生成器で抽出する。使用した Debian source の
+SHA-256 は `792040c47410b60235af15ba84eb2771f035434e18bd3e22e84fa0968fbf2084`。
+ライセンス全文は [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) に収録する。
+
+姓名分割と同形の一般名詞・地名候補は、R01 の非公開コーパスを設定して次の probe で陰性ケース
+だけから頻度順に抽出する。出力を自動採用せず、実在人名を抑制しないことを確認した語だけを
+[`name_homographs.txt`](../internal/dict/name_homographs.txt) へ追加する。
+
+```console
+$ JP_PII_FIXTURES=/path/to/private-corpus.json \
+    go run ./cmd/pii-fixture name-homographs -min-count 2
+```
+
+辞書を拡張したら 3 プロファイルの eval を含む `go test ./...` で検証し、精度が動く場合は
+`docs/accuracy.json` / バッジを正式な非公開コーパスで再生成すること。
 
 固定電話の市外局番は総務省の電気通信番号指定状況（「市外局番の一覧」）由来の実在集合を
 [`internal/dict/area_codes.txt`](../internal/dict/area_codes.txt) にテキストで保存して

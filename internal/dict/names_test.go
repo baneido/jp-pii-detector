@@ -46,6 +46,8 @@ func TestNameDictIntegrity(t *testing.T) {
 	}
 	dupCheck("surnames.txt", mustRead("surnames.txt"))
 	dupCheck("given_names.txt", mustRead("given_names.txt"))
+	dupCheck("given_names_katakana_org.txt", mustRead("given_names_katakana_org.txt"))
+	dupCheck("name_homographs.txt", mustRead("name_homographs.txt"))
 
 	for s := range surnames {
 		if givenNames[s] {
@@ -193,12 +195,44 @@ func TestKatakanaNameDictionaryExamples(t *testing.T) {
 	}
 }
 
+func TestExtendedKatakanaGivenNamesAreHighRecallOnly(t *testing.T) {
+	if IsGivenName("カレン") {
+		t.Fatal(`IsGivenName("カレン") = true, want false（org 差分は既定辞書へ混ぜない）`)
+	}
+	if !IsGivenNameExtended("カレン") {
+		t.Fatal(`IsGivenNameExtended("カレン") = false, want true`)
+	}
+	if IsPersonName("サトウ カレン") {
+		t.Fatal(`IsPersonName("サトウ カレン") = true, want false（既定ルールは opti のまま）`)
+	}
+	if !IsPersonNameExtended("サトウ カレン") {
+		t.Fatal(`IsPersonNameExtended("サトウ カレン") = false, want true`)
+	}
+	if surname, given, ok := SplitFullNameExtended("サトウカレン"); !ok || surname != "サトウ" || given != "カレン" {
+		t.Fatalf("SplitFullNameExtended() = (%q, %q, %v), want (サトウ, カレン, true)", surname, given, ok)
+	}
+}
+
 // TestFourCharacterSurname は 4 文字姓（issue #58 で人手追加）が辞書に
 // 収録されていることを確認する。従来の辞書は最長 3 文字だった。
 func TestFourCharacterSurname(t *testing.T) {
-	for _, s := range []string{"勅使河原", "小比類巻", "テシガハラ"} {
+	for _, s := range []string{"勅使河原", "小比類巻", "テシガハラ", "武者小路", "ムシャノコウジ"} {
 		if !IsSurname(s) {
 			t.Errorf("IsSurname(%q) = false, want true", s)
+		}
+	}
+}
+
+func TestExtendedGivenNameDictIntegrity(t *testing.T) {
+	if len(extendedGivenNames) < 7000 || len(extendedGivenNames) > 10000 {
+		t.Fatalf("extended given-name count = %d, want 7000..10000", len(extendedGivenNames))
+	}
+	for name := range extendedGivenNames {
+		if givenNames[name] {
+			t.Errorf("org 差分に既定名辞書との重複 %q がある", name)
+		}
+		if surnames[name] {
+			t.Errorf("org 差分に姓と同形の名 %q がある", name)
 		}
 	}
 }
@@ -272,16 +306,22 @@ func TestMatchPersonNameMinimalComponentConstraint(t *testing.T) {
 	}
 }
 
-// TestNonPersonHomographDenylist は山田錦（酒米の品種名）のように、姓+名の
-// 分割自体は辞書上成立してしまう非人名の固有名詞が denylist で除外されることを
-// 確認する（issue #59 段階1）。山田（姓・2 ルーン）+ 錦（名・1 ルーン）は
-// 「両方 1 ルーン」制約の対象外のため、分割ループ単体では弾けない。
 func TestNonPersonHomographDenylist(t *testing.T) {
-	if got := MatchPersonName("山田錦"); got != NoMatch {
-		t.Errorf("MatchPersonName(山田錦) = %v, want NoMatch", got)
-	}
-	if IsPersonName("山田錦") {
-		t.Errorf("IsPersonName(山田錦) = true, want false")
+	for _, value := range []string{"山田錦", "三角形", "中国人", "中生代", "北海道", "東海道"} {
+		t.Run(value, func(t *testing.T) {
+			if _, _, ok := SplitFullNameCandidate(value); !ok {
+				t.Fatalf("SplitFullNameCandidate(%q) = false, probe 候補として成立する必要がある", value)
+			}
+			if _, _, ok := SplitFullName(value); ok {
+				t.Fatalf("SplitFullName(%q) = true, denylist で棄却したい", value)
+			}
+			if got := MatchPersonName(value); got != NoMatch {
+				t.Fatalf("MatchPersonName(%q) = %v, want NoMatch", value, got)
+			}
+			if IsPersonName(value) {
+				t.Fatalf("IsPersonName(%q) = true, want false", value)
+			}
+		})
 	}
 }
 

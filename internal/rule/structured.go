@@ -102,7 +102,7 @@ var (
 // 辞書未収録の氏名は取りこぼす（高再現率モード限定の適合率↔再現率トレードオフ）。
 func ValidCrossLineName(v string) bool {
 	v = strings.TrimSpace(v)
-	return notPlaceholderName(v) && notOrgName(v) && validStrictFullName(v)
+	return notPlaceholderName(v) && notOrgName(v) && validStrictFullNameExtended(v)
 }
 
 // ValidCrossLineSurnameGivenPair は、姓ラベル行から取り出した値 sei と名ラベル行
@@ -118,7 +118,7 @@ func ValidCrossLineSurnameGivenPair(sei, mei string) bool {
 	if !notPlaceholderName(sei) || !notPlaceholderName(mei) {
 		return false
 	}
-	return dict.IsSurname(sei) && dict.IsGivenName(mei)
+	return dict.IsSurname(sei) && dict.IsGivenNameExtended(mei)
 }
 
 // ValidCrossLineYuchoPair は、記号ラベル行から取り出した値 symbol と番号ラベル行
