@@ -41,8 +41,8 @@ import (
 //
 // 同一スパンで単独行の弱いラベル検出（person-name、Medium）と重なった場合は、
 // このパスの finding も同じく Medium のため、呼び出し元 ScanContent の
-// resolveOverlapsPerLine が信頼度・スパン長のタイブレーク（最終的に RuleID の
-// 辞書順）で決着する。person-name-structured という強い相関の根拠があっても、
+// resolveOverlapsPerLine が Confidence・内部 score・スパン長のタイブレーク
+// （最終的に RuleID の辞書順）で決着する。person-name-structured という強い相関の根拠があっても、
 // 単独行検出が既に Medium で拾える値では person-name 側が残ることがあるが、
 // 値そのものは変わらず Medium で報告されるため実害はない
 // （detect_test.go 相当の固定テストは structured_pair_test.go 側に置く）。
@@ -95,7 +95,7 @@ func (d *Detector) crossLineSurnameGivenFinding(file string, lineNo int, origLin
 	rs := len([]rune(normLine[:m[2]]))
 	re := rs + len([]rune(normLine[m[2]:m[3]]))
 	origRunes := []rune(origLine)
-	return Finding{
+	finding := Finding{
 		RuleID:      d.crossLineName.ID,
 		Description: d.crossLineName.Description,
 		File:        file,
@@ -108,7 +108,10 @@ func (d *Detector) crossLineSurnameGivenFinding(file string, lineNo int, origLin
 			FinalConfidence: rule.Medium.String(),
 			Validated:       true,
 		},
-		start: rs,
-		end:   re,
+		start:         rs,
+		end:           re,
+		scoreEvidence: confidenceScoreEvidence{structuredPair: true},
 	}
+	finalizeFindingScore(&finding)
+	return finding
 }
