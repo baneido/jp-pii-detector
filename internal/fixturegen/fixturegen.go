@@ -24,6 +24,15 @@
 //   - jp-address: 都道府県名・市区町村名をサンプリングする公開dict APIが無いため、
 //     実在する組み合わせ（東京都渋谷区神南）を 1 つだけ使い、番地部分はパターンが
 //     要求する形状のみを満たす架空の値を付与する（番地自体の実在性は検証しない）。
+//   - jp-bank-account: 口座番号もチェックディジットを持たないため、
+//     syntheticPhoneDigits と同じ決定式（プレースホルダパターンを避けた
+//     任意桁数のダミー数字列）を桁数だけ変えて流用する（Validate は
+//     checksum.AllSame 棄却のみで、辞書照合や実在性検証は無い）。
+//
+// 上記に加え、ラベル行と値行が別行に分かれる隣接行相関（クロスライン昇格。
+// CrossLinePromotionCases）と、CSV/TSV のヘッダ列名が同一列のデータ行へ文脈を
+// 与える経路（CSVColumnContextCases）も、jp-phone-number・jp-bank-account を
+// 題材にした契約ケースとして生成する。
 //
 // 生成物は internal/evalcase の JSON スキーマ（dataset 配列）に互換な
 // []evalcase.Case で、cmd/pii-dataset-gen が JSON として書き出す。出力は
@@ -54,6 +63,8 @@ func Generate() []evalcase.Case {
 	cases = append(cases, PhoneNumberCases()...)
 	cases = append(cases, BirthdateCases()...)
 	cases = append(cases, AddressCases()...)
+	cases = append(cases, CrossLinePromotionCases()...)
+	cases = append(cases, CSVColumnContextCases()...)
 	counts := map[string]int{}
 	for i := range cases {
 		key := "negative"
@@ -482,7 +493,8 @@ func filterMinRunes(list []string, minRunes, maxRunes int) []string {
 // length 桁のダミー電話番号下位桁を返す。既存の syntheticMyNumber と同じ決定式の
 // 流儀で生成し、採取値ではない（TestSyntheticPhoneDigitsAvoidsPlaceholderPatterns
 // で checksum.AllSame / checksum.IsZeroPaddedSequential のいずれにも該当しないことを
-// 回帰確認する）。
+// 回帰確認する）。checksum を持たない他の桁数固定ルール（jp-bank-account の
+// 7桁口座番号等）のダミー値合成にも、length を変えるだけで流用する。
 func syntheticPhoneDigits(seed, length int) string {
 	b := make([]byte, length)
 	for i := range b {
@@ -691,6 +703,155 @@ func AddressCases() []evalcase.Case {
 		Tags: []string{SourceTag, "rule:jp-address", "polarity:negative"},
 	})
 	return cases
+}
+
+// ---- クロスライン昇格契約（jp-phone-number / jp-bank-account） ----
+
+// CrossLinePromotionCases は、ラベル行と値行が別の行に分かれ、隣接行相関
+// （ScanContent の2行ウィンドウ・ScanDiffHunk の文脈行相関、いずれも
+// internal/detect.maxAdjacentLineGap まで）で RequireContext が成立する経路の
+// 契約ケースを返す。jp-postal-code の既存クロスラインケース（本ファイル内、
+// PostalCodeCases 末尾）の構造をそのまま踏襲し、区切りなし固定電話
+// （jp-phone-number）と銀行口座番号（jp-bank-account）へ展開する。
+//
+// この2ルールの対象パターンはいずれも RequireContext: true のみで構成される
+// （internal/rule/builtin.go の `0\d{9}`・`\d{7}`）。internal/detect の実装
+// コメント（「RequireContext のパターンはキーワードの存在が検出の前提であり
+// 昇格の根拠にならないため、Base の信頼度のまま報告する」）通り、ラベルが
+// 同一行・隣接行いずれで見つかっても Medium から昇格しないことを、実際に
+// ScanContent/ScanDiffHunk を呼んで確認した（ContextPromoted は立たず、
+// FinalConfidence は常に medium）。そのため期待信頼度はすべて "medium"。
+//
+// 固定電話は市外局番辞書（dict.ValidAreaCode のシードデータ）に確実に存在する
+// 03 を使う。口座番号は checksum を持たないため syntheticPhoneDigits を桁数
+// だけ変えて流用する（口座番号の Validate は checksum.AllSame 棄却のみ）。
+func CrossLinePromotionCases() []evalcase.Case {
+	// 直接隣接（j-i=1、空行なし）用と、空行 1 つを挟む論理隣接（j-i=2、
+	// maxAdjacentLineGap<=3 の契約）用に、それぞれ別の合成値を使う。
+	phoneAdjacent := "03" + syntheticPhoneDigits(2, 8)
+	phoneGapped := "03" + syntheticPhoneDigits(3, 8)
+	bankAdjacent := syntheticPhoneDigits(4, 7)
+	bankGapped := syntheticPhoneDigits(5, 7)
+
+	var cases []evalcase.Case
+
+	// jp-phone-number: ラベル行「電話番号:」+ 次行に区切りなし固定10桁。
+	cases = append(cases,
+		evalcase.Case{
+			Content: "電話番号:\n" + phoneAdjacent,
+			Want:    []string{"jp-phone-number"},
+			Spans:   expectedSpan(phoneAdjacent, phoneAdjacent, "jp-phone-number", "medium", 2),
+			Tags:    []string{SourceTag, "rule:jp-phone-number", "layout:cross-line", "format:bare", "sep:none", "type:landline"},
+		},
+		evalcase.Case{
+			Diff: []evalcase.DiffLine{
+				{Text: "電話番号:", Added: false},
+				{Text: phoneAdjacent, Added: true},
+			},
+			Want:  []string{"jp-phone-number"},
+			Spans: expectedSpan(phoneAdjacent, phoneAdjacent, "jp-phone-number", "medium", 2),
+			Tags:  []string{SourceTag, "rule:jp-phone-number", "layout:cross-line", "format:bare", "sep:none", "type:landline"},
+		},
+		evalcase.Case{
+			Content: "電話番号:\n\n" + phoneGapped,
+			Want:    []string{"jp-phone-number"},
+			Spans:   expectedSpan(phoneGapped, phoneGapped, "jp-phone-number", "medium", 3),
+			Tags:    []string{SourceTag, "rule:jp-phone-number", "layout:cross-line-gap", "format:bare", "sep:none", "type:landline"},
+		},
+	)
+
+	// jp-bank-account: ラベル行「口座番号:」+ 次行7桁。
+	cases = append(cases,
+		evalcase.Case{
+			Content: "口座番号:\n" + bankAdjacent,
+			Want:    []string{"jp-bank-account"},
+			Spans:   expectedSpan(bankAdjacent, bankAdjacent, "jp-bank-account", "medium", 2),
+			Tags:    []string{SourceTag, "rule:jp-bank-account", "layout:cross-line", "format:bare"},
+		},
+		evalcase.Case{
+			Diff: []evalcase.DiffLine{
+				{Text: "口座番号:", Added: false},
+				{Text: bankAdjacent, Added: true},
+			},
+			Want:  []string{"jp-bank-account"},
+			Spans: expectedSpan(bankAdjacent, bankAdjacent, "jp-bank-account", "medium", 2),
+			Tags:  []string{SourceTag, "rule:jp-bank-account", "layout:cross-line", "format:bare"},
+		},
+		evalcase.Case{
+			Content: "口座番号:\n\n" + bankGapped,
+			Want:    []string{"jp-bank-account"},
+			Spans:   expectedSpan(bankGapped, bankGapped, "jp-bank-account", "medium", 3),
+			Tags:    []string{SourceTag, "rule:jp-bank-account", "layout:cross-line-gap", "format:bare"},
+		},
+	)
+
+	return cases
+}
+
+// ---- CSV 列コンテキスト契約 ----
+
+// CSVColumnContextCases は .csv/.tsv 専用の列コンテキスト機構
+// （internal/detect/csv_context.go）の契約ケースを返す。ヘッダ行の列ラベルが
+// 同一列の全データ行へ文脈を与える経路で、隣接±1行ウィンドウでは届かない
+// 3行目以降のデータ行まで文脈が伝播する点が要点のため、データ行を3行用意する。
+// Case.File を .csv 拡張子にした content ケースとして構成する
+// （internal/detect.sourceKindForPath が拡張子で CSV 専用パーサへ分岐するため、
+// File 未指定＝拡張子なしの既定 "dataset" では CSV 経路に入らない）。
+//
+// 高再現率専用の氏名列走査（scanCSVNameColumns。ヘッダが rule.CSVNameHeaderRe に
+// 一致する列だけ rule.CSVNameValueRe + ValidCrossLineName で検証する経路）は
+// --high-recall / [rules] high_recall=true のときだけ呼ばれる。fixturegen は
+// internal/eval の既定オプション（low プロファイル、high_recall=false）で
+// 評価する前提のため対象外とする。
+func CSVColumnContextCases() []evalcase.Case {
+	const header = "電話番号,金額" // 電話番号列 / 金額列
+	phones := [3]string{
+		"03" + syntheticPhoneDigits(6, 8),
+		"03" + syntheticPhoneDigits(7, 8),
+		"03" + syntheticPhoneDigits(8, 8),
+	}
+	// 金額列は電話番号列と同じ10桁（"同形"）の数字だが、jp-phone-number の
+	// 全パターンが先頭 0 または +81 を要求するため、先頭を 0 以外にすることで
+	// 文脈の有無に関わらず正規表現の時点で一致し得ない。列コンテキストの
+	// 選択性（金額列には「電話」文脈が付与されないこと）を、隣接行ウィンドウの
+	// 到達範囲やたまたまの負文脈語彙の有無に依存せず、構造的に保証するため。
+	amounts := [3]string{
+		"9" + syntheticPhoneDigits(16, 9),
+		"9" + syntheticPhoneDigits(17, 9),
+		"9" + syntheticPhoneDigits(18, 9),
+	}
+
+	dataLines := make([]string, len(phones))
+	for i := range dataLines {
+		dataLines[i] = phones[i] + "," + amounts[i]
+	}
+
+	// 正負ペア: 電話番号列の区切りなし固定10桁は（1行目のヘッダ直下だけでなく
+	// 3行目以降も含めて）検出され、金額列の同形数字は検出されない。
+	var spans []evalcase.Span
+	for i, line := range dataLines {
+		spans = append(spans, expectedSpan(line, phones[i], "jp-phone-number", "medium", i+2)...)
+	}
+	positive := evalcase.Case{
+		File:    "synthetic.csv",
+		Content: header + "\n" + strings.Join(dataLines, "\n"),
+		Want:    []string{"jp-phone-number"},
+		Spans:   spans,
+		Tags:    []string{SourceTag, "rule:jp-phone-number", "layout:csv-column", "format:bare", "sep:none", "type:landline"},
+	}
+
+	// 陰性契約: 1行目が header-shaped でない（フィールドが数字多数）場合、
+	// looksLikeCSVHeader が false を返し、列コンテキストはファイル全体で
+	// 無効になる（安全側のデフォルト）。ヘッダを取り除いた同じデータ行だけを
+	// 並べると、ラベルが存在しないため隣接行相関も効かず、電話番号列の値は
+	// 一切検出されない。
+	negative := evalcase.Case{
+		File:    "synthetic-noheader.csv",
+		Content: strings.Join(dataLines, "\n"),
+		Tags:    []string{SourceTag, "rule:jp-phone-number", "layout:csv-column", "polarity:negative", "csv:non-header-first-row"},
+	}
+
+	return []evalcase.Case{positive, negative}
 }
 
 // ---- JSON 書き出し（cmd/pii-dataset-gen 用） ----

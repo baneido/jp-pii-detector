@@ -26,7 +26,7 @@ func TestGeneratedCasesDetectAsExpected(t *testing.T) {
 
 	targetRules := []string{
 		"jp-my-number", "credit-card", "jp-postal-code", "person-name",
-		"jp-phone-number", "jp-birthdate", "jp-address",
+		"jp-phone-number", "jp-birthdate", "jp-address", "jp-bank-account",
 	}
 	found := map[string]eval.Result{}
 	for _, r := range results {
