@@ -101,8 +101,9 @@ func Build(base []evalcase.Case) ([]evalcase.Case, Summary, error) {
 }
 
 // UpgradePublishedV2 は、旧v2で正例扱いだった公知sandbox PANを陰性へ
-// 再分類し、不足する正例を既存の決定的合成器で補う。GCS objectを更新せずに
-// 固定generationを現行ルールの評価契約へ読み替えるための互換migrationで、
+// 再分類し、後から追加した高再現率ルールを含む不足正例を既存の決定的合成器で補う。
+// GCS objectを更新せずに固定generationを現行ルールの評価契約へ読み替える
+// 互換migrationで、
 // 入力を変更せず、同じ入力からは常に同じ出力を返す。
 func UpgradePublishedV2(input []evalcase.Case) ([]evalcase.Case, error) {
 	low, err := newDetector(false)
@@ -119,9 +120,10 @@ func UpgradePublishedV2(input []evalcase.Case) ([]evalcase.Case, error) {
 	for i := range cases {
 		reclassifyKnownTestPAN(&cases[i])
 	}
-	// この互換migrationで不足しうるcredit-cardだけを補い、他ルールの
+	// この互換migrationで不足しうるルールだけを補い、他ルールの
 	// データ品質不備を暗黙に修復しない。
-	if _, err := fillPositiveCoverage(&cases, seed, []string{"credit-card"}, low, high); err != nil {
+	upgradeRuleIDs := []string{"credit-card", "email-address-confusable", "email-address-eai"}
+	if _, err := fillPositiveCoverage(&cases, seed, upgradeRuleIDs, low, high); err != nil {
 		return nil, err
 	}
 	if err := ensureUnique(cases); err != nil {
@@ -459,6 +461,13 @@ func positiveCandidates(id string, seed int) []evalcase.Case {
 			out = append(out, lineCase(fmt.Sprintf("住所: 東京都渋谷区神南%d丁目%d番%d号", i%9+1, i%20+1, i%15+1)))
 		case "email-address":
 			out = append(out, lineCase("連絡先: corpusv2-"+digitRun(seed+i+90, 8)+"@baneido.com"))
+		case "email-address-eai":
+			// 文字列を分割し、dogfood がコーパス構築コード自体を PII として
+			// 報告しないようにする。実行時には日本語ローカル部の EAI になる。
+			out = append(out, lineCase("連絡先: 利用者"+digitRun(seed+i+90, 4)+"@"+"baneido.com"))
+		case "email-address-confusable":
+			// キリル小文字 s（U+0455）を ASCII 中心ローカル部へ 1 文字だけ混入。
+			out = append(out, lineCase("連絡先: u"+"ѕ"+"er"+digitRun(seed+i+90, 4)+"@"+"baneido.com"))
 		case "credit-card":
 			out = append(out, lineCase("カード番号: "+group(cardNumber(seed+i), []int{4, 4, 4, 4}, "-")))
 		case "jp-drivers-license":

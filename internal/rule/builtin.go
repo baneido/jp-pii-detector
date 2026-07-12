@@ -761,14 +761,38 @@ func Builtin() []Rule {
 			Prefilter:   PrefilterAt,
 			Validate:    validEmail,
 			Patterns: []Pattern{
-				// 右境界ガード `(?:[^A-Za-z0-9_%+:-]|$)` を捕捉グループの外に置き、
+				// Unicode Letter/Number を含む右境界ガードを捕捉グループの外に置き、
 				// user@gmail.com_suffix / user@gmail.com+suffix のように直後が
 				// 英数字・_ % + - : で続く（メールアドレスの一部ではない）部分一致を
-				// 棄却する。`:` は git@github.com:owner/repo.git のような
+				// 棄却する。Unicode 文字も境界にしないため、EAI/confusable 候補の
+				// ASCII 接尾部だけを通常メールとして報告しない。`:` は
+				// git@github.com:owner/repo.git のような
 				// scp 形式の SSH URL をメールとして切り出さないために含める。
 				// `.` は除外集合に含めないため、文末ピリオド
 				// （…は user@example.com.）は従来どおり検出できる。
-				{Re: regexp.MustCompile(`(?:^|[^A-Za-z0-9._%+-])([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})(?:[^A-Za-z0-9_%+:-]|$)`), Base: High},
+				{Re: emailASCIIRe, Base: High},
+			},
+		},
+		{
+			// EAI（国際化メールアドレス）は高再現率モードでのみ有効。
+			// 日本語を含む候補と IANA TLD 実在確認に限定し、まず安全側から導入する。
+			ID:          "email-address-eai",
+			Description: "メールアドレス（EAI・高再現率）",
+			Prefilter:   PrefilterAt,
+			Validate:    validEAIEmail,
+			Patterns: []Pattern{
+				{Re: emailEAIRe, Base: High},
+			},
+		},
+		{
+			// Unicode confusable は ASCII 中心のメール候補だけを高再現率モードで
+			// 検査する。全行の汎用正規化には加えず、位置保存不変条件を維持する。
+			ID:          "email-address-confusable",
+			Description: "メールアドレス（Unicode confusable・高再現率）",
+			Prefilter:   PrefilterAt,
+			Validate:    validConfusableEmail,
+			Patterns: []Pattern{
+				{Re: emailConfusableRe, Base: High},
 			},
 		},
 		{

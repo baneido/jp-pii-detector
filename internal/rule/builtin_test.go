@@ -149,6 +149,63 @@ func TestValidEmail(t *testing.T) {
 	}
 }
 
+func TestInternationalEmailValidators(t *testing.T) {
+	t.Run("Punycode", func(t *testing.T) {
+		tests := map[string]string{
+			"例え":  "xn--r8jz45g",
+			"みんな": "xn--q9jyb4c",
+			"日本":  "xn--wgv71a",
+			"コム":  "xn--tckwe",
+		}
+		for in, want := range tests {
+			got, ok := punycodeDomainLabel(in)
+			if !ok || got != want {
+				t.Errorf("punycodeDomainLabel(%q) = %q, %t; want %q, true", in, got, ok, want)
+			}
+		}
+	})
+
+	t.Run("EAI", func(t *testing.T) {
+		tests := []struct {
+			name, in string
+			want     bool
+		}{
+			{"日本語ローカル部", "山田太郎@kaisha.co.jp", true},
+			{"日本語ドメイン", "user@例え.jp", true},
+			{"Unicode TLD", "担当@例え.みんな", true},
+			{"連続ドット", "山田..太郎@kaisha.co.jp", false},
+			{"未登録 TLD", "山田@例え.未登録", false},
+			{"予約ドメイン", "山田@example.co.jp", false},
+			{"日本語なし", "δοκιμή@παράδειγμα.com", false},
+			{"ドメインラベル先頭ハイフン", "山田@-kaisha.jp", false},
+		}
+		for _, tt := range tests {
+			if got := validEAIEmail(tt.in); got != tt.want {
+				t.Errorf("%s: validEAIEmail(%q) = %t, want %t", tt.name, tt.in, got, tt.want)
+			}
+		}
+	})
+
+	t.Run("confusable", func(t *testing.T) {
+		tests := []struct {
+			name, in string
+			want     bool
+		}{
+			{"キリル е 一文字", "usеr@kaisha.co.jp", true},
+			{"ギリシャ ο を TLD に混入", "user@kaisha.cοm", true},
+			{"confusable なし", "user@kaisha.com", false},
+			{"三文字超", "раураl@kaisha.com", false},
+			{"通常のキリル EAI", "почта@пример.com", false},
+			{"スケルトンが予約ドメイン", "usеr@example.com", false},
+		}
+		for _, tt := range tests {
+			if got := validConfusableEmail(tt.in); got != tt.want {
+				t.Errorf("%s: validConfusableEmail(%q) = %t, want %t", tt.name, tt.in, got, tt.want)
+			}
+		}
+	})
+}
+
 // 加入者番号部の並びだけでは実在番号と安全に区別できないため、末尾 4 桁が
 // 全桁同一または連番でも、電話番号全体の形式が妥当なら許容する。
 func TestValidPhoneAllowsSubscriberPatterns(t *testing.T) {

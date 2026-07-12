@@ -44,7 +44,7 @@ Examples below are all fictitious dummy values.
 |---|---|
 | My Number (individual number) | 12 digits + check digit (statutory algorithm) |
 | Credit card number | Luhn + brand detection (Visa/Master/JCB/Amex, etc.) + known sandbox PAN exclusion |
-| Email address | Pattern + IANA TLD existence check + reserved-domain exclusion |
+| Email address | Pattern + IANA TLD existence check + reserved-domain exclusion; Japanese EAI and limited confusables in high-recall mode |
 | Phone number | Mobile / IP / landline / +81 + digit-count validation |
 | Postal code | Exact 7-digit match against real Japan-Post codes |
 | Address | Prefecture-to-street-number pattern |

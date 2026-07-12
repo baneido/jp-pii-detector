@@ -473,6 +473,91 @@ func TestEmailRule(t *testing.T) {
 	}
 }
 
+func TestInternationalEmailHighRecall(t *testing.T) {
+	enabled := newDetector(t, highRecallTOML)
+	disabled := newDetector(t, "")
+
+	tests := []struct {
+		name, line, ruleID string
+	}{
+		{"日本語ローカル部", "連絡先: 山田太郎@kaisha.co.jp", "email-address-eai"},
+		{"日本語ドメインと全角記号", "連絡先：ｕｓｅｒ＠例え．ｊｐ", "email-address-eai"},
+		{"Unicode TLD", "連絡先: 担当@例え.みんな", "email-address-eai"},
+		{"CSV 第2列", "管理番号,山田@例え.jp", "email-address-eai"},
+		{"ローカル部のキリル confusable", "連絡先: usеr@kaisha.co.jp", "email-address-confusable"},
+		{"TLD のギリシャ confusable", "連絡先: user@kaisha.cοm", "email-address-confusable"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, disabled.ScanLine("f.txt", 1, tt.line))
+			fs := enabled.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, tt.ruleID)
+			if fs[0].Match == "" {
+				t.Fatal("match must preserve the original value")
+			}
+		})
+	}
+}
+
+func TestInternationalEmailBoundariesAndPositions(t *testing.T) {
+	d := newDetector(t, highRecallTOML)
+	tests := []struct {
+		name, line string
+		want       []string
+		column     int
+		match      string
+	}{
+		{"EAI 位置保存", "前置😀: 山田@例え.jp", []string{"email-address-eai"}, 6, "山田@例え.jp"},
+		{"全角位置保存", "前置：ｕｓｅｒ＠例え．ｊｐ", []string{"email-address-eai"}, 4, "ｕｓｅｒ＠例え．ｊｐ"},
+		{"confusable 原文保存", "連絡先: usеr@kaisha.co.jp", []string{"email-address-confusable"}, 6, "usеr@kaisha.co.jp"},
+		{"日本語本文への吸着を防止", "連絡先山田@例え.jp", nil, 0, ""},
+		{"右側の識別子連結を防止", "山田@例え.jp追記", nil, 0, ""},
+		{"confusable 三文字超は抑制", "連絡先: раураl@kaisha.com", nil, 0, ""},
+		{"通常のキリル EAI は対象外", "連絡先: почта@пример.com", nil, 0, ""},
+		{"未登録 Unicode TLD", "連絡先: 山田@例え.未登録", nil, 0, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, tt.want...)
+			if len(fs) == 1 && (fs[0].Column != tt.column || fs[0].Match != tt.match) {
+				t.Errorf("location/match = %d/%q, want %d/%q", fs[0].Column, fs[0].Match, tt.column, tt.match)
+			}
+		})
+	}
+}
+
+func TestInternationalEmailContentAndDiff(t *testing.T) {
+	d := newDetector(t, highRecallTOML)
+
+	content := "メールアドレス:\n\n山田@例え.jp"
+	fs := d.ScanContent("f.txt", content)
+	assertRules(t, fs, "email-address-eai")
+	if fs[0].Line != 3 || fs[0].Column != 1 {
+		t.Fatalf("content location = %d:%d, want 3:1", fs[0].Line, fs[0].Column)
+	}
+	withOffsets := ComputeOffsets(content, fs)
+	if !withOffsets[0].HasOffset || withOffsets[0].Offset != 10 ||
+		withOffsets[0].EndOffset-withOffsets[0].Offset != utf8.RuneCountInString(fs[0].Match) {
+		t.Fatalf("offsets = %+v, want rune-accurate EAI span", withOffsets[0])
+	}
+
+	fs = d.ScanDiffHunk("f.txt", []DiffLine{
+		{Text: "連絡先:", Added: false},
+		{Text: "usеr@kaisha.co.jp", Added: true},
+	})
+	assertRules(t, fs, "email-address-confusable")
+	if fs[0].Line != 2 || fs[0].Column != 1 || fs[0].Match != "usеr@kaisha.co.jp" {
+		t.Fatalf("diff finding = %+v, want added line 2 original match", fs[0])
+	}
+
+	fs = d.ScanDiffHunk("f.txt", []DiffLine{
+		{Text: "山田@例え.jp", Added: false},
+		{Text: "変更なし", Added: true},
+	})
+	assertRules(t, fs)
+}
+
 func TestCreditCardRule(t *testing.T) {
 	d := newDetector(t, "")
 	tests := []struct {

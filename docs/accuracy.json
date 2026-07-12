@@ -1746,6 +1746,86 @@
           }
         },
         {
+          "rule_id": "email-address-confusable",
+          "row": {
+            "tp": 10,
+            "fp": 0,
+            "fn": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1
+          },
+          "span_exact": {
+            "tp": 10,
+            "fp": 0,
+            "fn": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1
+          },
+          "span_containment": {
+            "tp": 10,
+            "fp": 0,
+            "fn": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1
+          },
+          "span_relaxed": {
+            "tp": 10,
+            "fp": 0,
+            "fn": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1
+          },
+          "auxiliary": {
+            "negatives": 114,
+            "finding_fp": 0,
+            "confidence_miss": 0
+          }
+        },
+        {
+          "rule_id": "email-address-eai",
+          "row": {
+            "tp": 10,
+            "fp": 0,
+            "fn": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1
+          },
+          "span_exact": {
+            "tp": 10,
+            "fp": 0,
+            "fn": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1
+          },
+          "span_containment": {
+            "tp": 10,
+            "fp": 0,
+            "fn": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1
+          },
+          "span_relaxed": {
+            "tp": 10,
+            "fp": 0,
+            "fn": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1
+          },
+          "auxiliary": {
+            "negatives": 114,
+            "finding_fp": 0,
+            "confidence_miss": 0
+          }
+        },
+        {
           "rule_id": "jp-address",
           "row": {
             "tp": 9,
@@ -2587,60 +2667,60 @@
         }
       ],
       "micro": {
-        "tp": 232,
+        "tp": 252,
         "fp": 10,
         "fn": 2,
-        "precision": 0.9586776859504132,
-        "recall": 0.9914529914529915,
-        "f1": 0.9747899159663866
+        "precision": 0.9618320610687023,
+        "recall": 0.9921259842519685,
+        "f1": 0.9767441860465117
       },
       "micro_span_exact": {
-        "tp": 233,
+        "tp": 253,
         "fp": 1,
         "fn": 2,
-        "precision": 0.9957264957264957,
-        "recall": 0.9914893617021276,
-        "f1": 0.9936034115138592
+        "precision": 0.9960629921259843,
+        "recall": 0.9921568627450981,
+        "f1": 0.994106090373281
       },
       "micro_span_containment": {
-        "tp": 233,
+        "tp": 253,
         "fp": 1,
         "fn": 2,
-        "precision": 0.9957264957264957,
-        "recall": 0.9914893617021276,
-        "f1": 0.9936034115138592
+        "precision": 0.9960629921259843,
+        "recall": 0.9921568627450981,
+        "f1": 0.994106090373281
       },
       "micro_span_relaxed": {
-        "tp": 233,
+        "tp": 253,
         "fp": 1,
         "fn": 2,
-        "precision": 0.9957264957264957,
-        "recall": 0.9914893617021276,
-        "f1": 0.9936034115138592
+        "precision": 0.9960629921259843,
+        "recall": 0.9921568627450981,
+        "f1": 0.994106090373281
       },
       "macro_span_exact": {
         "tp": 0,
         "fp": 0,
         "fn": 0,
-        "precision": 0.9960474308300395,
-        "recall": 0.991304347826087,
-        "f1": 0.9933529475863573
+        "precision": 0.9963636363636365,
+        "recall": 0.992,
+        "f1": 0.9938847117794487
       },
       "macro_span_containment": {
         "tp": 0,
         "fp": 0,
         "fn": 0,
-        "precision": 0.9960474308300395,
-        "recall": 0.991304347826087,
-        "f1": 0.9933529475863573
+        "precision": 0.9963636363636365,
+        "recall": 0.992,
+        "f1": 0.9938847117794487
       },
       "macro_span_relaxed": {
         "tp": 0,
         "fp": 0,
         "fn": 0,
-        "precision": 0.9960474308300395,
-        "recall": 0.991304347826087,
-        "f1": 0.9933529475863573
+        "precision": 0.9963636363636365,
+        "recall": 0.992,
+        "f1": 0.9938847117794487
       },
       "auxiliary": {
         "negatives": 114,
@@ -2650,10 +2730,10 @@
     }
   ],
   "dataset": {
-    "total_cases": 347,
-    "positive_cases": 233,
+    "total_cases": 367,
+    "positive_cases": 253,
     "negative_cases": 114,
-    "span_annotated_cases": 233,
+    "span_annotated_cases": 253,
     "per_rule": [
       {
         "rule_id": "credit-card",
@@ -2661,6 +2741,14 @@
       },
       {
         "rule_id": "email-address",
+        "positive_cases": 10
+      },
+      {
+        "rule_id": "email-address-confusable",
+        "positive_cases": 10
+      },
+      {
+        "rule_id": "email-address-eai",
         "positive_cases": 10
       },
       {
@@ -2759,7 +2847,7 @@
       },
       {
         "name": "line",
-        "cases": 331
+        "cases": 351
       }
     ],
     "per_format": [
@@ -2781,13 +2869,13 @@
       },
       {
         "name": "unspecified",
-        "cases": 331
+        "cases": 351
       }
     ],
     "per_source_class": [
       {
         "name": "curated-v2",
-        "cases": 175
+        "cases": 195
       },
       {
         "name": "hard-negative",
