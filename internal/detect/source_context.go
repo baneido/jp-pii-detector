@@ -16,6 +16,11 @@ const (
 	// （splitSourceStatements、カンマを文区切りとして扱う）は誤解釈するため
 	// sourceExtensions には追加せず、csv_context.go の専用パーサへ分岐する。
 	sourceKindCSV
+	// sourceKindSQL は .sql 用の種別。INSERT 文の列リスト・VALUES 句は
+	// カンマ・丸括弧・引用符の入れ子を持ち、CSV と同じ理由で汎用のコード文
+	// パーサでは誤解釈するため sourceExtensions には追加せず、sql_context.go
+	// の専用パーサへ分岐する。
+	sourceKindSQL
 )
 
 type statementContext struct {
@@ -68,7 +73,6 @@ var sourceExtensions = map[string]bool{
 	".sh":         true,
 	".bash":       true,
 	".zsh":        true,
-	".sql":        true,
 	".json":       true,
 	".jsonc":      true,
 	".yaml":       true,
@@ -144,6 +148,8 @@ func sourceKindForPath(path string) sourceKind {
 	switch ext {
 	case ".csv", ".tsv":
 		return sourceKindCSV
+	case ".sql":
+		return sourceKindSQL
 	}
 	if sourceExtensions[ext] {
 		return sourceKindCode
@@ -152,11 +158,15 @@ func sourceKindForPath(path string) sourceKind {
 }
 
 func sourceLineContexts(file string, lines []string) []lineContext {
-	// CSV/TSV はヘッダ列名からフィールド単位の文脈を組み立てる専用パーサへ
-	// 分岐する（フル走査限定。diff 走査ではヘッダ行が hunk 外のことが多く
-	// 誤帰属のリスクが高いため sourceLineContextsForDiff では使わない）。
-	if sourceKindForPath(file) == sourceKindCSV {
+	// CSV/TSV はヘッダ列名から、.sql は INSERT 文の列名から、それぞれ
+	// フィールド単位の文脈を組み立てる専用パーサへ分岐する（フル走査限定。
+	// diff 走査ではヘッダ行・INSERT の列リストが hunk 外のことが多く誤帰属の
+	// リスクが高いため sourceLineContextsForDiff では使わない）。
+	switch sourceKindForPath(file) {
+	case sourceKindCSV:
 		return csvLineContexts(file, lines)
+	case sourceKindSQL:
+		return sqlLineContexts(file, lines)
 	}
 	out, ok := baseSourceLineContexts(file, lines)
 	if !ok {
@@ -184,9 +194,9 @@ func sourceLineContextsForDiff(file string, lines []string, added []bool) []line
 
 func baseSourceLineContexts(file string, lines []string) ([]lineContext, bool) {
 	out := make([]lineContext, len(lines))
-	// sourceKindCSV はここでは常に ok=false（コード文パーサ対象外）。
-	// sourceLineContextsForDiff がこの関数だけを使うため、結果として CSV は
-	// diff 走査での列コンテキスト付与から自動的に除外される。
+	// sourceKindCSV・sourceKindSQL はここでは常に ok=false（コード文パーサ
+	// 対象外）。sourceLineContextsForDiff がこの関数だけを使うため、結果として
+	// CSV/SQL は diff 走査での列コンテキスト付与から自動的に除外される。
 	if sourceKindForPath(file) != sourceKindCode {
 		return out, false
 	}

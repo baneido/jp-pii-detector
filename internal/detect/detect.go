@@ -266,8 +266,15 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 	if d.crossLineName != nil {
 		candidates = append(candidates, d.scanCrossLineNames(file, lines)...)
 		candidates = append(candidates, d.scanCrossLineSurnameGivenPairs(file, lines)...)
-		if sourceKindForPath(file) == sourceKindCSV {
+		// SQL 版は sql_context.go の scanSQLNameColumns（csv_context.go の
+		// scanCSVNameColumns と同じ、列名がラベル・値がタプル内という構造を
+		// 使う専用経路。person-name 自体のラベル直接隣接パターンでは
+		// INSERT 文の列名と値の位置関係を拾えないため必要になる）。
+		switch sourceKindForPath(file) {
+		case sourceKindCSV:
 			candidates = append(candidates, d.scanCSVNameColumns(file, lines)...)
+		case sourceKindSQL:
+			candidates = append(candidates, d.scanSQLNameColumns(file, lines)...)
 		}
 	}
 
