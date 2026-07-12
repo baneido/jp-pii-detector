@@ -760,7 +760,7 @@ func Builtin() []Rule {
 		},
 		{
 			ID:              "credit-card",
-			Description:     "クレジットカード番号（Luhn + ブランドプレフィックス検証）",
+			Description:     "クレジットカード番号（Luhn + ブランドプレフィックス + 公知テストPAN除外）",
 			Prefilter:       PrefilterDigit,
 			Context:         []string{"クレジット", "カード番号", "credit", "card"},
 			NegativeContext: digitRuleUnitAdjacentNegativeContext,

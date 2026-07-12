@@ -13,6 +13,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/baneido/jp-pii-detector/internal/checksum"
 	"github.com/baneido/jp-pii-detector/internal/config"
 	"github.com/baneido/jp-pii-detector/internal/detect"
 	"github.com/baneido/jp-pii-detector/internal/dict"
@@ -52,34 +53,15 @@ func Build(base []evalcase.Case) ([]evalcase.Case, Summary, error) {
 			cases[i].SourceClass = "legacy-curated"
 		}
 		cases[i].Tags = appendUnique(cases[i].Tags, "source:"+cases[i].SourceClass)
+		reclassifyKnownTestPAN(&cases[i])
 		if err := annotateCase(low, high, &cases[i]); err != nil {
 			return nil, Summary{}, fmt.Errorf("既存case %s: %w", safeID(cases[i]), err)
 		}
 	}
 
-	counts := positiveCounts(cases)
-	addedPositive := 0
-	for _, id := range allRuleIDs() {
-		candidates := positiveCandidates(id, seed)
-		for _, candidate := range candidates {
-			if counts[id] >= MinPositiveCasesPerRule {
-				break
-			}
-			candidate.ID = fmt.Sprintf("v2-%s-%03d", id, counts[id]+1)
-			candidate.SourceClass = "curated-v2"
-			candidate.Tags = appendUnique(candidate.Tags,
-				"source:curated-v2", "polarity:positive", "rule:"+id)
-			if err := annotateCase(low, high, &candidate); err != nil {
-				continue // 候補語彙が辞書と合わない場合は次の決定的候補を試す。
-			}
-			cases = append(cases, candidate)
-			counts[id]++
-			addedPositive++
-		}
-		if counts[id] < MinPositiveCasesPerRule {
-			return nil, Summary{}, fmt.Errorf("rule %s の陽性候補が%d件しか成立しません（必要%d件）",
-				id, counts[id], MinPositiveCasesPerRule)
-		}
+	addedPositive, err := fillPositiveCoverage(&cases, seed, allRuleIDs(), low, high)
+	if err != nil {
+		return nil, Summary{}, err
 	}
 
 	hard := hardNegativeCases(seed)
@@ -116,6 +98,222 @@ func Build(base []evalcase.Case) ([]evalcase.Case, Summary, error) {
 		SpanlessPairs:   spanless,
 		PerRulePositive: positiveCounts(cases),
 	}, nil
+}
+
+// UpgradePublishedV2 は、旧v2で正例扱いだった公知sandbox PANを陰性へ
+// 再分類し、不足する正例を既存の決定的合成器で補う。GCS objectを更新せずに
+// 固定generationを現行ルールの評価契約へ読み替えるための互換migrationで、
+// 入力を変更せず、同じ入力からは常に同じ出力を返す。
+func UpgradePublishedV2(input []evalcase.Case) ([]evalcase.Case, error) {
+	low, err := newDetector(false)
+	if err != nil {
+		return nil, err
+	}
+	high, err := newDetector(true)
+	if err != nil {
+		return nil, err
+	}
+
+	cases := cloneCases(input)
+	seed := corpusSeed(input)
+	for i := range cases {
+		reclassifyKnownTestPAN(&cases[i])
+	}
+	// この互換migrationで不足しうるcredit-cardだけを補い、他ルールの
+	// データ品質不備を暗黙に修復しない。
+	if _, err := fillPositiveCoverage(&cases, seed, []string{"credit-card"}, low, high); err != nil {
+		return nil, err
+	}
+	if err := ensureUnique(cases); err != nil {
+		return nil, err
+	}
+	if err := evalcase.Validate(cases); err != nil {
+		return nil, err
+	}
+	if spanless := spanlessPairs(cases); spanless != 0 {
+		return nil, fmt.Errorf("span未付与の陽性(rule,case)が%d件残っています", spanless)
+	}
+	return cases, nil
+}
+
+func fillPositiveCoverage(cases *[]evalcase.Case, seed int, ids []string, low, high *detect.Detector) (int, error) {
+	counts := positiveCounts(*cases)
+	usedIDs := make(map[string]bool, len(*cases))
+	usedInputs := make(map[string]bool, len(*cases))
+	for _, c := range *cases {
+		usedIDs[c.ID] = true
+		usedInputs[caseInputKey(c)] = true
+	}
+
+	added := 0
+	for _, id := range ids {
+		nextOrdinal := counts[id] + 1
+		for _, candidate := range positiveCandidates(id, seed) {
+			if counts[id] >= MinPositiveCasesPerRule {
+				break
+			}
+			if usedInputs[caseInputKey(candidate)] {
+				continue
+			}
+			for {
+				candidate.ID = fmt.Sprintf("v2-%s-%03d", id, nextOrdinal)
+				nextOrdinal++
+				if !usedIDs[candidate.ID] {
+					break
+				}
+			}
+			candidate.SourceClass = "curated-v2"
+			candidate.Tags = appendUnique(candidate.Tags,
+				"source:curated-v2", "polarity:positive", "rule:"+id)
+			if err := annotateCase(low, high, &candidate); err != nil {
+				continue // 候補語彙が辞書と合わない場合は次の決定的候補を試す。
+			}
+			*cases = append(*cases, candidate)
+			usedIDs[candidate.ID] = true
+			usedInputs[caseInputKey(candidate)] = true
+			counts[id]++
+			added++
+		}
+		if counts[id] < MinPositiveCasesPerRule {
+			return 0, fmt.Errorf("rule %s の陽性候補が%d件しか成立しません（必要%d件）",
+				id, counts[id], MinPositiveCasesPerRule)
+		}
+	}
+	return added, nil
+}
+
+// reclassifyKnownTestPAN はcredit-cardの期待spanが公知sandbox PANに一致する
+// 場合だけ、その期待を陰性へ読み替える。他ルールの期待や未知のLuhn妥当値は
+// 変更しない。
+func reclassifyKnownTestPAN(c *evalcase.Case) bool {
+	hadCreditSpan := false
+	hasRemainingCreditSpan := false
+	changed := false
+	spans := c.Spans[:0]
+	for _, span := range c.Spans {
+		if span.RuleID != "credit-card" {
+			spans = append(spans, span)
+			continue
+		}
+		hadCreditSpan = true
+		value, ok := caseSpanText(*c, span)
+		if ok && checksum.KnownTestPAN(digitsOnly(value)) {
+			changed = true
+			continue
+		}
+		hasRemainingCreditSpan = true
+		spans = append(spans, span)
+	}
+	c.Spans = spans
+
+	removeWant := changed && !hasRemainingCreditSpan
+	if !hadCreditSpan && hasWant(*c, "credit-card") && caseContainsKnownTestPAN(*c) {
+		removeWant = true
+		changed = true
+	}
+	if removeWant {
+		want := c.Want[:0]
+		for _, id := range c.Want {
+			if id != "credit-card" {
+				want = append(want, id)
+			}
+		}
+		c.Want = want
+	}
+	if changed {
+		c.Tags = appendUnique(c.Tags, "scenario:known-test-pan")
+		if len(c.Want) == 0 && len(c.Spans) == 0 {
+			c.Tags = removeTag(c.Tags, "polarity:positive")
+			c.Tags = appendUnique(c.Tags, "polarity:negative")
+		}
+	}
+	return changed
+}
+
+func hasWant(c evalcase.Case, id string) bool {
+	for _, got := range c.Want {
+		if got == id {
+			return true
+		}
+	}
+	return false
+}
+
+func caseSpanText(c evalcase.Case, span evalcase.Span) (string, bool) {
+	lines := caseLines(c)
+	line := span.Line
+	if line == 0 {
+		line = 1
+	}
+	if line < 1 || line > len(lines) {
+		return "", false
+	}
+	runes := []rune(lines[line-1])
+	if span.Start < 0 || span.End < span.Start || span.End > len(runes) {
+		return "", false
+	}
+	return string(runes[span.Start:span.End]), true
+}
+
+func caseContainsKnownTestPAN(c evalcase.Case) bool {
+	for _, line := range caseLines(c) {
+		digits := digitsOnly(line)
+		for width := 13; width <= 19; width++ {
+			for start := 0; start+width <= len(digits); start++ {
+				if checksum.KnownTestPAN(digits[start : start+width]) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func caseLines(c evalcase.Case) []string {
+	switch {
+	case len(c.Diff) > 0:
+		lines := make([]string, len(c.Diff))
+		for i, line := range c.Diff {
+			lines[i] = line.Text
+		}
+		return lines
+	case c.Content != "":
+		return strings.Split(c.Content, "\n")
+	default:
+		return []string{c.Line}
+	}
+}
+
+func digitsOnly(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] >= '0' && s[i] <= '9' {
+			b.WriteByte(s[i])
+		}
+	}
+	return b.String()
+}
+
+func caseInputKey(c evalcase.Case) string {
+	input := struct {
+		File    string
+		Line    string
+		Content string
+		Diff    []evalcase.DiffLine
+	}{c.File, c.Line, c.Content, c.Diff}
+	b, _ := json.Marshal(input)
+	return string(b)
+}
+
+func removeTag(tags []string, remove string) []string {
+	out := tags[:0]
+	for _, tag := range tags {
+		if tag != remove {
+			out = append(out, tag)
+		}
+	}
+	return out
 }
 
 func newDetector(highRecall bool) (*detect.Detector, error) {

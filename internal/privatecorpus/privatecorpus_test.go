@@ -1,11 +1,13 @@
 package privatecorpus
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/baneido/jp-pii-detector/internal/corpusv2"
 	"github.com/baneido/jp-pii-detector/internal/evalcase"
 )
 
@@ -20,6 +22,40 @@ func TestDecodeStrictAndVersioned(t *testing.T) {
 	}
 	if c.DatasetID != "eval-v1" || len(c.Dataset) != 1 {
 		t.Fatalf("decoded metadata mismatch: id=%q cases=%d", c.DatasetID, len(c.Dataset))
+	}
+}
+
+func TestDecodeUpgradesPublishedV2KnownTestPAN(t *testing.T) {
+	pan := strings.Join([]string{"4242", "4242", "4242", "4242"}, "")
+	raw := fmt.Sprintf(`{
+  "schema_version": 1,
+  "dataset_id": "private-eval-v2",
+  "dataset": [{
+    "id":"legacy-test-pan",
+    "source_class":"legacy-curated",
+    "line":"card: %s",
+    "want":["credit-card"],
+    "spans":[{"rule_id":"credit-card","line":1,"start":6,"end":22}]
+  }]
+}`, pan)
+	c, err := Decode(strings.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Dataset[0].Want) != 0 || len(c.Dataset[0].Spans) != 0 {
+		t.Fatalf("公開済みv2のテストPANが正例のまま残った: %+v", c.Dataset[0])
+	}
+	positive := 0
+	for _, item := range c.Dataset {
+		for _, id := range item.Want {
+			if id == "credit-card" {
+				positive++
+				break
+			}
+		}
+	}
+	if positive < corpusv2.MinPositiveCasesPerRule {
+		t.Fatalf("credit-card positives = %d, want >= %d", positive, corpusv2.MinPositiveCasesPerRule)
 	}
 }
 

@@ -1,6 +1,6 @@
 # jp-pii-detector
 
-![PII detection F1](https://img.shields.io/badge/PII検出_F1（評価データセット）-0.96-brightgreen)
+![PII detection F1](https://img.shields.io/badge/PII検出_F1（評価データセット）-0.97-brightgreen)
 
 [English](README.en.md) | 日本語
 
@@ -28,7 +28,7 @@ jp-pii-detect はこれらの置き換えではなく、シークレット検出
 | 種別 | 例（すべて架空のダミー） | 精度 | 実測 F1 | 検出の決め手 |
 |---|---|:---:|:---:|---|
 | マイナンバー（個人番号） | `1234-5678-9018` | ◎ | ![F1 0.83](https://img.shields.io/badge/F1-0.83-yellowgreen) | 12 桁 + 検査用数字（総務省令のアルゴリズム） |
-| クレジットカード番号 | `4111-1111-1111-1111` | ◎ | ![F1 0.80](https://img.shields.io/badge/F1-0.80-yellowgreen) | Luhn + ブランド判定（Visa/Master/JCB/Amex 等） |
+| クレジットカード番号 | `4000-0012-3456-7899` | ◎ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | Luhn + ブランド判定（Visa/Master/JCB/Amex 等）+ 公知テストPAN除外 |
 | メールアドレス | `taro@example.jp` | ◎ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | パターン + IANA TLD 実在チェック + 予約ドメイン除外 |
 | 電話番号 | `090-XXXX-XXXX` | ◎ | ![F1 0.91](https://img.shields.io/badge/F1-0.91-green) | 携帯/IP/固定/+81 + 桁数検証 |
 | 郵便番号 | `〒150-0043` | ◎ / ○ | ![F1 0.91](https://img.shields.io/badge/F1-0.91-green) | 7 桁完全一致の実在チェック（〒付きは単独、なしは周辺の語が必要） |

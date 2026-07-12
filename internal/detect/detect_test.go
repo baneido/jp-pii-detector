@@ -479,14 +479,14 @@ func TestCreditCardRule(t *testing.T) {
 		name, line string
 		want       []string
 	}{
-		{"Visa 区切りあり", "card: 4111-1111-1111-1111", []string{"credit-card"}},
-		{"JCB 区切りなし", "3530111333300000", []string{"credit-card"}},
-		{"slash-prefixed separated card is still detected", "/4111-1111-1111-1111", []string{"credit-card"}},
+		{"Visa 区切りあり", "card: 4000-0012-3456-7899", []string{"credit-card"}},
+		{"JCB 区切りなし", "3528000000000007", []string{"credit-card"}},
+		{"slash-prefixed separated card is still detected", "/4000-0012-3456-7899", []string{"credit-card"}},
 		// 区切りなしカードがスラッシュ直後にある場合は、URL の記事 ID と
 		// 区別できないため意図的に検出しない（割り切り）。同じ桁は
 		// 区切りありなら上で検出される Luhn 妥当な Visa 番号。
-		{"slash-prefixed contiguous card is intentionally not detected", "/4111111111111111", nil},
-		{"Luhn 不正", "4111-1111-1111-1112", nil},
+		{"slash-prefixed contiguous card is intentionally not detected", "/4000001234567899", nil},
+		{"Luhn 不正", "4000-0012-3456-7898", nil},
 		{"URL article ID is not a card", "https://support.otetsutabi.com/hc/ja/articles/46129829524505", nil},
 		{"URL article ID with shorter Luhn-passing number is not a card", "https://support.otetsutabi.com/hc/ja/articles/4608392522393", nil},
 	}
@@ -732,13 +732,13 @@ func TestDigitRulesIgnoreDistantNegativeContext(t *testing.T) {
 
 // mynumValid / mynumValid2 は検査用数字の合致するダミーのマイナンバー
 // （testfixtures 無しでも実行できるよう、チェックディジットを手計算した値）。
-// visaTestCard は Stripe 等が公開する Luhn 有効な Visa テスト番号。
+// visaCard はdenylist外でLuhnを満たす計算合成Visa番号。
 // shibuyaPostal は実在する郵便番号（渋谷区道玄坂、internal/dict のテストと同じ値）。
 const (
 	mynumValid    = "123456789018"
 	mynumValid2   = "100000000013"
-	visaTestCard  = "4242424242424242"
-	visaSepCard   = "4111-1111-1111-1111"
+	visaCard      = "4000001234567899"
+	visaSepCard   = "4000-0012-3456-7899"
 	shibuyaPostal = "150-0043"
 )
 
@@ -753,7 +753,7 @@ func TestUnitAdjacentNegativeContextSuppressesFiveRules(t *testing.T) {
 		name, line string
 	}{
 		{"マイナンバーに直後の円", "マイナンバー: " + mynumValid + "円"},
-		{"売上表記のカード番号（issue 実測例）", "売上は " + visaTestCard + " 円"},
+		{"売上表記のカード番号（issue 実測例）", "売上は " + visaCard + " 円"},
 		{"郵便番号に直後のカウンタ", "〒" + shibuyaPostal + "件"},
 		{"パスポート番号に直後のカウンタ", "パスポート番号: TZ1234567件"},
 		{"在留カード番号に直後のカウンタ", "在留カード番号: AB12345678CD件"},
