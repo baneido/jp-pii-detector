@@ -548,14 +548,35 @@ type DiffLine struct {
 	Added bool
 }
 
+// DiffScanOptions は ScanDiffHunkOpts への追加オプション（すべて省略可能で、
+// ゼロ値なら ScanDiffHunk と完全に同じ挙動になる）。
+type DiffScanOptions struct {
+	// CSVHeader は .csv/.tsv の post-image ヘッダ行（1 行目のテキスト）。
+	// ScanDiffHunkWithCSVHeader の csvHeader 引数と同じ意味・同じフォールバック
+	// 規則（空文字列 = 列コンテキストなし）。
+	CSVHeader string
+	// PostImage は .json/.yaml/.yml の post-image 全文（"\n" 区切り、hunk の
+	// 断片ではなくファイル全体）。呼び出し側（internal/source/gitdiff.go）が
+	// `git show` で取得する（サイズ上限・取得失敗・バイナリはすべて呼び出し側の
+	// 責任で空文字列にフォールバックする）。空文字列は「取得できなかった／
+	// 対象外」を表し、オブジェクトスコープの親キー文脈なしにフォールバックする
+	// （object_scope.go の applyObjectScopeContextForDiff 参照）。
+	PostImage string
+	// HunkStartLine は hunk の新ファイル側開始行（unified diff の
+	// `@@ -a,b +c,d @@` の c、1 始まり）。PostImage 中の対応行を lines[i]
+	// （0 始まり）↔ PostImage の行 HunkStartLine+i-1（0 始まり）で対応付けるために
+	// 使う。PostImage が空文字列の場合は参照されない。
+	HunkStartLine int
+}
+
 // ScanDiffHunk は差分 hunk（文脈行＋追加行）を走査し、検出値が追加行に乗る
-// finding だけを返す（行番号はウィンドウ内 1 始まり）。CSV/TSV の列コンテキスト
-// （ヘッダ行→同一列の正負文脈。internal/detect/csv_context.go）は使わない
-// 後方互換のエントリポイントで、ScanDiffHunkWithCSVHeader(file, lines, "") に
-// 委譲する（既存呼び出し — internal/source/gitdiff.go の CSV 以外の経路、
+// finding だけを返す（行番号はウィンドウ内 1 始まり）。CSV/TSV の列コンテキスト・
+// JSON/YAML のオブジェクトスコープ親キー文脈のいずれも使わない後方互換の
+// エントリポイントで、ScanDiffHunkOpts(file, lines, DiffScanOptions{}) に委譲する
+// （既存呼び出し — internal/source/gitdiff.go の CSV/JSON/YAML 以外の経路、
 // internal/eval 等 — のシグネチャ・挙動を一切変えないため）。
 func (d *Detector) ScanDiffHunk(file string, lines []DiffLine) []Finding {
-	return d.ScanDiffHunkWithCSVHeader(file, lines, "")
+	return d.ScanDiffHunkOpts(file, lines, DiffScanOptions{})
 }
 
 // ScanDiffHunkWithCSVHeader は ScanDiffHunk に、走査対象が .csv/.tsv の場合の
@@ -564,14 +585,22 @@ func (d *Detector) ScanDiffHunk(file string, lines []DiffLine) []Finding {
 // （internal/source/gitdiff.go）が `git show` で post-image のヘッダ行だけを
 // 個別取得して渡す。csvHeader を空文字にすると ScanDiffHunk と完全に同じ
 // 挙動になる（ヘッダ未取得・取得失敗・非 CSV ファイルはすべてこの経路）。
+// ScanDiffHunkOpts(file, lines, DiffScanOptions{CSVHeader: csvHeader}) に委譲する
+// 後方互換のエントリポイント（既存呼び出しのシグネチャ・挙動を一切変えない）。
+func (d *Detector) ScanDiffHunkWithCSVHeader(file string, lines []DiffLine, csvHeader string) []Finding {
+	return d.ScanDiffHunkOpts(file, lines, DiffScanOptions{CSVHeader: csvHeader})
+}
+
+// ScanDiffHunkOpts は ScanDiffHunk/ScanDiffHunkWithCSVHeader の一般化版
+// （issue #134）。opts がゼロ値なら ScanDiffHunk と完全に同じ挙動になる。
 //
-// API 拡張の形について: ScanDiffHunk の既存シグネチャ・既存呼び出し（本パッケージ
-// 外では internal/source・internal/eval）を一切変更せず、新規のオプション付き
-// 関数を追加する形を選んだ。DiffLine 自体に CSV ヘッダを持たせる案（各行へ同じ
-// 文字列を複製する）や、DiffLine とは別の opts 構造体を第 3 引数にする案も
-// 検討したが、渡すオプションが現時点で「CSV ヘッダ 1 個」だけであり、
-// 汎用の opts 構造体を導入するより意図の伝わる専用関数名の方が呼び出し側
-// （internal/source/gitdiff.go）を読みやすいと判断した。
+// API 拡張の形について: ScanDiffHunkWithCSVHeader 追加時と同じく、既存
+// シグネチャ・既存呼び出し（本パッケージ外では internal/source・internal/eval）を
+// 一切変更せず、新規の関数を追加する形を選んだ。ただし今回は CSV ヘッダに加えて
+// JSON/YAML の post-image 全文・hunk 開始行という、渡せるオプションが今後も
+// 増えうる性質を踏まえ、専用関数を増やす代わりに汎用の DiffScanOptions 構造体を
+// 導入した。ScanDiffHunk・ScanDiffHunkWithCSVHeader 側はそれぞれ薄い委譲に
+// とどめている。
 //
 // 設計意図（ScanDiffHunk と共通）: 文脈行（未変更行）は正のコンテキスト
 // （ラベル等）の補完にのみ使い、抑制（ignore マーカー・負コンテキスト）の
@@ -584,19 +613,29 @@ func (d *Detector) ScanDiffHunk(file string, lines []DiffLine) []Finding {
 // --staged では報告されるという非対称が生まれるため。CSV 列コンテキストの
 // PositiveText/NegativeText も、この「文脈行は正の補完のみ・抑制は値の行のみ」
 // という原則に従う（csvHeader 自体は外部から渡された固定情報であり、hunk 内の
-// 文脈行/追加行の区別とは独立に、行ごとの列の割り当てにのみ使う）。
+// 文脈行/追加行の区別とは独立に、行ごとの列の割り当てにのみ使う）。オブジェクト
+// スコープの親キー文脈（PostImage 由来）も同じ原則に従う: postImage 自体は
+// 外部から渡された固定情報で、hunk 内の文脈行/追加行の区別とは独立に働くが、
+// 親キー由来の finding が実際に報告されるかどうかは通常どおり「値が追加行に
+// 乗っているか」で決まる。
 //
 // この「抑制は検出値が乗る行に対してのみ適用し、隣接行のマーカーを巻き添えに
 // しない」という原則は diff 経路専用ではなく、ScanContent 側の隣接行走査
 // （scanAdjacentLines）にも同様に適用される。
-func (d *Detector) ScanDiffHunkWithCSVHeader(file string, lines []DiffLine, csvHeader string) []Finding {
+func (d *Detector) ScanDiffHunkOpts(file string, lines []DiffLine, opts DiffScanOptions) []Finding {
 	texts := make([]string, len(lines))
 	added := make([]bool, len(lines))
 	for i, l := range lines {
 		texts[i] = l.Text
 		added[i] = l.Added
 	}
-	lineContexts := sourceLineContextsForDiff(file, texts, added, csvHeader)
+	lineContexts := sourceLineContextsForDiff(file, texts, added, opts.CSVHeader)
+	// JSON/YAML のオブジェクトスコープ親キー文脈は、hunk 断片単体からは復元
+	// できない深さ情報を opts.PostImage（呼び出し側が git show で取得した
+	// post-image 全文）から補う。opts.PostImage が空文字列（未取得・対象外
+	// 拡張子・サイズ超過・バイナリ等）なら何もしない安全側
+	// （applyObjectScopeContextForDiff 参照）。
+	applyObjectScopeContextForDiff(lineContexts, file, texts, opts.PostImage, opts.HunkStartLine)
 
 	var candidates []Finding
 	// 追加行は単独走査（同一行コンテキスト・同一行抑制が正しく適用される）。
@@ -620,6 +659,13 @@ func (d *Detector) ScanDiffHunkWithCSVHeader(file string, lines []DiffLine, csvH
 		candidates = append(candidates,
 			d.scanAdjacentLinesDiff(file, i+1, texts[i], j+1, texts[j], added[i], added[j], lineContexts[i], lineContexts[j])...)
 	}
+	// ゆうちょ別行ペア（yucho_pair.go の scanCrossLineYuchoPairs）の diff 版。
+	// 記号・番号ラベルの構造的な組を hunk 全体（文脈行＋追加行）に対して
+	// 探索し、検出値が追加行に乗る finding だけを残す（他の diff 走査経路と
+	// 同じ「文脈行上で完結する検出は新規追加ではない」原則。ScanContent と
+	// 同様 crossLineName の nil ガードの外で呼ぶ＝高再現率モードに依存しない。
+	// 詳細は scanCrossLineYuchoPairsDiff のコメント）。
+	candidates = append(candidates, d.scanCrossLineYuchoPairsDiff(file, texts, added)...)
 
 	// 文脈行由来の cross-line 負コンテキストは適用しない（上記の設計意図）。
 	// 非追加行を空文字にマスクした行スライスを使うことで、
@@ -644,7 +690,8 @@ func (d *Detector) ScanDiffHunkWithCSVHeader(file string, lines []DiffLine, csvH
 	demoted := d.applyPathDemotion(filtered)
 
 	// ScanContent と同様、単行パスと隣接行ペアパスをまたいだ重複を統合する
-	// （cross-line names は diff 走査では実行されないため対象は 2 系統のみ）。
+	// （cross-line names は diff 走査では実行されないため対象はゆうちょ別行
+	// ペアを含む 3 系統）。
 	resolved := resolveOverlapsPerLine(demoted)
 	d.recordOverlapLosses(demoted, resolved)
 	return dedupAndSortFindings(resolved)

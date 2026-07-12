@@ -390,11 +390,13 @@ internal/
      デコード後の行・列はルーン単位としては正しいものの、元ファイルのバイトオフセット
      とは対応しません。この変換はフルスキャン限定で、`git diff` がバイナリ扱いする
      UTF-16 ファイルは `--staged` / `--diff` の走査対象になりません。
-   - git モード: `git diff -U3` で文脈行付きの差分を取得し、`detect.ScanDiffHunk`
-     （`.csv`/`.tsv` は `git show` で post-image のヘッダ行を追加取得できたときだけ
-     `detect.ScanDiffHunkWithCSVHeader`。詳細は後述の CSV/TSV の項）で走査します。
-     検出値が**追加行に乗っているもののみ**を報告し、文脈行（未変更行）上の
-     既存 PII は報告しません。
+   - git モード: `git diff -U3` で文脈行付きの差分を取得し、`detect.ScanDiffHunkOpts`
+     で走査します（`.csv`/`.tsv` は post-image のヘッダ行、`.json`/`.yaml`/`.yml` は
+     post-image 全文を `git show` で追加取得できたときだけ `DiffScanOptions` 経由で
+     渡し、取得できなければ従来どおりコンテキストなしにフォールバックします。
+     `ScanDiffHunk`/`ScanDiffHunkWithCSVHeader` は後方互換の薄い委譲として残ります。
+     詳細は後述の CSV/TSV の項）。検出値が**追加行に乗っているもののみ**を報告し、
+     文脈行（未変更行）上の既存 PII は報告しません。
    - ラベルが**論理的に隣接する未変更行**（間が空白のみの行なら最大 2 行挟んでもよい。
      `j-i<=3`）にあり値だけを追加したケースでも、コンテキスト必須ルールが発火します
      （ScanContent の論理隣接ウィンドウに準じます）。
