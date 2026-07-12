@@ -959,6 +959,10 @@ func Builtin() []Rule {
 			Validate: func(m string) bool {
 				return checksum.CorporateNumber(strings.TrimPrefix(m, "T"))
 			},
+			// 登録番号は国税庁の適格請求書発行事業者公表サイトで公開される情報のため
+			// kind=public-business を付与する（PublicBusinessKind、identifier_kind.go）。
+			// ノイズになる場合は [rules] exclude_kinds = ["public-business"] で除外可能。
+			Kind: PublicBusinessKind,
 			Patterns: []Pattern{
 				// T + 13 桁（法人は法人番号と同一の 13 桁、個人事業主等は
 				// 別途 13 桁が採番される）。

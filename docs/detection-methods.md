@@ -162,6 +162,12 @@ Qn = n + 1   (1 <= n <= 6)
 
 #### 電話番号の下位種別分類
 
+下位種別分類（`Rule.Kind`、internal/rule）はルール横断の汎用機構である。対応するルールが検出値を
+分類して `Reason.kind`（`--explain` で確認可能。JSON 出力では `reason.kind`）に記録し、
+`.jp-pii.toml` の `[rules] exclude_kinds` に種別名を列挙すると、検出可否・信頼度はそのままに
+その種別の finding だけを結果から除外できる。最初にこの仕組みを使ったのは以下の電話番号の下位種別
+分類で、`jp-invoice-number` の `public-business`（このセクションの末尾）も同じ機構に乗っている。
+
 `jp-phone-number` は書式が電話番号として成立する値をすべて検出するため、0120/0800/0570/0990/0180
 （フリーダイヤル・ナビダイヤル・ダイヤルQ2・テレドーム等のサービス番号）や 050（IP電話）も検出対象に
 含まれる。これらは検出可否・信頼度には影響しないが、検出結果の `Reason.kind`（`--explain` で確認可能。
@@ -179,6 +185,19 @@ JSON 出力では `reason.kind`）に下位種別が記録される:
 ```toml
 [rules]
 exclude_kinds = ["service"]
+```
+
+同じ仕組みは `jp-invoice-number`（適格請求書発行事業者登録番号 / インボイス登録番号）にも使われている。
+登録番号は国税庁の適格請求書発行事業者公表サイトで誰でも検索・閲覧できる公開情報であり（3 節の
+「対象外としたもの」にある法人番号と同じ性質）、マイナンバー等の機微な個人情報と同列に CI を
+失敗させると運用上のノイズになりうる。そのため検出結果には常に `Reason.kind = "public-business"` が
+記録され（`PublicBusinessKind`、internal/rule/identifier_kind.go）、ルールを無効化せずに下位種別として
+opt-in で除外できる（電話番号側の kind とは語彙が独立しているため、`exclude_kinds` に両方を指定しない
+限り互いに影響しない）:
+
+```toml
+[rules]
+exclude_kinds = ["public-business"]
 ```
 
 #### 複数行にまたがる検出

@@ -229,9 +229,10 @@ high_recall = false
 # あるときだけ 1 段昇格（low→medium、まれに medium→high）させる。CSV/DB ダンプ監査など、
 # 強めの検出をしたい場合のみ opt-in する（既定では既存の出力に影響しない）
 cooccurrence_boost = false
-# 電話番号ルール（jp-phone-number）が付与する下位種別（Reason.kind。service=フリーダイヤル等・
-# ip・mobile・fixed・international）のうち、指定した種別を検出結果から除外する（既定は未設定＝
-# 全種別検出。詳細は docs/detection-methods.md の「電話番号の下位種別分類」を参照）
+# ルール横断の下位種別（Reason.kind）のうち、指定した種別を検出結果から除外する（既定は未設定＝
+# 全種別検出）。電話番号ルール（jp-phone-number）は service=フリーダイヤル等・ip・mobile・fixed・
+# international、インボイス登録番号ルール（jp-invoice-number）は国税庁公表の公開情報であることを示す
+# public-business を付与する。詳細は docs/detection-methods.md の「電話番号の下位種別分類」を参照
 exclude_kinds = ["service"]
 
 [allowlist]
