@@ -96,6 +96,17 @@ $ go test ./internal/eval -run 'TestGenerateDoc|TestReadmeBadges' -update  # doc
 'TestGenerateDoc|TestReadmeBadges' -update` で `docs/accuracy.md`・`docs/accuracy.json`・
 README のバッジをまとめて再生成してコミット**してください（手動での数値編集は不要です）。
 
+非公開コーパスへのアクセスがない環境（GitHub 上のブラウザのみ等）からでも、
+[`.github/workflows/accuracy-update.yml`](../.github/workflows/accuracy-update.yml) が
+上記の再生成を代行します。GitHub の Actions タブから「accuracy-update」→
+「Run workflow」で実行すると、ci.yml の private-eval ジョブと同じ手順で非公開コーパスを
+取得し、`-update` を実行して差分があれば `automated/accuracy-golden` ブランチへ
+PR を自動作成します（postal-update.yml / tld-update.yml と同じ、force-push +
+`gh pr create`/`gh pr edit` の方式）。差分がなければ PR を作らず正常終了します。
+実測値が想定外に悪化していないか（例: 特定ルールの F1 が 0.00 になっている場合は
+コーパス側の問題の可能性がある）を確認したうえで、作成された PR をレビューして
+マージしてください。
+
 #### プロファイル別評価（low / medium / high-recall）
 
 `TestAccuracy` は3プロファイルを同じコーパスから評価し、行スコア、exact / containment /
