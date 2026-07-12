@@ -1637,26 +1637,28 @@ func validPhone(m string) bool {
 	return false
 }
 
-// validYuchoAccount はゆうちょ銀行の記号（5 桁・先頭 "1"・末尾 "0"）・番号
-// （7〜8 桁・末尾 1）がハイフンで相関した表記かを検証する。記号 4 桁目の
-// 検査数字は checksum.YuchoAccount（ゆうちょ銀行公式変換サービスの公開
-// JavaScript による）で検証する。全桁同一のダミー値も棄却する。
-func validYuchoAccount(m string) bool {
-	symbol, number, ok := strings.Cut(m, "-")
+// parseYuchoDashForm はゆうちょ銀行の記号（5 桁・先頭 "1"・末尾 "0"）・番号
+// （7〜8 桁・末尾 1）がハイフンで相関した表記（jp-yucho-account 第 1 パターンの
+// 捕捉値、例「1XXX0-XXXXXXX1」）を記号・番号へ分解する。桁数・先頭/末尾だけを
+// 見る形状検証で、検査数字・全桁同一の判定は行わない（呼び出し側が
+// yuchoAccountChecksumOK で行う）。
+func parseYuchoDashForm(m string) (symbol, number string, ok bool) {
+	symbol, number, ok = strings.Cut(m, "-")
 	if !ok || len(symbol) != 5 || symbol[0] != '1' || symbol[4] != '0' ||
 		(len(number) != 7 && len(number) != 8) || number[len(number)-1] != '1' {
-		return false
+		return "", "", false
 	}
-	return !checksum.AllSame(symbol) && !checksum.AllSame(number) && checksum.YuchoAccount(symbol, number)
+	return symbol, number, true
 }
 
-// validYuchoLabeledAccount はゆうちょ銀行の記号・番号ラベルが同一行で別々に
-// 書かれた表記（例:「記号 11111 番号 11111111」相当の並び。dogfooding での
-// 自己検出を避けるため全桁同一のダミー値で例示する）を検証する。捕捉値には
-// ラベル文字「番号」や区切り文字（空白・コロン等）が混じるため、まず数字だけを
-// 抽出し、先頭 5 桁を記号・残りを番号として validYuchoAccount と同じ基準
-// （桁数・先頭/末尾・全桁同一の棄却）で判定する。
-func validYuchoLabeledAccount(m string) bool {
+// parseYuchoLabeledForm はゆうちょ銀行の記号・番号ラベルが同一行で別々に
+// 書かれた表記（jp-yucho-account 第 2 パターンの捕捉値、例:「記号 11111
+// 番号 11111111」相当の並びから前置ラベル「記号」を除いた部分。dogfooding
+// での自己検出を避けるため全桁同一のダミー値で例示する）を記号・番号へ
+// 分解する。捕捉値にはラベル文字「番号」や区切り文字（空白・コロン等）が
+// 混じるため、まず数字だけを抽出し、先頭 5 桁を記号・残りを番号とみなした上で
+// parseYuchoDashForm と同じ形状検証（桁数・先頭/末尾）を行う。
+func parseYuchoLabeledForm(m string) (symbol, number string, ok bool) {
 	digits := make([]byte, 0, len(m))
 	for i := 0; i < len(m); i++ {
 		if m[i] >= '0' && m[i] <= '9' {
@@ -1664,13 +1666,93 @@ func validYuchoLabeledAccount(m string) bool {
 		}
 	}
 	if len(digits) != 12 && len(digits) != 13 {
-		return false
+		return "", "", false
 	}
-	symbol, number := string(digits[:5]), string(digits[5:])
+	symbol, number = string(digits[:5]), string(digits[5:])
 	if symbol[0] != '1' || symbol[4] != '0' || number[len(number)-1] != '1' {
-		return false
+		return "", "", false
 	}
+	return symbol, number, true
+}
+
+// yuchoAccountChecksumOK は形状検証済み（parseYuchoDashForm /
+// parseYuchoLabeledForm 通過済み）の記号・番号について、全桁同一の
+// ダミー値でないことと、checksum.YuchoAccount（記号 4 桁目の公式検査数字。
+// ゆうちょ銀行公式変換サービスの公開 JavaScript による）を満たすことを返す。
+func yuchoAccountChecksumOK(symbol, number string) bool {
 	return !checksum.AllSame(symbol) && !checksum.AllSame(number) && checksum.YuchoAccount(symbol, number)
+}
+
+// validYuchoAccount はゆうちょ銀行の記号・番号がハイフンで相関した表記
+// （parseYuchoDashForm）かを検証し、形状が正しければ検査数字・全桁同一を
+// yuchoAccountChecksumOK で判定する。
+func validYuchoAccount(m string) bool {
+	symbol, number, ok := parseYuchoDashForm(m)
+	return ok && yuchoAccountChecksumOK(symbol, number)
+}
+
+// validYuchoLabeledAccount はゆうちょ銀行の記号・番号ラベルが同一行で別々に
+// 書かれた表記（parseYuchoLabeledForm）かを検証し、形状が正しければ検査数字・
+// 全桁同一を yuchoAccountChecksumOK で判定する。
+func validYuchoLabeledAccount(m string) bool {
+	symbol, number, ok := parseYuchoLabeledForm(m)
+	return ok && yuchoAccountChecksumOK(symbol, number)
+}
+
+// YuchoChecksumStatus は、ある候補文字列がゆうちょ銀行の記号・番号としてパース
+// できたか、パースできた場合に公式検査数字（checksum.YuchoAccount）を満たすかを
+// 表す。ゼロ値は YuchoChecksumUnparseable（パース不能）にしてあり、判定を
+// 忘れた呼び出し側が誤って「成立」「不成立」のどちらかに倒れないようにしている。
+//
+// internal/corpusv2 が非公開評価コーパスの陽性ケースを移行する際、「値そのものが
+// 客観的に検査数字を満たさない」ケースだけを狙い撃ちし、想定外の表記（パース
+// 不能）は判定不能として一切変更しないために、bool 1 つではなくこの 3 値を使う
+// （bool 1 つだと「パース不能」と「検査数字不成立」を区別できず、想定外の表記を
+// 誤って「不成立」扱いしてしまう）。
+type YuchoChecksumStatus int
+
+const (
+	// YuchoChecksumUnparseable は、ハイフン形（parseYuchoDashForm）・ラベル形
+	// （parseYuchoLabeledForm）のどちらの形状にも一致しなかったことを表す。
+	// 呼び出し側はこれを「判定不能」として扱い、何も変更しないこと。
+	YuchoChecksumUnparseable YuchoChecksumStatus = iota
+	// YuchoChecksumValid は記号・番号として解釈でき、かつ公式検査数字（4桁目）を
+	// 満たすことを表す。
+	YuchoChecksumValid
+	// YuchoChecksumInvalid は記号・番号として解釈できたが、公式検査数字を
+	// 満たさない（全桁同一の明らかなダミー値を含む）ことを表す。
+	YuchoChecksumInvalid
+)
+
+func (s YuchoChecksumStatus) String() string {
+	switch s {
+	case YuchoChecksumValid:
+		return "valid"
+	case YuchoChecksumInvalid:
+		return "invalid"
+	}
+	return "unparseable"
+}
+
+// YuchoValueChecksumStatus は、jp-yucho-account が検出したスパン文字列
+// （呼び出し側で normalize.Line 済みであること）を、validYuchoAccount /
+// validYuchoLabeledAccount と同じパース規則（ハイフン形→ラベル形の順に試す）で
+// 記号・番号へ分解し、公式検査数字の成立可否を返す。jp-yucho-account の
+// Validate が使う判定ロジックの唯一の情報源で、ここでは再実装しない
+// （parseYuchoDashForm / parseYuchoLabeledForm / yuchoAccountChecksumOK を
+// そのまま共有する）。
+func YuchoValueChecksumStatus(value string) YuchoChecksumStatus {
+	symbol, number, ok := parseYuchoDashForm(value)
+	if !ok {
+		symbol, number, ok = parseYuchoLabeledForm(value)
+	}
+	if !ok {
+		return YuchoChecksumUnparseable
+	}
+	if yuchoAccountChecksumOK(symbol, number) {
+		return YuchoChecksumValid
+	}
+	return YuchoChecksumInvalid
 }
 
 // birthdateRe は jp-birthdate の区切りあり捕捉値（西暦 4 桁 or 和暦元号＋年・月・日）

@@ -104,7 +104,9 @@ func Build(base []evalcase.Case) ([]evalcase.Case, Summary, error) {
 // UpgradePublishedV2 は、旧v2で正例扱いだった公知sandbox PANを陰性へ
 // 再分類し、jp-address第3エントリ追加後にWant帰属が古くなったケースを
 // jp-addressへ読み替え（reassignLabeledNoPrefectureAddressWant参照）、
-// 後から追加した高再現率ルールを含む不足正例を既存の決定的合成器で補う。
+// #145で導入した公式検査数字の検証を満たさないゆうちょ記号番号の陽性を陰性へ
+// 再分類し（reclassifyChecksumInvalidYucho参照）、後から追加した高再現率
+// ルールを含む不足正例を既存の決定的合成器で補う。
 // GCS objectを更新せずに固定generationを現行ルールの評価契約へ読み替える
 // 互換migrationで、
 // 入力を変更せず、同じ入力からは常に同じ出力を返す。
@@ -123,16 +125,24 @@ func UpgradePublishedV2(input []evalcase.Case) ([]evalcase.Case, error) {
 	for i := range cases {
 		reclassifyKnownTestPAN(&cases[i])
 		reassignLabeledNoPrefectureAddressWant(&cases[i])
+		reclassifyChecksumInvalidYucho(&cases[i])
 	}
 	// この互換migrationで不足しうるルールだけを補い、他ルールの
 	// データ品質不備を暗黙に修復しない。jp-address-high-recallは、上の
 	// reassignLabeledNoPrefectureAddressWantでnative陽性の一部をjp-addressへ
 	// 帰属し直した分だけ不足しうるため、他の互換migration対象と同様にここへ
 	// 加える（合成陽性は既にラベルなし形のため、この読み替えとは衝突しない。
-	// positiveCandidatesの"jp-address-high-recall"節を参照）。既にMinPositiveCasesPerRule
+	// positiveCandidatesの"jp-address-high-recall"節を参照）。jp-yucho-accountも
+	// 同じ理由でここへ加える: reclassifyChecksumInvalidYuchoがnative陽性の一部
+	// （検査数字不成立の無効値）を陰性へ再分類した分だけ不足しうるが、合成陽性は
+	// yuchoSymbolで検査数字を必ず満たすよう決定的に生成するため、この再分類とは
+	// 衝突しない。既にMinPositiveCasesPerRule
 	// 以上あるコーパスに対してはfillPositiveCoverageが何も追加しないため、
 	// このルールを常にidsへ含めても既存の合成陽性件数は変わらない。
-	upgradeRuleIDs := []string{"credit-card", "email-address-confusable", "email-address-eai", "jp-address-high-recall"}
+	upgradeRuleIDs := []string{
+		"credit-card", "email-address-confusable", "email-address-eai",
+		"jp-address-high-recall", "jp-yucho-account",
+	}
 	if _, err := fillPositiveCoverage(&cases, seed, upgradeRuleIDs, low, high); err != nil {
 		return nil, err
 	}
@@ -204,6 +214,118 @@ func reassignLabeledNoPrefectureAddressWant(c *evalcase.Case) bool {
 		if c.Spans[i].RuleID == "jp-address-high-recall" {
 			c.Spans[i].RuleID = "jp-address"
 		}
+	}
+	return true
+}
+
+// reclassifyChecksumInvalidYucho は、jp-yucho-account の期待spanのうち、記号・
+// 番号としてパース可能かつ公式検査数字（checksum.YuchoAccount、記号4桁目）を
+// 満たさないものだけを陰性へ読み替える。パースできない表記（想定外の表記ゆれ）や
+// 検査数字が成立する値は一切変更しない。Diff ケースは対象外（安全側）。
+//
+// なぜコーパス本体でなくコードで移行するのか（reclassifyKnownTestPANと同じ原理）:
+// private-evalの実測で jp-yucho-account が low/medium/high-recallの全プロファイルで
+// TP0・FN10（F1 0.00）になった。この回帰はPR #148/#149のマージ前の旧コードでも
+// 同じ値で再現するためコード起因ではない。また、corpusv2の合成ゆうちょ陽性は
+// yuchoSymbolで検査数字を総当たりして必ず成立させる構造上、native陽性が
+// MinPositiveCasesPerRule件未満のときしか生成されない（fillPositiveCoverageの
+// break条件）。したがって全滅の唯一の整合的な説明は、「公開コーパスに
+// native なゆうちょ陽性がMinPositiveCasesPerRule件以上入っており、その全部が
+// #145で導入した検査数字検証（validYuchoAccount / validYuchoLabeledAccountが
+// 使うrule.YuchoValueChecksumStatus）を満たさない」という仮説である
+// （検証導入より前に作られた無効値、と辻褄が合う）。
+//
+// reclassifyKnownTestPAN が「値そのものが客観的に本物のPIIでない（公知sandbox
+// PAN）陽性ケースを負例へ再分類する」のと同じ原理で、ゆうちょも「公式検査数字を
+// 満たさない記号番号 = 客観的に無効なゆうちょ口座」として同様に負例へ
+// 再分類できる。コーパス本体（非公開・GCS管理の固定generation）は本リポジトリから
+// 直接編集できず、また編集すべきでもない（dataset_idを固定したまま評価契約を
+// 変えないため）ため、UpgradePublishedV2側で決定的に読み替える。
+//
+// パース不能なら一切触らないことの安全性: この移行は「検査数字不成立」仮説に
+// 基づくが、真因が別（例えば検出器が未対応の表記ゆれで、値自体は正当なのに
+// パースできない）だった場合、パース不能な値は rule.YuchoValueChecksumStatus が
+// YuchoChecksumUnparseable を返すため「判定不能」のまま何も変更しない。つまり
+// この仮説が外れていても、この移行はコーパスを一切壊さない（何も変更しない
+// ケースが増えるだけ）。
+//
+// 述語（すべて満たす場合だけ書き換える）:
+//  1. c が Diff 入力でない（Line/Content ケースのみ対象。ScanDiffHunkは
+//     diffの追加行限定報告などLine単体の判定では再現できない経路を持つため、
+//     reassignLabeledNoPrefectureAddressWantと同じ理由で安全側に絞る）。
+//  2. c.Spans に RuleID == "jp-yucho-account" が 1 件以上ある
+//     （対応するSpansを持たないWantは、この移行の対象外として触らない）。
+//  3. それら全スパンについて、caseSpanText で元の行から Start/End のルーン位置
+//     ぴったりに切り出した部分文字列を normalize.Line してから
+//     rule.YuchoValueChecksumStatus に渡すと、全件が YuchoChecksumInvalid
+//     （パース可能かつ検査数字不成立）と判定される。1 件でも
+//     YuchoChecksumValid・YuchoChecksumUnparseable・抽出失敗（範囲外）が
+//     あれば、ケース全体を一切変更しない（部分除去はしない、安全側）。
+//
+// 書き換え内容: RuleID == "jp-yucho-account" の Spans をすべて除去し、Want からも
+// "jp-yucho-account" だけを除く（reclassifyKnownTestPANと同じ構造。他のWant・
+// Spansが複数ルールにまたがっていても、それらは一切変更しない）。結果として
+// Want・Spansが両方空になれば polarity:negative へタグを付け替える
+// （reclassifyKnownTestPANと同じ）。
+//
+// 決定性: 乱数・時刻を使わず、c の既存フィールド（Want/Line/Content/Diff/Spans）
+// だけを見て判定するため、同じ入力からは常に同じ結果になる。
+func reclassifyChecksumInvalidYucho(c *evalcase.Case) bool {
+	if len(c.Diff) > 0 {
+		return false
+	}
+	var yuchoSpans []evalcase.Span
+	for _, span := range c.Spans {
+		if span.RuleID == "jp-yucho-account" {
+			yuchoSpans = append(yuchoSpans, span)
+		}
+	}
+	if len(yuchoSpans) == 0 {
+		return false
+	}
+	for _, span := range yuchoSpans {
+		value, ok := caseSpanText(*c, span)
+		if !ok {
+			return false
+		}
+		if rule.YuchoValueChecksumStatus(normalize.Line(value)) != rule.YuchoChecksumInvalid {
+			return false
+		}
+	}
+
+	spans := c.Spans[:0]
+	for _, span := range c.Spans {
+		if span.RuleID != "jp-yucho-account" {
+			spans = append(spans, span)
+		}
+	}
+	c.Spans = spans
+	if len(c.Spans) == 0 {
+		// evalcase.Span の json タグは omitempty のため、コーパスが GCS へ
+		// 一度書き出されて読み直された（あるいは cloneCases で JSON
+		// 往復した）後は空スライスが nil として復元される。この関数を
+		// その前後どちらの入力に対しても冪等にするため、ここで先に nil へ
+		// 揃えておく（さもないと「今回truncateして空になった直後」と
+		// 「前回の実行結果をJSON往復した後」で reflect.DeepEqual が
+		// 一致しない）。
+		c.Spans = nil
+	}
+
+	want := c.Want[:0]
+	for _, id := range c.Want {
+		if id != "jp-yucho-account" {
+			want = append(want, id)
+		}
+	}
+	c.Want = want
+	if len(c.Want) == 0 {
+		c.Want = nil
+	}
+
+	c.Tags = appendUnique(c.Tags, "scenario:checksum-invalid-yucho")
+	if len(c.Want) == 0 && len(c.Spans) == 0 {
+		c.Tags = removeTag(c.Tags, "polarity:positive")
+		c.Tags = appendUnique(c.Tags, "polarity:negative")
 	}
 	return true
 }
