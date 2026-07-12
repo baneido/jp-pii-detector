@@ -3859,3 +3859,47 @@ base_confidence = "low"
 		t.Error("2 回目の DroppedTruncated() は false であるべき（drain 方式）")
 	}
 }
+
+// ゆうちょ銀行の記号・番号ラベルが同一行で別々に書かれる表記（記号: 14040
+// 番号: 12345671 等。ラベル直結・コロン・スペース区切りいずれも許容）。
+// 別行に分かれるラベル形式はレコードスコープ実装後の拡張対象で対象外のまま。
+// 値はダミーの数字列のみを使い、外部フィクスチャなしでテストできる。
+func TestYuchoLabeledAccountRule(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line, wantMatch string
+	}{
+		{"スペース区切り", "記号 14040 番号 12345671", "14040 番号 12345671"},
+		{"コロン区切り", "記号:14040 番号:12345671", "14040 番号:12345671"},
+		{"ラベル直結", "記号14040番号12345671", "14040番号12345671"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, "jp-yucho-account")
+			if fs[0].Confidence != rule.High {
+				t.Fatalf("confidence = %v, want high", fs[0].Confidence)
+			}
+			if fs[0].Match != tt.wantMatch {
+				t.Fatalf("match = %q, want %q", fs[0].Match, tt.wantMatch)
+			}
+		})
+	}
+}
+
+// 記号先頭が "1" でない・番号末尾が "1" でない・全桁同一のダミー値・番号ラベルが
+// 存在しない（別々の数字列がたまたま同一行にあるだけ）場合は検出しない。
+func TestYuchoLabeledAccountRuleNegative(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct{ name, line string }{
+		{"記号が1始まりでない", "記号 24040 番号 12345671"},
+		{"番号末尾が1以外", "記号 14040 番号 12345670"},
+		{"記号・番号とも全桁同一のダミー値", "記号 11111 番号 11111111"},
+		{"番号ラベルがなく無関係な数字列が並ぶだけ", "付録の記号 14040 は図 12345671 を参照"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line))
+		})
+	}
+}
