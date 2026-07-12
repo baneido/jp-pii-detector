@@ -3,6 +3,8 @@ package rule
 import (
 	"regexp"
 	"strings"
+
+	"github.com/baneido/jp-pii-detector/internal/dict"
 )
 
 // 構造化・複数行の氏名検出（高再現率）で使う公開ヘルパ。
@@ -42,6 +44,27 @@ var (
 	CSVNameValueRe = regexp.MustCompile(
 		`^\s*(` + personNameValue + `)\s*$`,
 	)
+	// CrossLineSurnameLabelRe / CrossLineGivenLabelRe は、姓・名の弱いラベル
+	// （姓/名字/苗字/last_name、名/first_name。internal/rule/builtin.go の
+	// person-name ルールの弱いラベルパターンと同じ語彙）と値が同一行に収まる形に
+	// マッチし、値をグループ 1 で返す。姓と名がそれぞれ別行の弱いラベル付き
+	// フィールドとして分かれるフォーム（姓行の次に名行が続く形）で、姓行・名行を
+	// それぞれ単独に識別するために使う。値そのものは各行内に収まっているが、
+	// 姓+名のペアとしての相関検証は detect.scanCrossLineSurnameGivenPairs が行う
+	// （このファイルは正規表現・検証器の定義に留め、走査は internal/detect 側の
+	// 既存方針を踏襲する）。値の文字クラスは personNameValueShort を共用し、
+	// 定義の二重化を避ける。行全体を `^...$` でアンカーするため、行末に何か
+	// （ignore マーカーを含む）が付くとその行自体がマッチしなくなり、抑制は
+	// 自然に値が乗る行基準になる（CrossLineNameLabelRe / CrossLineNameValueRe と
+	// 同じ設計。呼び出し側で明示的な ignore 判定は不要）。
+	CrossLineSurnameLabelRe = regexp.MustCompile(
+		`^\s*["']?(?:姓|名字|苗字|last_?name)["']?\s*[:=]\s*["'「]?(` + personNameValueShort + `)["'」]?\s*$`,
+	)
+	// CrossLineGivenLabelRe は CrossLineSurnameLabelRe の名側版（名・first_name）。
+	// 設計・用途は同じ。
+	CrossLineGivenLabelRe = regexp.MustCompile(
+		`^\s*["']?(?:名|first_?name)["']?\s*[:=]\s*["'「]?(` + personNameValueShort + `)["'」]?\s*$`,
+	)
 )
 
 // ValidCrossLineName は次行の値 v が氏名として妥当かを返す。クロスライン検出は
@@ -53,4 +76,20 @@ var (
 func ValidCrossLineName(v string) bool {
 	v = strings.TrimSpace(v)
 	return notPlaceholderName(v) && notOrgName(v) && validStrictFullName(v)
+}
+
+// ValidCrossLineSurnameGivenPair は、姓ラベル行から取り出した値 sei と名ラベル行
+// から取り出した値 mei が、姓+名のペアとして妥当かを返す。クロスラインは同一行
+// より前提が弱いため、ValidCrossLineName と同じ思想で辞書一致を必須にする
+// （dict.IsSurname(sei) && dict.IsGivenName(mei)）。姓ラベル・名ラベルという
+// 構造的な手がかりが既にあるため、姓+名一括の分割検証（dict.SplitFullName）は
+// 使わず、姓辞書・名辞書とそれぞれ直接照合する。プレースホルダ（未定 等、
+// notPlaceholderName）は両方の値に適用して棄却する。
+func ValidCrossLineSurnameGivenPair(sei, mei string) bool {
+	sei = dict.ComposeKana(strings.TrimSpace(sei))
+	mei = dict.ComposeKana(strings.TrimSpace(mei))
+	if !notPlaceholderName(sei) || !notPlaceholderName(mei) {
+		return false
+	}
+	return dict.IsSurname(sei) && dict.IsGivenName(mei)
 }

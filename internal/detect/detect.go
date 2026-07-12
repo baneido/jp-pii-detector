@@ -265,6 +265,7 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 	}
 	if d.crossLineName != nil {
 		candidates = append(candidates, d.scanCrossLineNames(file, lines)...)
+		candidates = append(candidates, d.scanCrossLineSurnameGivenPairs(file, lines)...)
 		if sourceKindForPath(file) == sourceKindCSV {
 			candidates = append(candidates, d.scanCSVNameColumns(file, lines)...)
 		}
