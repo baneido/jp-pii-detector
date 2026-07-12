@@ -914,11 +914,11 @@ func Builtin() []Rule {
 			NegativeContext:      digitRuleNegativeContext,
 			RequireContextWindow: digitRuleRequireContextWindow,
 			Patterns: []Pattern{
-				// 記号（5 桁、先頭は必ず "1"）＋番号（7〜8 桁、末尾は必ず
-				// "1"）をハイフンで相関させた表記。チェックディジットの具体式は
-				// 未確認のため（要追加調査）、全桁同一のダミー値のみ Validate で
-				// 棄却する。
-				{Re: dgNoAlnumHyphen(`1\d{4}-\d{6,7}1`), Base: High, RequireContext: true, Validate: validYuchoAccount},
+				// 記号（5 桁、先頭 "1"・末尾 "0"）＋番号（7〜8 桁、末尾は必ず
+				// "1"）をハイフンで相関させた表記。記号 4 桁目は、ゆうちょ銀行
+				// 公式変換サービスの公開 JavaScript にある検査式で検証する
+				// （checksum.YuchoAccount の出典コメントを参照）。
+				{Re: dgNoAlnumHyphen(`1\d{3}0-\d{6,7}1`), Base: High, RequireContext: true, Validate: validYuchoAccount},
 				// 記号・番号のラベルが同一行で別々に書かれる形式（"記号 11111
 				// 番号 11111111" 相当の並び。ラベル直結・コロン・スペース区切り
 				// いずれも許容）。同一行のラベル形式は対応済み。別行形式も
@@ -933,7 +933,7 @@ func Builtin() []Rule {
 				// dogfooding で自己検出されないよう、上の例は全桁同一のダミー値
 				// （Validate で棄却される形）だけを書く。
 				{Re: regexp.MustCompile(
-					`(?:^|[^0-9])記号\s*[:=]?\s*(1\d{4}\s*[:=]?\s*番号\s*[:=]?\s*\d{6,7}1)(?:[^0-9]|$)`,
+					`(?:^|[^0-9])記号\s*[:=]?\s*(1\d{3}0\s*[:=]?\s*番号\s*[:=]?\s*\d{6,7}1)(?:[^0-9]|$)`,
 				), Base: High, RequireContext: true, Validate: validYuchoLabeledAccount},
 			},
 		},
@@ -1047,12 +1047,13 @@ func Builtin() []Rule {
 			// 未検証の算式で実在値を棄却せず、11 桁の形状と周辺語を必須にする。
 			// 全桁同一のみ、明らかなダミー値として除外する。
 			//
-			// 裏取り調査の結果（2026-07 時点）: 算式は住民基本台帳法施行規則
+			// 裏取り調査の結果（2026-07-12 時点）: 算式は住民基本台帳法施行規則
 			// （平成11年自治省令第35号）第1条第2号が「総務大臣が定める算式」として
-			// 平成14年総務省告示第436号へ委任しているが、e-Gov 法令検索は告示を
-			// 収録せず、官報の無料アーカイブ（平成15年7月以降）・総務省の公表資料
-			// のいずれからも告示原文へ到達できなかった。有料の官報情報検索サービス
-			// 等で原文を確認できるまで、この方針（形状＋文脈のみ）を維持する。
+			// 平成14年総務省告示第436号へ委任する。国立国会図書館「日本法令索引」は
+			// 告示の題名・公布日・現行有効を確認できるが、本文リンクを「該当する情報は
+			// ありません」としている。e-Gov・官報発行サイトの無料公開範囲・総務省公開
+			// 資料でも原文に到達できなかったため、官報原本を確認するまで形状＋文脈のみを
+			// 維持する（出典 URL は docs/detection-methods.md 4.1 節）。
 			Validate: func(m string) bool {
 				return !checksum.AllSame(m)
 			},
@@ -1355,9 +1356,12 @@ func validHealthInsurance(m string) bool {
 }
 
 // validPassport は旅券（パスポート）番号（英字 2 + 数字 7）の末尾 7 桁が
-// 全桁同一の明らかなダミー値（0000000 等）を棄却する。旅券冊子記号の先頭
-// 文字制限（[T,M] 等）は外務省/ICAO の一次情報で裏取りができるまで導入しない
-// （docs/detection-methods.md 参照）。
+// 全桁同一の明らかなダミー値（0000000 等）を棄却する。ICAO Doc 9303 Part 4
+// 4.2.2.2 は旅券番号を発行国が定める最大 9 文字としており、日本の冊子記号の
+// 発行範囲（先頭 T/M 等）は規定しない。外務省の公開資料にもその割当規則はない
+// ため、標本から推測した先頭文字制限は導入しない（2026-07 再調査）。
+// https://www.icao.int/publications/Documents/9303_p4_cons_en.pdf
+// https://www.mofa.go.jp/mofaj/ca/pss/page23_003544.html
 func validPassport(m string) bool {
 	if len(m) < 7 {
 		return false
@@ -1365,17 +1369,14 @@ func validPassport(m string) bool {
 	return !checksum.AllSame(m[len(m)-7:])
 }
 
-// validResidenceCard は在留カード番号（英 2 + 数 8 + 英 2）のうち、
-// 出入国在留管理庁の文字集合仕様で使われない英字 I・O を含む値と、
-// 数字 8 桁が全桁同一のダミー値を棄却する。パターン側が小文字表記
-// （ab12345678cd 等）も許容するため、I・O 除外判定も大小文字を区別しない
-// （i・o も同様に棄却する）。
+// validResidenceCard は在留カード番号（英 2 + 数 8 + 英 2）のうち、数字 8 桁が
+// 全桁同一のダミー値を棄却する。出入国在留管理庁「第2世代在留カード等仕様書」
+// Ver 1.1（3.3.4.3、2026-04）は、番号を JIS X 0201 の「英字＋数字」12 バイト、
+// 詳細を「年度/発行組織/年齢区分/その他」とだけ公開し、検査式も I/O 除外も
+// 規定していない。したがって、未公開の割当・検査式を推測して棄却しない。
+// https://www.moj.go.jp/isa/content/001460711.pdf
 func validResidenceCard(m string) bool {
 	if len(m) != 12 {
-		return false
-	}
-	letters := m[:2] + m[10:]
-	if strings.ContainsAny(letters, "IOio") {
 		return false
 	}
 	return !checksum.AllSame(m[2:10])
@@ -1428,18 +1429,17 @@ func validPhone(m string) bool {
 	return false
 }
 
-// validYuchoAccount はゆうちょ銀行の記号（5 桁・先頭は必ず "1"）・番号
-// （7〜8 桁・末尾 1）がハイフンで相関した表記かを検証する。記号 4 桁目に意味を持つ
-// チェックディジット式が存在するとされるが、公開情報からは具体式を確認できな
-// かったため（要追加調査）実装していない。全桁同一のダミー値（"11111-1111111"
-// 等）だけを明白な非 PII として棄却する。
+// validYuchoAccount はゆうちょ銀行の記号（5 桁・先頭 "1"・末尾 "0"）・番号
+// （7〜8 桁・末尾 1）がハイフンで相関した表記かを検証する。記号 4 桁目の
+// 検査数字は checksum.YuchoAccount（ゆうちょ銀行公式変換サービスの公開
+// JavaScript による）で検証する。全桁同一のダミー値も棄却する。
 func validYuchoAccount(m string) bool {
 	symbol, number, ok := strings.Cut(m, "-")
-	if !ok || len(symbol) != 5 || symbol[0] != '1' ||
+	if !ok || len(symbol) != 5 || symbol[0] != '1' || symbol[4] != '0' ||
 		(len(number) != 7 && len(number) != 8) || number[len(number)-1] != '1' {
 		return false
 	}
-	return !checksum.AllSame(symbol) && !checksum.AllSame(number)
+	return !checksum.AllSame(symbol) && !checksum.AllSame(number) && checksum.YuchoAccount(symbol, number)
 }
 
 // validYuchoLabeledAccount はゆうちょ銀行の記号・番号ラベルが同一行で別々に
@@ -1459,10 +1459,10 @@ func validYuchoLabeledAccount(m string) bool {
 		return false
 	}
 	symbol, number := string(digits[:5]), string(digits[5:])
-	if symbol[0] != '1' || number[len(number)-1] != '1' {
+	if symbol[0] != '1' || symbol[4] != '0' || number[len(number)-1] != '1' {
 		return false
 	}
-	return !checksum.AllSame(symbol) && !checksum.AllSame(number)
+	return !checksum.AllSame(symbol) && !checksum.AllSame(number) && checksum.YuchoAccount(symbol, number)
 }
 
 // birthdateRe は jp-birthdate の区切りあり捕捉値（西暦 4 桁 or 和暦元号＋年・月・日）

@@ -10,7 +10,7 @@ import (
 // scanCrossLineYuchoPairs はフォームでゆうちょ銀行の記号・番号がそれぞれ独立した
 // ラベル付きフィールドとして別行に分かれるケース（例:
 //
-//	記号: 14040
+//	記号: 14030
 //	番号: 12345671
 //
 // ）を検出する。internal/rule/builtin.go の jp-yucho-account は同一行の

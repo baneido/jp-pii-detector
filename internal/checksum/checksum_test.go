@@ -149,6 +149,64 @@ func TestCorporateNumber(t *testing.T) {
 	}
 }
 
+// TestYuchoAccountOfficialFormulaExample は、ゆうちょ銀行公式変換サービスの
+// set_checkdigit と同じ入力（記号の検査数字を未設定にした 140X0、番号
+// 12345671）を、コメントに書き下した式で手計算した既知値 3 と突き合わせる。
+// 出典は YuchoAccount のコメントに記載した公式 JavaScript。
+func TestYuchoAccountOfficialFormulaExample(t *testing.T) {
+	if !YuchoAccount("14030", "12345671") {
+		t.Error("YuchoAccount(14030, 12345671) = false, want true")
+	}
+	if YuchoAccount("14040", "12345671") {
+		t.Error("YuchoAccount(14040, 12345671) = true, want false")
+	}
+}
+
+// TestYuchoAccountRejectsEverySingleDigitMutation は、公式式を満たす記号番号の
+// どの数字を 1 桁だけ別の数字へ変えても検査数字不一致になることを確認する。
+func TestYuchoAccountRejectsEverySingleDigitMutation(t *testing.T) {
+	const symbol = "14030"
+	const number = "12345671"
+	for part, original := range map[string]string{"symbol": symbol, "number": number} {
+		for i := range len(original) {
+			for replacement := byte('0'); replacement <= '9'; replacement++ {
+				if replacement == original[i] {
+					continue
+				}
+				mutated := []byte(original)
+				mutated[i] = replacement
+				gotSymbol, gotNumber := symbol, number
+				if part == "symbol" {
+					gotSymbol = string(mutated)
+				} else {
+					gotNumber = string(mutated)
+				}
+				if YuchoAccount(gotSymbol, gotNumber) {
+					t.Errorf("YuchoAccount(%q, %q) = true after %s[%d] mutation", gotSymbol, gotNumber, part, i)
+				}
+			}
+		}
+	}
+}
+
+func TestYuchoAccountInvalidInput(t *testing.T) {
+	for _, tt := range []struct {
+		symbol string
+		number string
+	}{
+		{"1403", "12345671"},
+		{"140300", "12345671"},
+		{"1403x", "12345671"},
+		{"14030", ""},
+		{"14030", "123456789"},
+		{"14030", "1234567x"},
+	} {
+		if YuchoAccount(tt.symbol, tt.number) {
+			t.Errorf("YuchoAccount(%q, %q) = true, want false", tt.symbol, tt.number)
+		}
+	}
+}
+
 func TestLuhn(t *testing.T) {
 	if !Luhn("4111111111111111") {
 		t.Error("Luhn(4111111111111111) = false, want true")

@@ -151,6 +151,43 @@ func CorporateNumber(digits string) bool {
 	return int(digits[0]-'0') == check
 }
 
+// YuchoAccount は、ゆうちょ銀行の記号 5 桁と番号（最大 8 桁）について、
+// 記号 4 桁目の検査数字を検証する。
+//
+// 一次資料は、ゆうちょ銀行公式「記号番号から振込用の店名・預金種目・口座番号を
+// 調べる」の公開 JavaScript（関数 checkdigit / set_checkdigit、2026-07 確認）:
+// https://www.jp-bank.japanpost.jp/kojin/sokin/furikomi/kouza/js/kouza_1.js
+// （この Web 仕様には文書番号は付されていない）。番号を 8 桁に左ゼロ埋めし、
+// 記号の検査数字以外の 4 桁と合わせて次の重み付き和を求める。D(x) は x を 2 倍し、
+// 10 以上なら 9 を引く処理（十進各桁の和）を表す。
+//
+//	記号 = s1 s2 s3 c s5、8 桁化した番号 = n1 ... n8
+//	S = s1 + 3*s2 + D(s3) + 3*s5
+//	    + D(n1) + n2 + 3*n3 + D(n4) + n5 + 3*n6 + D(n7) + n8
+//	検査数字 c = S mod 10
+//
+// 口座種別ごとの先頭・末尾や桁数の制約は番号体系の形状であり、呼び出し側で
+// 判定する。この関数は公式式を適用できる 5 桁記号・1〜8 桁番号だけを受け付ける。
+func YuchoAccount(symbol, number string) bool {
+	if len(symbol) != 5 || len(number) < 1 || len(number) > 8 ||
+		!numeric(symbol) || !numeric(number) {
+		return false
+	}
+
+	padded := strings.Repeat("0", 8-len(number)) + number
+	doubleDigit := func(b byte) int {
+		d := int(b-'0') * 2
+		if d >= 10 {
+			d -= 9
+		}
+		return d
+	}
+	sum := int(symbol[0]-'0') + 3*int(symbol[1]-'0') + doubleDigit(symbol[2]) + 3*int(symbol[4]-'0')
+	sum += doubleDigit(padded[0]) + int(padded[1]-'0') + 3*int(padded[2]-'0') + doubleDigit(padded[3])
+	sum += int(padded[4]-'0') + 3*int(padded[5]-'0') + doubleDigit(padded[6]) + int(padded[7]-'0')
+	return int(symbol[3]-'0') == sum%10
+}
+
 // Luhn は Luhn アルゴリズム（ISO/IEC 7812）でチェックディジットを検証する。
 func Luhn(digits string) bool {
 	if len(digits) < 2 || !numeric(digits) {

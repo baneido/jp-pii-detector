@@ -10,7 +10,7 @@ import (
 // （scanCrossLineYuchoPairsDiff、internal/detect/yucho_pair.go、issue #134）の
 // テスト。internal/source/gitdiff_test.go には実 git リポジトリを使った
 // end-to-end テストがある。yucho_pair_test.go（ScanContent 版）と同じ記号
-// "14040"・番号 "12345671" を使う（テスト間で検出値の実値を揃えるため）。
+// "14030"・番号 "12345671" を使う（テスト間で検出値の実値を揃えるため）。
 //
 // PII 形サンプルについて: jp-yucho-account の別行ペア検出は Base が常に High
 // （path_profile.go のパス降格対象外）なので、記号・番号の値を含む行には
@@ -23,7 +23,7 @@ import (
 func TestScanDiffHunkOptsYuchoPairSymbolContextNumberAdded(t *testing.T) {
 	d := newDetector(t, "")
 	lines := []DiffLine{
-		{Text: "記号: 14040", Added: false},   // jp-pii-detector:ignore
+		{Text: "記号: 14030", Added: false},   // jp-pii-detector:ignore
 		{Text: "番号: 12345671", Added: true}, // jp-pii-detector:ignore
 	}
 	fs := d.ScanDiffHunkOpts("f.txt", lines, DiffScanOptions{})
@@ -44,7 +44,7 @@ func TestScanDiffHunkOptsYuchoPairSymbolContextNumberAdded(t *testing.T) {
 func TestScanDiffHunkOptsYuchoPairSymbolAddedNumberContext(t *testing.T) {
 	d := newDetector(t, "")
 	lines := []DiffLine{
-		{Text: "記号: 14040", Added: true},     // jp-pii-detector:ignore
+		{Text: "記号: 14030", Added: true},     // jp-pii-detector:ignore
 		{Text: "番号: 12345671", Added: false}, // jp-pii-detector:ignore
 	}
 	fs := d.ScanDiffHunkOpts("f.txt", lines, DiffScanOptions{})
@@ -52,8 +52,8 @@ func TestScanDiffHunkOptsYuchoPairSymbolAddedNumberContext(t *testing.T) {
 		t.Fatalf("len(fs) = %d, want 1 (findings=%v)", len(fs), ruleIDs(fs))
 	}
 	f := fs[0]
-	if f.RuleID != "jp-yucho-account" || f.Line != 1 || f.Match != "14040" {
-		t.Fatalf("finding = %+v, want jp-yucho-account line=1 match=14040", f)
+	if f.RuleID != "jp-yucho-account" || f.Line != 1 || f.Match != "14030" {
+		t.Fatalf("finding = %+v, want jp-yucho-account line=1 match=14030", f)
 	}
 }
 
@@ -62,7 +62,7 @@ func TestScanDiffHunkOptsYuchoPairSymbolAddedNumberContext(t *testing.T) {
 func TestScanDiffHunkOptsYuchoPairBothAdded(t *testing.T) {
 	d := newDetector(t, "")
 	lines := []DiffLine{
-		{Text: "記号: 14040", Added: true},    // jp-pii-detector:ignore
+		{Text: "記号: 14030", Added: true},    // jp-pii-detector:ignore
 		{Text: "番号: 12345671", Added: true}, // jp-pii-detector:ignore
 	}
 	fs := d.ScanDiffHunkOpts("f.txt", lines, DiffScanOptions{})
@@ -74,8 +74,8 @@ func TestScanDiffHunkOptsYuchoPairBothAdded(t *testing.T) {
 			t.Errorf("unexpected rule %q in findings: %+v", f.RuleID, fs)
 		}
 	}
-	if fs[0].Line != 1 || fs[0].Match != "14040" {
-		t.Errorf("fs[0] = %+v, want line=1 match=14040", fs[0])
+	if fs[0].Line != 1 || fs[0].Match != "14030" {
+		t.Errorf("fs[0] = %+v, want line=1 match=14030", fs[0])
 	}
 	if fs[1].Line != 2 || fs[1].Match != "12345671" {
 		t.Errorf("fs[1] = %+v, want line=2 match=12345671", fs[1])
@@ -87,7 +87,7 @@ func TestScanDiffHunkOptsYuchoPairBothAdded(t *testing.T) {
 func TestScanDiffHunkOptsYuchoPairBothContextNotReported(t *testing.T) {
 	d := newDetector(t, "")
 	lines := []DiffLine{
-		{Text: "記号: 14040", Added: false},    // jp-pii-detector:ignore
+		{Text: "記号: 14030", Added: false},    // jp-pii-detector:ignore
 		{Text: "番号: 12345671", Added: false}, // jp-pii-detector:ignore
 	}
 	fs := d.ScanDiffHunkOpts("f.txt", lines, DiffScanOptions{})
@@ -99,7 +99,7 @@ func TestScanDiffHunkOptsYuchoPairBothContextNotReported(t *testing.T) {
 func TestScanDiffHunkOptsYuchoPairAdjacentWithBlankLine(t *testing.T) {
 	d := newDetector(t, "")
 	lines := []DiffLine{
-		{Text: "記号: 14040", Added: false}, // jp-pii-detector:ignore
+		{Text: "記号: 14030", Added: false}, // jp-pii-detector:ignore
 		{Text: "", Added: false},
 		{Text: "番号: 12345671", Added: true}, // jp-pii-detector:ignore
 	}
@@ -130,7 +130,7 @@ func TestScanDiffHunkOptsYuchoPairInvalidPairNotReported(t *testing.T) {
 
 func TestScanCrossLineYuchoPairsDiffFiltersToAddedLines(t *testing.T) {
 	d := newDetector(t, "")
-	texts := []string{"記号: 14040", "番号: 12345671"} // jp-pii-detector:ignore
+	texts := []string{"記号: 14030", "番号: 12345671"} // jp-pii-detector:ignore
 	tests := []struct {
 		name  string
 		added []bool

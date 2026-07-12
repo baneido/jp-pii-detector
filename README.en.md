@@ -53,7 +53,7 @@ Examples below are all fictitious dummy values.
 | Basic pension number | 4-digit + 6-digit + nearby context keyword required |
 | Residence card number | 2 letters + 8 digits + 2 letters + context required |
 | Bank account number | 7 digits + context keyword required |
-| Japan Post Bank symbol/number | 5-digit symbol + up-to-8-digit number + Japan Post Bank context required |
+| Japan Post Bank symbol/number | Official symbol check digit + correlated number + Japan Post Bank context required |
 | Health insurance number | 8 digits + context keyword required |
 | Employment insurance number | 4-6-1 digit structure + context keyword required |
 | Long-term care insurance number | 10 digits + context keyword required |

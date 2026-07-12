@@ -2246,7 +2246,8 @@ func TestBankNameContextStillRejectsNegativeContext(t *testing.T) {
 	assertRules(t, d.ScanLine("f.txt", 1, "管理番号1234567（みずほ銀行の資料）"))
 }
 
-// ゆうちょ銀行の記号番号（記号5桁・先頭は必ず1、番号7〜8桁・末尾1をハイフンで相関）。
+// ゆうちょ銀行の記号番号（記号5桁・先頭1・末尾0・4桁目の検査数字、
+// 番号7〜8桁・末尾1をハイフンで相関）。
 // 値はダミーの数字列と辞書収録の「ゆうちょ銀行」表記のみを使い、外部フィクスチャ
 // なしでテストできる。
 func TestYuchoAccountRule(t *testing.T) {
@@ -2255,19 +2256,20 @@ func TestYuchoAccountRule(t *testing.T) {
 		name, line string
 		want       []string
 	}{
-		{"記号番号＋ゆうちょ表記", "ゆうちょ銀行 記号12340-7654321", []string{"jp-yucho-account"}},
-		{"地の文に埋め込まれたゆうちょ銀行名", "取引銀行はゆうちょ銀行本店です 12340-7654321", []string{"jp-yucho-account"}},
-		{"記号番号＋記号ラベル", "記号12345-1234561 ゆうちょ口座", []string{"jp-yucho-account"}},
-		{"記号番号＋日本郵政系文脈", "日本郵政 12345-12345671", []string{"jp-yucho-account"}},
-		{"通常銀行名はゆうちょ文脈にも通常口座にも汚染しない", "三菱UFJ銀行 12345-1234561", nil},
-		{"コンテキストなしは検出しない", "12345-1234561", nil},
+		{"記号番号＋ゆうちょ表記", "ゆうちょ銀行 記号12370-7654321", []string{"jp-yucho-account"}},
+		{"地の文に埋め込まれたゆうちょ銀行名", "取引銀行はゆうちょ銀行本店です 12370-7654321", []string{"jp-yucho-account"}},
+		{"記号番号＋記号ラベル", "記号12390-1234561 ゆうちょ口座", []string{"jp-yucho-account"}},
+		{"記号番号＋日本郵政系文脈", "日本郵政 12330-12345671", []string{"jp-yucho-account"}},
+		{"記号4桁目の検査数字が不一致", "ゆうちょ 12340-7654321", nil},
+		{"通常銀行名はゆうちょ文脈にも通常口座にも汚染しない", "三菱UFJ銀行 12390-1234561", nil},
+		{"コンテキストなしは検出しない", "12390-1234561", nil},
 		{"記号が1始まりでない", "記号22345-1234561 ゆうちょ", nil},
-		{"記号が全桁同一のダミー値", "記号11111-1111111 ゆうちょ", nil},
-		{"番号が全桁同一のダミー値", "記号12345-1111111 ゆうちょ", nil},
+		{"記号末尾が0でない", "記号12395-1234561 ゆうちょ", nil},
+		{"番号が全桁同一のダミー値", "記号12360-1111111 ゆうちょ", nil},
 		{"番号末尾が1以外", "記号12345-1234567 ゆうちょ", nil},
-		{"金額の負コンテキストで抑制", "ゆうちょ記号12345-1234561円", nil},
-		{"長い数字列の一部は対象外", "8" + "12345-1234561" + " ゆうちょ", nil},
-		{"英数字トークン末尾への隣接は対象外", "ゆうちょ 12345-1234561A", nil},
+		{"金額の負コンテキストで抑制", "ゆうちょ記号12390-1234561円", nil},
+		{"長い数字列の一部は対象外", "8" + "12390-1234561" + " ゆうちょ", nil},
+		{"英数字トークン末尾への隣接は対象外", "ゆうちょ 12390-1234561A", nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -2281,18 +2283,18 @@ func TestYuchoAccountRule(t *testing.T) {
 func TestYuchoAccountAdjacentLinesDoNotContaminate(t *testing.T) {
 	d := newDetector(t, "")
 
-	fs := d.ScanContent("f.txt", "ゆうちょ口座:\n12340-7654321")
+	fs := d.ScanContent("f.txt", "ゆうちょ口座:\n12370-7654321")
 	assertRules(t, fs, "jp-yucho-account")
-	if fs[0].Line != 2 || fs[0].Match != "12340-7654321" {
+	if fs[0].Line != 2 || fs[0].Match != "12370-7654321" {
 		t.Fatalf("finding = %+v, want value on line 2", fs[0])
 	}
 
 	// 通常銀行名だけでは、隣接行のゆうちょ形後半を通常口座として拾わない。
-	assertRules(t, d.ScanContent("f.txt", "三菱UFJ銀行:\n12340-7654321"))
+	assertRules(t, d.ScanContent("f.txt", "三菱UFJ銀行:\n12370-7654321"))
 
 	// ラベル行のマーカーは値行を抑制せず、値行自身のマーカーは抑制する。
-	assertRules(t, d.ScanContent("f.txt", "ゆうちょ口座: // "+IgnoreMarker+"\n12340-7654321"), "jp-yucho-account")
-	assertRules(t, d.ScanContent("f.txt", "ゆうちょ口座:\n12340-7654321 // "+IgnoreMarker))
+	assertRules(t, d.ScanContent("f.txt", "ゆうちょ口座: // "+IgnoreMarker+"\n12370-7654321"), "jp-yucho-account")
+	assertRules(t, d.ScanContent("f.txt", "ゆうちょ口座:\n12370-7654321 // "+IgnoreMarker))
 }
 
 // jp-yucho-account が共有する銀行名 ContextPattern も、空白なしの地の文から
@@ -2316,13 +2318,13 @@ func TestYuchoAccountContextPatternFindsEmbeddedBankName(t *testing.T) {
 // （RequireContext は昇格の根拠にならない不変条件）。
 func TestYuchoAccountConfidenceIsBaseHigh(t *testing.T) {
 	d := newDetector(t, "")
-	fs := d.ScanLine("f.txt", 1, "ゆうちょ銀行 記号12340-7654321")
+	fs := d.ScanLine("f.txt", 1, "ゆうちょ銀行 記号12370-7654321")
 	assertRules(t, fs, "jp-yucho-account")
 	if fs[0].Confidence != rule.High {
 		t.Fatalf("confidence = %v, want high", fs[0].Confidence)
 	}
-	if fs[0].Match != "12340-7654321" {
-		t.Fatalf("match = %q, want 12340-7654321", fs[0].Match)
+	if fs[0].Match != "12370-7654321" {
+		t.Fatalf("match = %q, want 12370-7654321", fs[0].Match)
 	}
 }
 
@@ -3977,7 +3979,7 @@ base_confidence = "low"
 	}
 }
 
-// ゆうちょ銀行の記号・番号ラベルが同一行で別々に書かれる表記（記号: 14040
+// ゆうちょ銀行の記号・番号ラベルが同一行で別々に書かれる表記（記号: 14030
 // 番号: 12345671 等。ラベル直結・コロン・スペース区切りいずれも許容）。
 // 別行に分かれるラベル形式はレコードスコープ実装後の拡張対象で対象外のまま。
 // 値はダミーの数字列のみを使い、外部フィクスチャなしでテストできる。
@@ -3986,9 +3988,9 @@ func TestYuchoLabeledAccountRule(t *testing.T) {
 	tests := []struct {
 		name, line, wantMatch string
 	}{
-		{"スペース区切り", "記号 14040 番号 12345671", "14040 番号 12345671"},
-		{"コロン区切り", "記号:14040 番号:12345671", "14040 番号:12345671"},
-		{"ラベル直結", "記号14040番号12345671", "14040番号12345671"},
+		{"スペース区切り", "記号 14030 番号 12345671", "14030 番号 12345671"},
+		{"コロン区切り", "記号:14030 番号:12345671", "14030 番号:12345671"},
+		{"ラベル直結", "記号14030番号12345671", "14030番号12345671"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -4010,9 +4012,9 @@ func TestYuchoLabeledAccountRuleNegative(t *testing.T) {
 	d := newDetector(t, "")
 	tests := []struct{ name, line string }{
 		{"記号が1始まりでない", "記号 24040 番号 12345671"},
-		{"番号末尾が1以外", "記号 14040 番号 12345670"},
+		{"番号末尾が1以外", "記号 14030 番号 12345670"},
 		{"記号・番号とも全桁同一のダミー値", "記号 11111 番号 11111111"},
-		{"番号ラベルがなく無関係な数字列が並ぶだけ", "付録の記号 14040 は図 12345671 を参照"},
+		{"番号ラベルがなく無関係な数字列が並ぶだけ", "付録の記号 14030 は図 12345671 を参照"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
