@@ -472,8 +472,8 @@ func positiveCandidates(id string, seed int) []evalcase.Case {
 		case "jp-bank-account":
 			out = append(out, lineCase("口座番号: "+d[:7]))
 		case "jp-yucho-account":
-			symbol := "1" + d[:4]
 			number := d[4:10] + "1"
+			symbol := yuchoSymbol("1"+d[:2], number)
 			out = append(out, lineCase("ゆうちょ銀行 記号"+symbol+"-"+number))
 		case "jp-birthdate":
 			out = append(out, lineCase(fmt.Sprintf("生年月日: %d年%d月%d日", 1970+i%35, i%12+1, i%27+1)))
@@ -515,6 +515,18 @@ func positiveCandidates(id string, seed int) []evalcase.Case {
 		out[i].Want = []string{id}
 	}
 	return out
+}
+
+// yuchoSymbol は先頭 3 桁と末尾固定 0 から、公式式を満たす検査数字を
+// 4 桁目へ付与する。評価値は収集した実値ではなく決定的に合成する。
+func yuchoSymbol(first3, number string) string {
+	for check := byte('0'); check <= '9'; check++ {
+		symbol := first3 + string(check) + "0"
+		if checksum.YuchoAccount(symbol, number) {
+			return symbol
+		}
+	}
+	panic("ゆうちょ記号の検査数字を生成できません")
 }
 
 func hardNegativeCases(seed int) []evalcase.Case {
