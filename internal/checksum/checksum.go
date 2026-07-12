@@ -73,6 +73,29 @@ func MyNumber(digits string) bool {
 	return int(digits[11]-'0') == check
 }
 
+// Modulus10Weight21 は、末尾の検証番号を除く数字へ右端から 2・1 を交互に
+// 乗じ、2 桁の積は各桁を加算してから 10 の補数を取る検証番号を確認する。
+// 国民健康保険の 6 桁保険者番号などで使われる M10W21 方式である。
+//
+// 算式の一次資料: 厚生省保険局国民健康保険課長通知
+// 「診療報酬明細書等に記載される保険者番号の設定について」
+// （昭和49年9月20日 保険発第104号）
+// https://www.mhlw.go.jp/web/t_doc?dataId=00tb0648&dataType=1&pageNo=1
+func Modulus10Weight21(digits string) bool {
+	if len(digits) < 2 || !numeric(digits) {
+		return false
+	}
+	sum := 0
+	weight := 2
+	for i := len(digits) - 2; i >= 0; i-- {
+		product := int(digits[i]-'0') * weight
+		sum += product/10 + product%10
+		weight = 3 - weight // 2 と 1 を交互に切り替える。
+	}
+	check := (10 - sum%10) % 10
+	return int(digits[len(digits)-1]-'0') == check
+}
+
 // CorporateNumber は法人番号（13 桁）の検査用数字を検証する。アルゴリズムは
 // 「法人番号の指定等に関する省令」（平成26年財務省令第70号）による:
 //

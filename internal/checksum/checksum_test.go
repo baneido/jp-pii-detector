@@ -57,6 +57,31 @@ func TestMyNumberKnownValue(t *testing.T) {
 	}
 }
 
+// TestModulus10Weight21 は厚生省通知（昭和49年9月20日 保険発第104号）の
+// 国民健康保険 保険者番号の算式を、手計算できる正例と検証番号破壊で確認する。
+// https://www.mhlw.go.jp/web/t_doc?dataId=00tb0648&dataType=1&pageNo=1
+func TestModulus10Weight21(t *testing.T) {
+	tests := []struct {
+		name, digits string
+		want         bool
+	}{
+		{"issue記載の6桁値", "138057", true},
+		{"積和の1の位が0なら検証番号0", "000190", true},
+		{"昇順の本体にも正しい検証番号", "123455", true},
+		{"検証番号不一致", "138058", false},
+		{"非数字", "13805x", false},
+		{"1桁は不足", "0", false},
+		{"空文字列", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := Modulus10Weight21(tt.digits); got != tt.want {
+				t.Errorf("Modulus10Weight21(%q) = %v, want %v", tt.digits, got, tt.want)
+			}
+		})
+	}
+}
+
 // genCorporateNumber は 12 桁の基礎番号から検査用数字を計算して 13 桁を生成する
 // （実装と独立に財務省令のアルゴリズムを書き下したもの）。
 func genCorporateNumber(base12 string) string {

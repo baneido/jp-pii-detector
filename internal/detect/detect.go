@@ -1057,6 +1057,10 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 			return d.hasNegativeContextNear(norm, start, end, negativeContextWindowRunes, &normRunes, r.NegativeContext)
 		}
 		for _, p := range r.Patterns {
+			requireContextWindow := r.RequireContextWindow
+			if p.RequireContextWindow > 0 {
+				requireContextWindow = p.RequireContextWindow
+			}
 			// FindAll はマッチ全体（末尾の境界ガード文字を含む）の直後から
 			// 次を探すため、`090-…-2222,090-…-4444` のように区切りが 1 文字
 			// だけの隣接エンティティを取りこぼす。キャプチャ終端から再検索
@@ -1088,10 +1092,10 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 				reason := DetectReason{
 					BaseConfidence: p.Base.String(),
 					RequireContext: p.RequireContext,
-					ContextWindow:  r.RequireContextWindow,
+					ContextWindow:  requireContextWindow,
 				}
 				if p.RequireContext {
-					kws := ctxForMatch(start, end, r.RequireContextWindow)
+					kws := ctxForMatch(start, end, requireContextWindow)
 					if len(kws) == 0 {
 						if d.collectDropped {
 							d.recordDroppedMatch(r.ID, file, lineNo, norm, start, DropReasonRequireContextMissing, p.Base)

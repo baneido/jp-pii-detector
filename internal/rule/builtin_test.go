@@ -244,8 +244,8 @@ func TestValidDriversLicense(t *testing.T) {
 	}
 }
 
-// validBankAccount / validHealthInsurance は全桁同一のダミー値だけを棄却する。
-// 口座番号・保険者番号は検査用数字を持たず、連番も実在しうるため許容する。
+// validBankAccount は全桁同一だけを棄却し、validHealthInsurance は 6 桁に限り
+// 厚生省通知に基づく M10W21 の検証番号も確認する。
 func TestValidBankAccount(t *testing.T) {
 	tests := []struct {
 		name string
@@ -293,6 +293,10 @@ func TestValidHealthInsurance(t *testing.T) {
 		{"昇順連番も実在しうる", "12345678", true},
 		{"全桁同一は棄却", "00000000", false},
 		{"先頭ゼロ埋め＋末尾昇順連番も許容", "00000123", true},
+		{"6桁の昇順本体と正しい検証番号", "123455", true},
+		{"6桁の検証番号不一致", "123456", false},
+		{"6桁の全桁同一は棄却", "111111", false},
+		{"6桁の先頭ゼロ埋めも許容", "000190", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

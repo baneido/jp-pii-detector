@@ -51,6 +51,11 @@ type Pattern struct {
 	// RequireContext が true の場合、コンテキストキーワードが
 	// 同一行に存在しなければ検出を破棄する。
 	RequireContext bool
+	// RequireContextWindow は、このパターンの RequireContext 判定だけに使う
+	// コンテキスト窓。正の値なら Rule.RequireContextWindow を上書きし、0 なら
+	// ルール側の値を継承する。同一ルール内の低エントロピーな形式だけを、既存形式
+	// より狭い文脈へ限定したい場合に使う。
+	RequireContextWindow int
 	// IgnoreNegativeContext が true の場合、Rule.NegativeContext による
 	// 棄却をこのパターンには適用しない。同一ルール内で既存の高精度パターンと
 	// 負文脈を必要とする高偽陽性パターンが混在する場合に使う。

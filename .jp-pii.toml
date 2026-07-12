@@ -12,7 +12,7 @@ paths = [
   "^internal/dict/phone_test\\.go$",
   "^internal/rule/builtin_test\\.go$",
   "^internal/rule/phone_kind_test\\.go$",
-  "^internal/detect/(detect|probe_regression|csv_context)_test\\.go$",
+  "^internal/detect/(detect|probe_regression|csv_context|health_insurance_6digit)_test\\.go$",
   "^internal/fixturegen/.*_test\\.go$",
   "^cmd/jp-pii-detect/main_test\\.go$",
   "^internal/config/config_test\\.go$",
