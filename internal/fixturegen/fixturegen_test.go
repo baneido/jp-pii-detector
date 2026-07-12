@@ -121,7 +121,7 @@ func TestPersonNameCasesUseDictionaryNames(t *testing.T) {
 }
 
 // TestGenerateProducesTaggedSyntheticCases は Generate() が返す全ケースに
-// SourceTag（source:synthetic）が付いていること、対応 7 ルールぶんの内容が
+// SourceTag（source:synthetic）が付いていること、対応 8 ルールぶんの内容が
 // あることを検証する。
 func TestGenerateProducesTaggedSyntheticCases(t *testing.T) {
 	cases := Generate()
@@ -130,7 +130,7 @@ func TestGenerateProducesTaggedSyntheticCases(t *testing.T) {
 	}
 	wantRules := map[string]bool{
 		"jp-my-number": false, "credit-card": false, "jp-postal-code": false, "person-name": false,
-		"jp-phone-number": false, "jp-birthdate": false, "jp-address": false,
+		"jp-phone-number": false, "jp-birthdate": false, "jp-address": false, "jp-bank-account": false,
 	}
 	for _, c := range cases {
 		if c.ID == "" || c.SourceClass != "algorithmic" {
@@ -267,6 +267,81 @@ func TestAddressCasesMatrixShape(t *testing.T) {
 	}
 	if negatives != 1 {
 		t.Errorf("AddressCases() negative count = %d, want 1", negatives)
+	}
+}
+
+// TestCrossLinePromotionCasesShape は CrossLinePromotionCases()（軸1: クロスライン
+// 昇格）の件数（jp-phone-number: content/diff/gap 3件 + jp-bank-account:
+// content/diff/gap 3件、すべて陽性）と、期待信頼度がすべて medium であること
+// （RequireContext パターンは同一行・隣接行いずれのラベルでも Base から昇格しない。
+// internal/detect.scanLineNoIgnoreWithContext の実装と、開発時に ScanContent/
+// ScanDiffHunk を直接呼んで確認した実測値に基づく契約）を検証する。
+func TestCrossLinePromotionCasesShape(t *testing.T) {
+	cases := CrossLinePromotionCases()
+	const want = 3 + 3
+	if len(cases) != want {
+		t.Fatalf("CrossLinePromotionCases() = %d cases, want %d", len(cases), want)
+	}
+	kinds := map[string]int{}
+	for _, c := range cases {
+		if !hasTagPrefix(c.Tags, SourceTag) {
+			t.Errorf("case %q missing %s tag", caseLine(c), SourceTag)
+		}
+		if !hasTagPrefix(c.Tags, "rule:jp-phone-number") && !hasTagPrefix(c.Tags, "rule:jp-bank-account") {
+			t.Errorf("case %q missing rule:jp-phone-number/rule:jp-bank-account tag", caseLine(c))
+		}
+		if len(c.Want) == 0 {
+			t.Errorf("case %q should be positive (CrossLinePromotionCases has no negative cases)", caseLine(c))
+		}
+		for _, s := range c.Spans {
+			if s.WantConfidence != "medium" {
+				t.Errorf("case %q span want_confidence = %q, want %q", caseLine(c), s.WantConfidence, "medium")
+			}
+		}
+		switch {
+		case len(c.Diff) > 0:
+			kinds["diff"]++
+		case c.Content != "":
+			kinds["content"]++
+		default:
+			t.Errorf("case %q should be a content or diff case (cross-line requires 2 lines)", caseLine(c))
+		}
+	}
+	if kinds["diff"] != 2 {
+		t.Errorf("CrossLinePromotionCases() diff-kind count = %d, want 2", kinds["diff"])
+	}
+	if kinds["content"] != 4 {
+		t.Errorf("CrossLinePromotionCases() content-kind count = %d, want 4", kinds["content"])
+	}
+}
+
+// TestCSVColumnContextCasesShape は CSVColumnContextCases()（軸2: CSV 列
+// コンテキスト）の件数（正負ペア1件ずつ）と、File が .csv 拡張子であること
+// （internal/detect.sourceKindForPath が CSV 専用パーサへ分岐する条件）を検証する。
+func TestCSVColumnContextCasesShape(t *testing.T) {
+	cases := CSVColumnContextCases()
+	if len(cases) != 2 {
+		t.Fatalf("CSVColumnContextCases() = %d cases, want 2", len(cases))
+	}
+	for _, c := range cases {
+		if !hasTagPrefix(c.Tags, SourceTag) {
+			t.Errorf("case %q missing %s tag", caseLine(c), SourceTag)
+		}
+		if !hasTagPrefix(c.Tags, "rule:jp-phone-number") {
+			t.Errorf("case %q missing rule:jp-phone-number tag", caseLine(c))
+		}
+		if !strings.HasSuffix(c.File, ".csv") {
+			t.Errorf("case %q File = %q, want a .csv path", caseLine(c), c.File)
+		}
+	}
+	if len(cases[0].Want) == 0 {
+		t.Errorf("CSVColumnContextCases()[0] should be the positive case (Want non-empty)")
+	}
+	if len(cases[1].Want) != 0 {
+		t.Errorf("CSVColumnContextCases()[1] should be the negative (header-shape) case (Want empty)")
+	}
+	if len(cases[0].Spans) != 3 {
+		t.Errorf("CSVColumnContextCases()[0] spans = %d, want 3 (one per data row, rows 2-4)", len(cases[0].Spans))
 	}
 }
 

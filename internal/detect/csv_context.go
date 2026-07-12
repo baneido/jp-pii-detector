@@ -28,6 +28,16 @@ func csvDelimiterForPath(path string) byte {
 	return ','
 }
 
+// IsCSVOrTSVPath は path の拡張子が .csv/.tsv（大文字小文字を区別しない）かを
+// 返す。internal/source/gitdiff.go が diff hunk 用の post-image ヘッダ行を
+// `git show` で取得するかどうかの判定に使う（ヘッダ取得は CSV/TSV だけに
+// 意味があり、それ以外の拡張子で無駄な git 呼び出しをしないため）。
+// sourceKindForPath と判定基準がずれないよう、拡張子リストを再定義せず
+// sourceKindForPath に委譲する。
+func IsCSVOrTSVPath(path string) bool {
+	return sourceKindForPath(path) == sourceKindCSV
+}
+
 // csvField は 1 フィールドの本文（囲み引用符を除く）のバイト範囲。
 // line（正規化済み）に対する半開区間で、statementContext.Start/End と
 // 同じ基準（正規化済み行の byte offset）を使う。
@@ -261,7 +271,8 @@ func parseCSVHeader(lines []string, delim byte) (csvHeader, bool) {
 
 // csvLineContexts は CSV/TSV ファイルのヘッダ列名から、以降の全データ行の
 // 該当フィールドへ statementContext を付与する（sourceLineContexts からのみ
-// 呼ばれる。フル走査限定）。
+// 呼ばれる。フル走査限定。1 行目は自ファイルのヘッダなのでデータ行の
+// 割り当ては 2 行目 (index 1) から始める）。
 func csvLineContexts(file string, lines []string) []lineContext {
 	out := make([]lineContext, len(lines))
 	delim := csvDelimiterForPath(file)
@@ -269,18 +280,61 @@ func csvLineContexts(file string, lines []string) []lineContext {
 	if !ok {
 		return out
 	}
-	for i := 1; i < len(lines); i++ {
+	csvAssignColumnContexts(out, lines, delim, header, 1)
+	return out
+}
+
+// csvDiffLineContexts は csvLineContexts の diff hunk 版。ヘッダは hunk 自身の
+// 1 行目（lines[0]）ではなく、呼び出し側（internal/source/gitdiff.go）が
+// post-image から `git show` で個別取得した 1 行（header）を使う。hunk は
+// 通常ヘッダ行を含まない（変更箇所がファイル先頭付近でない限り）ため、
+// csvLineContexts のようにヘッダをスキップせず lines[0] からデータ行として
+// 割り当てる（万一ヘッダ自身が hunk の 1 行目に含まれていても、ラベル文字列
+// 自体が数字系 PII パターンにマッチすることは実質なく、実害はない）。
+//
+// header が空文字、または looksLikeCSVHeader を満たさない場合は列コンテキスト
+// なし（out はゼロ値のまま）を返す — 呼び出し側のヘッダ取得失敗（新規ファイル
+// がまだ対象リビジョンに存在しない等）・空・ヘッダ行らしくない、のいずれでも
+// 従来どおり列コンテキストなしの安全側にフォールバックする。
+func csvDiffLineContexts(file, header string, lines []string) []lineContext {
+	out := make([]lineContext, len(lines))
+	delim := csvDelimiterForPath(file)
+	h, ok := parseCSVHeader([]string{header}, delim)
+	if !ok {
+		return out
+	}
+	csvAssignColumnContexts(out, lines, delim, h, 0)
+	return out
+}
+
+// csvAssignColumnContexts は header 済みの列文脈を lines[from:] の各データ行へ
+// 割り当てる（csvLineContexts と csvDiffLineContexts の共通本体。前者は
+// lines[0] が自ファイルのヘッダのため from=1、後者は lines 自体がヘッダを
+// 含まない前提のため from=0 で呼ぶ）。
+//
+// 制限: フィールド内改行で引用符が物理行末までに閉じないレコードに遭遇したら
+// csvUnterminatedRecordEnd でレコードの終端を lines の範囲内で探し、レコードが
+// 占める物理行には列コンテキストを付与しない（列がずれた誤帰属を避ける）。
+// diff hunk 版では lines が hunk 内の行に限られるため、hunk 内でレコードが
+// 閉じなければ（closed=false）EOF まで閉じない場合と同じ扱いで以降の割り当てを
+// 打ち切る。hunk の直前（hunk に含まれない先行部分）で引用符が開いたまま
+// hunk へ突入しているケース（hunk 冒頭が引用符未閉レコードの途中）は診断
+// できないが、その場合 lines[from] 自体の splitCSVLine が構文エラーとして
+// terminated=false を返す可能性が高く、同じ「閉じるまで打ち切る」経路で
+// 安全側に倒れる（詳細は docs/development.md）。
+func csvAssignColumnContexts(out []lineContext, lines []string, delim byte, header csvHeader, from int) {
+	for i := from; i < len(lines); i++ {
 		norm := normalize.Line(lines[i])
 		fields, terminated := splitCSVLine(norm, delim)
 		if !terminated {
 			// フィールド内改行（またはレコード内の構文エラー）でこの行の列は
 			// 信頼できないため、レコードが占める物理行には列コンテキストを
 			// 付与しない。ただしレコードが閉じ次第、次の物理行からは列の
-			// ずれがないため付与を再開する（EOF まで閉じない場合のみ、
-			// 従来どおりファイル末尾まで打ち切る）。
+			// ずれがないため付与を再開する（範囲内で閉じない場合のみ、
+			// 従来どおり残り全体を打ち切る）。
 			next, closed := csvUnterminatedRecordEnd(lines, i)
 			if !closed {
-				break
+				return
 			}
 			i = next - 1
 			continue
@@ -302,7 +356,6 @@ func csvLineContexts(file string, lines []string) []lineContext {
 		}
 		out[i].Statements = stmts
 	}
-	return out
 }
 
 // scanCSVNameColumns は CSV/TSV のヘッダが氏名系の強いラベル

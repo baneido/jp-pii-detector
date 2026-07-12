@@ -819,15 +819,26 @@ func Builtin() []Rule {
 			},
 			NegativeContext:      digitRuleNegativeContext,
 			RequireContextWindow: digitRuleRequireContextWindow,
-			Validate:             validYuchoAccount,
 			Patterns: []Pattern{
 				// 記号（5 桁、先頭は必ず "1"）＋番号（7〜8 桁、末尾は必ず
-				// "1"）をハイフンで相関させた表記。記号・番号の
-				// ラベルが別々に書かれる形式（記号: … 番号: …）は将来の拡張対象
-				// とし、誤検出リスクを抑えるためこの表記に限定する。チェック
-				// ディジットの具体式は未確認のため（要追加調査）、全桁同一の
-				// ダミー値のみ Validate で棄却する。
-				{Re: dgNoAlnumHyphen(`1\d{4}-\d{6,7}1`), Base: High, RequireContext: true},
+				// "1"）をハイフンで相関させた表記。チェックディジットの具体式は
+				// 未確認のため（要追加調査）、全桁同一のダミー値のみ Validate で
+				// 棄却する。
+				{Re: dgNoAlnumHyphen(`1\d{4}-\d{6,7}1`), Base: High, RequireContext: true, Validate: validYuchoAccount},
+				// 記号・番号のラベルが同一行で別々に書かれる形式（"記号 11111
+				// 番号 11111111" 相当の並び。ラベル直結・コロン・スペース区切り
+				// いずれも許容）。同一行のラベル形式は対応済み。別行のラベル形式
+				// （記号: … の次行に番号: … が続く表記）はレコードスコープ実装後の
+				// 拡張対象とする。捕捉値（グループ1）は記号側の数字先頭から番号側の
+				// 数字末尾まで（間の「番号」ラベルを含む）とし、ラベル語「記号」
+				// 自体はグループ外に置く。間に非数字のラベルを挟むため dg ヘルパーは
+				// グループを二重にしてしまい使えず、境界ガード（前後が数字で
+				// ないこと）を自前で書く。このコメント自体が dogfooding で自己検出
+				// されないよう、上の例は全桁同一のダミー値（Validate で棄却される
+				// 形）だけを書く。
+				{Re: regexp.MustCompile(
+					`(?:^|[^0-9])記号\s*[:=]?\s*(1\d{4}\s*[:=]?\s*番号\s*[:=]?\s*\d{6,7}1)(?:[^0-9]|$)`,
+				), Base: High, RequireContext: true, Validate: validYuchoLabeledAccount},
 			},
 		},
 		{
@@ -923,6 +934,13 @@ func Builtin() []Rule {
 			// 検査数字の公式算式を一次資料から独立検証できていないため、
 			// 未検証の算式で実在値を棄却せず、11 桁の形状と周辺語を必須にする。
 			// 全桁同一のみ、明らかなダミー値として除外する。
+			//
+			// 裏取り調査の結果（2026-07 時点）: 算式は住民基本台帳法施行規則
+			// （平成11年自治省令第35号）第1条第2号が「総務大臣が定める算式」として
+			// 平成14年総務省告示第436号へ委任しているが、e-Gov 法令検索は告示を
+			// 収録せず、官報の無料アーカイブ（平成15年7月以降）・総務省の公表資料
+			// のいずれからも告示原文へ到達できなかった。有料の官報情報検索サービス
+			// 等で原文を確認できるまで、この方針（形状＋文脈のみ）を維持する。
 			Validate: func(m string) bool {
 				return !checksum.AllSame(m)
 			},
@@ -1300,6 +1318,29 @@ func validYuchoAccount(m string) bool {
 	symbol, number, ok := strings.Cut(m, "-")
 	if !ok || len(symbol) != 5 || symbol[0] != '1' ||
 		(len(number) != 7 && len(number) != 8) || number[len(number)-1] != '1' {
+		return false
+	}
+	return !checksum.AllSame(symbol) && !checksum.AllSame(number)
+}
+
+// validYuchoLabeledAccount はゆうちょ銀行の記号・番号ラベルが同一行で別々に
+// 書かれた表記（例:「記号 11111 番号 11111111」相当の並び。dogfooding での
+// 自己検出を避けるため全桁同一のダミー値で例示する）を検証する。捕捉値には
+// ラベル文字「番号」や区切り文字（空白・コロン等）が混じるため、まず数字だけを
+// 抽出し、先頭 5 桁を記号・残りを番号として validYuchoAccount と同じ基準
+// （桁数・先頭/末尾・全桁同一の棄却）で判定する。
+func validYuchoLabeledAccount(m string) bool {
+	digits := make([]byte, 0, len(m))
+	for i := 0; i < len(m); i++ {
+		if m[i] >= '0' && m[i] <= '9' {
+			digits = append(digits, m[i])
+		}
+	}
+	if len(digits) != 12 && len(digits) != 13 {
+		return false
+	}
+	symbol, number := string(digits[:5]), string(digits[5:])
+	if symbol[0] != '1' || number[len(number)-1] != '1' {
 		return false
 	}
 	return !checksum.AllSame(symbol) && !checksum.AllSame(number)

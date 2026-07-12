@@ -80,7 +80,10 @@ Scan flags:
   --diff <range>           指定リビジョン範囲の追加行を走査
   --stdin                  標準入力のテキストを 1 本のテキストとして走査。json 出力に
                            offset/end_offset（テキスト先頭からのルーン単位の半開区間）を
-                           付与する。Microsoft Presidio など文字オフセット基準の連携用
+                           付与する。Microsoft Presidio など文字オフセット基準の連携用。
+                           入力に JSON の \uXXXX エスケープ（ensure_ascii=True 出力等）が
+                           含まれる場合は復号したビューを走査し、offset/end_offset も
+                           復号後テキスト上のルーンオフセットになる点に注意
   --format <fmt>           出力形式: text|json|sarif|github (既定: text)
   --config <path>          設定ファイル (既定: .jp-pii.toml をリポジトリルートまで上方探索)
   --min-confidence <lvl>   報告する最小信頼度: low|medium|high (既定: 設定ファイル値 or medium)
@@ -91,6 +94,8 @@ Scan flags:
                            分離するためのフラグ)
   --unmask                 検出値をマスクせず出力
   --explain                text/json 出力に検出理由（コンテキスト昇格・検証有無等）を含める
+  --explain-dropped        検出候補がどの段階で棄却されたかを text/json 出力に追加する
+                           （FN 分析用。json 出力の dropped 配列に生の値は含めない）
   --high-recall            偽陽性リスクの高い再現率重視ルールを有効化
   --exit-zero              検出があっても終了コード 0 を返す
   --baseline <path>        ベースラインファイルを読み込み、記録済み（fingerprint が
@@ -141,6 +146,7 @@ func runScan(args []string) int {
 	failOn := fs.String("fail-on", "", "")
 	unmask := fs.Bool("unmask", false, "")
 	explain := fs.Bool("explain", false, "")
+	explainDropped := fs.Bool("explain-dropped", false, "")
 	highRecall := fs.Bool("high-recall", false, "")
 	exitZero := fs.Bool("exit-zero", false, "")
 	baselinePath := fs.String("baseline", "", "")
@@ -184,6 +190,13 @@ func runScan(args []string) int {
 	if err != nil {
 		return fail(err)
 	}
+	// --explain-dropped 指定時のみ棄却候補の記録を有効化する。既定では
+	// CollectDropped を呼ばないため、Detector.TakeDropped/DroppedTruncated は
+	// 常にゼロ値（nil/false）を返し、後段の report.Text/JSON の出力は
+	// 従来と完全に不変になる。
+	if *explainDropped {
+		det.CollectDropped(true)
+	}
 
 	var findings []detect.Finding
 	var warnings []error
@@ -193,6 +206,19 @@ func runScan(args []string) int {
 		data, err = io.ReadAll(os.Stdin)
 		if err == nil {
 			text := string(data)
+			// フルスキャン（internal/source の scanFiles）の最終段と同じ JSON
+			// \uXXXX エスケープの復号ビュー（source.DecodeEscapedView）を適用
+			// する。stdin はまさに JSON をそのままパイプで流し込む用途（外部
+			// 連携・エージェントのフック等）が多く、適用価値が高い。復号が
+			// 成立した場合、以後の ScanContent と ComputeOffsets は必ず同じ
+			// text（復号後テキスト）に対して行う。json 出力の offset/end_offset
+			// はその結果、復号後テキスト上のルーンオフセットになる（usage の
+			// --stdin 節に注記）。復号を無効にするフラグは設けない（フル
+			// スキャン側にも opt-out が無く、対称性を保つため。将来必要になれば
+			// ここに条件分岐で opt-out を足せる）。
+			if decoded, ok := source.DecodeEscapedView(text); ok {
+				text = decoded
+			}
 			findings = detect.ComputeOffsets(text, det.ScanContent("<stdin>", text))
 		}
 	case *staged:
@@ -249,12 +275,17 @@ func runScan(args []string) int {
 	if fpSalt != "" {
 		fpArgs = []string{fpSalt}
 	}
+	// --explain-dropped 未指定時は CollectDropped が一度も呼ばれていないため、
+	// dropped は常に nil・droppedTruncated は常に false になる
+	// （report.Text/JSON の出力が従来と完全に不変であることの根拠）。
+	dropped := det.TakeDropped()
+	droppedTruncated := det.DroppedTruncated()
 
 	switch *format {
 	case "text":
-		report.Text(os.Stdout, reportFindings, *unmask, *explain)
+		report.Text(os.Stdout, reportFindings, *unmask, *explain, dropped, droppedTruncated)
 	case "json":
-		if err := report.JSON(os.Stdout, reportFindings, *unmask, *explain, fpArgs...); err != nil {
+		if err := report.JSON(os.Stdout, reportFindings, *unmask, *explain, dropped, droppedTruncated, fpArgs...); err != nil {
 			return fail(err)
 		}
 	case "sarif":

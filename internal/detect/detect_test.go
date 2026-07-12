@@ -3559,3 +3559,347 @@ pattern = "("
 		t.Errorf("cfg = %v, want nil on error", cfg)
 	}
 }
+
+// --- 棄却候補記録（DroppedCandidate、--explain-dropped 用。issue #43 段階4）のテスト ---
+//
+// 既定では CollectDropped を呼ばない限り完全に無効（TakeDropped は常に空）で
+// あることが最重要の不変条件なので、各テストは明示的に CollectDropped(true) を
+// 呼んでから検証する。findDropped は dropped の中から ruleID・reason が一致する
+// 最初の要素を返すヘルパー（他の棄却候補が同時に記録されていても頑健に検証する
+// ため、スライス全体の完全一致ではなく部分一致で確認する）。
+
+func findDropped(dropped []DroppedCandidate, ruleID, reason string) (DroppedCandidate, bool) {
+	for _, c := range dropped {
+		if c.RuleID == ruleID && c.Reason == reason {
+			return c, true
+		}
+	}
+	return DroppedCandidate{}, false
+}
+
+// TestDroppedCandidatesDisabledByDefault は CollectDropped を呼ばない限り
+// TakeDropped が常に空を返すこと（無効時は挙動・性能・出力とも従来と完全に
+// 不変という既定の安全側動作）を、棄却が実際に起きるケースで確認する。
+func TestDroppedCandidatesDisabledByDefault(t *testing.T) {
+	d := newDetector(t, `
+[[rules.custom]]
+id = "ticket-id"
+description = "チケット番号"
+pattern = 'T\d{6}'
+digit_boundary = true
+negative_context = ["サンプル"]
+base_confidence = "medium"
+`)
+	fs := d.ScanLine("f.go", 1, "サンプル: T123456")
+	assertRules(t, fs) // 負文脈で棄却され検出なし
+	if got := d.TakeDropped(); len(got) != 0 {
+		t.Fatalf("CollectDropped 未呼び出しなのに TakeDropped = %+v, want 空", got)
+	}
+	if d.DroppedTruncated() {
+		t.Error("CollectDropped 未呼び出しなのに DroppedTruncated() = true")
+	}
+}
+
+// TestDroppedCandidateRequireContextMissing は RequireContext のパターンで
+// 近傍にコンテキストキーワードが無い候補が require-context-missing として
+// 記録されることを確認する（TestCustomRuleRequireContext と同じ入力）。
+func TestDroppedCandidateRequireContextMissing(t *testing.T) {
+	d := newDetector(t, `
+[[rules.custom]]
+id = "staff-id"
+description = "社員番号"
+pattern = 'E\d{6}'
+digit_boundary = true
+context = ["社員番号"]
+require_context = true
+base_confidence = "medium"
+`)
+	d.CollectDropped(true)
+	fs := d.ScanLine("f.go", 1, "E123456") // ラベル無し
+	assertRules(t, fs)
+	dropped := d.TakeDropped()
+	c, ok := findDropped(dropped, "staff-id", DropReasonRequireContextMissing)
+	if !ok {
+		t.Fatalf("require-context-missing が記録されていない: %+v", dropped)
+	}
+	if c.File != "f.go" || c.Line != 1 || c.Column != 1 {
+		t.Errorf("位置が不正: %+v, want File=f.go Line=1 Column=1", c)
+	}
+	if c.PatternBase != rule.Medium {
+		t.Errorf("PatternBase = %v, want Medium", c.PatternBase)
+	}
+}
+
+// TestDroppedCandidateNegativeContext は同一行の負文脈語で棄却された候補が
+// negative-context として記録されることを確認する（TestCustomRuleNegativeContext
+// と同じ入力）。
+func TestDroppedCandidateNegativeContext(t *testing.T) {
+	d := newDetector(t, `
+[[rules.custom]]
+id = "ticket-id"
+description = "チケット番号"
+pattern = 'T\d{6}'
+digit_boundary = true
+negative_context = ["サンプル"]
+base_confidence = "medium"
+`)
+	d.CollectDropped(true)
+	fs := d.ScanLine("f.go", 1, "サンプル: T123456")
+	assertRules(t, fs)
+	dropped := d.TakeDropped()
+	if _, ok := findDropped(dropped, "ticket-id", DropReasonNegativeContext); !ok {
+		t.Fatalf("negative-context が記録されていない: %+v", dropped)
+	}
+}
+
+// TestDroppedCandidateValidateFailed は My Number の検査用数字不一致
+// （Rule.Validate 失敗）が validate-failed として記録されることを確認する
+// （TestMyNumberRule の「検査用数字不一致」ケースと同じ入力）。
+func TestDroppedCandidateValidateFailed(t *testing.T) {
+	d := newDetector(t, "")
+	d.CollectDropped(true)
+	fs := d.ScanLine("f.txt", 1, "value = 123456789012") // 検査用数字不一致
+	assertRules(t, fs)
+	dropped := d.TakeDropped()
+	if _, ok := findDropped(dropped, "jp-my-number", DropReasonValidateFailed); !ok {
+		t.Fatalf("validate-failed が記録されていない: %+v", dropped)
+	}
+}
+
+// TestDroppedCandidateValidateLineFailed は Pattern.ValidateLine
+// （rejectSeparatedDigitGroup）失敗で棄却された候補が validate-line-failed
+// として記録されることを確認する
+// （TestNumericSeparatorVariantsRejectLongTokenPrefixes と同じ入力）。
+func TestDroppedCandidateValidateLineFailed(t *testing.T) {
+	d := newDetector(t, "")
+	d.CollectDropped(true)
+	fs := d.ScanLine("f.txt", 1, "パスポート番号: AB 1234567 8") // 末尾にさらに数字
+	assertRules(t, fs)
+	dropped := d.TakeDropped()
+	if _, ok := findDropped(dropped, "jp-passport", DropReasonValidateLineFailed); !ok {
+		t.Fatalf("validate-line-failed が記録されていない: %+v", dropped)
+	}
+}
+
+// TestDroppedCandidateAllowlisted は allowlist.stopwords に一致して棄却された
+// 候補が allowlisted として記録されることを確認する。
+func TestDroppedCandidateAllowlisted(t *testing.T) {
+	d := newDetector(t, `
+[[rules.custom]]
+id = "allow-test"
+description = "テスト用"
+pattern = 'ALLOWME\d{3}'
+base_confidence = "high"
+
+[allowlist]
+stopwords = ["ALLOWME123"]
+`)
+	d.CollectDropped(true)
+	fs := d.ScanLine("f.txt", 1, "ALLOWME123")
+	assertRules(t, fs)
+	dropped := d.TakeDropped()
+	if _, ok := findDropped(dropped, "allow-test", DropReasonAllowlisted); !ok {
+		t.Fatalf("allowlisted が記録されていない: %+v", dropped)
+	}
+}
+
+// TestDroppedCandidateKindExcluded は jp-phone-number のサービス番号
+// （0120 等、PhoneKind が "service" を返す）が [rules] exclude_kinds=["service"]
+// で kind-excluded として記録されることを確認する。
+func TestDroppedCandidateKindExcluded(t *testing.T) {
+	d := newDetector(t, `
+[rules]
+exclude_kinds = ["service"]
+`)
+	d.CollectDropped(true)
+	fs := d.ScanLine("f.txt", 1, "0120-000-000")
+	assertRules(t, fs)
+	dropped := d.TakeDropped()
+	if _, ok := findDropped(dropped, "jp-phone-number", DropReasonKindExcluded); !ok {
+		t.Fatalf("kind-excluded が記録されていない: %+v", dropped)
+	}
+}
+
+// TestDroppedCandidateBelowMinConfidence は最終信頼度が既定の
+// min_confidence=medium 未満（Low）で棄却された候補が below-min-confidence
+// として記録されることを確認する。
+func TestDroppedCandidateBelowMinConfidence(t *testing.T) {
+	d := newDetector(t, `
+[[rules.custom]]
+id = "low-conf"
+description = "低信頼度テスト"
+pattern = 'LOWCONF\d{3}'
+base_confidence = "low"
+`)
+	d.CollectDropped(true)
+	fs := d.ScanLine("f.txt", 1, "LOWCONF123")
+	assertRules(t, fs)
+	dropped := d.TakeDropped()
+	c, ok := findDropped(dropped, "low-conf", DropReasonBelowMinConfidence)
+	if !ok {
+		t.Fatalf("below-min-confidence が記録されていない: %+v", dropped)
+	}
+	if c.PatternBase != rule.Low {
+		t.Errorf("PatternBase = %v, want Low", c.PatternBase)
+	}
+}
+
+// TestDroppedCandidateOverlapLost は同一スパンで重なる 2 候補のうち、
+// resolveOverlaps で信頼度の低い側が敗れて棄却された場合に overlap-lost として
+// 記録されることを確認する。2 つの custom ルールに全く同じパターンを与え、
+// 信頼度だけを変えることでチェックサム等に依存しない決定的な重複を作る。
+func TestDroppedCandidateOverlapLost(t *testing.T) {
+	d := newDetector(t, `
+[[rules.custom]]
+id = "overlap-high"
+description = "重複解決テスト（高信頼度）"
+pattern = 'ZZZ999'
+base_confidence = "high"
+
+[[rules.custom]]
+id = "overlap-low"
+description = "重複解決テスト（中信頼度）"
+pattern = 'ZZZ999'
+base_confidence = "medium"
+`)
+	d.CollectDropped(true)
+	fs := d.ScanLine("f.txt", 1, "ZZZ999")
+	assertRules(t, fs, "overlap-high")
+	dropped := d.TakeDropped()
+	c, ok := findDropped(dropped, "overlap-low", DropReasonOverlapLost)
+	if !ok {
+		t.Fatalf("overlap-lost が記録されていない: %+v", dropped)
+	}
+	if c.PatternBase != rule.Medium {
+		t.Errorf("PatternBase = %v, want Medium", c.PatternBase)
+	}
+}
+
+// TestDroppedCandidateCrossLineNegativeContext は値の行とは別の論理隣接行に
+// ある汎用負文脈語（伝票 等）で棄却された候補が cross-line-negative-context
+// として記録されることを確認する（ScanContent 経由の隣接行相関のみが持つ
+// 経路。同一行の負文脈は negative-context になる）。
+func TestDroppedCandidateCrossLineNegativeContext(t *testing.T) {
+	d := newDetector(t, "")
+	d.CollectDropped(true)
+	fs := d.ScanContent("f.txt", "口座番号: 1234567\n伝票番号です")
+	assertRules(t, fs)
+	dropped := d.TakeDropped()
+	if _, ok := findDropped(dropped, "jp-bank-account", DropReasonCrossLineNegativeContext); !ok {
+		t.Fatalf("cross-line-negative-context が記録されていない: %+v", dropped)
+	}
+}
+
+// TestDroppedCandidatePathDemotionBelowMin はテスト経路（testdata/）の
+// Medium 系検出が path_profile.go の降格で Low になり、既定の
+// min_confidence=medium 未満になって棄却された場合に path-demotion-below-min
+// として記録されることを確認する。
+func TestDroppedCandidatePathDemotionBelowMin(t *testing.T) {
+	d := newDetector(t, "")
+	d.CollectDropped(true)
+	fs := d.ScanContent("testdata/sample.txt", "口座番号: 1234567")
+	assertRules(t, fs) // Low へ降格し既定 min_confidence=medium では非表示
+	dropped := d.TakeDropped()
+	c, ok := findDropped(dropped, "jp-bank-account", DropReasonPathDemotionBelowMin)
+	if !ok {
+		t.Fatalf("path-demotion-below-min が記録されていない: %+v", dropped)
+	}
+	if c.PatternBase != rule.Low {
+		t.Errorf("PatternBase = %v, want Low（降格後の値）", c.PatternBase)
+	}
+}
+
+// TestDroppedCandidateUUIDToken は UUIDv4 トークン内部に完全に含まれる数字列が
+// uuid-token として記録されることを確認する。custom ルールは
+// digit_boundary=false（既定）で builtin の dg() 系境界ガードを経由しないため、
+// insideUUIDv4Token 自体の判定を直接検証できる。
+func TestDroppedCandidateUUIDToken(t *testing.T) {
+	d := newDetector(t, `
+[[rules.custom]]
+id = "any-7-digits"
+description = "UUID 内部判定テスト"
+pattern = '\d{7}'
+base_confidence = "high"
+`)
+	d.CollectDropped(true)
+	// 有効な UUIDv4（バージョン桁 '4'、バリアント桁は 8/9/a/b のいずれか）。
+	fs := d.ScanLine("f.txt", 1, "12345678-1234-4000-8000-123456789012")
+	assertRules(t, fs)
+	dropped := d.TakeDropped()
+	if _, ok := findDropped(dropped, "any-7-digits", DropReasonUUIDToken); !ok {
+		t.Fatalf("uuid-token が記録されていない: %+v", dropped)
+	}
+}
+
+// TestDroppedCandidatesCappedWithTruncationFlag は上限（maxDroppedCandidates）に
+// 達した場合、超過分を黙って捨てず DroppedTruncated で分かることを確認する。
+// DroppedTruncated は drain 方式（TakeDropped と対）なので 2 回目の呼び出しは
+// false に戻ることも確認する。
+func TestDroppedCandidatesCappedWithTruncationFlag(t *testing.T) {
+	d := newDetector(t, `
+[[rules.custom]]
+id = "many-drops"
+description = "上限テスト"
+pattern = 'DROP\d{3}'
+base_confidence = "low"
+`)
+	d.CollectDropped(true)
+	// 上限より十分多い件数の候補（既定 min_confidence=medium 未満で全て棄却
+	// される）を 1 行にまとめて生成する。
+	line := strings.Repeat("DROP000 ", maxDroppedCandidates+50)
+	d.ScanLine("f.txt", 1, line)
+	dropped := d.TakeDropped()
+	if len(dropped) != maxDroppedCandidates {
+		t.Fatalf("len(dropped) = %d, want %d（上限）", len(dropped), maxDroppedCandidates)
+	}
+	if !d.DroppedTruncated() {
+		t.Error("DroppedTruncated() = false, want true（上限超過）")
+	}
+	if d.DroppedTruncated() {
+		t.Error("2 回目の DroppedTruncated() は false であるべき（drain 方式）")
+	}
+}
+
+// ゆうちょ銀行の記号・番号ラベルが同一行で別々に書かれる表記（記号: 14040
+// 番号: 12345671 等。ラベル直結・コロン・スペース区切りいずれも許容）。
+// 別行に分かれるラベル形式はレコードスコープ実装後の拡張対象で対象外のまま。
+// 値はダミーの数字列のみを使い、外部フィクスチャなしでテストできる。
+func TestYuchoLabeledAccountRule(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line, wantMatch string
+	}{
+		{"スペース区切り", "記号 14040 番号 12345671", "14040 番号 12345671"},
+		{"コロン区切り", "記号:14040 番号:12345671", "14040 番号:12345671"},
+		{"ラベル直結", "記号14040番号12345671", "14040番号12345671"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, "jp-yucho-account")
+			if fs[0].Confidence != rule.High {
+				t.Fatalf("confidence = %v, want high", fs[0].Confidence)
+			}
+			if fs[0].Match != tt.wantMatch {
+				t.Fatalf("match = %q, want %q", fs[0].Match, tt.wantMatch)
+			}
+		})
+	}
+}
+
+// 記号先頭が "1" でない・番号末尾が "1" でない・全桁同一のダミー値・番号ラベルが
+// 存在しない（別々の数字列がたまたま同一行にあるだけ）場合は検出しない。
+func TestYuchoLabeledAccountRuleNegative(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct{ name, line string }{
+		{"記号が1始まりでない", "記号 24040 番号 12345671"},
+		{"番号末尾が1以外", "記号 14040 番号 12345670"},
+		{"記号・番号とも全桁同一のダミー値", "記号 11111 番号 11111111"},
+		{"番号ラベルがなく無関係な数字列が並ぶだけ", "付録の記号 14040 は図 12345671 を参照"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line))
+		})
+	}
+}

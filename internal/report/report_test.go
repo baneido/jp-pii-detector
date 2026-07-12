@@ -48,7 +48,7 @@ func TestMask(t *testing.T) {
 func TestTextMasksByDefault(t *testing.T) {
 	phone := testfixtures.MustGet(t, "report.phone_match")
 	var buf bytes.Buffer
-	Text(&buf, sample(phone), false, false)
+	Text(&buf, sample(phone), false, false, nil, false)
 	out := buf.String()
 	if strings.Contains(out, phone) {
 		t.Error("output should be masked")
@@ -63,7 +63,7 @@ func TestTextMasksByDefault(t *testing.T) {
 
 func TestTextNoFindingsNoSummary(t *testing.T) {
 	var buf bytes.Buffer
-	Text(&buf, nil, false, false)
+	Text(&buf, nil, false, false, nil, false)
 	if buf.Len() != 0 {
 		t.Errorf("expected empty output, got %q", buf.String())
 	}
@@ -92,7 +92,7 @@ func TestTextExplainIncludesReason(t *testing.T) {
 	}}
 
 	var withExplain bytes.Buffer
-	Text(&withExplain, fs, false, true)
+	Text(&withExplain, fs, false, true, nil, false)
 	out := withExplain.String()
 	if !strings.Contains(out, "理由:") {
 		t.Fatalf("--explain 相当の text 出力に理由が無い: %s", out)
@@ -108,7 +108,7 @@ func TestTextExplainIncludesReason(t *testing.T) {
 	}
 
 	var withoutExplain bytes.Buffer
-	Text(&withoutExplain, fs, false, false)
+	Text(&withoutExplain, fs, false, false, nil, false)
 	if strings.Contains(withoutExplain.String(), "理由:") {
 		t.Errorf("explain=false では理由行を出すべきではない: %s", withoutExplain.String())
 	}
@@ -135,7 +135,7 @@ func TestTextExplainIncludesKind(t *testing.T) {
 	}}
 
 	var buf bytes.Buffer
-	Text(&buf, fs, false, true)
+	Text(&buf, fs, false, true, nil, false)
 	if !strings.Contains(buf.String(), "種別=service") {
 		t.Errorf("--explain 相当の text 出力に種別(Kind)が無い: %s", buf.String())
 	}
@@ -146,7 +146,7 @@ func TestTextExplainIncludesKind(t *testing.T) {
 func TestTextIncludesBaselineHint(t *testing.T) {
 	findings := []detect.Finding{{RuleID: "jp-phone-number", File: "users.csv", Line: 4, Column: 6, Match: "dummy-value-1"}}
 	var buf bytes.Buffer
-	Text(&buf, findings, false, false)
+	Text(&buf, findings, false, false, nil, false)
 	out := buf.String()
 	if !strings.Contains(out, "--update-baseline") {
 		t.Errorf("missing baseline remediation hint: %s", out)
@@ -192,7 +192,7 @@ func TestSARIFLevels(t *testing.T) {
 func TestJSON(t *testing.T) {
 	phone := testfixtures.MustGet(t, "report.phone_match")
 	var buf bytes.Buffer
-	if err := JSON(&buf, sample(phone), true, false); err != nil {
+	if err := JSON(&buf, sample(phone), true, false, nil, false); err != nil {
 		t.Fatal(err)
 	}
 	var got struct {
@@ -221,7 +221,7 @@ func TestJSONOffsets(t *testing.T) {
 		{RuleID: "b", File: "<stdin>", Line: 1, Column: 5, Match: "de"}, // HasOffset=false
 	}
 	var buf bytes.Buffer
-	if err := JSON(&buf, findings, true, false); err != nil {
+	if err := JSON(&buf, findings, true, false, nil, false); err != nil {
 		t.Fatal(err)
 	}
 	out := buf.String()
@@ -254,7 +254,7 @@ func TestJSONFingerprint(t *testing.T) {
 	findings := []detect.Finding{{RuleID: "jp-phone-number", File: "app/users.csv", Line: 1, Column: 1, Match: "dummy-value-1"}}
 
 	var withoutSalt bytes.Buffer
-	if err := JSON(&withoutSalt, findings, true, false); err != nil {
+	if err := JSON(&withoutSalt, findings, true, false, nil, false); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(withoutSalt.String(), "fingerprint") {
@@ -262,7 +262,7 @@ func TestJSONFingerprint(t *testing.T) {
 	}
 
 	var withSalt bytes.Buffer
-	if err := JSON(&withSalt, findings, true, false, "test-salt"); err != nil {
+	if err := JSON(&withSalt, findings, true, false, nil, false, "test-salt"); err != nil {
 		t.Fatal(err)
 	}
 	var got struct {
@@ -290,7 +290,7 @@ func TestJSONExplainIncludesReason(t *testing.T) {
 		Validated:       true,
 	}
 	var buf bytes.Buffer
-	if err := JSON(&buf, fs, false, true); err != nil {
+	if err := JSON(&buf, fs, false, true, nil, false); err != nil {
 		t.Fatal(err)
 	}
 	var got struct {
@@ -496,5 +496,151 @@ func TestGitHubLevelByConfidence(t *testing.T) {
 		if !strings.HasPrefix(buf.String(), tt.want) {
 			t.Errorf("confidence=%s: out = %q, want prefix %q", tt.conf, buf.String(), tt.want)
 		}
+	}
+}
+
+// --- --explain-dropped 相当（dropped/droppedTruncated 引数）の出力テスト ---
+// issue #43 段階4。DroppedCandidate は生の検出値を持たないため、フィクスチャは
+// 不要（実在しうる PII 形式を含まない合成データのみ使う）。
+
+func sampleDropped() []detect.DroppedCandidate {
+	return []detect.DroppedCandidate{
+		{RuleID: "jp-bank-account", File: "users.csv", Line: 7, Column: 3,
+			Reason: "require-context-missing", PatternBase: rule.Medium},
+	}
+}
+
+// TestTextDroppedSection は dropped 非空のとき、通常の findings 出力の後に
+// 棄却候補セクションが追加されること、dropped が nil（既定・未指定相当）なら
+// 追加が一切無い（出力が 4 引数時代と完全に同一）ことを確認する。
+func TestTextDroppedSection(t *testing.T) {
+	findings := sample("dummy-value-1")
+
+	var withDropped bytes.Buffer
+	Text(&withDropped, findings, false, false, sampleDropped(), false)
+	out := withDropped.String()
+	if !strings.Contains(out, "棄却候補") {
+		t.Fatalf("--explain-dropped 相当の text 出力に棄却候補セクションが無い: %s", out)
+	}
+	if !strings.Contains(out, "jp-bank-account") || !strings.Contains(out, "require-context-missing") {
+		t.Errorf("棄却候補の内容が出力に無い: %s", out)
+	}
+
+	var withoutDropped bytes.Buffer
+	Text(&withoutDropped, findings, false, false, nil, false)
+	if strings.Contains(withoutDropped.String(), "棄却候補") {
+		t.Errorf("dropped 未指定では棄却候補セクションを出すべきではない: %s", withoutDropped.String())
+	}
+	var legacyEquivalent bytes.Buffer
+	Text(&legacyEquivalent, findings, false, false, nil, false)
+	if legacyEquivalent.String() != withoutDropped.String() {
+		t.Errorf("dropped=nil の出力が不安定: %q != %q", legacyEquivalent.String(), withoutDropped.String())
+	}
+}
+
+// TestTextDroppedTruncatedNote は droppedTruncated=true のとき、上限到達を
+// 示す注記が出力されることを確認する。
+func TestTextDroppedTruncatedNote(t *testing.T) {
+	var buf bytes.Buffer
+	Text(&buf, nil, false, false, sampleDropped(), true)
+	if !strings.Contains(buf.String(), "上限") {
+		t.Errorf("droppedTruncated=true のとき打ち切りの注記が無い: %s", buf.String())
+	}
+}
+
+// TestJSONDroppedField は dropped 非空のとき JSON 出力に
+// rule_id/file/line/column/reason/base_confidence を持つ dropped 配列が
+// 追加されること、dropped=nil（既定・未指定相当）では "dropped" キー自体が
+// 出力に現れない（出力スキーマが 6 引数化前と完全に不変）ことを確認する。
+func TestJSONDroppedField(t *testing.T) {
+	findings := sample("dummy-value-1")
+
+	var withDropped bytes.Buffer
+	if err := JSON(&withDropped, findings, true, false, sampleDropped(), false); err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Dropped []struct {
+			RuleID         string `json:"rule_id"`
+			File           string `json:"file"`
+			Line           int    `json:"line"`
+			Column         int    `json:"column"`
+			Reason         string `json:"reason"`
+			BaseConfidence string `json:"base_confidence"`
+		} `json:"dropped"`
+		DroppedTruncated bool `json:"dropped_truncated"`
+	}
+	if err := json.Unmarshal(withDropped.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Dropped) != 1 {
+		t.Fatalf("dropped の件数 = %d, want 1: %s", len(got.Dropped), withDropped.String())
+	}
+	d := got.Dropped[0]
+	if d.RuleID != "jp-bank-account" || d.File != "users.csv" || d.Line != 7 || d.Column != 3 ||
+		d.Reason != "require-context-missing" || d.BaseConfidence != "medium" {
+		t.Errorf("dropped[0] = %+v, 期待値と不一致", d)
+	}
+	if got.DroppedTruncated {
+		t.Error("droppedTruncated=false のはずが true になっている")
+	}
+
+	var withoutDropped bytes.Buffer
+	if err := JSON(&withoutDropped, findings, true, false, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	out := withoutDropped.String()
+	if strings.Contains(out, `"dropped"`) {
+		t.Errorf("dropped=nil なのに \"dropped\" キーが出力に現れている: %s", out)
+	}
+	if strings.Contains(out, `"dropped_truncated"`) {
+		t.Errorf("droppedTruncated=false なのに \"dropped_truncated\" キーが出力に現れている: %s", out)
+	}
+}
+
+// TestJSONDroppedTruncated は droppedTruncated=true のとき
+// "dropped_truncated": true が出力されることを確認する。
+func TestJSONDroppedTruncated(t *testing.T) {
+	var buf bytes.Buffer
+	if err := JSON(&buf, nil, true, false, sampleDropped(), true); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), `"dropped_truncated": true`) {
+		t.Errorf("droppedTruncated=true が出力に反映されていない: %s", buf.String())
+	}
+}
+
+// TestJSONDroppedNoRawValue は dropped 配列の各要素が
+// rule_id/file/line/column/reason/base_confidence のみを持ち、生の検出値
+// （match 相当のフィールド）が一切含まれないことを確認する
+// （DroppedCandidate 自体が生値を持たない安全境界の出力層での再確認）。
+func TestJSONDroppedNoRawValue(t *testing.T) {
+	dropped := []detect.DroppedCandidate{
+		{RuleID: "jp-my-number", File: "f.go", Line: 1, Column: 1, Reason: "validate-failed", PatternBase: rule.Medium},
+	}
+	var buf bytes.Buffer
+	if err := JSON(&buf, nil, true, false, dropped, false); err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	entries, ok := doc["dropped"].([]any)
+	if !ok || len(entries) != 1 {
+		t.Fatalf("dropped 配列が想定形式でない: %s", buf.String())
+	}
+	entry, ok := entries[0].(map[string]any)
+	if !ok {
+		t.Fatalf("dropped[0] が object でない: %s", buf.String())
+	}
+	wantKeys := map[string]bool{"rule_id": true, "file": true, "line": true, "column": true, "reason": true, "base_confidence": true}
+	for k := range entry {
+		if !wantKeys[k] {
+			t.Errorf("dropped[0] に想定外のキー %q がある（生値混入の疑い）: %s", k, buf.String())
+		}
+	}
+	if len(entry) != len(wantKeys) {
+		t.Errorf("dropped[0] のキー数 = %d, want %d: %+v", len(entry), len(wantKeys), entry)
 	}
 }

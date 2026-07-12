@@ -2,7 +2,9 @@ package source
 
 import (
 	"encoding/binary"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"unicode/utf16"
 
@@ -227,4 +229,200 @@ func TestDecodeLegacyJapanese(t *testing.T) {
 			t.Fatalf("got = %q, want %q", got, wide)
 		}
 	})
+}
+
+// jsonEscapeAll は s の非 ASCII 文字をすべて \uXXXX（BMP 外は UTF-16
+// サロゲートペアの 2 個組）でエスケープする。Python の
+// json.dumps(..., ensure_ascii=True) が出力するエスケープ形式をテストで
+// 再現するためのヘルパー（テスト専用。本体コードでは使わない）。
+func jsonEscapeAll(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r < 0x80 {
+			b.WriteRune(r)
+			continue
+		}
+		if r > 0xFFFF {
+			r1, r2 := utf16.EncodeRune(r)
+			fmt.Fprintf(&b, `\u%04x\u%04x`, r1, r2)
+			continue
+		}
+		fmt.Fprintf(&b, `\u%04x`, r)
+	}
+	return b.String()
+}
+
+// decodeJSONUnicodeEscapes の単体テスト。復号規則を 1 つずつ確認する。
+// 入力はテスト対象そのものである \uXXXX エスケープ表記（バックティック
+// 文字列リテラルなので Go コンパイラによる解釈は受けず、そのままのバイト列
+// が渡る）。復号先のサンプル値は検出対象にならない一般語（あ・@・絵文字等）
+// のみを使い、dogfooding（jp-pii-detect scan .）に本ファイルが引っかから
+// ないようにする。
+func TestDecodeJSONUnicodeEscapes(t *testing.T) {
+	t.Run("基本", func(t *testing.T) {
+		got, ok := decodeJSONUnicodeEscapes("\\u3042")
+		if !ok {
+			t.Fatal("ok = false, want true")
+		}
+		if got != "あ" {
+			t.Fatalf("got = %q, want %q", got, "あ")
+		}
+	})
+
+	t.Run("バックスラッシュ偶奇", func(t *testing.T) {
+		// 2 連続バックスラッシュ + u0040 は、手前のバックスラッシュと
+		// ペアになるリテラルの \ の続きであり、JSON のエスケープ規則上
+		// そこから \u エスケープは始まらないため復号しない。
+		if got, ok := decodeJSONUnicodeEscapes(`\\u0040`); ok {
+			t.Fatalf("ok = true, got = %q, want false（2連続バックスラッシュは非復号のはず）", got)
+		}
+		// バックスラッシュ 1 個 + u0040 は復号する（0x40 は '@'）。
+		got, ok := decodeJSONUnicodeEscapes("\\u0040")
+		if !ok {
+			t.Fatal("ok = false, want true")
+		}
+		if got != "@" {
+			t.Fatalf("got = %q, want %q", got, "@")
+		}
+	})
+
+	t.Run("サロゲートペア合成", func(t *testing.T) {
+		got, ok := decodeJSONUnicodeEscapes("\\uD83D\\uDE00")
+		if !ok {
+			t.Fatal("ok = false, want true")
+		}
+		want := string(rune(0x1F600)) // U+1F600（BMP 外、サロゲートペア必須）
+		if got != want {
+			t.Fatalf("got = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("孤立サロゲート非復号", func(t *testing.T) {
+		// 対応する低位サロゲートが続かない孤立した上位サロゲート \uD83D は
+		// 復号せずリテラルのまま残す。直後に無関係な あ を置き、
+		// そちらは独立に復号されることで全体としては ok=true になることも
+		// 合わせて確認する（1 箇所でも復号できれば復号後テキストを使う、
+		// という規則の確認）。
+		got, ok := decodeJSONUnicodeEscapes("\\uD83D\\u3042")
+		if !ok {
+			t.Fatal("ok = false, want true（後続の \\u3042 は復号されるはず）")
+		}
+		want := "\\uD83D" + "あ"
+		if got != want {
+			t.Fatalf("got = %q, want %q（孤立サロゲートはリテラルのまま残るはず）", got, want)
+		}
+	})
+
+	t.Run("制御文字非復号", func(t *testing.T) {
+		// 復号結果が U+0020 未満の制御文字（U+000A は改行文字）になる
+		// エスケープは、行構造を壊さず行番号を原文と厳密に一致させるため
+		// 復号しない。直後の あ は独立に復号される。
+		got, ok := decodeJSONUnicodeEscapes("\\u000A\\u3042")
+		if !ok {
+			t.Fatal("ok = false, want true（後続の \\u3042 は復号されるはず）")
+		}
+		want := "\\u000A" + "あ"
+		if got != want {
+			t.Fatalf("got = %q, want %q（制御文字はリテラルのまま残るはず）", got, want)
+		}
+	})
+
+	t.Run("不正hex非復号", func(t *testing.T) {
+		// "g" は 16 進数として不正なため \u12g4 はエスケープとして復号しない。
+		got, ok := decodeJSONUnicodeEscapes("\\u12g4\\u3042")
+		if !ok {
+			t.Fatal("ok = false, want true（後続の \\u3042 は復号されるはず）")
+		}
+		want := `\u12g4` + "あ"
+		if got != want {
+			t.Fatalf("got = %q, want %q（不正なエスケープはリテラルのまま残るはず）", got, want)
+		}
+	})
+
+	t.Run("uなしは早期リターンし追加確保なし", func(t *testing.T) {
+		text := "plain ascii text without any escapes at all, here to give the fast path something to scan."
+		if _, ok := decodeJSONUnicodeEscapes(text); ok {
+			t.Fatal("ok = true, want false（バックスラッシュ u を含まないので復号対象なしのはず）")
+		}
+		allocs := testing.AllocsPerRun(100, func() {
+			decodeJSONUnicodeEscapes(text)
+		})
+		if allocs != 0 {
+			t.Fatalf("allocs/op = %v, want 0（早期リターンで確保が発生しないこと）", allocs)
+		}
+	})
+}
+
+// TestDecodeEscapedView は DecodeEscapedView が decodeJSONUnicodeEscapes への
+// 薄いラッパとして委譲していることだけを確認する（scan --stdin 経路
+// （cmd/jp-pii-detect/main.go）からの利用を想定した公開関数）。復号規則
+// そのものの網羅的なケースは TestDecodeJSONUnicodeEscapes を参照。
+func TestDecodeEscapedView(t *testing.T) {
+	t.Run("委譲: 復号成立", func(t *testing.T) {
+		got, ok := DecodeEscapedView("\\u3042")
+		if !ok {
+			t.Fatal("ok = false, want true")
+		}
+		if got != "あ" {
+			t.Fatalf("got = %q, want %q", got, "あ")
+		}
+	})
+
+	t.Run("委譲: \\u を含まない入力は復号なし（元テキストは変更されない）", func(t *testing.T) {
+		text := "plain text without escapes"
+		got, ok := DecodeEscapedView(text)
+		if ok {
+			t.Fatalf("ok = true, got = %q, want false", got)
+		}
+		if got != "" {
+			t.Fatalf("ok=false 時の戻り値 = %q, want \"\"（decodeJSONUnicodeEscapes と同じ契約）", got)
+		}
+	})
+}
+
+// ScanPaths が JSON の \uXXXX エスケープ（json.dumps(ensure_ascii=True) 等の
+// 出力・.ipynb・各種ログに頻出）に隠れた日本語 PII を復号して検出できること
+// （フル走査の end-to-end）。氏名（person-name）・住所（jp-address）の
+// 双方が検出され、行番号が原文（1 行の JSON）と一致することを確認する。
+func TestScanPathsDecodesJSONUnicodeEscapes(t *testing.T) {
+	name := testfixtures.MustGet(t, "detect.name_sato_hanako")
+	addr := testfixtures.MustGet(t, "detect.address_shibuya")
+	// json.dumps({"customer_name": name, "addr": addr}, ensure_ascii=True) 相当
+	// （インデント無しの 1 行出力）を手組みする。
+	content := `{"customer_name": "` + jsonEscapeAll(name) + `", "addr": "` + jsonEscapeAll(addr) + `"}` + "\n"
+
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "escaped.json"), []byte(content))
+
+	cfg := config.Default()
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, warnings, err := ScanPaths(d, cfg, []string{tmp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v, want none", warnings)
+	}
+
+	var hasName, hasAddress bool
+	for _, f := range findings {
+		if f.Line != 1 {
+			t.Errorf("finding = %+v, want line 1（原文どおり 1 行の JSON のため）", f)
+		}
+		switch f.RuleID {
+		case "person-name":
+			hasName = true
+		case "jp-address":
+			hasAddress = true
+		}
+	}
+	if !hasName {
+		t.Errorf("findings = %+v, want person-name の検出を含む", findings)
+	}
+	if !hasAddress {
+		t.Errorf("findings = %+v, want jp-address の検出を含む", findings)
+	}
 }

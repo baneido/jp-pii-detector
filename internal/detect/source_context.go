@@ -16,6 +16,11 @@ const (
 	// （splitSourceStatements、カンマを文区切りとして扱う）は誤解釈するため
 	// sourceExtensions には追加せず、csv_context.go の専用パーサへ分岐する。
 	sourceKindCSV
+	// sourceKindSQL は .sql 用の種別。INSERT 文の列リスト・VALUES 句は
+	// カンマ・丸括弧・引用符の入れ子を持ち、CSV と同じ理由で汎用のコード文
+	// パーサでは誤解釈するため sourceExtensions には追加せず、sql_context.go
+	// の専用パーサへ分岐する。
+	sourceKindSQL
 )
 
 type statementContext struct {
@@ -68,7 +73,6 @@ var sourceExtensions = map[string]bool{
 	".sh":         true,
 	".bash":       true,
 	".zsh":        true,
-	".sql":        true,
 	".json":       true,
 	".jsonc":      true,
 	".yaml":       true,
@@ -144,6 +148,8 @@ func sourceKindForPath(path string) sourceKind {
 	switch ext {
 	case ".csv", ".tsv":
 		return sourceKindCSV
+	case ".sql":
+		return sourceKindSQL
 	}
 	if sourceExtensions[ext] {
 		return sourceKindCode
@@ -152,11 +158,20 @@ func sourceKindForPath(path string) sourceKind {
 }
 
 func sourceLineContexts(file string, lines []string) []lineContext {
-	// CSV/TSV はヘッダ列名からフィールド単位の文脈を組み立てる専用パーサへ
-	// 分岐する（フル走査限定。diff 走査ではヘッダ行が hunk 外のことが多く
-	// 誤帰属のリスクが高いため sourceLineContextsForDiff では使わない）。
-	if sourceKindForPath(file) == sourceKindCSV {
+	// CSV/TSV はヘッダ列名から、.sql は INSERT 文の列名から、それぞれ
+	// フィールド単位の文脈を組み立てる専用パーサへ分岐する。フル走査の CSV は
+	// 1 行目（lines[0]）自身がヘッダなので csvLineContexts が使える。diff 走査
+	// （sourceLineContextsForDiff）の CSV はヘッダ行が hunk 外のことが多いため、
+	// 呼び出し側が `git show` で個別取得したヘッダを csvDiffLineContexts に渡す
+	// （internal/source/gitdiff.go 参照）。SQL の diff 走査は現状未対応
+	// （列コンテキストなしの安全側。対象の単一行 INSERT は列リストと値が同一
+	// 物理行で自己完結するため、必要になれば sqlLineContexts をそのまま分岐に
+	// 追加するだけで対応できる）。
+	switch sourceKindForPath(file) {
+	case sourceKindCSV:
 		return csvLineContexts(file, lines)
+	case sourceKindSQL:
+		return sqlLineContexts(file, lines)
 	}
 	out, ok := baseSourceLineContexts(file, lines)
 	if !ok {
@@ -168,7 +183,20 @@ func sourceLineContexts(file string, lines []string) []lineContext {
 	return out
 }
 
-func sourceLineContextsForDiff(file string, lines []string, added []bool) []lineContext {
+// csvHeader は .csv/.tsv の post-image ヘッダ行（1 行目）で、hunk 自体には
+// 含まれないことが多いため呼び出し側（internal/source/gitdiff.go）が
+// `git show` で個別取得して渡す（ScanDiffHunkWithCSVHeader 経由）。空文字なら
+// 「取得できなかった／対象外」を表し、CSV/TSV は csvDiffLineContexts が
+// そのまま列コンテキストなしを返す（安全側 = ScanDiffHunk のみを使っていた
+// 従来の挙動と同じ）。
+func sourceLineContextsForDiff(file string, lines []string, added []bool, csvHeader string) []lineContext {
+	// CSV/TSV は汎用のコード文パーサ（baseSourceLineContexts）ではなく専用の
+	// 列コンテキストパーサへ分岐する（sourceLineContexts のフル走査版と対称）。
+	// cross-line source context（addCrossLineSourceContexts）は CSV には適用しない
+	// （フル走査の csvLineContexts と同じ方針）。
+	if sourceKindForPath(file) == sourceKindCSV {
+		return csvDiffLineContexts(file, csvHeader, lines)
+	}
 	out, ok := baseSourceLineContexts(file, lines)
 	if !ok {
 		return out
@@ -184,9 +212,11 @@ func sourceLineContextsForDiff(file string, lines []string, added []bool) []line
 
 func baseSourceLineContexts(file string, lines []string) ([]lineContext, bool) {
 	out := make([]lineContext, len(lines))
-	// sourceKindCSV はここでは常に ok=false（コード文パーサ対象外）。
-	// sourceLineContextsForDiff がこの関数だけを使うため、結果として CSV は
-	// diff 走査での列コンテキスト付与から自動的に除外される。
+	// sourceKindCSV・sourceKindSQL はここでは常に ok=false（コード文パーサ
+	// 対象外）。CSV/TSV はフル走査・diff 走査とも、この関数へ渡る前に専用の
+	// csv*LineContexts へ分岐するため実際にはここへ来ない。SQL はフル走査では
+	// sqlLineContexts へ分岐し、diff 走査（sourceLineContextsForDiff）だけが
+	// ここへ来て ok=false → 列コンテキストなしの安全側になる。
 	if sourceKindForPath(file) != sourceKindCode {
 		return out, false
 	}
