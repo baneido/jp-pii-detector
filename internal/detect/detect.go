@@ -135,6 +135,11 @@ type DetectReason struct {
 	// service/ip/mobile/fixed/international のいずれか。設定ファイルの
 	// [rules] exclude_kinds（internal/config）でこの値ごとに検出を除外できる。
 	Kind string `json:"kind,omitempty"`
+	// External は組み込みルールではなく、[external_recognizer] で設定した外部コマンド
+	// 由来の検出であることを示す（--explain 表示用。internal/detect/external.go の
+	// MergeExternalFindings が設定する）。外部候補はチェックサム等の内部検証を
+	// 一切行わないため、Validated は常に false のままになる。
+	External bool `json:"external,omitempty"`
 }
 
 // Detector は設定を適用済みの検出エンジン。

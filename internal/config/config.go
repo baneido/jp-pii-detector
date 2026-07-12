@@ -8,9 +8,11 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/BurntSushi/toml"
+	"github.com/baneido/jp-pii-detector/internal/external"
 	"github.com/baneido/jp-pii-detector/internal/rule"
 )
 
@@ -90,6 +92,26 @@ type Config struct {
 		// Stopwords はマッチ文字列との完全一致で除外する値。
 		Stopwords []string `toml:"stopwords"`
 	} `toml:"allowlist"`
+
+	// ExternalRecognizer は外部コマンドを検出候補の生成器として呼び出す opt-in 連携設定
+	// （[external_recognizer]、internal/external）。既定は未設定（Command が空）＝完全に
+	// 無効で、フルスキャンと --stdin にのみ適用される（git diff 系は対象外）。
+	// 環境変数や自動探索ではコマンドを拾わず、この設定ファイル（--config で明示指定した
+	// ものを含む）でのみ有効化される。設定ファイルに書かれた任意コマンドを実行する
+	// 機能のため、リポジトリ内の .jp-pii.toml を信用できない環境では使わないこと
+	// （運用上の注意は integrations/external-recognizer/README.md を参照）。
+	ExternalRecognizer struct {
+		// Command は実行する外部コマンドの argv（例: ["python3", "my_ner.py"]）。
+		// シェル解釈は行わず exec.Command にそのまま渡すため、シェルインジェクションの
+		// 経路にはならない。空なら無効。
+		Command []string `toml:"command"`
+		// TimeoutSeconds は子プロセスの実行タイムアウト秒。0 以下なら既定
+		// external.DefaultTimeout（30 秒）を使う。
+		TimeoutSeconds int `toml:"timeout_seconds"`
+		// MaxFindings は 1 回の走査で受理する外部検出候補の上限。0 以下なら既定
+		// external.DefaultMaxFindings（1000 件）を使う。
+		MaxFindings int `toml:"max_findings"`
+	} `toml:"external_recognizer"`
 
 	pathRes  []*regexp.Regexp
 	allowRes []*regexp.Regexp
@@ -204,6 +226,24 @@ func (c *Config) compile() error {
 	}
 	if err := c.compileCustomRules(); err != nil {
 		return err
+	}
+	if err := c.validateExternalRecognizer(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateExternalRecognizer は [external_recognizer].command の形を検査する。
+// 未設定（空）は常に有効な「無効状態」なので何もしない。空文字列を実行しようとする
+// 設定ミスだけを早期に検知し、後段の exec.Command 呼び出し時の分かりにくい失敗より
+// 分かりやすい設定エラーにする。timeout_seconds・max_findings は 0 以下を
+// internal/external 側が既定値へフォールバックするため、ここでは検証しない。
+func (c *Config) validateExternalRecognizer() error {
+	if len(c.ExternalRecognizer.Command) == 0 {
+		return nil
+	}
+	if c.ExternalRecognizer.Command[0] == "" {
+		return fmt.Errorf("config: external_recognizer.command: 先頭要素（実行コマンド）が空です")
 	}
 	return nil
 }
@@ -342,3 +382,22 @@ func (c *Config) CustomRules() []rule.Rule { return c.customRules }
 
 // Warnings は Parse 時に検出した非致命的な警告（未知の設定キー等）を返す。
 func (c *Config) Warnings() []string { return c.warnings }
+
+// ExternalRecognizerEnabled は [external_recognizer] にコマンドが設定されているかを
+// 返す。false の間は呼び出し側（internal/source・cmd/jp-pii-detect）が
+// internal/external.Run を一切呼ばないため、既定の未設定状態でのコストはゼロになる。
+func (c *Config) ExternalRecognizerEnabled() bool {
+	return len(c.ExternalRecognizer.Command) > 0 && c.ExternalRecognizer.Command[0] != ""
+}
+
+// ExternalRecognizerConfig は [external_recognizer] を internal/external.Config へ
+// 変換する。timeout_seconds・max_findings が 0 以下（未設定）の場合はそのまま
+// external.Config へ渡し、実際のフォールバック（既定 30 秒・1000 件）は
+// external.Run 側が行う。
+func (c *Config) ExternalRecognizerConfig() external.Config {
+	return external.Config{
+		Command:     append([]string{}, c.ExternalRecognizer.Command...),
+		Timeout:     time.Duration(c.ExternalRecognizer.TimeoutSeconds) * time.Second,
+		MaxFindings: c.ExternalRecognizer.MaxFindings,
+	}
+}

@@ -1,0 +1,11 @@
+# external_recognizer のデモ設定（integrations/external-recognizer/README.md 参照）。
+# このファイル自体はサンプルであり、jp-pii-detector リポジトリ自身の設定
+# （リポジトリルートの .jp-pii.toml）には external_recognizer を追加していません。
+#
+# 使い方:
+#   ./jp-pii-detect scan --config integrations/external-recognizer/sample.jp-pii.toml <path>
+
+[external_recognizer]
+command = ["python3", "integrations/external-recognizer/demo_recognizer.py"]
+timeout_seconds = 30
+max_findings = 1000

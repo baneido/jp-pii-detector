@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"github.com/baneido/jp-pii-detector/internal/baseline"
 	"github.com/baneido/jp-pii-detector/internal/config"
 	"github.com/baneido/jp-pii-detector/internal/detect"
+	"github.com/baneido/jp-pii-detector/internal/external"
 	"github.com/baneido/jp-pii-detector/internal/report"
 	"github.com/baneido/jp-pii-detector/internal/rule"
 	"github.com/baneido/jp-pii-detector/internal/source"
@@ -219,7 +221,26 @@ func runScan(args []string) int {
 			if decoded, ok := source.DecodeEscapedView(text); ok {
 				text = decoded
 			}
-			findings = detect.ComputeOffsets(text, det.ScanContent("<stdin>", text))
+			stdinFindings := det.ScanContent("<stdin>", text)
+			// 外部レコグナイザ（opt-in、internal/external）: フルスキャン
+			// （internal/source）と同じく 1 走査 1 プロセスで、--stdin では
+			// このテキスト 1 本だけを渡す。未設定時は cfg.ExternalRecognizerEnabled()
+			// が false のためここに一切コストがかからない。git diff 系
+			// （--staged/--diff）は対象外（設計メモ・CLAUDE.md 参照）。
+			if cfg.ExternalRecognizerEnabled() {
+				candidates, diagnostics := external.Run(context.Background(), cfg.ExternalRecognizerConfig(),
+					[]external.FileInput{{File: "<stdin>", Text: text}})
+				for _, msg := range diagnostics {
+					fmt.Fprintln(os.Stderr, "jp-pii-detect: external-recognizer:", msg)
+				}
+				if len(candidates) > 0 {
+					stdinFindings = det.MergeExternalFindings("<stdin>", text, stdinFindings, candidates)
+				}
+			}
+			// ComputeOffsets は外部レコグナイザ由来の finding も含めて
+			// offset/end_offset を付与する（Presidio 連携等、文字オフセット基準の
+			// 利用側は外部候補も同じ形式で受け取れる）。
+			findings = detect.ComputeOffsets(text, stdinFindings)
 		}
 	case *staged:
 		findings, err = source.ScanStaged(det, cfg)

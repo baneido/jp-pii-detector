@@ -3,8 +3,10 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/baneido/jp-pii-detector/internal/rule"
 )
@@ -554,5 +556,104 @@ func TestRepoOwnConfigParsesWithoutWarnings(t *testing.T) {
 	}
 	if len(cfg.CustomRules()) != 0 {
 		t.Errorf("CustomRules() = %v, want none (repo config defines no custom rules)", cfg.CustomRules())
+	}
+	// external_recognizer は任意コマンド実行機能のため、リポジトリ自身の
+	// .jp-pii.toml には意図的に追加しない（設計メモ参照）。既定の未設定状態を
+	// ここで確認しておく。
+	if cfg.ExternalRecognizerEnabled() {
+		t.Error("ExternalRecognizerEnabled() = true, want false for the repo's own config (must not be enabled by default)")
+	}
+}
+
+func TestParseExternalRecognizerDefaultsDisabled(t *testing.T) {
+	cfg, err := Parse("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ExternalRecognizerEnabled() {
+		t.Error("ExternalRecognizerEnabled() = true, want false when [external_recognizer] is absent")
+	}
+	if cfg.ExternalRecognizerConfig().Enabled() {
+		t.Error("ExternalRecognizerConfig().Enabled() = true, want false when [external_recognizer] is absent")
+	}
+}
+
+func TestParseExternalRecognizerEnabled(t *testing.T) {
+	cfg, err := Parse(`
+[external_recognizer]
+command = ["python3", "my_ner.py"]
+timeout_seconds = 5
+max_findings = 50
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.ExternalRecognizerEnabled() {
+		t.Fatal("ExternalRecognizerEnabled() = false, want true")
+	}
+	want := []string{"python3", "my_ner.py"}
+	if got := cfg.ExternalRecognizer.Command; !slices.Equal(got, want) {
+		t.Errorf("ExternalRecognizer.Command = %v, want %v", got, want)
+	}
+	ec := cfg.ExternalRecognizerConfig()
+	if !ec.Enabled() {
+		t.Fatal("ExternalRecognizerConfig().Enabled() = false, want true")
+	}
+	if !slices.Equal(ec.Command, want) {
+		t.Errorf("ExternalRecognizerConfig().Command = %v, want %v", ec.Command, want)
+	}
+	if ec.Timeout != 5*time.Second {
+		t.Errorf("ExternalRecognizerConfig().Timeout = %v, want 5s", ec.Timeout)
+	}
+	if ec.MaxFindings != 50 {
+		t.Errorf("ExternalRecognizerConfig().MaxFindings = %d, want 50", ec.MaxFindings)
+	}
+}
+
+func TestParseExternalRecognizerUnsetTimeoutAndMaxFindingsPassThroughAsZero(t *testing.T) {
+	// timeout_seconds・max_findings 未指定時は 0 のまま internal/external.Config へ
+	// 渡し、既定値へのフォールバックは external.Run 側の責務にする（config 側で
+	// 二重にデフォルト値を持たない）。
+	cfg, err := Parse(`
+[external_recognizer]
+command = ["my-recognizer"]
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ec := cfg.ExternalRecognizerConfig()
+	if ec.Timeout != 0 {
+		t.Errorf("Timeout = %v, want 0 (fallback happens in internal/external, not here)", ec.Timeout)
+	}
+	if ec.MaxFindings != 0 {
+		t.Errorf("MaxFindings = %d, want 0 (fallback happens in internal/external, not here)", ec.MaxFindings)
+	}
+}
+
+func TestParseExternalRecognizerEmptyCommandFirstElementIsConfigError(t *testing.T) {
+	_, err := Parse(`
+[external_recognizer]
+command = [""]
+`)
+	if err == nil {
+		t.Fatal("Parse() succeeded, want an error for an empty command[0]")
+	}
+}
+
+func TestParseExternalRecognizerUnknownSubkeyWarns(t *testing.T) {
+	cfg, err := Parse(`
+[external_recognizer]
+command = ["my-recognizer"]
+typo_key = "x"
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	warnings := cfg.Warnings()
+	if len(warnings) == 0 {
+		t.Fatal("Warnings() is empty, want a warning for the unknown external_recognizer.typo_key")
+	}
+	if joined := strings.Join(warnings, " "); !strings.Contains(joined, "typo_key") {
+		t.Errorf("Warnings() = %v, want it to mention %q", warnings, "typo_key")
 	}
 }

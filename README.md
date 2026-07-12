@@ -255,6 +255,24 @@ TEST_PHONE = "090-XXXX-XXXX"  # jp-pii-detector:ignore テスト用ダミー
 
 旧マーカー `pii-allow` も互換性のため引き続き利用できます。
 
+### 外部レコグナイザ連携（`external_recognizer`、opt-in）
+
+軽量 NER（GiNZA/BERT 等）による氏名検出などを、Go バイナリに依存を足さずに接続できます。
+既定は未設定＝完全に無効です:
+
+```toml
+[external_recognizer]
+command = ["python3", "my_ner.py"]  # argv 配列。シェル解釈はしない
+timeout_seconds = 30                # 既定 30
+max_findings = 1000                 # 既定 1000
+```
+
+プロトコル仕様・動くデモ（[integrations/external-recognizer/](integrations/external-recognizer/)）・
+**セキュリティ上の注意**（設定ファイルに書かれた任意コマンドを実行する機能のため、
+リポジトリ内の `.jp-pii.toml` を信用できない環境では使わないこと等）は
+[docs/detection-methods.md の「4.8 外部レコグナイザ連携」](docs/detection-methods.md#48-外部レコグナイザ連携external_recognizeropt-in)
+を参照してください。
+
 ## ベースライン（既存の検出を凍結して新規のみ fail させる）
 
 既存リポジトリに導入すると、過去に混入済みの PII やダミー値が一斉に検出されて CI が

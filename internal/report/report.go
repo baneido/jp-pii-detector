@@ -99,6 +99,9 @@ func formatReason(r detect.DetectReason) string {
 	if r.Kind != "" {
 		parts = append(parts, fmt.Sprintf("種別=%s", r.Kind))
 	}
+	if r.External {
+		parts = append(parts, "外部レコグナイザ=true")
+	}
 	return strings.Join(parts, " ")
 }
 
