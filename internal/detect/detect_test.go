@@ -104,6 +104,39 @@ func TestMyNumberSeparatorVariants(t *testing.T) {
 	}
 }
 
+// TestMyNumberDotSlashParenVariants はドット・スラッシュ・括弧区切りの 6-6
+// マイナンバー表記をカバーする（#46 と同型の作業）。小数リテラル・URL・関数
+// 呼び出し風の表記と衝突しないよう、3 形とも RequireContext を必須にしている。
+func TestMyNumberDotSlashParenVariants(t *testing.T) {
+	d := newDetector(t, "")
+	mynum := testfixtures.MustGet(t, "detect.mynumber_valid")
+	sep := func(c string) string { return mynum[:6] + c + mynum[6:] }
+	paren := "(" + mynum[:6] + ")" + mynum[6:]
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"ドット区切り コンテキストあり", "個人番号：" + sep("."), []string{"jp-my-number"}},
+		{"スラッシュ区切り コンテキストあり", "my_number: " + sep("/"), []string{"jp-my-number"}},
+		{"括弧区切り コンテキストあり", "mynumber: " + paren, []string{"jp-my-number"}},
+		{"ドット区切り コンテキストなしは対象外（小数リテラルと区別できない）", "値 = " + sep("."), nil},
+		{"スラッシュ区切り コンテキストなしは対象外", sep("/"), nil},
+		{"括弧区切り コンテキストなしは対象外", paren, nil},
+		{"文脈ありでも金額サフィックス（負文脈）があれば抑制", "個人番号" + sep(".") + "円", nil},
+		// 数式・関数呼び出し風は境界ガードで自然に非対象になる。
+		{"関数呼び出し風（開き括弧の直前が英字）は対象外", "mynumber: func" + paren, nil},
+		{"数式風（閉じ括弧の直後に空白と演算子）は対象外", "mynumber: (" + mynum[:6] + ") + " + mynum[6:], nil},
+		// 部分一致防止（隣接する同幅グループがあれば全体を棄却）。
+		{"ドット区切りの直後にさらに同幅のドット区切り数字が続く場合は対象外", "個人番号：" + sep(".") + "." + mynum[6:], nil},
+		{"スラッシュ区切りの直前にさらに同幅のスラッシュ区切り数字がある場合は対象外", "個人番号：" + mynum[6:] + "/" + sep("/"), nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
 func TestNumericSeparatorVariantsRejectLongTokenPrefixes(t *testing.T) {
 	d := newDetector(t, "")
 	tests := []struct {
@@ -451,6 +484,60 @@ func TestPhoneLandlineDotSeparated(t *testing.T) {
 	}
 }
 
+// TestPhoneSlashSeparatedMobile はスラッシュ区切り携帯番号（例:「連絡先
+// 090/1234/5678」）をカバーする。スラッシュは URL パス区切りとしても一般的で
+// 桁形状だけでは判別できないため、他の区切りあり携帯パターンと異なり
+// RequireContext を必須にして URL パス風の表記を構造的に避ける。
+func TestPhoneSlashSeparatedMobile(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"コンテキストあり", "連絡先 090/1234/5678", []string{"jp-phone-number"}},
+		{"コンテキストなしは対象外", "090/1234/5678", nil},
+		{"携帯プレフィックスでないスラッシュ区切りは対象外", "連絡先 030/1234/5678", nil},
+		{"URLパス風は対象外（コンテキストなし）", "https://example.com/090/1234/5678", nil},
+		{"URLパス風は対象外（APIパス）", "api/v2/090/1234/5678", nil},
+		{"日付風は対象外（桁形状不一致）", "更新日: 2024/04/01", nil},
+		{"直後にさらにスラッシュ数字が続く場合は対象外", "連絡先 090/1234/5678/9", nil},
+		{"直前にさらにスラッシュ数字がある場合は対象外", "連絡先 9/090/1234/5678", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestPhoneMixedSeparatorLandline は混在区切り固定電話（ドット+ハイフン、
+// ハイフン+ドット）をカバーする。既存のドット単独区切りパターンに倣い
+// RequireContext なし・Base Medium とする。
+func TestPhoneMixedSeparatorLandline(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+		conf       rule.Confidence
+	}{
+		{"ドット+ハイフン", "本社: 03.1234-5678", []string{"jp-phone-number"}, rule.Medium},
+		{"ハイフン+ドット", "本社: 03-1234.5678", []string{"jp-phone-number"}, rule.Medium},
+		{"コンテキストなしでも検出（Base Medium のまま）", "03.1234-5678", []string{"jp-phone-number"}, rule.Medium},
+		{"バージョン風（先頭グループが数字を持たない）は対象外", "バージョン 0.1234-5678", nil, 0},
+		{"直後にさらにドット数字が続く場合は対象外", "本社: 03.1234-5678.9", nil, 0},
+		{"直前にさらにハイフン数字がある場合は対象外", "本社: 9-03.1234-5678", nil, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, tt.want...)
+			if len(fs) == 1 && fs[0].Confidence != tt.conf {
+				t.Errorf("confidence = %v, want %v", fs[0].Confidence, tt.conf)
+			}
+		})
+	}
+}
+
 // TestPhoneKindDefaultReportsBothWithReasonKind は、docs/detection-methods.md の
 // 対象外表とルール実装の不整合（フリーダイヤル等のサービス番号も実際には
 // jp-phone-number として検出される）を踏まえて追加した下位種別分類（Rule.Kind /
@@ -727,6 +814,36 @@ func TestDriversLicenseHyphenVariant(t *testing.T) {
 	}
 }
 
+// TestDriversLicenseDotSeparated はドット区切り（4-4-4）の運転免許証番号
+// 表記をカバーする。このルールは Base High だが、新表記ゆれ形は High帯
+// キャリブレーション（validate だけで精度が出る場合に限り High とする方針）を
+// 守るため Base Medium に据え置く。
+func TestDriversLicenseDotSeparated(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+		conf       rule.Confidence
+	}{
+		{"ドット区切り コンテキストあり", "免許 1234.5678.9012", []string{"jp-drivers-license"}, rule.Medium},
+		{"ドット区切り コンテキストなし", "1234.5678.9012", nil, 0},
+		{"プレースホルダ（全桁同一）はドット区切りでも棄却", "免許 0000.0000.0000", nil, 0},
+		{"プレースホルダ（全桁同一・非ゼロ）はドット区切りでも棄却", "免許 1111.1111.1111", nil, 0},
+		{"先頭が0の場合はドット区切りでも棄却", "免許 0501.2345.6789", nil, 0},
+		{"直後にさらに同幅のドット区切り数字が続く場合は対象外", "免許 1234.5678.9012.3456", nil, 0},
+		{"直前にさらに同幅のドット区切り数字がある場合は対象外", "免許 3456.1234.5678.9012", nil, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, tt.want...)
+			if len(fs) == 1 && fs[0].Confidence != tt.conf {
+				t.Errorf("confidence = %v, want %v", fs[0].Confidence, tt.conf)
+			}
+		})
+	}
+}
+
 // TestPassportSpaceVariant は issue #46 で追加した英字・数字間の半角スペース
 // 任意表記（AB 1234567）をカバーする。
 func TestPassportSpaceVariant(t *testing.T) {
@@ -768,6 +885,35 @@ func TestPensionNumberSpaceVariant(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestPensionNumberDotSeparated はドット区切り（4-6）の基礎年金番号表記を
+// カバーする。既存のハイフン・空白区切りは書式自体の情報量が高く Base High
+// だが、ドット区切りは小数点のようにも見えるため新表記ゆれとして Base Medium
+// に据え置く。
+func TestPensionNumberDotSeparated(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+		conf       rule.Confidence
+	}{
+		{"ドット区切り", "年金 1234.567890", []string{"jp-pension-number"}, rule.Medium},
+		{"コンテキストなし", "1234.567890", nil, 0},
+		{"より長い数字列の一部は対象外", "年金 1234.5678901", nil, 0},
+		{"全桁同一のダミー値は棄却", "年金 0000.000000", nil, 0},
+		{"直後にさらにドット数字が続く場合は対象外", "年金 1234.567890.1", nil, 0},
+		{"直前にさらにドット数字がある場合は対象外", "年金 1.1234.567890", nil, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, tt.want...)
+			if len(fs) == 1 && fs[0].Confidence != tt.conf {
+				t.Errorf("confidence = %v, want %v", fs[0].Confidence, tt.conf)
+			}
 		})
 	}
 }
@@ -2445,6 +2591,52 @@ func TestBankCodeContextEnablesDetection(t *testing.T) {
 		{"未収録コード", "9999-123-7654321", nil},
 		{"5桁コードの一部", "10005-123-7654321", nil},
 		{"コードだけでは文脈にしない", "銀行コード0005 7654321", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestBankAccountSpaceSlashSeparatedVariant は空白・スラッシュ区切り（3+4）の
+// 銀行口座番号表記をカバーする。normalize.Line が全角スラッシュ「／」を半角へ
+// 畳むため、この 1 パターンで両方の表記に対応する。
+func TestBankAccountSpaceSlashSeparatedVariant(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"空白区切り", "口座番号 123 4567", []string{"jp-bank-account"}},
+		{"全角スラッシュ区切り", "口座番号 123／4567", []string{"jp-bank-account"}},
+		{"半角スラッシュ区切り", "口座番号 123/4567", []string{"jp-bank-account"}},
+		{"コンテキストなしは対象外", "123 4567", nil},
+		{"全桁同一（空白区切り）ダミーは棄却", "口座番号 000 0000", nil},
+		{"直後にさらに空白数字が続く場合は対象外", "口座番号 123 4567 8888", nil},
+		{"直前にさらに空白数字がある場合は対象外", "口座番号 8888 123 4567", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestHealthInsuranceSpaceSeparated8Digit は空白区切り8桁（4+4）の健康保険
+// 番号表記をカバーする。8桁連結パターンと同じ RequireContext・窓（ルール既定
+// の40ルーン）を使う。
+func TestHealthInsuranceSpaceSeparated8Digit(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"コンテキストあり", "保険者番号 1234 5678", []string{"jp-health-insurance"}},
+		{"コンテキストなしは対象外", "1234 5678", nil},
+		{"全桁同一ダミーは棄却", "保険者番号 0000 0000", nil},
+		{"直後にさらに空白数字が続く場合は対象外", "保険者番号 1234 5678 9999", nil},
+		{"直前にさらに空白数字がある場合は対象外", "保険者番号 9999 1234 5678", nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

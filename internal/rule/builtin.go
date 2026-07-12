@@ -97,15 +97,18 @@ func rejectSeparatedDigitGroup(separators string, widths ...int) func(string, in
 }
 
 // stripSeparators は番号表記の区切り文字（ハイフン・半角スペース・ドット・
-// 丸括弧）を除去する。マイナンバー・クレジットカードの呼び出しはこれらの
-// 区切り文字を元々捕捉しない（正規表現側にハイフン・空白しか含まない）ため、
-// ドット・丸括弧の追加は無効化に影響しない。電話番号（括弧市外局番・
-// ドット区切り携帯）と運転免許（ハイフン区切り 4-4-4）の新パターンが
-// この拡張に依存する。
+// 丸括弧・スラッシュ）を除去する。マイナンバー・クレジットカードの呼び出しは
+// これらの区切り文字を元々捕捉しない（正規表現側にハイフン・空白しか
+// 含まない）ため、ドット・丸括弧・スラッシュの追加は無効化に影響しない。
+// 電話番号（括弧市外局番・ドット区切り携帯）と運転免許（ハイフン区切り
+// 4-4-4）の新パターンがドット・丸括弧の拡張に依存する。スラッシュは
+// マイナンバーのスラッシュ区切り 6-6 と電話番号のスラッシュ区切り携帯の
+// 新パターンが依存する（区切りを除いた 12 桁 / 10-11 桁でチェックディジット・
+// 市外局番辞書照合が成立するようにするため）。
 func stripSeparators(s string) string {
 	return strings.Map(func(r rune) rune {
 		switch r {
-		case '-', ' ', '.', '(', ')':
+		case '-', ' ', '.', '(', ')', '/':
 			return -1
 		}
 		return r
@@ -584,6 +587,21 @@ func Builtin() []Rule {
 					ValidateLine: rejectSeparatedDigitGroup(" ", 4)},
 				{Re: dgNoAlnumHyphen(`\d{6} \d{6}`), Base: Medium,
 					ValidateLine: rejectSeparatedDigitGroup(" ", 6)},
+				// ドット区切り（6-6）。「値 = 123456.000007」のような小数リテラルと
+				// 区別できないため、上の空白区切りと異なり RequireContext を必須に
+				// する（以下のスラッシュ・括弧区切りも同じ理由で必須にする）。Base は
+				// 新表記ゆれとして Medium に据え置く。
+				{Re: dgNoAlnumHyphen(`\d{6}\.\d{6}`), Base: Medium, RequireContext: true, RequireContextWindow: digitRuleRequireContextWindow,
+					ValidateLine: rejectSeparatedDigitGroup(".", 6)},
+				// スラッシュ区切り（6-6）。stripSeparators にスラッシュを追加済み
+				// なので、区切りを除いた 12 桁でそのまま検査用数字が検証される。
+				{Re: dgNoAlnumHyphen(`\d{6}/\d{6}`), Base: Medium, RequireContext: true, RequireContextWindow: digitRuleRequireContextWindow,
+					ValidateLine: rejectSeparatedDigitGroup("/", 6)},
+				// 括弧区切り（前半 6 桁を丸括弧書き）。dgNoAlnumHyphen の境界ガードが
+				// 開き括弧の直前の英数字（"func(123456)000007" のような関数呼び出し
+				// 風の表記）を除外するため、数式・関数呼び出しとの衝突は構造的に
+				// 避けられる。
+				{Re: dgNoAlnumHyphen(`\(\d{6}\)\d{6}`), Base: Medium, RequireContext: true, RequireContextWindow: digitRuleRequireContextWindow},
 			},
 		},
 		{
@@ -612,6 +630,12 @@ func Builtin() []Rule {
 				// 空白・ドット区切り携帯・IP 電話
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0[ .]\d{4}[ .]\d{4}`), Base: Medium,
 					ValidateLine: rejectSeparatedDigitGroup(" .", 1)},
+				// スラッシュ区切り携帯・IP 電話。スラッシュは URL パス区切りとしても
+				// 一般的で桁形状だけでは判別できないため（"https://.../090/1234/5678"
+				// 「api/v2/090/1234/5678」等）、他の区切りあり携帯パターンと異なり
+				// RequireContext を必須にして構造的に FP を避ける。
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0/\d{4}/\d{4}`), Base: Medium, RequireContext: true,
+					ValidateLine: rejectSeparatedDigitGroup("/", 1)},
 				// 区切りなし携帯・IP 電話
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0\d{8}`), Base: Medium, NegativeContextMode: NegativeContextAdjacentLabelOnly},
 				// 区切りあり固定電話（市外局番 2〜5 桁）。末尾は 3〜4 桁を許容し、
@@ -626,6 +650,20 @@ func Builtin() []Rule {
 				// 表記は自動的に市外局番の実在性検証がかかる。
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}\.\d{1,4}\.\d{3,4}`), Base: Medium,
 					ValidateLine: rejectSeparatedDigitGroup(" .", 1)},
+				// 混在区切り固定電話（ドット+ハイフン、ハイフン+ドット）。上の
+				// ドット単独区切りパターンに倣い RequireContext なし・Base Medium と
+				// する。ただし、上のコメントにある「ドット単独区切りは自動的に
+				// 市外局番辞書照合がかかる」仕組みには乗らない: validPhone は
+				// strings.ContainsAny(m, "- ") でハイフン・空白の有無だけを見て
+				// 経路を分けるため、この混在形は必ずハイフンを含み、区切りあり
+				// 表記と同じ緩い判定（2 桁目が 0 でないことのみ）の経路になる
+				// （dict.ValidAreaCode は通らない）。桁構造自体が既に情報量の
+				// 高いシグナルであるため、他の区切りあり電話パターンと同水準の
+				// 検証で許容する。
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}\.\d{1,4}-\d{3,4}`), Base: Medium,
+					ValidateLine: rejectSeparatedDigitGroup(" .-", 1)},
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}-\d{1,4}\.\d{3,4}`), Base: Medium,
+					ValidateLine: rejectSeparatedDigitGroup(" .-", 1)},
 				// 括弧市外局番（市外局番の直後に市内局番を括弧書き、または
 				// 市外局番全体を括弧で囲む表記）。
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}\(\d{1,4}\)\d{4}`), Base: Medium},
@@ -837,6 +875,14 @@ func Builtin() []Rule {
 				// ハイフン区切り（4-4-4）。dgNoAlnumHyphen で UUID 等のハイフン区切り
 				// トークンの内部を除外する（dg ではなく my-number と同じ境界ガード）。
 				{Re: dgNoAlnumHyphen(`\d{4}-\d{4}-\d{4}`), Base: High, RequireContext: true},
+				// ドット区切り（4-4-4）。このルールは Base High だが、新表記ゆれ形は
+				// Base Medium に据え置き、High帯キャリブレーション（validate だけで
+				// 精度が出る場合に限り High とする方針）を守る。ValidateLine は
+				// 自身の内部グループと同じ幅（4 桁）の隣接ドット区切りグループが
+				// あれば、より長い数字列の一部とみなして棄却する
+				// （my-number の 4-4-4 空白区切りパターンと同じ手法）。
+				{Re: dg(`\d{4}\.\d{4}\.\d{4}`), Base: Medium, RequireContext: true,
+					ValidateLine: rejectSeparatedDigitGroup(".", 4)},
 			},
 		},
 		{
@@ -866,6 +912,13 @@ func Builtin() []Rule {
 				// stripSeparators で区切り文字を除いた上で判定する）。
 				{Re: dg(`\d{4}[- ]?\d{6}`), Base: High, RequireContext: true,
 					ValidateLine: rejectSeparatedDigitGroup(" ", 1)},
+				// ドット区切り（4-6）。既存のハイフン・空白区切りは書式自体の
+				// 情報量が高く Base High だが、ドット区切りは小数点のようにも
+				// 見えるため新表記ゆれとして Base Medium に据え置く。
+				// stripSeparators は既にドットを除去するため validPensionNumber の
+				// AllSame 判定はそのまま効く。
+				{Re: dg(`\d{4}\.\d{6}`), Base: Medium, RequireContext: true,
+					ValidateLine: rejectSeparatedDigitGroup(".", 1)},
 			},
 		},
 		{
@@ -906,6 +959,16 @@ func Builtin() []Rule {
 			Validate:             validBankAccount,
 			Patterns: []Pattern{
 				{Re: dg(`\d{7}`), Base: Medium, RequireContext: true, ValidateLine: rejectYuchoAccountSuffix},
+				// 空白・スラッシュ区切り（3+4）。normalize.Line が全角スラッシュ
+				// 「／」を半角へ畳むため、この 1 パターンで両表記に対応する。
+				// validBankAccount は区切り文字を含む生のマッチ文字列に対して
+				// AllSame を判定するため、区切りを挟むと全桁同一ダミー
+				// （"口座番号 000 0000" 等）を取りこぼす。区切りを除いてから
+				// 同じ判定を行う Pattern.Validate を追加する
+				// （validPensionNumber 等と同じ手法）。
+				{Re: dg(`\d{3}[ /]\d{4}`), Base: Medium, RequireContext: true,
+					Validate:     func(m string) bool { return !checksum.AllSame(stripSeparators(m)) },
+					ValidateLine: rejectSeparatedDigitGroup(" /", 3, 4)},
 			},
 		},
 		{
@@ -991,6 +1054,15 @@ func Builtin() []Rule {
 			Validate:             validHealthInsurance,
 			Patterns: []Pattern{
 				{Re: dg(`\d{8}`), Base: Medium, RequireContext: true},
+				// 空白区切り8桁（4+4）。8桁連結時と同じ RequireContext・窓
+				// （ルール既定の 40 ルーン）を使う。validHealthInsurance は区切り
+				// 文字を含む生のマッチ文字列に対して AllSame を判定するため、
+				// 空白を挟むと全桁同一ダミー（"保険者番号 0000 0000" 等）を
+				// 取りこぼす。区切りを除いてから同じ判定を行う Pattern.Validate を
+				// 追加する。
+				{Re: dg(`\d{4} \d{4}`), Base: Medium, RequireContext: true,
+					Validate:     func(m string) bool { return !checksum.AllSame(stripSeparators(m)) },
+					ValidateLine: rejectSeparatedDigitGroup(" ", 4)},
 				// 国民健康保険の保険者番号は 6 桁。日常的な数字との衝突が大きい
 				// ため、既存の広い文脈語（「保険証」「被保険者」等）だけでは
 				// 発火させず、正規表現自体にも強ラベル「保険者番号」と通常の

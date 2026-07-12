@@ -809,9 +809,12 @@ func TestPhoneNumberPatternsUseAdjacentLabelOnlyMode(t *testing.T) {
 	wantAdjacentLabelOnly := map[string]bool{
 		dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0-\d{4}-\d{4}`).String():                      true,
 		dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0[ .]\d{4}[ .]\d{4}`).String():                false,
+		dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0/\d{4}/\d{4}`).String():                      false,
 		dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0\d{8}`).String():                             true,
 		dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}-\d{1,4}-\d{3,4}`).String():                 true,
 		dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}\.\d{1,4}\.\d{3,4}`).String():               false,
+		dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}\.\d{1,4}-\d{3,4}`).String():                false,
+		dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}-\d{1,4}\.\d{3,4}`).String():                false,
 		dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}\(\d{1,4}\)\d{4}`).String():                 false,
 		dgNoDigitBeforeNoAlnumHyphenAfter(`\(0\d{1,4}\)\s?\d{1,4}-?\d{4}`).String():            false,
 		dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{9}`).String():                                   false,

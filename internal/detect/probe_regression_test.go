@@ -49,31 +49,9 @@ func TestProbeRegressionKnownFalseNegatives(t *testing.T) {
 	tests := []struct {
 		name, line string
 	}{
-		// jp-my-number: 12 桁が区切り文字（ドット・括弧・スラッシュ）で
-		// 分断されると \d{12} 連続要求にマッチしない。issue 記載の
-		// 「空白区切りマイナンバー」系統のうち、空白 6-6 / 4-4-4 は #46 で
-		// 検出に転じたため下の TestProbeResolvedNumericSeparatorFalseNegatives へ移動。
-		{"probe-fn:mynumber-dot-separated", "個人番号：123456.000007"},
-		{"probe-fn:mynumber-paren-grouped", "mynumber: (123456)000007"},
-		{"probe-fn:mynumber-slash-separated", "my_number: 123456/000007"},
-
-		// 括弧市外局番・空白/ドット区切り携帯は #46 で検出に転じたため下の
-		// TestProbeResolvedNumericSeparatorFalseNegatives へ移動。スラッシュ
-		// 区切り・混在区切りは依然パターン未対応で FN のまま。
-		{"probe-fn:phone-slash-separated-mobile", "連絡先 090/1234/5678"},
-		{"probe-fn:phone-mixed-separator", "本社: 03.1234-5678"},
-
 		// 都道府県名を伴わない市区町村＋番地は、既定プロファイルでは
 		// jp-address-high-recall（高再現率限定）でしか拾えない（既定は非検出）。
 		{"probe-fn:address-missing-prefecture known-limitation", "住所: 渋谷区神南1-2-3"},
-
-		// RequireContext 系ルールの区切り文字表記ゆれ。空白区切り年金は #46 で
-		// 検出に転じたため下の TestProbeResolvedNumericSeparatorFalseNegatives へ移動。
-		{"probe-fn:pension-dot-separated", "年金 1234.567890"},
-		{"probe-fn:health-insurance-space-separated", "保険者番号 1234 5678"},
-		{"probe-fn:bank-account-space-separated", "口座番号 123 4567"},
-		{"probe-fn:bank-account-fullwidth-slash-separated", "口座番号 123／4567"},
-		{"probe-fn:drivers-license-dot-separated", "免許 1234.5678.9012"},
 
 		// jp-drivers-license: RequireContextWindow（40 ルーン）を超えて
 		// コンテキスト語から離れると昇格せず検出されない
@@ -116,6 +94,11 @@ func TestProbeResolvedLowercaseLetterFalseNegatives(t *testing.T) {
 // 表記ゆれ対応）で偽陰性から検出に転じた系統を固定化する。元は
 // TestProbeRegressionKnownFalseNegatives に「検出なし」として並んでいたもので、
 // ルール改善に伴い期待値を反転した（回帰データセットとして機能している証拠）。
+//
+// #46 に続き、ドット・スラッシュ・括弧区切りのマイナンバー、スラッシュ区切り・
+// 混在区切りの電話番号、ドット区切りの年金番号・運転免許証番号、空白・スラッシュ
+// 区切りの銀行口座番号、空白区切りの健康保険番号（#46 と同型の区切り表記ゆれ
+// 対応）を追加で反転した。
 func TestProbeResolvedNumericSeparatorFalseNegatives(t *testing.T) {
 	d := newDetector(t, "")
 	tests := []struct {
@@ -127,6 +110,17 @@ func TestProbeResolvedNumericSeparatorFalseNegatives(t *testing.T) {
 		{"phone-space-separated-mobile", "携帯 090 1234 5678", "jp-phone-number"},
 		{"phone-dot-separated-mobile", "TEL 090.1234.5678", "jp-phone-number"},
 		{"pension-space-separated", "年金 1234 567890", "jp-pension-number"},
+		// 以下は本タスク（#46 と同型の区切り表記ゆれ追加対応）で解消。
+		{"mynumber-dot-separated", "個人番号：123456.000007", "jp-my-number"},
+		{"mynumber-slash-separated", "my_number: 123456/000007", "jp-my-number"},
+		{"mynumber-paren-grouped", "mynumber: (123456)000007", "jp-my-number"},
+		{"phone-slash-separated-mobile", "連絡先 090/1234/5678", "jp-phone-number"},
+		{"phone-mixed-separator", "本社: 03.1234-5678", "jp-phone-number"},
+		{"pension-dot-separated", "年金 1234.567890", "jp-pension-number"},
+		{"health-insurance-space-separated", "保険者番号 1234 5678", "jp-health-insurance"},
+		{"bank-account-space-separated", "口座番号 123 4567", "jp-bank-account"},
+		{"bank-account-fullwidth-slash-separated", "口座番号 123／4567", "jp-bank-account"},
+		{"drivers-license-dot-separated", "免許 1234.5678.9012", "jp-drivers-license"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
