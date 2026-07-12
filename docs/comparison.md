@@ -46,7 +46,7 @@ repos:
     hooks:
       - id: gitleaks
   - repo: https://github.com/baneido/jp-pii-detector
-    rev: v0.3.6
+    rev: v0.4.0
     hooks:
       - id: jp-pii-detect
 ```
@@ -72,7 +72,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: baneido/jp-pii-detector@v0.3.6
+      - uses: baneido/jp-pii-detector@v0.4.0
         with:
           args: scan --diff origin/${{ github.base_ref }}...HEAD --format github
 ```
