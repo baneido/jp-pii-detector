@@ -3,7 +3,11 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"golang.org/x/text/encoding/japanese"
+	"golang.org/x/text/transform"
 )
 
 func TestHiraganaToKatakana(t *testing.T) {
@@ -143,6 +147,86 @@ func TestExcludeSurnames(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("got = %v, want %v", got, want)
 		}
+	}
+}
+
+func TestReadIPADICFourRuneSurnames(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "Noun.name.csv")
+	utf8Body := strings.Join([]string{
+		"勅使河原,1,1,1,名詞,固有名詞,人名,姓,*,*,勅使河原,テシガワラ,テシガワラ",
+		"小比類巻,1,1,1,名詞,固有名詞,人名,姓,*,*,小比類巻,コヒルイマキ,コヒルイマキ",
+		"佐々木,1,1,1,名詞,固有名詞,人名,姓,*,*,佐々木,ササキ,ササキ",           // 3文字なので除外
+		"武者小路,1,1,1,名詞,固有名詞,人名,名,*,*,武者小路,ムシャノコウジ,ムシャノコージ", // 名なので除外
+		"テシガワラ,1,1,1,名詞,固有名詞,人名,姓,*,*,テシガワラ,テシガワラ,テシガワラ",   // 漢字表層でないため除外
+	}, "\n") + "\n"
+	body, _, err := transform.Bytes(japanese.EUCJP.NewEncoder(), []byte(utf8Body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readIPADICFourRuneSurnames(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"勅使河原", "テシガワラ", "小比類巻", "コヒルイマキ"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("readIPADICFourRuneSurnames() = %v, want %v", got, want)
+	}
+}
+
+func TestRunExtendedGivenNamesUsesOrgDelta(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		t.Helper()
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	args := genArgs{
+		lastNames:             write("last_name_org.csv", "三木,10000,みき,miki\n"),
+		givenMan:              write("first_name_man_opti.csv", "たろう,tarou,太郎\n"),
+		givenWoman:            write("first_name_woman_opti.csv", "はなこ,hanako,花子\n"),
+		givenOrgMan:           write("first_name_man_org.csv", "たろう,tarou,太郎\nあれっくす,arekkusu,亜歴久寿\n"),
+		givenOrgWoman:         write("first_name_woman_org.csv", "はなこ,hanako,花子\nみき,miki,美紀\nまりあ,maria,茉莉愛\n"),
+		surnamesOut:           write("surnames.txt", "三木\n"),
+		givenNamesOut:         write("given_names.txt", ""),
+		extendedGivenNamesOut: filepath.Join(dir, "given_names_katakana_org.txt"),
+		sourceRevision:        "test-revision",
+		romajiSurnamesOut:     filepath.Join(dir, "romaji_surnames.txt"),
+		romajiGivenNamesOut:   filepath.Join(dir, "romaji_given_names.txt"),
+	}
+	if err := run(args); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(args.extendedGivenNamesOut)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(body)
+	if !strings.Contains(got, "# upstream revision: test-revision\n") {
+		t.Errorf("org差分に生成元revisionが無い: %q", got)
+	}
+	for _, want := range []string{"アレックス", "マリア"} {
+		if !containsLine(got, want) {
+			t.Errorf("org差分に %q が無い: %q", want, got)
+		}
+	}
+	for _, unwanted := range []string{"タロウ", "ハナコ", "ミキ"} {
+		if containsLine(got, unwanted) {
+			t.Errorf("org差分に既定辞書または姓と同形の %q が混入している: %q", unwanted, got)
+		}
+	}
+}
+
+func TestRunRejectsPartialOrgInputs(t *testing.T) {
+	err := run(genArgs{givenOrgMan: "only-one.csv"})
+	if err == nil || !strings.Contains(err.Error(), "同時指定") {
+		t.Fatalf("run(partial org args) error = %v, want 同時指定エラー", err)
 	}
 }
 

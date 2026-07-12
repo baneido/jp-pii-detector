@@ -81,13 +81,22 @@ func run(args []string, stdout, stderr io.Writer) error {
 			return usageError()
 		}
 		return buildV2(*input, *output, *datasetID, stdout)
+	case "name-homographs":
+		fs := flag.NewFlagSet("name-homographs", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		minCount := fs.Int("min-count", 2, "出力する最小出現回数")
+		maxRunes := fs.Int("max-runes", 8, "候補の最大ルーン数")
+		if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 || *minCount < 1 || *maxRunes < 3 {
+			return usageError()
+		}
+		return runNameHomographs(*minCount, *maxRunes, stdout)
 	default:
 		return usageError()
 	}
 }
 
 func usageError() error {
-	return errors.New("usage: pii-fixture eval [-cache] | status | purge | migrate -input PATH -output PATH -dataset-id ID | build-v2 -input PATH -output PATH [-dataset-id ID]")
+	return errors.New("usage: pii-fixture eval [-cache] | status | purge | migrate -input PATH -output PATH -dataset-id ID | build-v2 -input PATH -output PATH [-dataset-id ID] | name-homographs [-min-count N] [-max-runes N]")
 }
 
 func migrate(input, output, datasetID string, stdout io.Writer) error {

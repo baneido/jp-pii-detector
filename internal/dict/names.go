@@ -6,12 +6,16 @@ import (
 	"strings"
 )
 
-//go:embed surnames.txt given_names.txt
+//go:embed surnames.txt given_names.txt given_names_katakana_org.txt name_homographs.txt
 var namesFS embed.FS
 
 var (
 	surnames   = loadNameSet(namesFS, "surnames.txt")
 	givenNames = loadNameSet(namesFS, "given_names.txt")
+	// extendedGivenNames は org 版の読みから既定（opti）との差分だけを収録した
+	// 高再現率用カタカナ名。既定 person-name の精度を変えず、明示的な
+	// high-recall 経路だけで使う。
+	extendedGivenNames = loadNameSet(namesFS, "given_names_katakana_org.txt")
 	// surnameList / givenNameList は SurnameSample / GivenNameSample 用に、
 	// 辞書を決定的な（バイト列順にソート済みの）スライスへ複製したもの。
 	// map のイテレーション順は不定なため、合成ケース生成のような再現性が
@@ -55,9 +59,7 @@ const nameComponentMaxRunes = 4
 // ない固有名詞（品種名・地名等）の denylist。山田錦は山田（姓）+錦（名）に分割
 // でき、両要素とも辞書に収録されているため SplitFullName の分割ループ単体では
 // 弾けない（姓側 2 ルーン・名側 1 ルーンで「両方 1 ルーン」制約の対象外）。
-var nonPersonHomographs = map[string]bool{
-	"山田錦": true, // 酒米の品種名（山田 + 錦 の分割が姓名辞書上は成立してしまう）
-}
+var nonPersonHomographs = loadNameSet(namesFS, "name_homographs.txt")
 
 // NameMatch は MatchPersonName が返す判定根拠。二値の是非だけでなく、
 // 呼び出し側が信頼度を作り分けられるよう根拠を区別する。
@@ -104,13 +106,31 @@ func (m NameMatch) String() string {
 // スペースに畳んでから値が渡るため通常は到達しないが、検証器を正規化前の生入力に
 // 対して直接呼ぶ呼び出し元（テスト等）でも正しく動くよう両対応にしている。
 func SplitFullName(s string) (surname, given string, ok bool) {
+	return splitFullName(s, false, true)
+}
+
+// SplitFullNameExtended は SplitFullName と同じ分割を行い、名側だけは org 版の
+// 高再現率用カタカナ名も許可する。high-recall ルール専用で、既定ルールから
+// 呼ばないこと。
+func SplitFullNameExtended(s string) (surname, given string, ok bool) {
+	return splitFullName(s, true, true)
+}
+
+// SplitFullNameCandidate は denylist 適用前の姓名分割候補を返す。非公開評価
+// コーパスの陰性ケースから同形語候補を収集する開発用 probe のための API で、
+// 検出ルールの Validate には SplitFullName / SplitFullNameExtended を使うこと。
+func SplitFullNameCandidate(s string) (surname, given string, ok bool) {
+	return splitFullName(s, false, false)
+}
+
+func splitFullName(s string, includeExtended, applyDenylist bool) (surname, given string, ok bool) {
 	s = ComposeKana(strings.TrimSpace(s))
-	if s == "" || nonPersonHomographs[s] {
+	if s == "" || (applyDenylist && nonPersonHomographs[s]) {
 		return "", "", false
 	}
 	if strings.ContainsAny(s, " 　") {
 		fields := strings.FieldsFunc(s, func(r rune) bool { return r == ' ' || r == '　' })
-		if len(fields) == 2 && surnames[fields[0]] && givenNames[fields[1]] {
+		if len(fields) == 2 && surnames[fields[0]] && isGivenName(fields[1], includeExtended) {
 			return fields[0], fields[1], true
 		}
 		return "", "", false
@@ -124,7 +144,7 @@ func SplitFullName(s string) (surname, given string, ok bool) {
 			continue // 姓・名とも 1 ルーンの分割（区切りなし）は不成立
 		}
 		sur, giv := string(rs[:i]), string(rs[i:])
-		if surnames[sur] && givenNames[giv] {
+		if surnames[sur] && isGivenName(giv, includeExtended) {
 			return sur, giv, true
 		}
 	}
@@ -144,6 +164,13 @@ func IsSurname(s string) bool { return surnames[s] }
 
 // IsGivenName は s が収録済みの名かを返す。
 func IsGivenName(s string) bool { return givenNames[s] }
+
+// IsGivenNameExtended は既定辞書に加え、高再現率用 org 版カタカナ名も照合する。
+func IsGivenNameExtended(s string) bool { return isGivenName(s, true) }
+
+func isGivenName(s string, includeExtended bool) bool {
+	return givenNames[s] || (includeExtended && extendedGivenNames[s])
+}
 
 // MatchPersonName は候補文字列 s が人名らしいかを姓名辞書で検証し、その判定
 // 根拠（NameMatch）を返す。優先順位は FullNameSplit（姓+名に分割）＞
@@ -187,6 +214,19 @@ func MatchPersonName(s string) NameMatch {
 // 折り畳まれるため、合成しないと辞書（濁点合成済み表記で収録）に一致しない。
 func IsPersonName(s string) bool {
 	return MatchPersonName(s) != NoMatch
+}
+
+// IsPersonNameExtended は高再現率用 org 版カタカナ名まで含めて人名を検証する。
+// 既定ルールの confidence を暗黙に変えないよう、high-recall 経路だけで使う。
+func IsPersonNameExtended(s string) bool {
+	s = ComposeKana(strings.TrimSpace(s))
+	if s == "" {
+		return false
+	}
+	if _, _, ok := SplitFullNameExtended(s); ok {
+		return true
+	}
+	return surnames[s] || isGivenName(s, true)
 }
 
 // SurnameSample は姓辞書から先頭 n 件を決定的に返す（バイト列でソート済み）。

@@ -2989,6 +2989,23 @@ func TestPersonNameKatakanaDictionaryWeakFields(t *testing.T) {
 	}
 }
 
+// TestPersonNameExtendedKatakanaHighRecall は org 版のカタカナ名が既定
+// person-name の Medium 判定へ混ざらず、高再現率の敬称アンカーと構造化経路だけで
+// 有効になることを確認する（issue #131）。
+func TestPersonNameExtendedKatakanaHighRecall(t *testing.T) {
+	defaultDetector := newDetector(t, `min_confidence = "medium"`)
+	assertRules(t, defaultDetector.ScanLine("f.txt", 1, "名: カレン"))
+	assertRules(t, defaultDetector.ScanLine("f.txt", 1, "カレンさんと話した"))
+
+	highRecall := newDetector(t, `
+min_confidence = "medium"
+[rules]
+high_recall = true
+`)
+	assertRules(t, highRecall.ScanLine("f.txt", 1, "カレンさんと話した"), "person-name-high-recall")
+	assertRules(t, highRecall.ScanContent("f.txt", "フリガナ:\nサトウ カレン"), "person-name-structured")
+}
+
 // TestPersonNameFourCharacterSurname は 4 文字姓（issue #58 で人手追加。従来の
 // 辞書は最長 3 文字だった）が弱いラベルで検出されることを確認する。
 func TestPersonNameFourCharacterSurname(t *testing.T) {
@@ -2998,6 +3015,8 @@ func TestPersonNameFourCharacterSurname(t *testing.T) {
 	}{
 		{"4文字姓（漢字）", "姓: 勅使河原"},
 		{"4文字姓（カタカナ読み）", "姓: テシガハラ"},
+		{"IPADIC由来4文字姓（漢字）", "姓: 武者小路"},
+		{"IPADIC由来4文字姓（カタカナ読み）", "姓: ムシャノコウジ"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

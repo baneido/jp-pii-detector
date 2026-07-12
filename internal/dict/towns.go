@@ -25,6 +25,7 @@ func loadTownSet(raw string) (map[string]bool, int) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
+		line = NormalizeMunicipalityKa(line)
 		out[line] = true
 		if n := len([]rune(line)); n > maxLen {
 			maxLen = n
@@ -37,10 +38,9 @@ func loadTownSet(raw string) (map[string]bool, int) {
 // 大字・町名）と最長一致するかを判定する。一致した場合、一致した町字名の
 // s 内でのバイト長 matchLen と true を返す。不一致は matchLen=0, ok=false。
 //
-// NormalizeMunicipalityKa（ヶ→ケ）を照合前に適用するが、この正規化はルーン
-// 単位で 1:1（バイト長を変えない）なので、返す matchLen は s（正規化前の
-// 元文字列）内でのバイト長としてそのまま使える
-// （internal/normalize.Line と同じ 1 ルーン = 1 ルーンの不変条件に準じる）。
+// NormalizeMunicipalityKa（ヶ/ケ・旧字体/新字体）を照合前に適用する。
+// 正規化は町字で許す文字について 1 ルーン = 1 ルーンを保つため、一致した
+// ルーン数から正規化前 s のバイト長を計算して返す。
 //
 // jp-address-high-recall の昇格専用 Validate（MunicipalityThenTownMatch）が
 // 使う。町字マスターに存在しない語（通学区域・団地名等）は素通りする
@@ -55,7 +55,7 @@ func TownPrefixMatch(s string) (matchLen int, ok bool) {
 	for l := maxLen; l >= 1; l-- {
 		cand := string(rs[:l])
 		if towns[cand] {
-			return len(cand), true
+			return len(string([]rune(s)[:l])), true
 		}
 	}
 	return 0, false

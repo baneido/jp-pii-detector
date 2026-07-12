@@ -513,6 +513,15 @@ func validStrictFullName(v string) bool {
 	return ok && len([]rune(given)) >= 2
 }
 
+// validStrictFullNameExtended は高再現率用カタカナ名（org 版）まで許す
+// validStrictFullName。person-name-structured / CSV 列文脈のように
+// high-recall 有効時だけ走る経路から使う。
+func validStrictFullNameExtended(v string) bool {
+	v = strings.TrimSpace(v)
+	_, given, ok := dict.SplitFullNameExtended(v)
+	return ok && len([]rune(given)) >= 2
+}
+
 // validPersonNameFullSplit は姓+名の分割（dict.FullNameSplit）が成立する
 // 場合のみ許可する。担当ラベル（person-name-high-recall）の Medium パターン用。
 // 単独の姓一致（SurnameOnly）は validPersonNameSurnameOnly 側の Low パターンで
@@ -1157,15 +1166,14 @@ func Builtin() []Rule {
 				// 敬称アンカー（ひらがな・カタカナの氏名 + 様/さん/氏/殿）。この
 				// 文字種には notRoleWord のような語尾 denylist が効かないほど
 				// 日常語との衝突が多いため、辞書一致必須の allowlist 方式
-				// （dict.IsPersonName）で検証する。辞書収録済みのひらがな名
+				// （dict.IsPersonNameExtended）で検証する。既定の opti 辞書に加え、
+				// org 版カタカナ名はこの高再現率経路だけで許可する。辞書収録済みのひらがな名
 				// （例: さくら）は敬称付きでも検出され、日常語（例: たくさん・
-				// みなさん）は辞書不在で棄却される。カタカナ人名は辞書未収録の
-				// ため、外来語名の敬称付き表記はこのパターンでは解消しない
-				// （辞書拡充は別課題として切り離す）。
+				// みなさん）は辞書不在で棄却される。
 				{Re: regexp.MustCompile(
 					`(?:^|[^` + kanji + hiragana + katakana + `])` +
 						`([` + hiragana + katakana + `]{2,8})(?:様|さん|氏|殿)`,
-				), Base: Medium, Validate: dict.IsPersonName},
+				), Base: Medium, Validate: dict.IsPersonNameExtended},
 			},
 		},
 		{

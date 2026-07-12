@@ -5,23 +5,28 @@
 //
 //	https://github.com/shuheilocale/japanese-personal-name-dataset
 //
-// 入力は同リポジトリの dataset/ ディレクトリにある 3 つの CSV:
+// 入力は同リポジトリの dataset/ ディレクトリにある 3 つの CSV（既定の
+// opti セット）:
 //
 //	last_name_org.csv         (kanji,count,hiragana,romaji)         姓・全件
 //	first_name_man_opti.csv   (hiragana,romaji,kanji...)            名（男性・人気名の厳選サブセット）
 //	first_name_woman_opti.csv (hiragana,romaji,kanji...)            名（女性・人気名の厳選サブセット）
 //
-// 名は同データセットが提供する "opti"（curated popular names）サブセットに
-// 限定する。カタカナ表記の氏名はサービス名・製品名と同形になりやすく
-// （例: さくら・ひかり型の誤検出）、全件（*_org.csv、数千〜1万件規模）を
-// 無条件に取り込むと適合率への影響が大きいおそれがあるため、まず代表的な
-// 部分集合から始め、外部評価データセット（$JP_PII_FIXTURES）で適合率を
-// 確認してから拡大するという段階的な方針をとる（詳細は issue #58）。姓は
+// カタカナ名の全件（*_org.csv）は -given-names-org-{man,woman} と
+// -extended-given-names-out を 3 つ同時に指定したときだけ、既定辞書とは別の
+// 高再現率用辞書へ出力する。既定モードの precision を変えずに、R01 の
+// high-recall プロファイルで段階評価できるようにするためである。姓は
 // 全件（1999 件、*_org.csv）を使う。カタカナの姓読みは一般語彙との衝突が
 // 相対的に少なく、既存の漢字姓辞書と同じソース・同じ件数なので追加リスクが
 // 小さいと判断した。
 //
-// 出力は 4 つの辞書ファイルへの追記（1 行 1 エントリ、UTF-8、既存エントリは
+// -ipadic-names には IPADIC 2.7.0 の Noun.name.csv（EUC-JP）を指定できる。
+// 「名詞,固有名詞,人名,姓」と明示された漢字 4 文字の表層形と読みだけを抽出し、
+// 姓辞書へ追記する。公開・固定版から再生成でき、一般サイトのランキングを
+// 人手転記しない 4 文字姓の補助ソースである。
+//
+// 出力は既定の 4 辞書と、指定時だけ高再現率カタカナ名辞書への追記
+// （1 行 1 エントリ、UTF-8、既存エントリは
 // 変更しない。新規エントリのみソート済みで末尾に追記する。再実行しても
 // 重複は追加しない）。
 //
@@ -29,14 +34,18 @@
 //	  -last-names last_name_org.csv \
 //	  -given-names-man first_name_man_opti.csv \
 //	  -given-names-woman first_name_woman_opti.csv \
+//	  -given-names-org-man first_name_man_org.csv \
+//	  -given-names-org-woman first_name_woman_org.csv \
+//	  -extended-given-names-out internal/dict/given_names_katakana_org.txt \
+//	  -source-revision c5220278652e7bae05b06cfaf527f1b09a100de6 \
+//	  -ipadic-names Noun.name.csv \
 //	  -surnames-out internal/dict/surnames.txt \
 //	  -given-names-out internal/dict/given_names.txt \
 //	  -romaji-surnames-out internal/dict/romaji_surnames.txt \
 //	  -romaji-given-names-out internal/dict/romaji_given_names.txt
 //
 // 4 文字姓（勅使河原・小比類巻 等）は現行の last_name_org.csv に収録が
-// 無い（最長 3 文字）ため、このツールでは生成しない。internal/dict/surnames.txt
-// に人手で追加済みの小さな代表集合を参照（各エントリのコメントに出典を記載）。
+// 無い（最長 3 文字）ため、-ipadic-names 指定時だけ IPADIC から補う。
 package main
 
 import (
@@ -48,12 +57,21 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"unicode"
+
+	"golang.org/x/text/encoding/japanese"
+	"golang.org/x/text/transform"
 )
 
 func main() {
 	lastNames := flag.String("last-names", "", "last_name_org.csv のパス (kanji,count,hiragana,romaji)")
 	givenMan := flag.String("given-names-man", "", "first_name_man_opti.csv のパス (hiragana,romaji,kanji...)")
 	givenWoman := flag.String("given-names-woman", "", "first_name_woman_opti.csv のパス (hiragana,romaji,kanji...)")
+	givenOrgMan := flag.String("given-names-org-man", "", "高再現率用 first_name_man_org.csv のパス（woman/out と同時指定）")
+	givenOrgWoman := flag.String("given-names-org-woman", "", "高再現率用 first_name_woman_org.csv のパス（man/out と同時指定）")
+	extendedGivenNamesOut := flag.String("extended-given-names-out", "", "org 版カタカナ名の差分を書き出すパス（man/woman と同時指定）")
+	sourceRevision := flag.String("source-revision", "", "生成元 japanese-personal-name-dataset の commit SHA（出力コメント用）")
+	ipadicNames := flag.String("ipadic-names", "", "IPADIC 2.7.0 Noun.name.csv (EUC-JP) のパス（任意）")
 	surnamesOut := flag.String("surnames-out", "", "カタカナ読みを追記する surnames.txt のパス")
 	givenNamesOut := flag.String("given-names-out", "", "カタカナ読みを追記する given_names.txt のパス")
 	romajiSurnamesOut := flag.String("romaji-surnames-out", "", "ローマ字姓を書き出す romaji_surnames.txt のパス")
@@ -68,13 +86,18 @@ func main() {
 	}
 
 	if err := run(genArgs{
-		lastNames:           *lastNames,
-		givenMan:            *givenMan,
-		givenWoman:          *givenWoman,
-		surnamesOut:         *surnamesOut,
-		givenNamesOut:       *givenNamesOut,
-		romajiSurnamesOut:   *romajiSurnamesOut,
-		romajiGivenNamesOut: *romajiGivenNamesOut,
+		lastNames:             *lastNames,
+		givenMan:              *givenMan,
+		givenWoman:            *givenWoman,
+		givenOrgMan:           *givenOrgMan,
+		givenOrgWoman:         *givenOrgWoman,
+		extendedGivenNamesOut: *extendedGivenNamesOut,
+		sourceRevision:        *sourceRevision,
+		ipadicNames:           *ipadicNames,
+		surnamesOut:           *surnamesOut,
+		givenNamesOut:         *givenNamesOut,
+		romajiSurnamesOut:     *romajiSurnamesOut,
+		romajiGivenNamesOut:   *romajiGivenNamesOut,
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, "gen-names:", err)
 		os.Exit(1)
@@ -82,13 +105,18 @@ func main() {
 }
 
 type genArgs struct {
-	lastNames           string
-	givenMan            string
-	givenWoman          string
-	surnamesOut         string
-	givenNamesOut       string
-	romajiSurnamesOut   string
-	romajiGivenNamesOut string
+	lastNames             string
+	givenMan              string
+	givenWoman            string
+	givenOrgMan           string
+	givenOrgWoman         string
+	extendedGivenNamesOut string
+	sourceRevision        string
+	ipadicNames           string
+	surnamesOut           string
+	givenNamesOut         string
+	romajiSurnamesOut     string
+	romajiGivenNamesOut   string
 }
 
 // lastNameRow は last_name_org.csv の 1 行（kanji,count,hiragana,romaji）。
@@ -106,6 +134,16 @@ type givenNameRow struct {
 }
 
 func run(args genArgs) error {
+	orgInputs := 0
+	for _, v := range []string{args.givenOrgMan, args.givenOrgWoman, args.extendedGivenNamesOut} {
+		if v != "" {
+			orgInputs++
+		}
+	}
+	if orgInputs != 0 && orgInputs != 3 {
+		return fmt.Errorf("org版カタカナ名は given-names-org-man / given-names-org-woman / extended-given-names-out を同時指定してください")
+	}
+
 	lastNames, err := readLastNames(args.lastNames)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", args.lastNames, err)
@@ -143,6 +181,20 @@ func run(args genArgs) error {
 	for _, s := range katakanaSurnames {
 		surnameSet[s] = true
 	}
+	if args.ipadicNames != "" {
+		ipadicSurnames, err := readIPADICFourRuneSurnames(args.ipadicNames)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", args.ipadicNames, err)
+		}
+		const ipadicHeader = "# 漢字4文字姓と読み（IPADIC 2.7.0-20070801 Noun.name.csv の人名/姓エントリより生成。\n" +
+			"# internal/dict/gen-names で再生成可能。出典・ライセンスは THIRD_PARTY_NOTICES.md 参照）。\n"
+		if err := appendUniqueLines(args.surnamesOut, ipadicHeader, ipadicSurnames); err != nil {
+			return fmt.Errorf("write %s: %w", args.surnamesOut, err)
+		}
+		for _, s := range ipadicSurnames {
+			surnameSet[s] = true
+		}
+	}
 	katakanaGivenNames = excludeSurnames(katakanaGivenNames, surnameSet)
 
 	header := "# カタカナ読み（shuheilocale/japanese-personal-name-dataset の読み仮名列より生成。\n" +
@@ -152,6 +204,34 @@ func run(args genArgs) error {
 	}
 	if err := appendUniqueLines(args.givenNamesOut, header, katakanaGivenNames); err != nil {
 		return fmt.Errorf("write %s: %w", args.givenNamesOut, err)
+	}
+
+	if orgInputs == 3 {
+		orgMan, err := readGivenNames(args.givenOrgMan)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", args.givenOrgMan, err)
+		}
+		orgWoman, err := readGivenNames(args.givenOrgWoman)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", args.givenOrgWoman, err)
+		}
+		var extended []string
+		for _, r := range append(orgMan, orgWoman...) {
+			extended = append(extended, hiraganaToKatakana(r.Hiragana))
+		}
+		extended = excludeSurnames(extended, surnameSet)
+		baseGiven, err := readNonCommentLines(args.givenNamesOut)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", args.givenNamesOut, err)
+		}
+		extended = excludeExisting(extended, baseGiven)
+		extendedHeader := "# 高再現率用カタカナ名。shuheilocale/japanese-personal-name-dataset の\n" +
+			"# first_name_{man,woman}_org.csv から既定辞書（opti）との差分だけを生成。\n" +
+			optionalRevisionHeader(args.sourceRevision) +
+			"# internal/dict/gen-names で再生成可能。出典・ライセンスは THIRD_PARTY_NOTICES.md 参照。\n"
+		if err := appendUniqueLines(args.extendedGivenNamesOut, extendedHeader, extended); err != nil {
+			return fmt.Errorf("write %s: %w", args.extendedGivenNamesOut, err)
+		}
 	}
 
 	romajiSurnameHeader := "# 日本の姓のローマ字（ヘボン式）表記。person-name-romaji ルール（高再現率、既定オフ）の\n" +
@@ -173,6 +253,56 @@ func run(args genArgs) error {
 		return fmt.Errorf("write %s: %w", args.romajiGivenNamesOut, err)
 	}
 	return nil
+}
+
+func optionalRevisionHeader(revision string) string {
+	revision = strings.TrimSpace(revision)
+	if revision == "" {
+		return ""
+	}
+	return "# upstream revision: " + revision + "\n"
+}
+
+// readIPADICFourRuneSurnames は IPADIC 2.7.0 の EUC-JP CSV から、品詞が
+// 名詞/固有名詞/人名/姓で、表層形が漢字 4 文字のエントリだけを読む。表層形と
+// 読み（カタカナ）を同じ姓辞書へ収録するため、戻り値は両方を含む。
+func readIPADICFourRuneSurnames(path string) ([]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	r := csv.NewReader(transform.NewReader(f, japanese.EUCJP.NewDecoder()))
+	r.FieldsPerRecord = -1
+	var out []string
+	for {
+		rec, err := r.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		if len(rec) < 12 || rec[4] != "名詞" || rec[5] != "固有名詞" || rec[6] != "人名" || rec[7] != "姓" || !fourHanRunes(rec[0]) {
+			continue
+		}
+		out = append(out, rec[0], rec[11])
+	}
+	return out, nil
+}
+
+func fourHanRunes(s string) bool {
+	rs := []rune(strings.TrimSpace(s))
+	if len(rs) != 4 {
+		return false
+	}
+	for _, r := range rs {
+		if !unicode.Is(unicode.Han, r) {
+			return false
+		}
+	}
+	return true
 }
 
 // readLastNames は last_name_org.csv（kanji,count,hiragana,romaji）を読む。
@@ -274,6 +404,16 @@ func excludeSurnames(entries []string, surnames map[string]bool) []string {
 	out := make([]string, 0, len(entries))
 	for _, e := range entries {
 		if !surnames[strings.TrimSpace(e)] {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func excludeExisting(entries []string, existing map[string]bool) []string {
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if !existing[strings.TrimSpace(e)] {
 			out = append(out, e)
 		}
 	}

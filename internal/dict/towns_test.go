@@ -3,7 +3,7 @@ package dict
 import "testing"
 
 // TestTownPrefixMatch は、実在する町字名（ABR 町字マスター由来）との前方一致、
-// 最長一致優先、ヶ/ケ表記ゆれの正規化、非実在語の不一致を確認する。
+// 最長一致優先、ヶ/ケ・旧字体/新字体の正規化、非実在語の不一致を確認する。
 func TestTownPrefixMatch(t *testing.T) {
 	tests := []struct {
 		in        string
@@ -25,6 +25,9 @@ func TestTownPrefixMatch(t *testing.T) {
 		// ため、長さの計算だけ「ケ」表記のバイト長と一致する）。
 		{"桜ケ丘1-2-3", "桜ケ丘"},
 		{"桜ヶ丘1-2-3", "桜ヶ丘"},
+		// ABR に旧字体で収録されている町字も、一般的な新字体で一致する。
+		{"一條1-2-3", "一條"},
+		{"一条1-2-3", "一条"},
 		// 非実在語は不一致（通学区域のような一般語、辞書外の集合住宅名等）。
 		{"通学区域は3丁目まで", ""},
 		{"ニュータウン1-1-1", ""},
@@ -82,6 +85,9 @@ func TestMunicipalityThenTownMatch(t *testing.T) {
 		{"千代田区霞が関3-2-1", true}, // jp-pii-detector:ignore
 		// 都道府県プレフィックスがあっても同様に判定できる。
 		{"東京都渋谷区神南1丁目2番3号", true}, // jp-pii-detector:ignore
+		// 市区町村と町字の双方が旧字体でも、新字体でも同じ組に一致する。
+		{"奈良県五條市五條1丁目", true}, // jp-pii-detector:ignore
+		{"奈良県五条市五条1丁目", true}, // jp-pii-detector:ignore
 		// 実在する市区町村だが、続く語が実在町字名でない
 		// （MunicipalitySuffixMatch 単体なら true になる状況でも false）。
 		{"渋谷区ニュータウン1-1-1", false}, // jp-pii-detector:ignore
