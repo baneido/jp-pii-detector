@@ -19,8 +19,8 @@ import (
 //
 // 姓・名がいずれも辞書収録の 2 文字以上の値（山田・太郎）のため、単独行の
 // 弱いラベル検出（person-name、Medium）も同一スパンで独立に成立し、
-// ScanContent の resolveOverlapsPerLine のタイブレーク（信頼度・スパン長が
-// 同点のとき RuleID の辞書順で決着。"person-name" は "person-name-structured" の
+// ScanContent の resolveOverlapsPerLine のタイブレーク（Confidence・内部 score・
+// スパン長が同点のとき RuleID の辞書順で決着。"person-name" は "person-name-structured" の
 // 真の接頭辞で文字列として小さいため勝つ）で "person-name" 側が残る。これは
 // 想定どおりの挙動で、値そのものは変わらず Medium で報告される（実害はない）。
 // 姓+名ペア相関が単独行検出には無い検出力を追加する、タイブレークなしの
