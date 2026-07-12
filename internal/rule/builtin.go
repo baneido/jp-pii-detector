@@ -174,22 +174,34 @@ const (
 // 従来どおりの Base Medium 判定を同一正規表現の 2 枚組（twin）で持つ
 // （person-name の辞書検証 twin と同じ手法。250 行目付近のコメント参照）。twin 間で
 // 正規表現オブジェクトを共有し、二重コンパイルを避けるためパッケージ変数として
-// 定義する。High 側は、Rule.Validate（dict.MunicipalitySuffixMatch、市区町村マッチ）に
-// 加えて、市区町村マッチ直後のギャップが ABR 町字マスター由来の実在町字名で
-// 始まる場合（dict.MunicipalityThenTownMatch）だけ Pattern.Validate を通過する。
-// 町字辞書は昇格専用のエビデンスであり、不一致は棄却ではなく Medium への
-// 据え置きにしかならないため recall には影響しない。
+// 定義する。マーカー付き番地（addressHighRecallMarkedRe）・漢数字番地
+// （addressHighRecallKanjiRe）・マーカーなしダッシュ連結（addressHighRecallDashRe）の
+// 3 形すべてに twin を適用する。High 側は、Rule.Validate
+// （dict.MunicipalitySuffixMatch、市区町村マッチ）に加えて、市区町村マッチ直後の
+// ギャップが ABR 町字マスター由来の実在町字名で始まる場合
+// （dict.MunicipalityThenTownMatch）だけ Pattern.Validate を通過する。町字辞書は
+// 昇格専用のエビデンスであり、不一致は棄却ではなく Medium への据え置きにしか
+// ならないため recall には影響しない。
 //
-// マーカーなしダッシュ連結（banchiDash）用のパターンには twin を追加しない
-// （既存の Medium 単体のまま）。この形は市区町村マッチ直後にラベルなしで
-// 数字列が続くだけの形状のため、TestPromotionContextWindowBoundary
-// （detect_test.go）が「渋谷区道玄坂1-2-3」を固定サンプルにコンテキスト窓 // jp-pii-detector:ignore
-// 境界を検証しており、"道玄坂" が ABR 町字マスターの実在町字名と一致する。
-// twin を追加すると窓の内外を問わず常に High 判定になり、
-// 同テストが検証するコンテキスト窓ちょうど外側での非昇格が壊れる
-// （internal/detect は変更禁止のため、そちらのサンプル値を差し替えて
-// 回避することはできない）。マーカー付き（丁目・番・号）と漢数字番地の
-// 2 形には同種の衝突が無いことを確認済みで、twin を適用している。
+// ダッシュ連結（banchiDash）の High 側だけは、Pattern.Validate に
+// dict.MunicipalityThenTownMatch 単体ではなく notCalendarDateBanchiAndRealTown
+// （notCalendarDateBanchi との AND 合成。定義・理由は同関数のコメント参照）を使う。
+// banchiDash は丁目・番・号のような明示的な番地マーカーを伴わないため、市区町村名の
+// 直後に ISO 日付（2025-07-02 等）が来ただけの文を誤って番地とみなしやすく、
+// Medium 側は元々 notCalendarDateBanchi でこれを棄却している（banchiDash 自体の
+// コメント参照）。この日付棄却を High 側でも維持しないと、市区町村の直後がたまたま
+// 実在町字名の場合に ISO 日付が無条件で High 判定になってしまう。
+//
+// 経緯（PR #127 で意図的に見送った既知の制限を解消）: このダッシュ形 twin は
+// 当初見送られていた。TestPromotionContextWindowBoundary（detect_test.go）が
+// コンテキスト窓境界の検証に使う固定サンプルの町字部分（旧サンプルの町名）が
+// ABR 町字マスターの実在町字名と偶然一致しており、無条件の辞書昇格を追加すると、
+// 同テストが検証する「窓のちょうど外側では昇格しない」が辞書昇格経路の混入で
+// 壊れるためだった。同テストのサンプル値を、町字マスターに前方一致しない架空の
+// 町名（go run で機械確認済み）へ差し替えたことでこの衝突が解消されたため、他の
+// 2 形と同じ twin 方式を適用できるようになった
+// （internal/detect/address_town_promotion_test.go の
+// TestAddressHighRecallDashFormPromotesWithRealTown も参照）。
 var (
 	addressHighRecallMarkedRe = regexp.MustCompile(
 		`(?:住所|所在地|勤務地|勤務先|自宅|address)?\s*[:=]?\s*(` +
@@ -202,6 +214,15 @@ var (
 			`[` + kanji + hiragana + katakana + `]{1,15}[市区町村]` +
 			`[` + kanji + hiragana + katakana + `0-9-]{0,30}?` +
 			banchiKanji + `)`,
+	)
+	// addressHighRecallDashRe はマーカーなしダッシュ連結（banchiDash）用。ギャップは
+	// hiraganaNoParticle（助詞抜き）に制限する（banchiDash 自体のコメント参照）。
+	// High/Medium 双方の Pattern がこの Re を共有する。
+	addressHighRecallDashRe = regexp.MustCompile(
+		`(?:住所|所在地|勤務地|勤務先|自宅|address)?\s*[:=]?\s*(` +
+			`[` + kanji + hiragana + katakana + `]{1,15}[市区町村]` +
+			`[` + kanji + hiraganaNoParticle + katakana + `0-9-]{0,30}?` +
+			banchiDash + `)`,
 	)
 )
 
@@ -693,13 +714,13 @@ func Builtin() []Rule {
 				// コメント参照）。
 				{Re: addressHighRecallMarkedRe, Base: High, Validate: dict.MunicipalityThenTownMatch},
 				{Re: addressHighRecallMarkedRe, Base: Medium},
-				// マーカーなしダッシュ連結は twin にしない（上記コメント参照）。
-				{Re: regexp.MustCompile(
-					`(?:住所|所在地|勤務地|勤務先|自宅|address)?\s*[:=]?\s*(` +
-						`[` + kanji + hiragana + katakana + `]{1,15}[市区町村]` +
-						`[` + kanji + hiraganaNoParticle + katakana + `0-9-]{0,30}?` +
-						banchiDash + `)`,
-				), Base: Medium, Validate: notCalendarDateBanchi},
+				// マーカーなしダッシュ連結にも同じ twin 方式を適用する。High 側の
+				// Validate は notCalendarDateBanchiAndRealTown（notCalendarDateBanchi と
+				// dict.MunicipalityThenTownMatch の AND 合成）を使い、ISO 日付棄却が
+				// High 側でも失われないようにする（経緯・理由は
+				// addressHighRecallDashRe・notCalendarDateBanchiAndRealTown 各コメント参照）。
+				{Re: addressHighRecallDashRe, Base: High, Validate: notCalendarDateBanchiAndRealTown},
+				{Re: addressHighRecallDashRe, Base: Medium, Validate: notCalendarDateBanchi},
 			},
 		},
 		{
@@ -1505,6 +1526,24 @@ func notCalendarDateBanchi(v string) bool {
 		return true
 	}
 	return !validCalendarDate(year, month, day)
+}
+
+// notCalendarDateBanchiAndRealTown は notCalendarDateBanchi（ISO 日付誤検出の
+// 棄却）と dict.MunicipalityThenTownMatch（市区町村直後が ABR 町字マスター由来の
+// 実在町字名で始まるかの昇格専用チェック）の両方を満たす場合だけ true を返す
+// 合成 Validate。jp-address-high-recall のマーカーなしダッシュ連結
+// （banchiDash）用 High 側 twin 専用（addressHighRecallDashRe のコメント参照）。
+//
+// dict.MunicipalityThenTownMatch 単体を High 側の Pattern.Validate にすると、
+// 市区町村の直後がたまたま実在町字名で始まり、かつ番地部分が ISO 日付形
+// （2025-07-02 等）のケースで、notCalendarDateBanchi による日付棄却が High 側
+// だけ効かなくなってしまう（Medium 側は変わらず notCalendarDateBanchi 単体で
+// 棄却されるため、その場合 Medium にも昇格せず完全に非検出になり、ISO 日付が
+// 誤って住所として報告されることはない＝リグレッションにはならないが、
+// 「両方満たす場合だけ True」という twin の設計原則からは外れる）。ここで
+// 明示的に AND 合成することで、日付棄却の意図を High 側でも保つ。
+func notCalendarDateBanchiAndRealTown(v string) bool {
+	return notCalendarDateBanchi(v) && dict.MunicipalityThenTownMatch(v)
 }
 
 // emailDummyWords はメールのダミー値でよく使われるローカル部・ドメイン第 1
