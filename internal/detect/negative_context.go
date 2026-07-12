@@ -332,7 +332,21 @@ func (d *Detector) hasNumberingSuffixBefore(rs []rune, start, radius int, posCtx
 	// camelCase 識別子が "account_no"/"bank account" 等のトークン化された
 	// 正文脈語を含む場合も正しく保護できる（素朴な部分文字列一致では
 	// 見逃す）。
-	protScanStart := readTokenBackward(rs, i, from, numberingSuffixMaxTokenRunes, isNumberingProtectionScanRune)
+	//
+	// 走査幅は numberingSuffixMaxTokenRunes（12、ラベル自体を切り出す語彙側の
+	// 判定用）ではなく radius（呼び出し元は negativeContextWindowRunes=20）を
+	// 使う。12 だと、正文脈語がラベルの直近ではなく地の文を挟んで少し手前に
+	// 来る自然な日本語の文（例:「介護保険の…に記載された被保険者番号は…です」で
+	// jp-kaigo-insurance の正文脈語「介護保険」が直近のラベル「被保険者番号」から
+	// 12 ルーンを超えて離れる）で保護が届かず、この接尾辞ヒューリスティック自体が
+	// 新規に追加するまで検出できていた値を誤って抑制する回帰になる
+	// （jp-kaigo-insurance は Context に「被保険者」を持たないため、「被保険者
+	// 番号」という値直前のラベルだけでは保護規則がそもそも成立しない）。この
+	// 関数は保護方向にしか働かないため（上記コメント参照）、走査幅を radius まで
+	// 広げても新たな誤抑制は生まない。回帰再現・固定は
+	// TestNumberingSuffixHeuristicProtectionReachesDistantOwnLabel
+	// （detect_test.go）参照。
+	protScanStart := readTokenBackward(rs, i, from, max(radius, numberingSuffixMaxTokenRunes), isNumberingProtectionScanRune)
 	if d.containsAnyContext(string(rs[protScanStart:i+1]), posCtx) {
 		return false
 	}
