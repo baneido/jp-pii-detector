@@ -651,7 +651,10 @@ func Builtin() []Rule {
 			Validate: dict.ValidPostalCode,
 			Patterns: []Pattern{
 				{Re: dg(`〒\s?\d{3}-?\d{4}`), Base: High},
-				{Re: dg(`\d{3}-\d{4}`), Base: Medium, RequireContext: true},
+				// dgNoAlnumHyphen で英数字・ハイフン連結トークンの内部を除外する
+				// （型番やリビジョン番号のような、英数字とハイフンで連結された長い
+				// トークンから 3-4 桁部分だけを郵便番号として切り出さないため）。
+				{Re: dgNoAlnumHyphen(`\d{3}-\d{4}`), Base: Medium, RequireContext: true},
 				// ハイフンなし裸 7 桁。桁数のみでは業務 ID 等と衝突しやすいため
 				// コンテキストを必須とし、Validate（dict.ValidPostalCode）が
 				// 7 桁完全一致でビットセットに対して実在性を検証するため、

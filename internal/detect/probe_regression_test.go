@@ -219,6 +219,12 @@ func TestProbeResolvedKnownTestPANFalsePositives(t *testing.T) {
 // 現状の挙動であり、将来の Validate 強化（例: #53 業務ID語彙拡張）で
 // 意図的に解消されうる。解消された場合はこのテストを
 // 更新し、pii-fixtures.json 側にも反映すること。
+//
+// 「12桁ジョブID」「受付番号は…」「型番: …」「お問い合わせ受付番号」
+// 「年金相談受付番号」の 5 系統は、負文脈「隣接ラベル」判定のグルー許容
+// （hasLabelBefore）と採番ラベル接尾辞ヒューリスティック（
+// hasNumberingSuffixBefore、internal/detect/negative_context.go）の追加で
+// 解消され、下の TestProbeResolvedNumberingLabelFalsePositives へ移設した。
 func TestProbeRegressionKnownFalsePositives(t *testing.T) {
 	d := newDetector(t, "")
 	tests := []struct {
@@ -226,28 +232,24 @@ func TestProbeRegressionKnownFalsePositives(t *testing.T) {
 		wantRule   string
 		wantConf   rule.Confidence
 	}{
-		// jp-my-number: ラベルや文脈と無関係に、検査用数字さえ偶然一致すれば
-		// 12 桁の業務 ID（ジョブID・受付番号等）も拾ってしまう
-		// （Context はあくまで信頼度昇格用で、検出のゲートではないため）。
-		// issue 記載の「12桁ジョブID」系統。
-		{"probe-fp:mynumber-lookalike-job-id", "ジョブID: 202507000004", "jp-my-number", rule.Medium},
-		{"probe-fp:mynumber-lookalike-ticket-id", "受付番号は123456000007です", "jp-my-number", rule.Medium},
-
-		// jp-passport: 「パスポート」等の文脈語がたまたま同じ行にあると、
-		// それと無関係な英字2桁+数字7桁の型番も旅券番号として検出される。
-		// issue 記載の「型番 TK1234567」系統（元の issue コメントが指摘した
-		// とおり、文脈語なしの単独表記では再現しない = 下の
-		// no-context ケースは検出なしが正しい仕様どおりの挙動）。
-		{"probe-fp:passport-lookalike-model-number-with-context", "海外パスポート対応 型番: TK1234567", "jp-passport", rule.High},
-
 		// jp-drivers-license: 「license no」等の英語ラベルは運転免許以外
 		// （ソフトウェアライセンス番号等）でも一般的に使われるため誤検出する。
+		// ラベル自体が正文脈語（Context の "license no"）そのものであり、
+		// 採番ラベル接尾辞ヒューリスティックの保護規則（ラベルに正文脈語を
+		// 含む場合は抑制しない）が働くため、この系統は意図的に未解消のまま
+		// 残る（別問題。#53 の業務ID語彙拡張が本来の対応方針）。
 		{"probe-fp:driverslicense-generic-license-label", "License No: 123456789012", "jp-drivers-license", rule.High},
 
-		// RequireContext 系ルールはラベル語の有無しか見ないため、値の意味論
-		// （実際は問い合わせ受付番号等）までは判定できず誤検出する。
-		{"probe-fp:bankaccount-lookalike-inquiry-ticket-id", "口座番号に関するお問い合わせ受付番号: 1234567", "jp-bank-account", rule.Medium},
-		{"probe-fp:pension-lookalike-inquiry-ticket-id", "年金相談受付番号: 1234-567890", "jp-pension-number", rule.High},
+		// jp-health-insurance: RequireContext 系ルールはラベル語の有無しか
+		// 見ないため、値の意味論（実際は資格確認受付ID等）までは判定できず
+		// 誤検出する。ラベル直前は「受付ID」で採番ラベル接尾辞ヒューリスティック
+		// の対象（id 接尾辞）になるが、値からラベル方向に 12 ルーン遡った
+		// トークンに「保険証」（Context 語）が入ってしまうため、保護規則が
+		// 働いてしまい抑制されない（トークン窓が偶然この語まで届く、この
+		// 具体的な文言に起因する副作用）。窓を狭めると
+		// TestKaigoInsuranceRule の「要介護認定 被保険者番号」のような、
+		// 空白を挟んだ正当な複合ラベルの保護が効かなくなる（要 #いずれかの
+		// 追加の設計拡張。詳細はタスクA報告のスコープ外メモを参照）。
 		{"probe-fp:healthinsurance-lookalike-reception-id", "健康保険証の資格確認受付ID 12345678", "jp-health-insurance", rule.Medium},
 	}
 	for _, tt := range tests {
@@ -268,6 +270,44 @@ func TestProbeRegressionKnownFalsePositives(t *testing.T) {
 	t.Run("probe-fp:passport-lookalike-model-number-without-context-is-not-detected", func(t *testing.T) {
 		assertRules(t, d.ScanLine("f.txt", 1, "型番 TK1234567"))
 	})
+}
+
+// TestProbeResolvedNumberingLabelFalsePositives は、負文脈「隣接ラベル」
+// 判定のグルー許容（hasLabelBefore が助詞・コロン・イコールを最大 2 個まで
+// 読み飛ばす）と採番ラベル接尾辞ヒューリスティック（hasNumberingSuffixBefore
+// が「番号/コード/キー/id/code/key/sku/no」で終わるラベルを未知語彙でも
+// 拾う）で、偽陽性から抑制（検出なし）に転じた系統を固定化する。元は
+// TestProbeRegressionKnownFalsePositives に「検出あり」として並んでいたもので、
+// ルール改善に伴い期待値を反転した（#46 の前例と同じく、回帰データセットとして
+// 機能している証拠）。
+func TestProbeResolvedNumberingLabelFalsePositives(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+	}{
+		// 助詞「は」で採番ラベル「受付番号」と値が途切れていたため、旧来の
+		// hasUnitBefore（空白・タブしか読み飛ばさない）では抑制できなかった。
+		{"probe-fp:mynumber-lookalike-ticket-id", "受付番号は123456000007です"},
+		// ASCII 語「ID」とコロンで採番ラベル「ジョブ」と値が途切れており、
+		// 明示語彙の隣接一致（「ジョブ」自体）は届かないが、接尾辞
+		// ヒューリスティックが「ジョブID」の "id" 接尾辞として拾う。
+		{"probe-fp:mynumber-lookalike-job-id", "ジョブID: 202507000004"},
+		// コロン+空白で採番ラベル「型番」と値が途切れていたため、旧来の
+		// hasUnitBefore では抑制できなかった（グルー許容で解消）。
+		{"probe-fp:passport-lookalike-model-number-with-context", "海外パスポート対応 型番: TK1234567"},
+		// コロン+空白で採番ラベル「受付番号」と値が途切れていた
+		// （グルー許容で解消。値の直前ラベルは「受付番号」で、文中の
+		// 「口座番号」は値から離れているため無関係）。
+		{"probe-fp:bankaccount-lookalike-inquiry-ticket-id", "口座番号に関するお問い合わせ受付番号: 1234567"},
+		// コロン+空白で採番ラベル「受付番号」と値が途切れていた
+		// （グルー許容で解消）。
+		{"probe-fp:pension-lookalike-inquiry-ticket-id", "年金相談受付番号: 1234-567890"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line))
+		})
+	}
 }
 
 func TestProbeResolvedKnownFalsePositives(t *testing.T) {

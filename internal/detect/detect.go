@@ -1068,7 +1068,7 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 				// 件数等）で誤って棄却しない（正ラベル優先。issue #68 段階1(a)）。
 				return false
 			}
-			return d.hasNegativeContextNear(norm, start, end, negativeContextWindowRunes, &normRunes, r.NegativeContext)
+			return d.hasNegativeContextNear(norm, start, end, negativeContextWindowRunes, &normRunes, r.NegativeContext, r.Context)
 		}
 		for _, p := range r.Patterns {
 			requireContextWindow := r.RequireContextWindow

@@ -68,7 +68,7 @@ func (d *Detector) hasCrossLineNegativeContext(f Finding, lines []string, lineCo
 	// 改行と空白は両方とも 1 バイトなのでオフセットは変わらない。
 	combined = strings.ReplaceAll(combined, "\n", " ")
 	var runes []rune
-	return d.hasNegativeContextNear(combined, offset+byteStart, offset+byteEnd, negativeContextWindowRunes, &runes, negCtx)
+	return d.hasNegativeContextNear(combined, offset+byteStart, offset+byteEnd, negativeContextWindowRunes, &runes, negCtx, posCtx)
 }
 
 // statementHasCleanPositiveLabel は st がこのルール自身の Context キーワードに
@@ -86,7 +86,12 @@ func (d *Detector) statementHasCleanPositiveLabel(st *statementContext, ctx []st
 	return len(d.matchingContexts(st.PositiveText, ctx)) > 0
 }
 
-func (d *Detector) hasNegativeContextNear(s string, start, end, radius int, runes *[]rune, kws []string) bool {
+// hasNegativeContextNear は kws（ルールの NegativeContext）を近接判定クラス
+// ごとに評価する。posCtx はこのルール自身の正文脈語（Rule.Context）で、
+// NegativeKeywordLabelPrefix の語が 1 つでも kws に含まれる場合、明示語彙の
+// 一致とは別に 1 回だけ実行する「採番ラベル接尾辞ヒューリスティック」
+// （hasNumberingSuffixBefore）の保護規則判定に使う。
+func (d *Detector) hasNegativeContextNear(s string, start, end, radius int, runes *[]rune, kws []string, posCtx []string) bool {
 	if *runes == nil {
 		*runes = []rune(s)
 	}
@@ -95,12 +100,21 @@ func (d *Detector) hasNegativeContextNear(s string, start, end, radius int, rune
 	runeEnd := runeStart + len([]rune(s[start:end]))
 
 	var generic []string
+	sawLabelPrefix := false
 	for _, kw := range kws {
 		switch rule.ClassifyNegativeKeyword(kw) {
-		case rule.NegativeKeywordCurrencyPrefix, rule.NegativeKeywordLabelPrefix:
-			// 通貨記号（¥100）と採番ラベル（伝票番号 100...）は、どちらも
-			// 値の直前に隣接する場合のみ抑制する（hasUnitBefore）。
+		case rule.NegativeKeywordCurrencyPrefix:
+			// 通貨記号（¥100）は値の直前に厳密隣接する場合のみ抑制する
+			// （空白・タブ以外は挟まない。hasUnitBefore）。
 			if hasUnitBefore(rs, runeStart, radius, []rune(kw)) {
+				return true
+			}
+		case rule.NegativeKeywordLabelPrefix:
+			sawLabelPrefix = true
+			// 採番ラベル（伝票番号 100... 等）は値の直前隣接で抑制するが、
+			// 助詞・コロン等の「グルー」を挟んだ表記ゆれも許容する
+			// （hasLabelBefore、hasUnitBefore とは別関数）。
+			if hasLabelBefore(rs, runeStart, radius, []rune(kw)) {
 				return true
 			}
 		case rule.NegativeKeywordCurrencySuffix:
@@ -114,6 +128,12 @@ func (d *Detector) hasNegativeContextNear(s string, start, end, radius int, rune
 		default:
 			generic = append(generic, kw)
 		}
+	}
+	// 明示語彙のどれとも一致しなかった場合でも、このルールが採番ラベル
+	// 接頭クラスの語を語彙に持つなら、語彙にない未知の採番風ラベル
+	// （「ジョブID:」「受付ID」等）を接尾辞形状だけで拾う。1 回限りの判定。
+	if sawLabelPrefix && d.hasNumberingSuffixBefore(rs, runeStart, radius, posCtx) {
+		return true
 	}
 	if len(generic) == 0 {
 		return false
@@ -138,6 +158,257 @@ func hasUnitBefore(rs []rune, start, radius int, unit []rune) bool {
 		return false
 	}
 	return runesEqual(rs[unitStart:i+1], unit)
+}
+
+// labelGlueMaxCount は hasLabelBefore が値の直前で読み飛ばす「グルー文字」
+// （助詞・区切り）の最大個数。連続する別の語や文全体を読み飛ばさないよう
+// 小さく抑える。
+const labelGlueMaxCount = 2
+
+// labelGlueMaxSkipRunes は hasLabelBefore / hasNumberingSuffixBefore が値の
+// 直前から後方に読み飛ばす空白・タブ・グルー文字の合計ルーン数の上限。
+// negativeContextWindowRunes（20）より小さく取り、離れた場所の別のラベルまで
+// 誤って隣接とみなさないようにする。
+const labelGlueMaxSkipRunes = 8
+
+// isLabelGlueRune は hasLabelBefore が空白・タブに加えて読み飛ばす「グルー
+// 文字」かどうかを返す。助詞（は/が/の/を/も）と区切り（: =）が対象。
+// normalize.Line が全角コロン・イコールを半角化済みのため ASCII だけで足りる。
+func isLabelGlueRune(r rune) bool {
+	switch r {
+	case 'は', 'が', 'の', 'を', 'も', ':', '=':
+		return true
+	}
+	return false
+}
+
+// skipLabelGlue は値の直前（start-1）から後方へ、空白・タブは任意個、
+// グルー文字（isLabelGlueRune）は最大 labelGlueMaxCount 個まで読み飛ばした
+// 位置を返す。数字はスキップ対象に含まれないため、別の値をまたいで
+// ラベルを探すことはない。合計スキップ数は labelGlueMaxSkipRunes で
+// 打ち切り、radius（from）も超えない。hasLabelBefore と
+// hasNumberingSuffixBefore（採番ラベル接尾辞ヒューリスティック）が共有する。
+func skipLabelGlue(rs []rune, start, from int) int {
+	i := start - 1
+	glueUsed := 0
+	for n := 0; i >= from && n < labelGlueMaxSkipRunes; n++ {
+		if rs[i] == ' ' || rs[i] == '\t' {
+			i--
+			continue
+		}
+		if glueUsed < labelGlueMaxCount && isLabelGlueRune(rs[i]) {
+			glueUsed++
+			i--
+			continue
+		}
+		break
+	}
+	return i
+}
+
+// hasLabelBefore は採番ラベル接頭クラス（伝票番号・受付番号・型番 等）専用の
+// 隣接判定。hasUnitBefore（空白・タブしか読み飛ばさない厳密隣接）と異なり、
+// skipLabelGlue で助詞・コロン・イコールも読み飛ばしてから比較するため、
+// 「受付番号は123456000007です」（助詞「は」で途切れる）や「ジョブID: …」
+// （ASCII 語 ID とコロンで途切れる…もっともこちらは "ジョブ" と "ID" の間に
+// グルーがないため一致せず、接尾辞ヒューリスティック側に委ねられる）、
+// 「型番: TK1234567」（コロン+空白）のような表記ゆれもラベルとして認識する。
+// ASCII ラベル（sku/version/ver）は runesEqualASCIIFold で大小文字を区別
+// しない（"SKU:" も一致させる）。
+func hasLabelBefore(rs []rune, start, radius int, unit []rune) bool {
+	if len(unit) == 0 {
+		return false
+	}
+	from := start - radius
+	if from < 0 {
+		from = 0
+	}
+	i := skipLabelGlue(rs, start, from)
+	unitStart := i - len(unit) + 1
+	if unitStart < from {
+		return false
+	}
+	return runesEqualASCIIFold(rs[unitStart:i+1], unit)
+}
+
+// numberingSuffixMaxTokenRunes は接尾辞ヒューリスティックが後方に読む
+// ラベルトークンの最大ルーン数。
+const numberingSuffixMaxTokenRunes = 12
+
+// numberingSuffixMinTokenRunes 未満のトークンは不成立とする。裸の
+// 「ID:」「No.」のような 2 ルーンだけのラベルで抑制しないための下限。
+const numberingSuffixMinTokenRunes = 3
+
+// numberingSuffixesJA / numberingSuffixesASCII はトークン末尾に現れれば
+// 採番ラベルとみなす接尾辞。ASCII 側は大小文字を区別しない。
+var (
+	numberingSuffixesJA    = []string{"番号", "コード", "キー"}
+	numberingSuffixesASCII = []string{"id", "code", "key", "sku", "no"}
+)
+
+// hasNumberingSuffixBefore は「採番ラベル接尾辞ヒューリスティック」。ルールの
+// NegativeContext に採番ラベル接頭クラスの語が 1 つでもある場合、明示語彙に
+// 完全一致しない未知のラベル（「ジョブID:」「受付ID」等、ASCII 語や省略形が
+// 挟まって数値番/文脈語の直接一致に届かないもの）も、ラベルの「形」だけで
+// 拾って抑制する。誤って正当なラベル（郵便番号・口座番号・免許証番号 等）
+// まで抑制しないよう、保護規則（d.containsAnyContext による posCtx 判定）を
+// 必ず通す。
+func (d *Detector) hasNumberingSuffixBefore(rs []rune, start, radius int, posCtx []string) bool {
+	from := start - radius
+	if from < 0 {
+		from = 0
+	}
+	i := skipLabelGlue(rs, start, from)
+	if i < from {
+		return false
+	}
+
+	// 接尾辞判定・境界規則は「空白で途切れる」厳格なトークンで行う
+	// （「Zip code」の "code" のように、直前の別単語まで結合して誤判定
+	// しないようにするため）。
+	tokenStart := readTokenBackward(rs, i, from, numberingSuffixMaxTokenRunes, isNumberingTokenRune)
+	token := rs[tokenStart : i+1]
+	if len(token) < numberingSuffixMinTokenRunes {
+		return false
+	}
+	suffixLen, isASCIISuffix, ok := numberingSuffixMatch(token)
+	if !ok {
+		return false
+	}
+	if isASCIISuffix && !asciiSuffixBoundaryOK(token, suffixLen) {
+		return false
+	}
+
+	// 保護規則（最重要）: ラベル自体にこのルール本来の正しい肯定文脈語
+	// （posCtx = Rule.Context）が含まれる場合は抑制しない。「免許証番号」
+	// （免許）・「郵便番号」（郵便）・「口座番号」（口座）・「在留カード番号」
+	// （在留）・「パスポート番号」（パスポート）・「被保険者番号」（被保険者）
+	// のように、接尾辞ヒューリスティックは「番号」「id」等の形だけでラベルを
+	// 判定するため、これらの正当なラベルまで誤って抑制してしまう副作用が
+	// 大きい。これを防ぐガード。
+	//
+	// 判定の走査は空白・タブも跨いで良い（isNumberingProtectionScanRune）。
+	// 「要介護認定 被保険者番号」「Zip code」のように、値の正当なラベルが
+	// 複数語からなり空白で区切られている場合に、その空白でラベルが分断され
+	// て保護規則を素通りしてしまわないようにするための拡張スキャンで、
+	// 抑制方向にしか効かない（保護されるケースが広がるだけで、新たに抑制
+	// されることはない）。d.containsAnyContext（matchingContexts 経由）を
+	// 再利用することで、日本語の部分一致だけでなく "bankAccountNo" のような
+	// camelCase 識別子が "account_no"/"bank account" 等のトークン化された
+	// 正文脈語を含む場合も正しく保護できる（素朴な部分文字列一致では
+	// 見逃す）。
+	protScanStart := readTokenBackward(rs, i, from, numberingSuffixMaxTokenRunes, isNumberingProtectionScanRune)
+	if d.containsAnyContext(string(rs[protScanStart:i+1]), posCtx) {
+		return false
+	}
+	return true
+}
+
+// readTokenBackward は位置 i（含む）から後方へ、allowed を満たすルーンが
+// 連続する限り最大 maxRunes 個読み取り、その先頭位置（含む）を返す。
+// from（radius 由来の下限）を超えては読まない。
+func readTokenBackward(rs []rune, i, from, maxRunes int, allowed func(rune) bool) int {
+	limitFrom := i - maxRunes + 1
+	if limitFrom < from {
+		limitFrom = from
+	}
+	j := i
+	for j >= limitFrom && allowed(rs[j]) {
+		j--
+	}
+	return j + 1
+}
+
+// isNumberingTokenRune は接尾辞ヒューリスティックがラベルトークンの構成
+// 文字とみなす文字種か（漢字[拡張Aを含む U+3400-9FFF]・〇・ひらがな・
+// カタカナ[長音ー含む]・ASCII 英数字・アンダースコア）を返す。空白は
+// 含まないため、複数語からなるラベルの末尾の単語だけがトークンになる。
+func isNumberingTokenRune(r rune) bool {
+	switch {
+	case r == '〇':
+		return true
+	case isKanji(r):
+		return true
+	case r >= 0x3041 && r <= 0x3096: // ひらがな
+		return true
+	case (r >= 0x30A1 && r <= 0x30FA) || r == 0x30FC: // カタカナ（長音ー含む）
+		return true
+	case r == '_':
+		return true
+	case r >= '0' && r <= '9', r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z':
+		return true
+	}
+	return false
+}
+
+// isNumberingProtectionScanRune は保護規則専用の走査で使う、
+// isNumberingTokenRune に空白・タブを加えた文字種。接尾辞・境界の判定には
+// 使わず、保護規則（hasNumberingSuffixBefore 内の d.containsAnyContext
+// 判定）にのみ使う。
+func isNumberingProtectionScanRune(r rune) bool {
+	return isNumberingTokenRune(r) || r == ' ' || r == '\t'
+}
+
+// numberingSuffixMatch は token が採番ラベル接尾辞（numberingSuffixesJA /
+// numberingSuffixesASCII）のいずれかで終わるかを判定し、一致した接尾辞の
+// ルーン数と、それが ASCII 接尾辞かどうかを返す。ASCII 側は大小文字を
+// 区別しない。
+func numberingSuffixMatch(token []rune) (suffixLen int, isASCIISuffix bool, ok bool) {
+	for _, s := range numberingSuffixesJA {
+		sr := []rune(s)
+		if len(sr) <= len(token) && runesEqual(token[len(token)-len(sr):], sr) {
+			return len(sr), false, true
+		}
+	}
+	for _, s := range numberingSuffixesASCII {
+		sr := []rune(s)
+		if len(sr) <= len(token) && runesEqualASCIIFold(token[len(token)-len(sr):], sr) {
+			return len(sr), true, true
+		}
+	}
+	return 0, false, false
+}
+
+// asciiSuffixBoundaryOK は ASCII 接尾辞（id/code/key/sku/no）の直前境界を
+// 判定する。直前が ASCII 小文字の場合、接尾辞自体が大文字始まりの
+// camelCase 境界（orderNo, orderId, ジョブID 等）でない限り不成立とする
+// （casino/piano の "no"、userid の "id" を採番ラベルと誤認しないため）。
+// 直前が `_`・数字・非 ASCII・トークン先頭の場合は常に成立する
+// （shipment_id、受付id 等）。
+func asciiSuffixBoundaryOK(token []rune, suffixLen int) bool {
+	prevIdx := len(token) - suffixLen - 1
+	if prevIdx < 0 {
+		return true // トークン先頭
+	}
+	prev := token[prevIdx]
+	if prev < 'a' || prev > 'z' {
+		return true
+	}
+	first := token[len(token)-suffixLen]
+	return first >= 'A' && first <= 'Z' // camelCase 境界
+}
+
+// runesEqualASCIIFold は runesEqual と同じだが ASCII 英字の大小差を無視する。
+// sku/version/ver のような ASCII ラベルを大文字表記（SKU 等）でも
+// 一致させるために使う。
+func runesEqualASCIIFold(a, b []rune) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if asciiFold(a[i]) != asciiFold(b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// asciiFold は ASCII 英大文字だけを小文字に変換する（他の文字はそのまま）。
+func asciiFold(r rune) rune {
+	if r >= 'A' && r <= 'Z' {
+		return r + ('a' - 'A')
+	}
+	return r
 }
 
 func hasUnitAfter(rs []rune, end, radius int, unit []rune, requireBoundary bool) bool {

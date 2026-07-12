@@ -32,9 +32,13 @@ const (
 
 // currencyPrefixWords / currencySuffixWords / counterSuffixWords /
 // numberingLabelPrefixes / genericNegativeWords は語彙そのもの。
-// digitRuleNegativeContext（既存 4 ルール用）と
-// digitRuleUnitAdjacentNegativeContext（my-number 等 5 ルール用）は
-// これらを組み合わせて構成する。
+// digitRuleNegativeContext（jp-drivers-license 等）と
+// digitRuleUnitAdjacentNegativeContext（my-number 等）は
+// これらを組み合わせて構成する。numberingLabelPrefixes は値への直接隣接
+// （internal/detect/negative_context.go の hasLabelBefore）でしか効かない
+// 隣接判定限定クラスのため、離れた位置の語では誤爆しない。汎用窓語
+// （genericNegativeWords）と異なり、既に RequireContext 前提の
+// digitRuleNegativeContext 側に混ぜても副作用が小さいため、両方の語彙に含める。
 var (
 	// currencyPrefixWords は値の直前に付く通貨記号。
 	currencyPrefixWords = []string{"¥", "￥", "$"}
@@ -42,12 +46,18 @@ var (
 	currencySuffixWords = []string{"円", "千", "万", "億", "%", "％"}
 	// counterSuffixWords は値の直後に付く数量カウンタ。
 	counterSuffixWords = []string{"人", "名", "件", "個", "回", "点"}
-	// numberingLabelPrefixes は値の直前に付く採番ラベル。hasUnitBefore と
-	// 同型の「数字直前隣接」判定でのみ効き、窓全体の汎用一致にはしない
-	// （「マイナンバー: …を伝票に転記」のように離れているだけでは抑制しない）。
+	// numberingLabelPrefixes は値の直前に付く採番ラベル。hasLabelBefore
+	// （internal/detect/negative_context.go）の「数字直前隣接」判定でのみ効き、
+	// 窓全体の汎用一致にはしない（「マイナンバー: …を伝票に転記」のように
+	// 離れているだけでは抑制しない）。hasLabelBefore は空白・タブに加えて、
+	// 助詞（は/が/の/を/も）とコロン・イコールを最大 2 個までグルーとして
+	// 読み飛ばすため、「ジョブID: …」のような ASCII 語混じりのラベルや
+	// 「受付番号は…」のような助詞続きのラベルにも隣接判定が届く。
+	// sku/version/ver は ASCII 大小文字を区別せず比較する（"SKU:" も一致）。
 	numberingLabelPrefixes = []string{
 		"伝票番号", "受付番号", "予約番号", "ビルド番号", "シリアル番号",
-		"ジョブ", "型番", "品番", "図面", "追跡番号",
+		"ジョブ", "型番", "品番", "図面", "追跡番号", "トランザクション",
+		"sku", "version", "ver",
 	}
 	// genericNegativeWords は前後 ±window ルーン以内であれば位置を問わず
 	// 抑制する汎用語。既存 4 ルール（jp-drivers-license 等）専用。
@@ -59,11 +69,13 @@ var (
 )
 
 // digitRuleNegativeContext は jp-drivers-license / jp-pension-number /
-// jp-bank-account / jp-health-insurance 向けの語彙（通貨・カウンタクラス +
-// 汎用窓語）。これらのルールは肯定文脈（RequireContext）が既に必須のため、
-// 汎用窓語による誤抑制のリスクが小さい。
+// jp-bank-account / jp-health-insurance 等向けの語彙（通貨・カウンタ・汎用窓語 +
+// 採番ラベル接頭クラス）。これらのルールは肯定文脈（RequireContext）が既に
+// 必須のため、汎用窓語による誤抑制のリスクが小さい。numberingLabelPrefixes は
+// 値への直接隣接でしか効かない隣接判定限定クラスのため、汎用窓語と違って
+// 離れた位置の語では誤爆せず、追加しても同じ理由で安全側に倒れる。
 var digitRuleNegativeContext = concatNegativeWords(
-	currencyPrefixWords, currencySuffixWords, counterSuffixWords, genericNegativeWords,
+	currencyPrefixWords, currencySuffixWords, counterSuffixWords, genericNegativeWords, numberingLabelPrefixes,
 )
 
 // digitRuleUnitAdjacentNegativeContext は jp-my-number / credit-card /

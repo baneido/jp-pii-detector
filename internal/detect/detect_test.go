@@ -901,6 +901,130 @@ func TestNumberingLabelPrefixIgnoresDistantLabel(t *testing.T) {
 	assertRules(t, d.ScanLine("f.txt", 1, line), "jp-my-number")
 }
 
+// TestNumberingLabelPrefixToleratesGlue は hasLabelBefore（negative_context.go）
+// のグルー許容を確認する。旧来の hasUnitBefore は値の直前で半角スペース・
+// タブしか読み飛ばさないため、助詞（は/が/を/も）やコロン・イコールで
+// ラベルと値が途切れると抑制できなかった（既知FP: 「受付番号は…です」
+// 「型番: …」等）。hasLabelBefore はこれらを最大 2 個までグルーとして
+// 読み飛ばしてから採番ラベルと比較する。値は checksum が成立する
+// mynumValid2（100000000013）を使う。
+func TestNumberingLabelPrefixToleratesGlue(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+	}{
+		{"助詞「は」", "伝票番号は" + mynumValid2 + "です"},
+		{"助詞「が」", "伝票番号が" + mynumValid2 + "と判明"},
+		{"助詞「を」", "伝票番号を" + mynumValid2 + "に更新"},
+		{"助詞「も」", "伝票番号も" + mynumValid2 + "です"},
+		{"コロン+空白", "型番: " + mynumValid2},
+		{"イコール", "型番=" + mynumValid2},
+		{"新語彙 トランザクション（空白区切り）", "トランザクション " + mynumValid2},
+		{"新語彙 sku（大文字・コロン+空白）", "SKU: " + mynumValid2},
+		{"新語彙 version（コロン+空白）", "version: " + mynumValid2},
+		{"新語彙 ver（コロン+空白）", "ver: " + mynumValid2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line))
+		})
+	}
+}
+
+// TestNumberingSuffixHeuristicSuppressesUnknownLabels は採番ラベル接尾辞
+// ヒューリスティック（hasNumberingSuffixBefore、negative_context.go）を
+// 確認する。numberingLabelPrefixes の明示語彙に完全一致しない未知のラベル
+// （ASCII 語や省略形が挟まって直接一致に届かないもの）でも、「番号/コード/
+// キー/id/code/key/sku/no」で終わる形状だけで抑制することを確認する。
+// 値は checksum が成立する mynumValid2（100000000013）/mynumValid
+// （123456789018）を使う。
+func TestNumberingSuffixHeuristicSuppressesUnknownLabels(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+	}{
+		// ASCII 語「ID」＋助詞・区切りで明示語彙「伝票番号」等に一致しない
+		// ラベルだが、"...ID" の接尾辞形状で拾う。
+		{"受注ID+空白", "受注ID " + mynumValid2 + " を処理"},
+		{"受注ID+助詞「は」", "受注ID は" + mynumValid + "です"},
+		{"受注ID+助詞「が」", "受注ID が" + mynumValid + "と判明"},
+		{"受注ID+コロン(区切りなし)", "受注ID:" + mynumValid2},
+		{"受注ID+イコール(区切りなし)", "受注ID=" + mynumValid2},
+		// アンダースコア境界（camelCase 境界規則: 直前が `_` なら成立）。
+		{"snake_case の shipment_id+イコール", "shipment_id= " + mynumValid2},
+		{"snake_case の shipment_id+コロン+空白", "shipment_id: " + mynumValid},
+		// 日本語接尾辞「キー」「コード」。
+		{"管理キー+空白", "管理キー " + mynumValid2},
+		{"発注コード+コロン+空白", "発注コード: " + mynumValid2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line))
+		})
+	}
+}
+
+// TestNumberingSuffixHeuristicASCIIBoundaryRule は asciiSuffixBoundaryOK
+// （negative_context.go）の camelCase 境界規則を確認する。ASCII 接尾辞
+// （id/no 等）の直前が ASCII 小文字の場合、接尾辞自体が大文字始まりの
+// camelCase 境界でない限り不成立とし、"casino"/"userid" のような偶然の
+// 語尾一致を採番ラベルと誤認しない。直前が `_`・非 ASCII・トークン先頭の
+// 場合や、接尾辞が大文字始まり（camelCase）の場合は成立する。
+func TestNumberingSuffixHeuristicASCIIBoundaryRule(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		wantRule   string
+	}{
+		// 直前が ASCII 小文字＋接尾辞も小文字 → 不成立（検出は維持される）。
+		{"casino の \"no\" は境界不成立", "casino: " + mynumValid2, "jp-my-number"},
+		{"userid の \"id\" は境界不成立", "userid: " + mynumValid, "jp-my-number"},
+		// camelCase 境界（接尾辞が大文字始まり）→ 成立（抑制される）。
+		{"orderNo は camelCase 境界で成立", "orderNo: " + mynumValid2, ""},
+		{"orderId は camelCase 境界で成立", "orderId: " + mynumValid, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.wantRule == "" {
+				assertRules(t, d.ScanLine("f.txt", 1, tt.line))
+			} else {
+				assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.wantRule)
+			}
+		})
+	}
+}
+
+// TestNumberingSuffixHeuristicProtectsLegitimateLabels は接尾辞
+// ヒューリスティックの保護規則（hasNumberingSuffixBefore が d.containsAnyContext
+// で posCtx = Rule.Context を判定する）を確認する。ラベル自体がそのルール
+// 本来の正しい肯定文脈語を含む場合（免許証番号・基礎年金番号・在留カード
+// 番号・パスポート番号・郵便番号）は、「番号」で終わる形状だけで誤って
+// 抑制しないことを確認する。
+func TestNumberingSuffixHeuristicProtectsLegitimateLabels(t *testing.T) {
+	d := newDetector(t, "")
+	license := testfixtures.MustGet(t, "detect.drivers_license")
+	tests := []struct {
+		name, line string
+		wantRule   string
+		wantConf   rule.Confidence
+	}{
+		{"運転免許証番号（免許を含む）", "運転免許証番号: " + license, "jp-drivers-license", rule.High},
+		{"基礎年金番号（年金を含む）", "基礎年金番号: 1234-567890", "jp-pension-number", rule.High},
+		{"在留カード番号（在留を含む）", "在留カード番号: AB12345678CD", "jp-residence-card", rule.High},
+		{"パスポート番号（パスポートを含む）", "パスポート番号: AB1234567", "jp-passport", rule.High},
+		{"郵便番号（郵便を含む・実在コード）", "郵便番号: " + shibuyaPostal, "jp-postal-code", rule.Medium},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, tt.wantRule)
+			if fs[0].Confidence != tt.wantConf {
+				t.Errorf("confidence = %v, want %v", fs[0].Confidence, tt.wantConf)
+			}
+		})
+	}
+}
+
 // hasUnitAfter の requireBoundary（issue #53 (2)）: 修正前は単位直後が
 // ひらがな（助詞）でも「日本語文字」とみなして境界不成立にしていたため、
 // 「1234567件に到達した」のような助詞続きでカウンタ抑制が効かなかった
