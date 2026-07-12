@@ -199,7 +199,9 @@ $ go test -race ./...
 
 ```console
 $ gcloud auth login
-$ export JP_PII_FIXTURES_BUCKET=<bucket>
+$ export JP_PII_FIXTURES_BUCKET=jp-pii-detector
+$ export JP_PII_FIXTURES_PROJECT=jp-pii-detector
+$ export JP_PII_FIXTURES_GCLOUD_ACCOUNT=<gcloud-account>
 $ go run ./cmd/pii-fixture eval          # 一時取得し、終了後に削除
 $ go run ./cmd/pii-fixture eval -cache   # 明示した場合だけユーザーキャッシュへ保存
 $ go run ./cmd/pii-fixture status
@@ -208,6 +210,19 @@ $ go run ./cmd/pii-fixture purge
 
 既に安全なローカルコピーがある場合は、従来どおり `JP_PII_FIXTURES=<path>` を設定できます。
 キャッシュは `os.UserCacheDir()` 配下、ディレクトリ0700・ファイル0600で管理します。
+
+旧形式を更新するときは、既存GCS objectを上書きせずにversion付きコーパスを作ります:
+
+```console
+$ go run ./cmd/pii-fixture migrate \
+    -input <legacy.json> \
+    -output <private-eval-v1.json> \
+    -dataset-id private-eval-v1
+```
+
+この処理は旧`strings`プールを引き継がず、ケースへ匿名IDと`source_class=legacy-curated`を
+付与し、既存出力ファイルを上書きしません。生成物を新しいGCS objectへpublishしてから、
+`fixtures.lock.json`のobject・generationを更新します。旧generationはrollback用に保持します。
 
 新しいJSONスキーマは
 `{ "schema_version": 1, "dataset_id": "<opaque-id>", "dataset": [ { "id", "source_class", "file", "line", "content", "diff", "want", "spans", "tags" } ] }` です。
@@ -233,7 +248,9 @@ $ go run ./cmd/pii-fixture purge
 CIは公開 `test` jobと、main pushまたは保守者の明示実行専用の `private-eval` jobを分離します。private jobだけが
 GitHub OIDC → GCP Workload Identity Federationで認証します。リポジトリ変数
 `JP_PII_FIXTURES_PROVIDER`・`JP_PII_FIXTURES_SA`・`JP_PII_FIXTURES_BUCKET`に加え、
-GCS object generationを固定する `JP_PII_FIXTURES_GENERATION` を設定してください。
+GCS object generationは `fixtures.lock.json` で固定します。緊急時にrepository variable
+`JP_PII_FIXTURES_GENERATION`で上書きできますが、その場合はlockのobjectに属するgenerationを
+指定してください。
 WIF側もrepository ID・workflow・`refs/heads/main`へattribute conditionを絞り、SAには対象objectの
 readだけを許可します。PRのマージ前評価が必要な場合は、main上のworkflowを
 `workflow_dispatch`し、レビュー済みcommitの40桁SHAを`eval_ref`へ指定します。可変なbranch名は

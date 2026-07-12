@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "dataset_id": "legacy",
-  "object": "pii-fixtures.json",
-  "generation": ""
+  "dataset_id": "private-eval-v1",
+  "object": "private-corpus/private-eval-v1.json",
+  "generation": "1783843559149098"
 }

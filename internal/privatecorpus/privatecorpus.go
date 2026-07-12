@@ -109,3 +109,80 @@ func Require(t TB) *Corpus {
 	}
 	return c
 }
+
+// MigrateLegacy は旧コーパスをversion付きの独立した評価コーパスへ変換する。
+// 旧stringsプールは通常テスト移行後の互換データであり、評価ケースから参照されない
+// ため引き継がない。ケース本文を識別子へ埋め込むこともない。
+func MigrateLegacy(c *Corpus, datasetID, sourceClass string) (*Corpus, error) {
+	if c == nil || c.DatasetID != "legacy" {
+		return nil, fmt.Errorf("legacyコーパスだけを移行できます")
+	}
+	if strings.TrimSpace(datasetID) == "" || datasetID == "legacy" {
+		return nil, fmt.Errorf("新しいdataset_idを指定してください")
+	}
+	if strings.TrimSpace(sourceClass) == "" {
+		return nil, fmt.Errorf("source_classを指定してください")
+	}
+
+	dataset := append([]evalcase.Case(nil), c.Dataset...)
+	usedIDs := make(map[string]bool, len(dataset))
+	for _, item := range dataset {
+		if item.ID != "" {
+			usedIDs[item.ID] = true
+		}
+	}
+	nextID := 1
+	for i := range dataset {
+		if dataset[i].ID == "" {
+			for {
+				candidate := fmt.Sprintf("private-case-%04d", nextID)
+				nextID++
+				if !usedIDs[candidate] {
+					dataset[i].ID = candidate
+					usedIDs[candidate] = true
+					break
+				}
+			}
+		}
+		if dataset[i].SourceClass == "" {
+			dataset[i].SourceClass = sourceClass
+		}
+	}
+	if err := evalcase.Validate(dataset); err != nil {
+		return nil, err
+	}
+	return &Corpus{
+		SchemaVersion: CurrentSchemaVersion,
+		DatasetID:     datasetID,
+		Dataset:       dataset,
+	}, nil
+}
+
+// WriteNew は既存ファイルを上書きせず、0600でコーパスを書き出す。
+func WriteNew(path string, c *Corpus) (err error) {
+	if c == nil || c.SchemaVersion != CurrentSchemaVersion || c.DatasetID == "" {
+		return fmt.Errorf("書き出すコーパスのmetadataが不正です")
+	}
+	if err := evalcase.Validate(c.Dataset); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return err
+	}
+	b = append(b, '\n')
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := f.Close(); err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			_ = os.Remove(path)
+		}
+	}()
+	_, err = f.Write(b)
+	return err
+}

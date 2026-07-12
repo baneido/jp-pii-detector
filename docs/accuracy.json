@@ -1,5 +1,5 @@
 {
-  "dataset_id": "legacy",
+  "dataset_id": "private-eval-v1",
   "rules": [
     {
       "rule_id": "credit-card",
