@@ -122,7 +122,7 @@ func crossLineYuchoFinding(r rule.Rule, file string, lineNo int, origLine, normL
 	rs := len([]rune(normLine[:m[2]]))
 	re := rs + len([]rune(normLine[m[2]:m[3]]))
 	origRunes := []rune(origLine)
-	return Finding{
+	finding := Finding{
 		RuleID:      r.ID,
 		Description: r.Description,
 		File:        file,
@@ -135,9 +135,12 @@ func crossLineYuchoFinding(r rule.Rule, file string, lineNo int, origLine, normL
 			FinalConfidence: rule.High.String(),
 			Validated:       true,
 		},
-		start: rs,
-		end:   re,
+		start:         rs,
+		end:           re,
+		scoreEvidence: confidenceScoreEvidence{structuredPair: true},
 	}
+	finalizeFindingScore(&finding)
+	return finding
 }
 
 // scanCrossLineYuchoPairsDiff は scanCrossLineYuchoPairs の diff 版（最小案、

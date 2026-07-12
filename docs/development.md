@@ -510,7 +510,9 @@ internal/
        `NegativeText` として、該当 statement の値だけを抑制します。
      - `RequireContext` のパターンはキーワードの存在が前提のため昇格せず、`Base` の
        信頼度のまま報告します。
-   - **resolveOverlaps** で範囲が重なる検出を信頼度（同率なら長い方）で 1 件に集約します。
+   - **resolveOverlaps** で範囲が重なる検出を Confidence、内部 score、長さ、RuleID の順で 1 件に集約します。
+     score は検証・文脈距離・構造証拠を加算しますが、既存 Confidence の帯域内に clamp し公開出力には
+     含めないため、`min_confidence` と JSON/SARIF の契約は変わりません。
    - **detect.ScanContent / detect.ScanDiffHunk** は通常の行単位検出に加え、
      「行 i と、間が空白のみの行を挟んでもよい後続の最初の非空白行 j」（`j-i<=3`。
      空行なしの物理隣接は `j-i=1`）を結合した仮想ウィンドウとして走査します（論理隣接）。

@@ -81,6 +81,9 @@ type Finding struct {
 	Column      int             `json:"column"` // 1 始まり（ルーン単位）
 	Match       string          `json:"-"`      // 元テキスト（生値。マスクは出力層で行う。直接 marshal では出さない）
 	Confidence  rule.Confidence `json:"-"`
+	// ConfidenceScore は検証・文脈距離・構造証拠を加算した内部スコア（0-100）。
+	// JSON/SARIF 等の公開契約は既存の 3 値 Confidence を維持し、score は出力しない。
+	ConfidenceScore int `json:"-"`
 	// Reason は検出の根拠（調査・チューニング用。既定の出力には含めない）。
 	Reason DetectReason `json:"reason,omitempty"`
 	// Offset/EndOffset は走査対象テキスト全体の先頭からのルーン単位の半開区間
@@ -105,6 +108,8 @@ type Finding struct {
 	// ignoreNegativeContext はマッチしたパターンが Rule.NegativeContext の
 	// 適用対象外であることを表す。隣接行の負文脈フィルタにも引き継ぐ。
 	ignoreNegativeContext bool
+	// scoreEvidence は ConfidenceScore の計算にだけ使う非公開の構造証拠。
+	scoreEvidence confidenceScoreEvidence
 }
 
 // Format は fmt の全verbで生の Match と文脈詳細を出さない。テスト失敗時の
@@ -418,12 +423,13 @@ func (d *Detector) applyCooccurrenceBoost(candidates []Finding, lineContexts []l
 		if !(f.Reason.Validated || len(f.Reason.ContextKeywords) > 0) {
 			continue
 		}
-		var boosted bool
+		var boosted, sameRecord bool
 		if rid := recordIDForLine(lineContexts, f.Line); rid != 0 {
 			// 候補行がレコードに属する: 同一 RecordID のアンカーは距離を問わず
 			// 昇格根拠にできる。RecordID を持たないアンカーとの組だけ、
 			// 従来どおり行窓へフォールバックする。
-			boosted = anchorRecordIDs[rid] || hasNearbyAnchorLine(anchorLinesNoRecord, f.Line, cooccurrenceWindowLines)
+			sameRecord = anchorRecordIDs[rid]
+			boosted = sameRecord || hasNearbyAnchorLine(anchorLinesNoRecord, f.Line, cooccurrenceWindowLines)
 		} else {
 			// 候補行がどのレコードにも属さない: アンカー側の RecordID の有無を
 			// 問わず、従来どおり全アンカーを対象に行窓で判定する（既存挙動を
@@ -436,6 +442,8 @@ func (d *Detector) applyCooccurrenceBoost(candidates []Finding, lineContexts []l
 		f.Confidence++
 		f.Reason.CooccurrenceBoosted = true
 		f.Reason.FinalConfidence = f.Confidence.String()
+		f.scoreEvidence.sameRecordBoost = sameRecord
+		finalizeFindingScore(f)
 	}
 	return candidates
 }
@@ -518,7 +526,7 @@ func dedupAndSortFindings(candidates []Finding) []Finding {
 	for _, f := range candidates {
 		key := findingKey(f)
 		if i, ok := index[key]; ok {
-			if f.Confidence > findings[i].Confidence {
+			if better(f, findings[i]) {
 				findings[i] = f
 			}
 			continue
@@ -820,7 +828,7 @@ func (d *Detector) scanCrossLineNames(file string, lines []string) []Finding {
 		rs := len([]rune(normValue[:m[2]]))
 		re := rs + len([]rune(entity))
 		origRunes := []rune(value)
-		out = append(out, Finding{
+		finding := Finding{
 			RuleID:      d.crossLineName.ID,
 			Description: d.crossLineName.Description,
 			File:        file,
@@ -833,9 +841,12 @@ func (d *Detector) scanCrossLineNames(file string, lines []string) []Finding {
 				FinalConfidence: rule.Medium.String(),
 				Validated:       true,
 			},
-			start: rs,
-			end:   re,
-		})
+			start:         rs,
+			end:           re,
+			scoreEvidence: confidenceScoreEvidence{structuredPair: true},
+		}
+		finalizeFindingScore(&finding)
+		out = append(out, finding)
 	}
 	return out
 }
@@ -1021,7 +1032,7 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 		// 渡す（issue #68 段階1(b)。無制限昇格による FP 増幅を防ぐ）ため、ここでは
 		// 単純に window>0 かどうかだけを見ればよい。ContextPatterns（銀行名辞書等の
 		// アンカー正規表現＋辞書検証経路）も同じ探索対象文字列 hay に対して評価する。
-		ctxForMatch := func(start, end int, window int) []string {
+		ctxForMatch := func(start, end int, window int) ([]string, bool) {
 			var hay string
 			if window > 0 {
 				hay = contextWindow(norm, start, end, window, &normRunes)
@@ -1032,13 +1043,16 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 			if len(r.ContextPatterns) > 0 {
 				kws = append(kws, matchContextPatterns(hay, r.ContextPatterns)...)
 			}
+			structured := false
 			if st := lineCtx.statementFor(start, end); st != nil && st.PositiveText != "" {
-				kws = append(kws, d.matchingContexts(st.PositiveText, r.Context)...)
+				structuredKws := d.matchingContexts(st.PositiveText, r.Context)
 				if len(r.ContextPatterns) > 0 {
-					kws = append(kws, matchContextPatterns(st.PositiveText, r.ContextPatterns)...)
+					structuredKws = append(structuredKws, matchContextPatterns(st.PositiveText, r.ContextPatterns)...)
 				}
+				structured = len(structuredKws) > 0
+				kws = append(kws, structuredKws...)
 			}
-			return kws
+			return kws, structured
 		}
 		hasNegativeNear := func(start, end int) bool {
 			if len(r.NegativeContext) == 0 {
@@ -1094,8 +1108,13 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 					RequireContext: p.RequireContext,
 					ContextWindow:  requireContextWindow,
 				}
+				scoreEvidence := confidenceScoreEvidence{}
+				// キャプチャ外に 2 ルーン以上の固定部分を持つパターンは、単なる
+				// 1 文字境界ガードではなくラベル直結等の構造証拠を含む。
+				scoreEvidence.patternBoundContext = utf8.RuneCountInString(norm[fullStart:start])+
+					utf8.RuneCountInString(norm[end:fullEnd]) > 1
 				if p.RequireContext {
-					kws := ctxForMatch(start, end, requireContextWindow)
+					kws, structured := ctxForMatch(start, end, requireContextWindow)
 					if len(kws) == 0 {
 						if d.collectDropped {
 							d.recordDroppedMatch(r.ID, file, lineNo, norm, start, DropReasonRequireContextMissing, p.Base)
@@ -1103,6 +1122,9 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 						continue
 					}
 					reason.ContextKeywords = kws
+					contextEvidence := contextScoreEvidenceForMatch(norm, start, end, kws, structured)
+					contextEvidence.patternBoundContext = scoreEvidence.patternBoundContext
+					scoreEvidence = contextEvidence
 				}
 				if !p.IgnoreNegativeContext && hasNegativeNear(start, end) {
 					if d.collectDropped {
@@ -1170,12 +1192,15 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 					if window <= 0 {
 						window = defaultPromotionContextWindow
 					}
-					kws := ctxForMatch(start, end, window)
+					kws, structured := ctxForMatch(start, end, window)
 					if len(kws) > 0 {
 						reason.ContextKeywords = kws
 						reason.ContextPromoted = true
 						reason.ContextWindow = window
 						conf = rule.High
+						contextEvidence := contextScoreEvidenceForMatch(norm, start, end, kws, structured)
+						contextEvidence.patternBoundContext = scoreEvidence.patternBoundContext
+						scoreEvidence = contextEvidence
 					}
 				}
 				if conf < d.minConf && !retainForCooccurrenceBoost(retainBudget, r.ID, reason) {
@@ -1196,7 +1221,7 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 				if origRunes == nil {
 					origRunes = []rune(line)
 				}
-				found = append(found, Finding{
+				finding := Finding{
 					RuleID:                r.ID,
 					Description:           r.Description,
 					File:                  file,
@@ -1210,7 +1235,10 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 					matchStart:            mrs,
 					matchEnd:              mre,
 					ignoreNegativeContext: p.IgnoreNegativeContext,
-				})
+					scoreEvidence:         scoreEvidence,
+				}
+				finalizeFindingScore(&finding)
+				found = append(found, finding)
 			}
 		}
 	}

@@ -140,7 +140,7 @@ func (d *Detector) externalCandidateToFinding(file string, lines []string, c ext
 	if conf < d.minConf {
 		return Finding{}, false
 	}
-	return Finding{
+	finding := Finding{
 		RuleID:      c.RuleID,
 		Description: externalFindingDescription(c.RuleID),
 		File:        file,
@@ -154,7 +154,9 @@ func (d *Detector) externalCandidateToFinding(file string, lines []string, c ext
 		},
 		start: start,
 		end:   end,
-	}, true
+	}
+	finalizeFindingScore(&finding)
+	return finding, true
 }
 
 // externalFindingDescription は report 出力用の説明文を組み立てる。rule_id から

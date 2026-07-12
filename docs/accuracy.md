@@ -17,6 +17,33 @@ high recall operationalの3プロファイルを別々に計測・CIゲートし
 > 入力での精度を保証するものではありません。データセットの取得方法は
 > [docs/development.md](../docs/development.md) を参照してください。
 
+## Confidence スコアの校正
+
+内部スコアは `low=0-39`、`medium=40-74`、`high=75-100` へ固定写像します。段階導入では既存 Confidence の帯域を越えないため、公開 JSON/SARIF と `min_confidence` の挙動は維持され、同一 Confidence の overlap だけを score で決着します。
+
+後方互換段階の受け入れ基準は finding 単位の実測適合率で **High 97.5%以上、Medium 92%以上** です。少数標本の不確実性を隠さないため Wilson 95% 信頼区間下限も併記しますが、現時点の CI gate は実測適合率を対象とし、下限値は標本拡充の判断材料とします。issue で例示された High 99.5% / Medium 95% は stretch target として維持しますが、現行 Confidence を変更せずに満たせないことを v2 実測で確認したため、この段階の gate にはしません。
+
+### low
+
+| Confidence | TP | FP | 実測適合率 | Wilson 95%下限 | 基準 |
+|---|--:|--:|--:|--:|:--:|
+| `high` | 120 | 3 | 97.56% | 93.07% | PASS（≥97.5%） |
+| `medium` | 73 | 6 | 92.41% | 84.40% | PASS（≥92.0%） |
+
+### medium
+
+| Confidence | TP | FP | 実測適合率 | Wilson 95%下限 | 基準 |
+|---|--:|--:|--:|--:|:--:|
+| `high` | 120 | 3 | 97.56% | 93.07% | PASS（≥97.5%） |
+| `medium` | 73 | 6 | 92.41% | 84.40% | PASS（≥92.0%） |
+
+### high-recall
+
+| Confidence | TP | FP | 実測適合率 | Wilson 95%下限 | 基準 |
+|---|--:|--:|--:|--:|:--:|
+| `high` | 131 | 3 | 97.76% | 93.62% | PASS（≥97.5%） |
+| `medium` | 103 | 6 | 94.50% | 88.51% | PASS（≥92.0%） |
+
 ## プロファイル: low
 
 rule capability（min_confidence=low、高再現率ルール無効）。

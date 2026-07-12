@@ -3,7 +3,7 @@ package detect
 import "sort"
 
 // resolveOverlaps は同一行内で範囲が重なる検出を信頼度順
-// （同率なら範囲が長い方、それも同率なら RuleID の辞書順）で集約する。
+// （同率なら内部スコア、範囲長、RuleID の辞書順）で集約する。
 // 例: クレジットカード 16 桁の先頭 12 桁にマイナンバーのパターンが
 // 重なった場合、検証を通った信頼度の高い方だけを残す。
 //
@@ -73,13 +73,16 @@ func overlaps(a, b Finding) bool {
 	return a.start < b.end && b.start < a.end
 }
 
-// better は a が b より優先されるかを返す。信頼度・範囲の長さが同率の場合は
-// RuleID の辞書順にフォールバックする。Builtin() の定義順（候補スライスへの
+// better は a が b より優先されるかを返す。信頼度・内部スコア・範囲の長さが
+// 同率の場合は RuleID の辞書順にフォールバックする。Builtin() の定義順（候補スライスへの
 // 挿入順）に依存しない決定的なタイブレークにするための措置で、ルール追加順が
 // 変わっても重複解決の結果が変わらないようにする。
 func better(a, b Finding) bool {
 	if a.Confidence != b.Confidence {
 		return a.Confidence > b.Confidence
+	}
+	if comparisonScore(a) != comparisonScore(b) {
+		return comparisonScore(a) > comparisonScore(b)
 	}
 	if (a.end - a.start) != (b.end - b.start) {
 		return (a.end - a.start) > (b.end - b.start)

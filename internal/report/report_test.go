@@ -189,6 +189,26 @@ func TestSARIFLevels(t *testing.T) {
 	}
 }
 
+func TestPublicJSONAndSARIFDoNotExposeConfidenceScore(t *testing.T) {
+	f := detect.Finding{
+		RuleID: "test-rule", Description: "test", File: "a.txt", Line: 1, Column: 1,
+		Match: "ABCDE", Confidence: rule.High, ConfidenceScore: 99,
+	}
+	var jsonBuf bytes.Buffer
+	if err := JSON(&jsonBuf, []detect.Finding{f}, false, true, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	var sarifBuf bytes.Buffer
+	if err := SARIF(&sarifBuf, []detect.Finding{f}, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	for name, output := range map[string]string{"json": jsonBuf.String(), "sarif": sarifBuf.String()} {
+		if strings.Contains(strings.ToLower(output), "score") {
+			t.Fatalf("%s exposed internal score: %s", name, output)
+		}
+	}
+}
+
 func TestJSON(t *testing.T) {
 	phone := testfixtures.MustGet(t, "report.phone_match")
 	var buf bytes.Buffer

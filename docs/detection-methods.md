@@ -194,6 +194,23 @@ FP を抑える。
   キーワードは検出の前提条件であり昇格の根拠にはしないため、ルールごとの基準信頼度
   （口座番号と保険者番号は medium、免許証や旅券などは high）のまま報告する
 
+#### 内部加算スコア（後方互換段階）
+
+3 段階の公開契約を維持したまま、同じ Confidence の候補同士を比較するため 0〜100 の内部スコアを持つ。
+写像は low=0〜39、medium=40〜74、high=75〜100 で固定し、現在の段階では既存 Confidence の帯域内へ
+clamp する。このため `min_confidence`、text/JSON/SARIF/GitHub 出力は従来どおりで、score 自体も公開出力へ
+追加しない。
+
+基準点は low=20、medium=50、high=80。検証通過、肯定文脈の距離（同一 statement、8 ルーン以内、
+40 ルーン以内、論理隣接行）、ラベルを含むパターン、CSV/SQL 列や姓名・ゆうちょペア等の構造証拠、
+cooccurrence boost の同一 RecordID / 行窓を加算する。high-recall 専用ルールには、同一スパンで標準ルールの
+帰属を不用意に奪わない prior を適用する。負文脈、検証失敗、allowlist、ignore、種別除外などの棄却理由は
+従来どおり score 計算前の hard drop とし、加点で復活させない安全境界を保つ。
+
+重複解決の優先順は **Confidence → 内部 score → span 長 → RuleID 辞書順**。private corpus v2 の全3
+プロファイルで既存 exact/containment/relaxed span と Finding FP が変わらないことを gate し、Confidence 別の
+実測値と受け入れ基準は [accuracy.md](accuracy.md) に記録する。
+
 #### キーワードの照合方法
 
 - ASCII のコンテキスト語は、`tel` が `hotel` に、`card` が `discard` に含まれるような

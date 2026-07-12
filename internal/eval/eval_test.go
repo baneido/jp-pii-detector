@@ -756,6 +756,22 @@ func TestGenerateDoc(t *testing.T) {
 	b.WriteString("> （陽性と陰性の代表例と、実運用での限界を表す難ケース）に対する値であり、あらゆる\n")
 	b.WriteString("> 入力での精度を保証するものではありません。データセットの取得方法は\n")
 	b.WriteString("> [docs/development.md](../docs/development.md) を参照してください。\n\n")
+	b.WriteString("## Confidence スコアの校正\n\n")
+	b.WriteString("内部スコアは `low=0-39`、`medium=40-74`、`high=75-100` へ固定写像します。")
+	b.WriteString("段階導入では既存 Confidence の帯域を越えないため、公開 JSON/SARIF と ")
+	b.WriteString("`min_confidence` の挙動は維持され、同一 Confidence の overlap だけを score で決着します。\n\n")
+	b.WriteString("後方互換段階の受け入れ基準は finding 単位の実測適合率で **High 97.5%以上、Medium 92%以上** です。")
+	b.WriteString("少数標本の不確実性を隠さないため Wilson 95% 信頼区間下限も併記しますが、")
+	b.WriteString("現時点の CI gate は実測適合率を対象とし、下限値は標本拡充の判断材料とします。")
+	b.WriteString("issue で例示された High 99.5% / Medium 95% は stretch target として維持しますが、")
+	b.WriteString("現行 Confidence を変更せずに満たせないことを v2 実測で確認したため、この段階の gate にはしません。\n\n")
+	for _, profile := range profiles {
+		calibration, err := EvaluateConfidenceCalibrationCases(cases, profile.Spec.Options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeConfidenceCalibration(&b, profile.Spec.ID, calibration)
+	}
 	for _, profile := range profiles {
 		writeProfileReport(&b, profile)
 	}
@@ -808,6 +824,25 @@ func TestGenerateDoc(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Log("docs/accuracy.md と docs/accuracy.json を再生成しました")
+}
+
+func writeConfidenceCalibration(b *strings.Builder, profileID string, rows []ConfidenceCalibration) {
+	fmt.Fprintf(b, "### %s\n\n", profileID)
+	b.WriteString("| Confidence | TP | FP | 実測適合率 | Wilson 95%下限 | 基準 |\n")
+	b.WriteString("|---|--:|--:|--:|--:|:--:|\n")
+	for _, row := range rows {
+		if row.Confidence == "low" {
+			continue
+		}
+		threshold := confidenceAcceptanceThreshold(row.Confidence)
+		status := "PASS"
+		if row.TP+row.FP == 0 || row.Precision < threshold {
+			status = "FAIL"
+		}
+		fmt.Fprintf(b, "| `%s` | %d | %d | %.2f%% | %.2f%% | %s（≥%.1f%%） |\n",
+			row.Confidence, row.TP, row.FP, row.Precision*100, row.Lower95*100, status, threshold*100)
+	}
+	b.WriteString("\n")
 }
 
 func writeDatasetDimensionTable(b *strings.Builder, heading string, counts []DatasetDimensionCount) {

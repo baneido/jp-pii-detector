@@ -1592,7 +1592,7 @@ func TestResolveOverlaps(t *testing.T) {
 		{"重複なしは全件残る", []Finding{mk("a", rule.High, 0, 5), mk("b", rule.High, 5, 10)}, []string{"a", "b"}},
 		{"信頼度が高い方が勝つ", []Finding{mk("lo", rule.Medium, 0, 8), mk("hi", rule.High, 4, 10)}, []string{"hi"}},
 		{"同率なら長い方が勝つ", []Finding{mk("short", rule.High, 0, 6), mk("long", rule.High, 4, 16)}, []string{"long"}},
-		// 信頼度・長さが同率のときは RuleID の辞書順で決める（挿入順＝
+		// Confidence・内部 score・長さが同率のときは RuleID の辞書順で決める（挿入順＝
 		// Builtin() 定義順には依存しない、issue #64 の付随改善）。
 		{"同率同長は RuleID の辞書順", []Finding{mk("first", rule.High, 0, 6), mk("second", rule.High, 3, 9)}, []string{"first"}},
 		// 挿入順を逆にしても RuleID の辞書順という結果は変わらないことを

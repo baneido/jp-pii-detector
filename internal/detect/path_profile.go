@@ -70,6 +70,7 @@ func (d *Detector) applyPathDemotion(findings []Finding) []Finding {
 			f.Confidence = rule.Low
 			f.Reason.FinalConfidence = rule.Low.String()
 			f.Reason.PathDemoted = true
+			finalizeFindingScore(&f)
 		}
 		if f.Confidence < d.minConf {
 			d.recordDropped(f.RuleID, f.File, f.Line, f.Column, DropReasonPathDemotionBelowMin, f.Confidence)
