@@ -865,7 +865,7 @@ func TestScanDiffRangeYAMLObjectScopeParentKeyOutsideHunk(t *testing.T) {
 func TestScanStagedYuchoPairBothAdded(t *testing.T) {
 	repo := initTestRepo(t)
 	name := "pii.txt"
-	content := []byte("記号: 14040\n番号: 12345671\n") // jp-pii-detector:ignore
+	content := []byte("記号: 14030\n番号: 12345671\n") // jp-pii-detector:ignore
 	if err := os.WriteFile(filepath.Join(repo, name), content, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -898,12 +898,12 @@ func TestScanStagedYuchoPairBothAdded(t *testing.T) {
 func TestScanStagedYuchoPairOnlyAddedSideReported(t *testing.T) {
 	repo := initTestRepo(t)
 	name := "pii.txt"
-	if err := os.WriteFile(filepath.Join(repo, name), []byte("記号: 14040\n"), 0o644); err != nil { // jp-pii-detector:ignore
+	if err := os.WriteFile(filepath.Join(repo, name), []byte("記号: 14030\n"), 0o644); err != nil { // jp-pii-detector:ignore
 		t.Fatal(err)
 	}
 	git(t, "add", ".")
 	git(t, "commit", "-q", "-m", "base")
-	if err := os.WriteFile(filepath.Join(repo, name), []byte("記号: 14040\n番号: 12345671\n"), 0o644); err != nil { // jp-pii-detector:ignore
+	if err := os.WriteFile(filepath.Join(repo, name), []byte("記号: 14030\n番号: 12345671\n"), 0o644); err != nil { // jp-pii-detector:ignore
 		t.Fatal(err)
 	}
 	git(t, "add", ".")
