@@ -26,7 +26,7 @@ func TestValidPhone(t *testing.T) {
 		{"携帯 区切りあり", testfixtures.MustGet(t, "rule.phone_mobile_sep"), true},
 		{"携帯 区切りなし", testfixtures.MustGet(t, "rule.phone_mobile_nosep"), true},
 		{"固定 10 桁", testfixtures.MustGet(t, "rule.phone_landline_sep"), true},
-		{"固定 10 桁・seed 辞書未収録の市外局番", "04992-2-1234", true},
+		{"固定 10 桁・5 桁市外局番（区切りあり）", "04992-2-1234", true},
 		// 新規 fixture キーを増やさず、既存の区切りあり固定電話から同じ番号の
 		// 区切りなし表記を作って市外局番辞書による validPhone 拡張を検証する。
 		{"固定 10 桁 区切りなし", stripSeparators(testfixtures.MustGet(t, "detect.phone_fixed_tokyo")), true},
@@ -39,6 +39,11 @@ func TestValidPhone(t *testing.T) {
 		{"11 桁の固定様式は実在しない", "0123-456-7890", false},
 		{"国際表記 +81 + 10 桁で携帯以外は不正", "+81-12-3456-7890", false},
 		{"全桁同一はダミー値として棄却", "00000000000", false},
+		// 0123 は完全版辞書では実在局番（恵庭・千歳）で桁数・形状も固定電話と
+		// して妥当なため、この値は連番棄却（IsZeroPaddedSequential）のみで
+		// 落ちる（＝連番棄却の単一原因テスト。国内表記は先頭 0 必須のため、
+		// 降順連番はそもそも形状チェックで落ちてしまいここでは検証しない）。
+		{"昇順連番のみはダミー値として棄却", "0123456789", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -50,8 +55,9 @@ func TestValidPhone(t *testing.T) {
 }
 
 // P10（#56）: 固定電話・区切りなし 10 桁は市外局番辞書（dict.ValidAreaCode）で
-// 先頭一致の実在性を検証する。一方、区切りあり固定電話は area_codes.txt の seed
-// 辞書が未完成でも取りこぼさない。
+// 先頭一致の実在性を検証する。一方、区切りあり固定電話には辞書照合を課さない
+// （区切りあり表記は形状自体の情報量が高く、市外局番の新設・統合など辞書の
+// 鮮度リスクで FN を出さないため）。
 func TestValidPhoneAreaCodeDictionaryOnlyAppliesToNoSep(t *testing.T) {
 	tests := []struct {
 		name string
@@ -59,8 +65,8 @@ func TestValidPhoneAreaCodeDictionaryOnlyAppliesToNoSep(t *testing.T) {
 		want bool
 	}{
 		{"区切りなし・辞書に存在しないプレフィックス", "0212345678", false},
-		{"区切りあり・seed 辞書未収録の実在市外局番", "04992-2-1234", true},
-		{"連番のみ・辞書に存在しないプレフィックス", "0123456789", false},
+		{"区切りあり・辞書に存在しないプレフィックスでも辞書照合を課さない", "0219-12-3456", true},
+		{"区切りなし・完全版辞書の 4 桁市外局番（藤沢）", "0466221111", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -74,7 +80,7 @@ func TestValidPhoneAreaCodeDictionaryOnlyAppliesToNoSep(t *testing.T) {
 // TestValidPhoneSeparatorVariants は issue #46 で stripSeparators に追加した
 // ドット・丸括弧の除去が validPhone に反映されることを検証する
 // （フィクスチャ非依存・意図的な形式値のみのため inline）。区切りあり表記は
-// 市外局番辞書ゲートを経ないため、seed 辞書が未完成でも成立する。
+// 市外局番辞書ゲートを経ないため、辞書の収録状況に依存しない。
 func TestValidPhoneSeparatorVariants(t *testing.T) {
 	tests := []struct {
 		name string

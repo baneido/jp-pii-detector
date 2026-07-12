@@ -24,7 +24,10 @@ func TestGeneratedCasesDetectAsExpected(t *testing.T) {
 		t.Fatalf("eval.EvaluateCases(fixturegen.Generate()) error: %v", err)
 	}
 
-	targetRules := []string{"jp-my-number", "credit-card", "jp-postal-code", "person-name"}
+	targetRules := []string{
+		"jp-my-number", "credit-card", "jp-postal-code", "person-name",
+		"jp-phone-number", "jp-birthdate", "jp-address",
+	}
 	found := map[string]eval.Result{}
 	for _, r := range results {
 		found[r.RuleID] = r

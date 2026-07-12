@@ -63,10 +63,6 @@ func TestProbeRegressionKnownFalseNegatives(t *testing.T) {
 		{"probe-fn:phone-slash-separated-mobile", "連絡先 090/1234/5678"},
 		{"probe-fn:phone-mixed-separator", "本社: 03.1234-5678"},
 
-		// jp-postal-code: 郵便番号はハイフンなしの裸 7 桁を検出する
-		// パターンを持たない（設計上の意図的な非検出）。
-		{"probe-fn:postal-bare-7digit-no-hyphen known-limitation", "郵便番号 1000001"},
-
 		// 都道府県名を伴わない市区町村＋番地は、既定プロファイルでは
 		// jp-address-high-recall（高再現率限定）でしか拾えない（既定は非検出）。
 		{"probe-fn:address-missing-prefecture known-limitation", "住所: 渋谷区神南1-2-3"},
@@ -132,6 +128,26 @@ func TestProbeResolvedNumericSeparatorFalseNegatives(t *testing.T) {
 		{"phone-space-separated-mobile", "携帯 090 1234 5678", "jp-phone-number"},
 		{"phone-dot-separated-mobile", "TEL 090.1234.5678", "jp-phone-number"},
 		{"pension-space-separated", "年金 1234 567890", "jp-pension-number"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want)
+		})
+	}
+}
+
+// TestProbeResolvedPostalBareSevenDigitFalseNegative は、ラベル付きコンテキスト下で
+// ハイフンなし裸 7 桁の郵便番号を検出するパターンを追加したことで、偽陰性から
+// 検出に転じた系統を固定化する。元は TestProbeRegressionKnownFalseNegatives に
+// "known-limitation" として並んでいたもので、ルール改善に伴い期待値を反転した
+// （回帰データセットとして機能している証拠）。1000001（東京都千代田区千代田＝
+// 皇居）は日本郵便の実在集合に含まれる。
+func TestProbeResolvedPostalBareSevenDigitFalseNegative(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line, want string
+	}{
+		{"postal-bare-7digit-no-hyphen", "郵便番号 1000001", "jp-postal-code"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

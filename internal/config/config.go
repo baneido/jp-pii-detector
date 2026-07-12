@@ -69,6 +69,12 @@ type Config struct {
 		// --min-confidence low で常に確認できる。無効化すると全ルールが
 		// パスに関わらず通常どおりの信頼度で報告される。
 		PathDemotion bool `toml:"path_demotion"`
+		// ExcludeKinds は Rule.Kind（internal/rule）が返す下位種別のうち、
+		// 検出結果から除外する種別の一覧（例: jp-phone-number の PhoneKind が
+		// 返す "service" を指定すると、フリーダイヤル等のサービス番号だけを
+		// 除外できる）。Kind が未設定のルールには影響しない。既定は空（nil）
+		// のため、既存の検出結果は変わらない。
+		ExcludeKinds []string `toml:"exclude_kinds"`
 		// Custom は利用者定義の追加ルール。
 		Custom []CustomRule `toml:"custom"`
 	} `toml:"rules"`

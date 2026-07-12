@@ -528,6 +528,11 @@ func Builtin() []Rule {
 			NegativeContext:      digitRuleNegativeContext,
 			RequireContextWindow: digitRuleRequireContextWindow,
 			Validate:             validPhone,
+			// PhoneKind はフリーダイヤル等のサービス番号(0120/0800/0570/0990/0180)・
+			// IP電話(050)・携帯(060/070/080/090)・国際表記・固定電話を判別し、
+			// Reason.Kind に記録する（内訳は internal/rule/phone_kind.go）。
+			// [rules] exclude_kinds で下位種別ごとに除外できる（既定は全種別検出）。
+			Kind: PhoneKind,
 			Patterns: []Pattern{
 				// 区切りあり携帯・IP 電話（060/070/080/090/050）
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0-\d{4}-\d{4}`), Base: High, IgnoreNegativeContext: true},
@@ -539,6 +544,15 @@ func Builtin() []Rule {
 				// 区切りあり固定電話（市外局番 2〜5 桁）。末尾は 3〜4 桁を許容し、
 				// フリーダイヤル・ナビダイヤル等の末尾 3 桁表記も拾う。
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}-\d{1,4}-\d{3,4}`), Base: Medium, IgnoreNegativeContext: true},
+				// ドット区切り固定電話（携帯のドット区切りパターン、上の
+				// 空白・ドット区切り携帯・IP 電話に倣う）。validPhone は 10 桁で
+				// ハイフン・空白のいずれも含まない場合、区切りなし固定電話と同じ
+				// 市外局番辞書（dict.ValidAreaCode）照合に落ちる（strings.ContainsAny
+				// による "-"/" " 判定にドットは該当しないため）。そのため、この
+				// パターン自体には市外局番の実在性検証を追加しなくても、ドット区切り
+				// 表記は自動的に市外局番の実在性検証がかかる。
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}\.\d{1,4}\.\d{3,4}`), Base: Medium,
+					ValidateLine: rejectSeparatedDigitGroup(" .", 1)},
 				// 括弧市外局番（市外局番の直後に市内局番を括弧書き、または
 				// 市外局番全体を括弧で囲む表記）。
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}\(\d{1,4}\)\d{4}`), Base: Medium},
@@ -569,6 +583,11 @@ func Builtin() []Rule {
 			Patterns: []Pattern{
 				{Re: dg(`〒\s?\d{3}-?\d{4}`), Base: High},
 				{Re: dg(`\d{3}-\d{4}`), Base: Medium, RequireContext: true},
+				// ハイフンなし裸 7 桁。桁数のみでは業務 ID 等と衝突しやすいため
+				// コンテキストを必須とし、Validate（dict.ValidPostalCode）が
+				// 7 桁完全一致でビットセットに対して実在性を検証するため、
+				// パターン固有の追加検証は不要。
+				{Re: dg(`\d{7}`), Base: Medium, RequireContext: true},
 			},
 		},
 		{
@@ -642,6 +661,28 @@ func Builtin() []Rule {
 						`[` + kanji + hiraganaNoParticle + katakana + `0-9-]{0,30}?` +
 						banchiDash + `)`,
 				), Base: Medium, Validate: notCalendarDateBanchi},
+			},
+		},
+		{
+			// 漢数字番地・都道府県なし（神南一丁目十九番十一号 等。高再現率）。
+			// 既定 jp-address が漢数字用に同一 ID の第 2 エントリを持つのと同じ
+			// 手法で、ASCII 数字を含まない行にもマッチさせるため PrefilterDigit
+			// ではなく PrefilterCJK + 市区町村リテラルで別途プリフィルタする。
+			// ダッシュ形は持たない（漢数字表記では実質使われないため。banchiKanji
+			// のコメント参照）。
+			ID:                "jp-address-high-recall",
+			Description:       "住所（都道府県なし・高再現率）",
+			Prefilter:         PrefilterCJK,
+			PrefilterLiterals: []string{"市", "区", "町", "村"},
+			Context:           []string{"住所", "所在地", "勤務地", "勤務先", "自宅", "address"},
+			Validate:          dict.MunicipalitySuffixMatch,
+			Patterns: []Pattern{
+				{Re: regexp.MustCompile(
+					`(?:住所|所在地|勤務地|勤務先|自宅|address)?\s*[:=]?\s*(` +
+						`[` + kanji + hiragana + katakana + `]{1,15}[市区町村]` +
+						`[` + kanji + hiragana + katakana + `0-9-]{0,30}?` +
+						banchiKanji + `)`,
+				), Base: Medium},
 			},
 		},
 		{
@@ -816,6 +857,14 @@ func Builtin() []Rule {
 					birthdateLabel + birthdateLabelSep +
 						`((?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01]))(?:[^0-9]|$)`,
 				), Base: Medium},
+				// 後置ラベル「生まれ」（値→ラベル順で前置ラベルが無いケース。
+				// 実測 FN「1985年1月2日生まれ」相当）。jp-pii-detector:ignore
+				// 上の区切りあり値パターン（第 1 パターン）の捕捉本体をそのまま
+				// 流用し、前方に数字境界ガード（(?:^|[^0-9])）、後方に「生まれ」を
+				// 必須とする。区切りなし8桁の後置ラベル形は実測未確認のため対象外。
+				{Re: regexp.MustCompile(
+					`(?:^|[^0-9])((?:(?:19|20)\d{2}|(?:明治|大正|昭和|平成|令和|[MTSHR])(?:元|\d{1,2}))[年/.-]\d{1,2}[月/.-]\d{1,2}日?)生まれ`,
+				), Base: Medium},
 			},
 		},
 		{
@@ -839,9 +888,13 @@ func Builtin() []Rule {
 			RequireContextWindow: digitRuleRequireContextWindow,
 			Validate:             validEmploymentInsurance,
 			Patterns: []Pattern{
-				// 区切りあり（4桁-6桁-1桁）は書式自体が固有の形状のため
-				// コンテキストなしで High とする（電話番号の区切りあり表記と同様）。
-				{Re: dg(`\d{4}-\d{6}-\d`), Base: High},
+				// 区切りあり（4桁-6桁-1桁）は当初、書式自体が固有の形状のため
+				// コンテキストなしで High としていたが、実測でリビジョン表記
+				// （「リビジョン 2024-123456-7 をデプロイ」）・業務ロット番号
+				// （「部品ロット 8907-654321-3」）と衝突することが確認されたため、
+				// 他の桁ベースパターンと同様にコンテキスト必須（RequireContext）へ
+				// 変更した。
+				{Re: dg(`\d{4}-\d{6}-\d`), Base: High, RequireContext: true},
 				// 区切りなし 11 桁は桁数のみが手がかりのため周辺語を必須にする。
 				{Re: dg(`\d{11}`), Base: Medium, RequireContext: true},
 			},
@@ -1052,8 +1105,10 @@ func Builtin() []Rule {
 			// PrefilterLiterals の "name" だけでホットパスを絞る。
 			Prefilter:         PrefilterNone,
 			PrefilterLiterals: []string{"name"},
-			// 姓辞書・名辞書の共起（語順不問）を必須にする。ヘボン式の表記揺れ
-			// （Itô/Itoh/Ito 等）や、辞書外の英単語（Ken/Kai/Mori 等）との衝突は
+			// 姓辞書・名辞書の共起（語順不問）を必須にする。長音省略ヘボン式
+			// （Ito/Saito）と OH 表記（Itoh/Ohno）は辞書読み込み時の機械派生で
+			// 併録済み（internal/dict の loadRomaji 参照）。マクロン付き表記
+			// （Itô/Itō 等）や、辞書外の英単語（Ken/Kai/Mori 等）との衝突は
 			// 網羅できないため、初期実装は高再現率モード限定（既定オフ、
 			// HighRecallRuleIDs）とする。
 			Validate: validRomajiFullName,
@@ -1194,6 +1249,15 @@ func validPhone(m string) bool {
 	if checksum.AllSame(d) {
 		return false
 	}
+	// 昇順・降順の連番のみ（0123456789 等）はプレースホルダとして棄却する。
+	// 市外局番辞書の完全化（総務省一次データ 387 件）で 0123（恵庭・千歳）の
+	// ような連番プレフィックスも実在局番として一致するようになり、辞書照合
+	// だけではこの種のダミー値を弾けなくなったため、マイナンバー・運転免許と
+	// 同じ棄却基準に揃える。実在の加入者番号が偶然完全な連番になるケースは
+	// 棄却されるが、プレースホルダとの区別は値からは付かないため許容する。
+	if checksum.IsZeroPaddedSequential(d) {
+		return false
+	}
 	if strings.HasPrefix(d, "81") {
 		// 国番号を除いた市外局番以下は、固定 9 桁 / 携帯・IP 10 桁
 		// （先頭 0 なし）。10 桁は携帯・IP のプレフィックス X0 のみ。
@@ -1216,8 +1280,9 @@ func validPhone(m string) bool {
 			return d[1] != '0'
 		}
 		// 区切りなし固定電話は市外局番辞書（dict.ValidAreaCode）で先頭一致の
-		// 実在性を検証する。area_codes.txt は seed のため、区切りあり表記では
-		// この辞書を必須にしない。
+		// 実在性を検証する。区切りあり表記にはこの辞書を必須にしない
+		// （区切りあり表記は形状自体の情報量が高く、市外局番の新設・統合など
+		// 辞書の鮮度リスクで FN を出さないため）。
 		_, ok := dict.ValidAreaCode(d)
 		return ok
 	case 11:

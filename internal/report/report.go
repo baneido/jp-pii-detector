@@ -81,6 +81,9 @@ func formatReason(r detect.DetectReason) string {
 	if r.Validated {
 		parts = append(parts, "検証=true")
 	}
+	if r.Kind != "" {
+		parts = append(parts, fmt.Sprintf("種別=%s", r.Kind))
+	}
 	return strings.Join(parts, " ")
 }
 
