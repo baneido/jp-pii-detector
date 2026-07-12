@@ -57,7 +57,7 @@ scanner_physical_lines() {
 		\( -type f -size -5242881c -exec sh -c '
 			for path do
 				bytes=$(dd if="$path" bs=8192 count=1 2>/dev/null | wc -c | tr -d " ")
-				non_nul_bytes=$(dd if="$path" bs=8192 count=1 2>/dev/null | tr -d "\000" | wc -c | tr -d " ")
+				non_nul_bytes=$(dd if="$path" bs=8192 count=1 2>/dev/null | LC_ALL=C tr -d "\000" | wc -c | tr -d " ")
 				if [ "$bytes" = "$non_nul_bytes" ]; then
 					wc -l < "$path"
 				fi

@@ -379,7 +379,7 @@ $ go run ./cmd/pii-dataset-gen -output /path/outside/repo/synthetic-cases.json
 3. 問題がなければ `.github/workflows/fp-corpus-report.yml` のコーパス一覧
    （`name|git-url|commit-sha` 形式）にコミット SHA を固定して登録します。
 
-**結果の保存先**: 集計結果はリポジトリの公開 `docs/` には置かず、評価コーパスとは分離した
+**結果の保存先と前回比較**: 集計結果はリポジトリの公開 `docs/` には置かず、評価コーパスとは分離した
 GCSバケットへ保存します。`JP_PII_REPORTS_PROVIDER`・`JP_PII_REPORTS_SA`・
 `JP_PII_REPORTS_BUCKET`を設定し、report writerに評価コーパスのread権限を与えないでください。
 `fp-corpus-report/` プレフィックスで JSON/Markdown
@@ -388,9 +388,23 @@ GCSバケットへ保存します。`JP_PII_REPORTS_PROVIDER`・`JP_PII_REPORTS_
 ルール別合計のみの `summary.json`/`summary.md` に限定します
 （実リポジトリ名と findings 内訳の組を公開の場に出さないための責任ある開示上の配慮）。
 
-**運用フェーズ**: 初期運用は `workflow_dispatch` のみです。数回分の手動実行でノイズ
-（コーパスの dead link・想定外の実 PII 混入）がないことを確認できたら、ワークフロー内の
-`schedule` のコメントアウトを外して週次 cron に昇格してください。
+週次 run は保存済みの `latest-summary.json` と今回の匿名集計を比較し、全体またはルール別の
+findings/MLoC が前回比 20% を超えて増加した場合に Actions の warning と step summary を
+出します。これは**非ゲート**であり、閾値超過だけでは job を失敗させず、Issue の自動作成・
+コメントも行いません。run ID ごとのスナップショットは作成時条件付きで上書き不可とし、
+`latest-summary.json` は読み込んだ GCS generation に対する compare-and-swap で更新します。
+ワークフローの `concurrency` と合わせ、再実行や外部 writer との競合で履歴を巻き戻さない設計です。
+
+成功した過去 run がなく `latest-summary.json` も存在しない場合は、比較を行わず、その run の
+結果を初回 baseline として保存する明示的な bootstrap 動作になります。オブジェクト不存在以外の
+取得エラーは bootstrap と解釈せず、baseline を上書きせずに job を失敗させます。REPORTS 系の
+3変数がすべて未設定なら履歴保存・比較を明示的にスキップし、部分設定は設定ミスとして失敗します。
+
+**運用フェーズ**: 固定した go・curl・TypeScript コーパスの取得と現行検出器での走査を確認し、
+毎週月曜 03:00 UTC の cron に昇格済みです。`workflow_dispatch` も残していますが、OIDC を伴う
+任意ブランチ実行を避けるため既定ブランチでしか job は動きません。`pull_request` では起動せず、
+PR 由来のコードへ report writer 権限を渡しません。閾値が安定しゲート化を検討するまでは、
+上記の非ゲート warning で推移を確認してください。
 
 ## 拡張と運用
 
