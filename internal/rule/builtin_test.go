@@ -273,7 +273,7 @@ func TestRejectYuchoAccountSuffix(t *testing.T) {
 	}{
 		{"1234567", 0, true},
 		{"口座: 1234567", len("口座: "), true},
-		{"12340-7654321", 6, false},
+		{"12370-7654321", 6, false},
 		{"22340-7654321", 6, true},
 		{"abcde-7654321", 6, true},
 	}
@@ -391,8 +391,8 @@ func TestValidPassport(t *testing.T) {
 	}
 }
 
-// validResidenceCard は出入国在留管理庁の文字集合仕様で使われない英字 I・O
-// を含む値と、数字 8 桁が全桁同一のダミー値を棄却する。
+// validResidenceCard は数字 8 桁が全桁同一のダミー値だけを棄却する。最新の
+// 出入国在留管理庁仕様にない I/O 除外や検査式は推測して適用しない。
 func TestValidResidenceCard(t *testing.T) {
 	tests := []struct {
 		name string
@@ -400,8 +400,8 @@ func TestValidResidenceCard(t *testing.T) {
 		want bool
 	}{
 		{"実在しうる値", "AB12345678CD", true},
-		{"先頭の英字に I を含むと棄却", "IB12345678CD", false},
-		{"末尾の英字に O を含むと棄却", "AB12345678CO", false},
+		{"I も公開仕様上は英字として許容", "IB12345678CD", true},
+		{"O も公開仕様上は英字として許容", "AB12345678CO", true},
 		{"数字8桁が全桁同一は棄却", "AB00000000CD", false},
 	}
 	for _, tt := range tests {
@@ -471,17 +471,19 @@ func TestValidBirthdate(t *testing.T) {
 	}
 }
 
-// validYuchoAccount はゆうちょ銀行の記号（5 桁・先頭は必ず "1"）・番号
-// （7〜8 桁・末尾 1）がハイフンで相関した表記かを検証する。
+// validYuchoAccount はゆうちょ銀行の記号（5 桁・先頭 1・末尾 0）・番号
+// （7〜8 桁・末尾 1）と、記号 4 桁目の公式検査数字を検証する。
 func TestValidYuchoAccount(t *testing.T) {
 	tests := []struct {
 		name string
 		in   string
 		want bool
 	}{
-		{"有効な記号番号（番号7桁）", "12345-1234561", true},
-		{"有効な記号番号（番号8桁）", "10090-12345671", true},
+		{"有効な記号番号（番号7桁）", "12390-1234561", true},
+		{"有効な記号番号（番号8桁）", "10010-12345671", true},
+		{"検査数字が不一致", "10020-12345671", false},
 		{"記号の先頭が1以外", "22345-1234567", false},
+		{"記号の末尾が0以外", "12395-1234561", false},
 		{"記号が5桁でない", "1234-1234567", false},
 		{"番号が6桁", "12345-123451", false},
 		{"番号が8桁超", "12345-123456789", false},
