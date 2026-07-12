@@ -11,13 +11,12 @@ name: fp-corpus-report
 # ci.yml の test job（精度ゴールデン・README バッジ・ドッグフードのゲート）とは完全に独立しており、
 # このワークフローの成否は PR CI に一切影響しない（postal-update.yml と同様の分離方針）。
 #
-# 初期運用は workflow_dispatch のみ。数回分の手動実行でノイズ（コーパスの dead link・
-# 想定外の実 PII 混入）がないことを確認できたら、下の schedule のコメントアウトを外して
-# 週次 cron に昇格する（docs/development.md「OSS コーパスでの偽陽性率計測」参照）。
+# 固定コーパスの取得・スキャンを確認したため週次実行する。手動実行は既定ブランチに限定し、
+# PR のコードに OIDC 権限を渡さない（docs/development.md「OSS コーパスでの偽陽性率計測」参照）。
 on:
+  schedule:
+    - cron: '0 3 * * 1' # 毎週月曜 03:00 UTC（= 12:00 JST）
   workflow_dispatch: {}
-  # schedule:
-  #   - cron: '0 3 * * 1' # 毎週月曜 03:00 UTC（= 12:00 JST）
 
 # 多重実行を避ける（クローン帯域・GCS 書き込みの競合防止）。進行中のランは中断しない。
 concurrency:
@@ -30,6 +29,8 @@ permissions: {}
 jobs:
   fp-corpus-report:
     name: fp corpus report
+    # workflow_dispatch で任意ブランチの workflow を OIDC 付きで動かせないようにする。
+    if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
     runs-on: ubuntu-latest
     # コーパスのクローン + スキャンは自リポジトリの CI より時間がかかるため長めに確保する。
     timeout-minutes: 45
@@ -160,33 +161,116 @@ jobs:
           echo "--- summary (anonymized) ---"
           cat "$RUNNER_TEMP/summary.json"
 
-      # 評価コーパスのreaderとは別のwriter主体・bucketを使う。
+      # 3 変数はすべて設定するか、すべて未設定にする。部分設定を黙って bootstrap と
+      # 解釈すると履歴欠損を見逃すため、設定不整合はエラーにする。
+      - name: Validate report storage configuration
+        id: report-storage
+        env:
+          REPORTS_PROVIDER: ${{ vars.JP_PII_REPORTS_PROVIDER }}
+          REPORTS_SA: ${{ vars.JP_PII_REPORTS_SA }}
+          REPORTS_BUCKET: ${{ vars.JP_PII_REPORTS_BUCKET }}
+        run: |
+          set -eu
+          configured=0
+          [ -n "$REPORTS_PROVIDER" ] && configured=$((configured + 1))
+          [ -n "$REPORTS_SA" ] && configured=$((configured + 1))
+          [ -n "$REPORTS_BUCKET" ] && configured=$((configured + 1))
+          if [ "$configured" -ne 0 ] && [ "$configured" -ne 3 ]; then
+            echo "::error::JP_PII_REPORTS_PROVIDER/SA/BUCKET は3つすべて設定してください"
+            exit 1
+          fi
+          if [ "$configured" -eq 3 ]; then
+            echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+            echo "::notice::report storage 未設定のため、履歴保存と前回比較をスキップします"
+          fi
+
+      # 評価コーパスの reader とは別の writer 主体・bucket を使う。
       - name: Authenticate to Google Cloud (OIDC / Workload Identity)
-        if: ${{ vars.JP_PII_REPORTS_PROVIDER != '' }}
+        if: ${{ steps.report-storage.outputs.enabled == 'true' }}
         uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
           workload_identity_provider: ${{ vars.JP_PII_REPORTS_PROVIDER }}
           service_account: ${{ vars.JP_PII_REPORTS_SA }}
       - name: Set up gcloud
-        if: ${{ vars.JP_PII_REPORTS_PROVIDER != '' }}
+        if: ${{ steps.report-storage.outputs.enabled == 'true' }}
         uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
-      - name: Upload report snapshot to GCS
-        if: ${{ vars.JP_PII_REPORTS_PROVIDER != '' }}
+      - name: Load previous baseline
+        if: ${{ steps.report-storage.outputs.enabled == 'true' }}
+        id: baseline
         env:
           REPORTS_BUCKET: ${{ vars.JP_PII_REPORTS_BUCKET }}
+        run: |
+          set -eu
+          baseline="gs://$REPORTS_BUCKET/fp-corpus-report/latest-summary.json"
+          error_file="$RUNNER_TEMP/baseline-error.txt"
+          if generation=$(gcloud storage objects describe "$baseline" --format='value(generation)' 2> "$error_file"); then
+            case "$generation" in
+              ''|*[!0-9]*) echo "::error::baseline generation が不正です"; exit 1 ;;
+            esac
+            gcloud storage cp "$baseline" "$RUNNER_TEMP/previous-summary.json"
+            echo 'found=true' >> "$GITHUB_OUTPUT"
+            echo "generation=$generation" >> "$GITHUB_OUTPUT"
+          elif grep -Eqi '(^|[^0-9])404([^0-9]|$)|not[ -]found|No URLs matched' "$error_file"; then
+            echo 'found=false' >> "$GITHUB_OUTPUT"
+            echo 'generation=0' >> "$GITHUB_OUTPUT"
+            echo "::notice::永続baselineがないため、今回の成功結果を初回baselineとして保存します"
+          else
+            cat "$error_file" >&2
+            echo "::error::baseline取得に失敗しました。履歴を上書きせず終了します"
+            exit 1
+          fi
+      - name: Compare with previous baseline (non-gating)
+        if: ${{ steps.baseline.outputs.found == 'true' }}
+        env:
+          TREND_THRESHOLD_PERCENT: '20'
+        run: |
+          set -eu
+          scripts/fp-corpus-trend.sh \
+            "$RUNNER_TEMP/summary.json" \
+            "$RUNNER_TEMP/previous-summary.json" \
+            "$TREND_THRESHOLD_PERCENT" > "$RUNNER_TEMP/trend.json"
+
+          {
+            echo
+            echo '## 前回比トレンド（非ゲート）'
+            jq -r '
+              "- warning: " + (.warning | tostring),
+              "- threshold_percent: " + (.threshold_percent | tostring),
+              "- previous_findings_per_mloc: " + (.previous_findings_per_mloc | tostring),
+              "- current_findings_per_mloc: " + (.current_findings_per_mloc | tostring),
+              "- overall_change_percent: " + ((.overall_change_percent // "n/a") | tostring),
+              "",
+              "| rule_id | previous | current | change_percent | warning |",
+              "|---|---:|---:|---:|---|",
+              (.by_rule[] | "| " + .rule_id + " | " + (.previous_count | tostring) + " | " + (.current_count | tostring) + " | " + ((.change_percent // "n/a") | tostring) + " | " + (.warning | tostring) + " |")
+            ' "$RUNNER_TEMP/trend.json"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$(jq -r '.warning' "$RUNNER_TEMP/trend.json")" = true ]; then
+            echo "::warning::fp-corpus-report が前回比閾値を超えました（非ゲート）。詳細はstep summaryを確認してください"
+          fi
+      - name: Upload report snapshot to GCS
+        if: ${{ steps.report-storage.outputs.enabled == 'true' }}
+        env:
+          REPORTS_BUCKET: ${{ vars.JP_PII_REPORTS_BUCKET }}
+          BASELINE_GENERATION: ${{ steps.baseline.outputs.generation }}
         run: |
           set -eu
           prefix="gs://$REPORTS_BUCKET/fp-corpus-report"
           run_id="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 
-          # detail.json（コーパス名付き）は非公開バケットにのみ保存する。
-          gcloud storage cp "$RUNNER_TEMP/detail.json" "$prefix/${run_id}-detail.json"
-          gcloud storage cp "$RUNNER_TEMP/detail.json" "$prefix/latest-detail.json"
-          # summary は匿名化済みなので公開しても問題ない値だが、置き場は同じ非公開バケット。
-          gcloud storage cp "$RUNNER_TEMP/summary.json" "$prefix/${run_id}-summary.json"
-          gcloud storage cp "$RUNNER_TEMP/summary.json" "$prefix/latest-summary.json"
-          gcloud storage cp "$RUNNER_TEMP/summary.md" "$prefix/${run_id}-summary.md"
-          gcloud storage cp "$RUNNER_TEMP/summary.md" "$prefix/latest-summary.md"
+          # run_id ごとの履歴は作成時条件で不変にし、再実行・外部 writer との競合で
+          # 上書きしない。detail.json（コーパス名付き）は非公開バケットだけに置く。
+          gcloud storage cp "$RUNNER_TEMP/detail.json" "$prefix/${run_id}-detail.json" --if-generation-match=0
+          gcloud storage cp "$RUNNER_TEMP/summary.json" "$prefix/${run_id}-summary.json" --if-generation-match=0
+          gcloud storage cp "$RUNNER_TEMP/summary.md" "$prefix/${run_id}-summary.md" --if-generation-match=0
+
+          # latest は読み込んだ世代に対する compare-and-swap。concurrency に加え、
+          # workflow 外の writer と競合した場合も古い結果で上書きしない。
+          gcloud storage cp "$RUNNER_TEMP/summary.json" "$prefix/latest-summary.json" \
+            --if-generation-match="$BASELINE_GENERATION"
       - name: Remove Google Cloud credentials file
-        if: ${{ always() && vars.JP_PII_REPORTS_PROVIDER != '' }}
+        if: ${{ always() && steps.report-storage.outputs.enabled == 'true' }}
         run: rm -f "${GOOGLE_GHA_CREDS_PATH:-}"
