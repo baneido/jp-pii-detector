@@ -44,6 +44,26 @@ func run(t *testing.T, dir string, args ...string) (string, int) {
 	return string(out), code
 }
 
+// runWithStderr は stdout と stderr を別々に検証したい CLI UX テスト用。
+func runWithStderr(t *testing.T, dir string, args ...string) (string, string, int) {
+	t.Helper()
+	cmd := exec.Command(binPath, args...)
+	cmd.Dir = dir
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	code := 0
+	if err != nil {
+		ee, ok := err.(*exec.ExitError)
+		if !ok {
+			t.Fatalf("run %v: %v", args, err)
+		}
+		code = ee.ExitCode()
+	}
+	return stdout.String(), stderr.String(), code
+}
+
 // piiDir は PII を含むファイル 1 つだけの作業ディレクトリを作る。
 // 携帯電話番号は実在しうるためフィクスチャから読み込む。
 func piiDir(t *testing.T) string {
@@ -183,6 +203,35 @@ func TestScanPartialErrorExitsTwoWithReport(t *testing.T) {
 	}
 }
 
+// 不完全な走査結果を「既知」として固定すると、その後の CI が検出漏れを
+// 正常扱いしてしまう。警告が 1 件でもあれば baseline を作成しないことを確認する。
+func TestBaselineUpdateRejectsPartialScan(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root では読み取り権限のチェックが効かないためスキップ")
+	}
+	dir := t.TempDir()
+	denied := filepath.Join(dir, "denied.txt")
+	if err := os.WriteFile(denied, []byte("no pii\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(denied, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(denied, 0o644) })
+	baselinePath := filepath.Join(dir, "baseline.json")
+
+	_, stderr, code := runWithStderr(t, dir, "scan", "--baseline", baselinePath, "--update-baseline", ".")
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2: %s", code, stderr)
+	}
+	if !strings.Contains(stderr, "baseline を更新しませんでした") {
+		t.Errorf("fail-closed の理由が表示されていない: %s", stderr)
+	}
+	if _, err := os.Stat(baselinePath); !os.IsNotExist(err) {
+		t.Errorf("不完全な走査で baseline が作成された: %v", err)
+	}
+}
+
 func TestMinConfidenceFlagOverride(t *testing.T) {
 	dir := t.TempDir()
 	// 区切りなし携帯（コンテキストなし）は medium → high 指定で報告されない。
@@ -289,6 +338,21 @@ func TestScanFailOnTriggersAtOrAboveThreshold(t *testing.T) {
 	}
 }
 
+func TestScanFailOnCanBeLowerThanReportThreshold(t *testing.T) {
+	dir := t.TempDir()
+	content := testfixtures.MustGet(t, "cmd.phone_mobile_nosep") + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, code := run(t, dir, "scan", "--min-confidence", "high", "--fail-on", "medium", ".")
+	if code != 1 {
+		t.Errorf("非表示の medium finding でも --fail-on medium なら exit = %d, want 1", code)
+	}
+	if out != "" {
+		t.Errorf("--min-confidence high なので medium finding は表示しない: %s", out)
+	}
+}
+
 // TestScanFailOnExitZeroStillWins は --exit-zero が --fail-on より優先される
 // （既存の --exit-zero の意味を変えない）ことを確認する。
 func TestScanFailOnExitZeroStillWins(t *testing.T) {
@@ -362,19 +426,69 @@ func TestScanDoubleDashStopsFlagParsing(t *testing.T) {
 	}
 }
 
-// TestScanHyphenLeadingPathAfterPositional は、既知フラグだけを並べ替え、
-// "-weird.txt" のような未定義フラグ風のパスを位置引数のまま保つことを確認する。
-// PR 以前は最初の位置引数以降を flag.Parse がそのままパスとして残していたため、
-// この呼び出しは後方互換として成功する必要がある。
-func TestScanHyphenLeadingPathAfterPositional(t *testing.T) {
+// TestScanHyphenLeadingPathAfterDoubleDash は、ハイフン始まりの実ファイルを
+// 標準 CLI と同じく "--" の後へ置けば走査できることを確認する。
+func TestScanHyphenLeadingPathAfterDoubleDash(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{"a.txt", "-weird.txt"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("no pii\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, code := run(t, dir, "scan", ".", "-weird.txt"); code != 0 {
+	if _, code := run(t, dir, "scan", ".", "--", "-weird.txt"); code != 0 {
 		t.Errorf("exit = %d, want 0（-weird.txt はパスとして扱う）", code)
+	}
+}
+
+func TestCLIHelpVersionAndUnknownFlags(t *testing.T) {
+	dir := t.TempDir()
+	for _, args := range [][]string{{"--help"}, {"scan", "--help"}, {"rules", "-h"}} {
+		out, code := run(t, dir, args...)
+		if code != 0 || !strings.Contains(out, "Usage:") {
+			t.Errorf("%v: exit=%d output=%q", args, code, out)
+		}
+	}
+	for _, arg := range []string{"version", "--version", "-version"} {
+		out, code := run(t, dir, arg)
+		if code != 0 || strings.TrimSpace(out) == "" {
+			t.Errorf("%s: exit=%d output=%q", arg, code, out)
+		}
+	}
+	for _, args := range [][]string{{"scan", "--typo"}, {"scan", ".", "--typo"}, {"rules", "--typo"}} {
+		_, stderr, code := runWithStderr(t, dir, args...)
+		if code != 2 || !strings.Contains(stderr, "unknown flag") {
+			t.Errorf("%v: exit=%d stderr=%q", args, code, stderr)
+		}
+	}
+}
+
+func TestScanRejectsAmbiguousModesAndPaths(t *testing.T) {
+	dir := t.TempDir()
+	for _, args := range [][]string{
+		{"scan", "--stdin", "--staged"},
+		{"scan", "--staged", "--diff", "HEAD~1"},
+		{"scan", "--staged", "."},
+		{"scan", "--summary", "--quiet"},
+	} {
+		if _, code := run(t, dir, args...); code != 2 {
+			t.Errorf("%v: exit=%d, want 2", args, code)
+		}
+	}
+}
+
+func TestScanSummaryIsWrittenToStderr(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("no pii\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, code := runWithStderr(t, dir, "scan", "--summary", ".")
+	if code != 0 || stdout != "" {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	for _, want := range []string{"summary:", "mode=full", "scanned=1", "findings=0", "warnings=0"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("summary missing %q: %s", want, stderr)
+		}
 	}
 }
 

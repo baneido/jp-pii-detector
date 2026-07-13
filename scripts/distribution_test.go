@@ -196,6 +196,20 @@ func TestPreCommitScriptInstallsAndRunsScanner(t *testing.T) {
 	}
 }
 
+func TestPreCommitScriptSupportsFullScan(t *testing.T) {
+	releases := t.TempDir()
+	writeFakeReleaseArchive(t, releases)
+	cacheDir := filepath.Join(t.TempDir(), "cache")
+
+	out, code := runScript(t, "scripts/pre-commit.sh", distributionEnv("file://"+releases, cacheDir), "--full", "--summary")
+	if code != 0 {
+		t.Fatalf("pre-commit.sh --full exit=%d\n%s", code, out)
+	}
+	if !strings.Contains(out, "fake-jp-pii-detect scan --summary .") {
+		t.Fatalf("full hook should scan the repository, got:\n%s", out)
+	}
+}
+
 func TestPreCommitLatestRefetchesOnEveryRun(t *testing.T) {
 	releases := t.TempDir()
 	writeFakeReleaseArchiveFor(t, releases, "latest", "#!/bin/sh\necho old-latest \"$@\"\n")
@@ -259,9 +273,12 @@ func TestActionAvoidsShellExpansionOfInputs(t *testing.T) {
 	}
 	for _, want := range []string{
 		"INPUT_VERSION: ${{ inputs.version }}",
+		"ACTION_REF: ${{ github.action_ref }}",
+		`[[ "$ACTION_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]`,
 		"INPUT_ARGS: ${{ inputs.args }}",
 		"shlex.split(os.environ[\"INPUT_ARGS\"])",
-		"subprocess.run([scanner, *args], check=True)",
+		"subprocess.run([scanner, *args], check=False)",
+		"raise SystemExit(completed.returncode)",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("action.yml missing shell-injection guard %q:\n%s", want, text)
@@ -375,6 +392,8 @@ func TestPreCommitHookUsesScriptWrapper(t *testing.T) {
 	}
 	text := string(data)
 	for _, want := range []string{
+		"id: jp-pii-detect-full",
+		"entry: scripts/pre-commit.sh --full",
 		"entry: scripts/pre-commit.sh",
 		"language: script",
 		"pass_filenames: false",

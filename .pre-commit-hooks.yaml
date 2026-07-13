@@ -5,3 +5,9 @@
   entry: scripts/pre-commit.sh
   language: script
   pass_filenames: false
+- id: jp-pii-detect-full
+  name: jp-pii-detect（リポジトリ全体）
+  description: リポジトリ全体を走査する（初回導入・手動監査用）
+  entry: scripts/pre-commit.sh --full
+  language: script
+  pass_filenames: false

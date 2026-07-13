@@ -42,4 +42,9 @@ if [ "$version" = "latest" ] || [ ! -x "$bin" ]; then
 	JP_PII_DETECT_VERSION="$version" "$script_dir/install.sh" --version "$version" --install-dir "$install_dir"
 fi
 
+if [ "${1:-}" = "--full" ]; then
+	shift
+	exec "$bin" scan "$@" .
+fi
+
 exec "$bin" scan --staged "$@"

@@ -108,6 +108,9 @@ Scan flags:
                            （--baseline <path> の指定が必須）
   --show-baseline          ベースラインで除外された検出も参考表示する（終了コードには
                            影響しない。--baseline <path> の指定が必須）
+  --summary                走査モード・走査件数・除外件数・検出件数の要約を stderr に表示
+                           （端末での text 出力時は未指定でも自動表示）
+  --quiet                  端末での自動要約を表示しない
 
 パスとフラグの順序は問いません（例: "scan . --high-recall" も
 "scan --high-recall ." と同じ意味になります）。"--" 以降は常にパスとして扱います。
@@ -127,7 +130,7 @@ func main() {
 		os.Exit(runScan(os.Args[2:]))
 	case "rules":
 		os.Exit(runRules(os.Args[2:]))
-	case "version":
+	case "version", "--version", "-version":
 		fmt.Println(resolveVersion())
 	case "help", "-h", "--help":
 		fmt.Print(usage)
@@ -138,7 +141,8 @@ func main() {
 }
 
 func runScan(args []string) int {
-	fs := flag.NewFlagSet("scan", flag.ExitOnError)
+	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
 	staged := fs.Bool("staged", false, "")
 	diffRange := fs.String("diff", "", "")
 	stdin := fs.Bool("stdin", false, "")
@@ -154,19 +158,54 @@ func runScan(args []string) int {
 	baselinePath := fs.String("baseline", "", "")
 	updateBaseline := fs.Bool("update-baseline", false, "")
 	showBaseline := fs.Bool("show-baseline", false, "")
+	showSummary := fs.Bool("summary", false, "")
+	quiet := fs.Bool("quiet", false, "")
+	help := fs.Bool("help", false, "")
+	fs.BoolVar(help, "h", false, "")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
+	if err := validateKnownFlags(fs, args); err != nil {
+		return fail(err)
+	}
 	// Go の flag パッケージは最初の非フラグ引数（パス等）でパースを止めるため、
 	// "scan . --high-recall" のようにパスの後ろに置かれたフラグは無視され、パス
 	// として扱われた "--high-recall" が存在チェックに回って分かりにくい
 	// "no such file" エラーになる。フラグと値をパス等より前に並べ替えてから渡す。
 	if err := fs.Parse(reorderArgs(fs, args)); err != nil {
-		return 2
+		return fail(err)
+	}
+	if *help {
+		fmt.Print(usage)
+		return 0
 	}
 	if *updateBaseline && *baselinePath == "" {
 		return fail(fmt.Errorf("--update-baseline には --baseline <path> の指定が必要です"))
 	}
 	if *showBaseline && *baselinePath == "" {
 		return fail(fmt.Errorf("--show-baseline には --baseline <path> の指定が必要です"))
+	}
+	if *updateBaseline && *showBaseline {
+		return fail(fmt.Errorf("--update-baseline と --show-baseline は同時に指定できません"))
+	}
+	if *showSummary && *quiet {
+		return fail(fmt.Errorf("--summary と --quiet は同時に指定できません"))
+	}
+	modeCount := 0
+	for _, enabled := range []bool{*stdin, *staged, *diffRange != ""} {
+		if enabled {
+			modeCount++
+		}
+	}
+	if modeCount > 1 {
+		return fail(fmt.Errorf("--stdin、--staged、--diff は同時に指定できません"))
+	}
+	if modeCount > 0 && len(fs.Args()) > 0 {
+		return fail(fmt.Errorf("--stdin、--staged、--diff と走査パスは同時に指定できません: %s", strings.Join(fs.Args(), ", ")))
+	}
+	if !validFormat(*format) {
+		return fail(fmt.Errorf("unknown format %q (text|json|sarif|github)", *format))
+	}
+	if *updateBaseline && *format != "text" {
+		return fail(fmt.Errorf("--update-baseline は --format text とのみ併用できます"))
 	}
 
 	var failThreshold rule.Confidence
@@ -188,6 +227,15 @@ func runScan(args []string) int {
 	if *highRecall {
 		cfg.SetHighRecall(true)
 	}
+	reportThreshold, err := rule.ParseConfidence(cfg.MinConfidence)
+	if err != nil {
+		return fail(fmt.Errorf("min_confidence: %w", err))
+	}
+	// fail 閾値が報告閾値より低い場合も正しく判定できるよう、Detector には
+	// 両者の低い方まで候補を保持させる。表示時に reportThreshold で再度絞る。
+	if failThreshold != 0 && failThreshold < reportThreshold {
+		cfg.MinConfidence = failThreshold.String()
+	}
 	det, err := detect.New(cfg)
 	if err != nil {
 		return fail(err)
@@ -202,8 +250,11 @@ func runScan(args []string) int {
 
 	var findings []detect.Finding
 	var warnings []error
+	var scanStats source.ScanStats
+	mode := "full"
 	switch {
 	case *stdin:
+		mode = "stdin"
 		var data []byte
 		data, err = io.ReadAll(os.Stdin)
 		if err == nil {
@@ -243,15 +294,17 @@ func runScan(args []string) int {
 			findings = detect.ComputeOffsets(text, stdinFindings)
 		}
 	case *staged:
+		mode = "staged"
 		findings, err = source.ScanStaged(det, cfg)
 	case *diffRange != "":
+		mode = "diff"
 		findings, err = source.ScanDiff(det, cfg, *diffRange)
 	default:
 		paths := fs.Args()
 		if len(paths) == 0 {
 			paths = []string{"."}
 		}
-		findings, warnings, err = source.ScanPaths(det, cfg, paths)
+		findings, warnings, scanStats, err = source.ScanPathsWithStats(det, cfg, paths)
 	}
 	if err != nil {
 		return fail(err)
@@ -263,21 +316,26 @@ func runScan(args []string) int {
 	for _, w := range warnings {
 		fmt.Fprintln(os.Stderr, "jp-pii-detect: warning:", w)
 	}
+	if len(warnings) > 0 && *updateBaseline {
+		return fail(fmt.Errorf("走査が不完全なため baseline を更新しませんでした（警告 %d 件）", len(warnings)))
+	}
+	visibleFindings := filterFindingsByConfidence(findings, reportThreshold)
 
 	// --update-baseline: 現在の findings（--staged / --diff / フルスキャンいずれの
 	// モードでも同じ findings 変数に集約されている）でベースラインファイルを
 	// 新規作成、または既存ファイルへ追記して終了コード 0 で終了する。他の
 	// フラグ（--baseline での既存フィルタ・出力形式）とは独立した早期リターン。
 	if *updateBaseline {
-		return updateBaselineFile(*baselinePath, findings)
+		return updateBaselineFile(*baselinePath, visibleFindings)
 	}
 
 	// --baseline: 記録済み（fingerprint 一致）の検出を結果・終了コードから除外する。
 	// detect パッケージ側の走査（並列）はここまでで完了しており、Filter は
 	// 単一 goroutine の後処理なので追加のデータレース懸念はない。
-	reportFindings := findings
+	reportFindings := visibleFindings
 	exitFindings := findings
 	var fpSalt string
+	baselinedCount := 0
 	if *baselinePath != "" {
 		bf, err := baseline.Load(*baselinePath)
 		if err != nil {
@@ -285,11 +343,12 @@ func runScan(args []string) int {
 		}
 		fpSalt = bf.Salt
 		kept, baselined := baseline.Filter(findings, bf)
+		baselinedCount = len(filterFindingsByConfidence(baselined, reportThreshold))
 		exitFindings = kept
-		reportFindings = kept
+		reportFindings = filterFindingsByConfidence(kept, reportThreshold)
 		if *showBaseline {
 			// 参考表示用: フィルタ済み分も併せて出力するが、終了コードの判定には使わない。
-			reportFindings = append(append([]detect.Finding{}, kept...), baselined...)
+			reportFindings = append(reportFindings, filterFindingsByConfidence(baselined, reportThreshold)...)
 		}
 	}
 	var fpArgs []string
@@ -315,8 +374,9 @@ func runScan(args []string) int {
 		}
 	case "github":
 		report.GitHub(os.Stdout, reportFindings, *unmask)
-	default:
-		return fail(fmt.Errorf("unknown format %q (text|json|sarif|github)", *format))
+	}
+	if shouldPrintSummary(*showSummary, *quiet, *format) {
+		printScanSummary(os.Stderr, mode, scanStats, len(filterFindingsByConfidence(exitFindings, reportThreshold)), baselinedCount, len(warnings))
 	}
 
 	if len(warnings) > 0 {
@@ -384,12 +444,25 @@ func updateBaselineFile(path string, findings []detect.Finding) int {
 // 漢数字番地用で Prefilter が異なる別エントリを同一 ID で持つ。
 // internal/rule/builtin.go 参照）。一覧表示では 1 行にまとめる。
 func runRules(args []string) int {
-	fs := flag.NewFlagSet("rules", flag.ExitOnError)
+	fs := flag.NewFlagSet("rules", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
 	configPath := fs.String("config", "", "")
 	highRecall := fs.Bool("high-recall", false, "")
+	help := fs.Bool("help", false, "")
+	fs.BoolVar(help, "h", false, "")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
+	if err := validateKnownFlags(fs, args); err != nil {
+		return fail(err)
+	}
 	if err := fs.Parse(reorderArgs(fs, args)); err != nil {
-		return 2
+		return fail(err)
+	}
+	if *help {
+		fmt.Print(usage)
+		return 0
+	}
+	if len(fs.Args()) > 0 {
+		return fail(fmt.Errorf("rules は位置引数を受け取りません: %s", strings.Join(fs.Args(), ", ")))
 	}
 
 	cfg, err := config.Load(*configPath)
@@ -440,6 +513,76 @@ func runRules(args []string) int {
 func fail(err error) int {
 	fmt.Fprintln(os.Stderr, "jp-pii-detect:", err)
 	return 2
+}
+
+func validFormat(format string) bool {
+	switch format {
+	case "text", "json", "sarif", "github":
+		return true
+	default:
+		return false
+	}
+}
+
+func filterFindingsByConfidence(findings []detect.Finding, threshold rule.Confidence) []detect.Finding {
+	filtered := make([]detect.Finding, 0, len(findings))
+	for _, finding := range findings {
+		if finding.Confidence >= threshold {
+			filtered = append(filtered, finding)
+		}
+	}
+	return filtered
+}
+
+func shouldPrintSummary(force, quiet bool, format string) bool {
+	if quiet {
+		return false
+	}
+	if force {
+		return true
+	}
+	if format != "text" {
+		return false
+	}
+	info, err := os.Stderr.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
+func printScanSummary(w io.Writer, mode string, stats source.ScanStats, findings, baselined, warnings int) {
+	if mode == "full" {
+		fmt.Fprintf(w, "jp-pii-detect: summary: mode=%s scanned=%d skipped=%d (binary=%d too-large=%d) excluded-paths=%d excluded-default-dirs=%d findings=%d baselined=%d warnings=%d\n",
+			mode, stats.FilesScanned, stats.SkippedFiles(), stats.SkippedBinary, stats.SkippedTooLarge,
+			stats.ExcludedPaths, stats.ExcludedDefaultDirs, findings, baselined, warnings)
+		return
+	}
+	fmt.Fprintf(w, "jp-pii-detect: summary: mode=%s findings=%d baselined=%d warnings=%d\n",
+		mode, findings, baselined, warnings)
+}
+
+// validateKnownFlags は "--" より前の未知フラグを走査前に拒否する。
+// ハイフンで始まる実ファイル名は標準 CLI と同様に "--" の後へ置けば走査できる。
+func validateKnownFlags(fs *flag.FlagSet, args []string) error {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			return nil
+		}
+		name, hasValue := flagName(a)
+		if name == "" {
+			continue
+		}
+		f := fs.Lookup(name)
+		if f == nil {
+			return fmt.Errorf("unknown flag %q（ハイフンで始まるパスは -- の後に指定してください）", a)
+		}
+		if hasValue {
+			continue
+		}
+		if bf, ok := f.Value.(interface{ IsBoolFlag() bool }); !ok || !bf.IsBoolFlag() {
+			i++
+		}
+	}
+	return nil
 }
 
 // reorderArgs は Go の flag パッケージが最初の非フラグ引数でパースを止める

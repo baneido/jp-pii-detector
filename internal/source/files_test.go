@@ -69,6 +69,37 @@ func TestScanPaths(t *testing.T) {
 	}
 }
 
+func TestScanPathsWithStats(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "clean.txt"), []byte("no pii here\n"))
+	writeFile(t, filepath.Join(tmp, "binary.bin"), []byte{0x00, 0x01})
+	writeFile(t, filepath.Join(tmp, "big.txt"), make([]byte, MaxFileSize+1))
+	writeFile(t, filepath.Join(tmp, "node_modules", "ignored.txt"), []byte("ignored\n"))
+	writeFile(t, filepath.Join(tmp, "excluded", "ignored.txt"), []byte("ignored\n"))
+
+	cfg, err := config.Parse("[allowlist]\npaths = [\"/excluded/\"]\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, warnings, stats, err := ScanPathsWithStats(d, cfg, []string{tmp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 0 || len(warnings) != 0 {
+		t.Fatalf("findings=%v warnings=%v, want empty", findings, warnings)
+	}
+	if stats.FilesDiscovered != 3 || stats.FilesScanned != 1 || stats.SkippedBinary != 1 || stats.SkippedTooLarge != 1 {
+		t.Fatalf("unexpected file stats: %+v", stats)
+	}
+	if stats.ExcludedDefaultDirs != 1 || stats.ExcludedPaths != 1 {
+		t.Fatalf("unexpected exclusion stats: %+v", stats)
+	}
+}
+
 // allowlist.paths は検出結果に報告されるパスと同じ表記で照合される。
 func TestScanPathsAllowlistMatchesReportedPath(t *testing.T) {
 	tmp := t.TempDir()
