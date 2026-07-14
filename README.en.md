@@ -26,6 +26,18 @@ identifiers). `jp-pii-detect` is not a replacement for them — use it **alongsi
 See [docs/comparison.md](docs/comparison.md) (Japanese) for a detailed comparison and a
 combined-setup guide.
 
+## Quick start
+
+```sh
+brew install baneido/tap/jp-pii-detect
+jp-pii-detect version
+jp-pii-detect scan .
+```
+
+Exit codes are `0` (clean), `1` (findings), and `2` (scan or configuration error).
+Use `--explain` to inspect why a value matched; remove real data, allowlist intentional
+fixtures, or create a baseline for existing findings.
+
 ## Key features
 
 - **19+ built-in rules** with checksum validation (My Number check digit, Luhn and brand detection for cards, known sandbox PAN exclusion)
@@ -120,6 +132,15 @@ repos:
       - id: jp-pii-detect
 ```
 
+```sh
+pre-commit install
+pre-commit run jp-pii-detect
+```
+
+The default hook always scans the staged diff. To audit the whole repository during
+adoption, configure `id: jp-pii-detect-full` and run
+`pre-commit run jp-pii-detect-full --all-files`.
+
 ### GitHub Actions
 
 ```yaml
@@ -135,8 +156,13 @@ jobs:
           fetch-depth: 0
       - uses: baneido/jp-pii-detector@v0.4.2
         with:
+          # Pin the jp-pii-detect binary version too
+          version: v0.4.2
           args: scan --diff origin/${{ github.base_ref }}...HEAD --format github
 ```
+
+The Action ref and downloaded binary version are resolved independently. For
+reproducible builds, explicitly set `with.version` to the same tag as `uses:`.
 
 ## Configuration
 

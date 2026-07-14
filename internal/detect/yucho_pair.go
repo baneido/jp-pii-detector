@@ -27,7 +27,7 @@ import (
 // 形状検証）まで通した Base High・Validated=true の検出のため、高再現率モードに
 // 依存せず既定で有効にする（ScanContent から d.crossLineName の nil ガードの外で
 // 呼ぶ）。Base が常に High（Confidence の最大値）のため、
-// scanCrossLineSurnameGivenPairs 等にある `rule.Medium < d.minConf` 相当の
+// scanCrossLineSurnameGivenPairs 等にある `rule.Medium < d.scanMinConf` 相当の
 // 早期 return（minConf 未満なら走査自体を省略する最適化）はここでは行わない
 // （常に false になり意味を持たないため）。
 //

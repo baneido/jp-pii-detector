@@ -2,6 +2,7 @@ package source
 
 import (
 	"encoding/binary"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,16 @@ import (
 	"github.com/baneido/jp-pii-detector/internal/detect"
 	"github.com/baneido/jp-pii-detector/internal/testfixtures"
 )
+
+func TestStatWarningIgnoresDisappearedFiles(t *testing.T) {
+	if got := statWarning("gone.txt", os.ErrNotExist); got != nil {
+		t.Fatalf("os.ErrNotExist should be ignored: %v", got)
+	}
+	want := errors.New("permission denied")
+	if got := statWarning("denied.txt", want); got == nil || !errors.Is(got, want) {
+		t.Fatalf("non-ENOENT stat error should remain a warning: %v", got)
+	}
+}
 
 func writeFile(t *testing.T, path string, data []byte) {
 	t.Helper()
@@ -66,6 +77,37 @@ func TestScanPaths(t *testing.T) {
 	}
 	if f.RuleID != "jp-phone-number" || f.Line != 1 {
 		t.Errorf("finding = %+v", f)
+	}
+}
+
+func TestScanPathsWithStats(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "clean.txt"), []byte("no pii here\n"))
+	writeFile(t, filepath.Join(tmp, "binary.bin"), []byte{0x00, 0x01})
+	writeFile(t, filepath.Join(tmp, "big.txt"), make([]byte, MaxFileSize+1))
+	writeFile(t, filepath.Join(tmp, "node_modules", "ignored.txt"), []byte("ignored\n"))
+	writeFile(t, filepath.Join(tmp, "excluded", "ignored.txt"), []byte("ignored\n"))
+
+	cfg, err := config.Parse("[allowlist]\npaths = [\"/excluded/\"]\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, warnings, stats, err := ScanPathsWithStats(d, cfg, []string{tmp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 0 || len(warnings) != 0 {
+		t.Fatalf("findings=%v warnings=%v, want empty", findings, warnings)
+	}
+	if stats.FilesDiscovered != 3 || stats.FilesScanned != 1 || stats.SkippedBinary != 1 || stats.SkippedTooLarge != 1 {
+		t.Fatalf("unexpected file stats: %+v", stats)
+	}
+	if stats.ExcludedDefaultDirs != 1 || stats.ExcludedPaths != 1 {
+		t.Fatalf("unexpected exclusion stats: %+v", stats)
 	}
 }
 

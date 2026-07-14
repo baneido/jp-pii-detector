@@ -47,7 +47,7 @@ import (
 // 値そのものは変わらず Medium で報告されるため実害はない
 // （detect_test.go 相当の固定テストは structured_pair_test.go 側に置く）。
 func (d *Detector) scanCrossLineSurnameGivenPairs(file string, lines []string) []Finding {
-	if rule.Medium < d.minConf {
+	if rule.Medium < d.scanMinConf {
 		return nil
 	}
 	var out []Finding

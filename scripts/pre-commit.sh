@@ -42,4 +42,8 @@ if [ "$version" = "latest" ] || [ ! -x "$bin" ]; then
 	JP_PII_DETECT_VERSION="$version" "$script_dir/install.sh" --version "$version" --install-dir "$install_dir"
 fi
 
-exec "$bin" scan --staged "$@"
+case "${JP_PII_DETECT_PRE_COMMIT_MODE:-staged}" in
+	staged) exec "$bin" scan --staged "$@" ;;
+	full) exec "$bin" scan --full "$@" ;;
+	*) die "invalid internal scan mode" ;;
+esac

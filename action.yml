@@ -9,7 +9,7 @@ inputs:
     required: false
     default: scan --format github .
   version:
-    description: インストールするバージョン（GitHub Releases のタグ、または latest）
+    description: インストールするバージョン（GitHub Releases のタグ、または latest）。再現性が必要な場合は明示指定を推奨
     required: false
     default: latest
 runs:
@@ -19,6 +19,7 @@ runs:
       env:
         INPUT_VERSION: ${{ inputs.version }}
       run: |
+        echo "jp-pii-detect version: $INPUT_VERSION"
         install_dir="${RUNNER_TEMP}/jp-pii-detect/bin"
         "$GITHUB_ACTION_PATH/scripts/install.sh" \
           --version "$INPUT_VERSION" \
@@ -37,6 +38,7 @@ runs:
             scanner += ".exe"
 
         args = shlex.split(os.environ["INPUT_ARGS"])
-        subprocess.run([scanner, *args], check=True)
+        completed = subprocess.run([scanner, *args], check=False)
+        raise SystemExit(completed.returncode)
         PY
       shell: bash
