@@ -111,6 +111,13 @@ type Finding struct {
 	negativeContextMode rule.NegativeContextMode
 	// scoreEvidence は ConfidenceScore の計算にだけ使う非公開の構造証拠。
 	scoreEvidence confidenceScoreEvidence
+	// failOnly は report 用 min_confidence 未満だが、CLI の --fail-on 判定用に
+	// scanMinConf まで追加収集した finding。通常の報告候補や共起昇格候補より
+	// 優先されないよう、重複解決の内部タイブレークにも使う。
+	failOnly bool
+	// cooccurrenceRetained は report 用 min_confidence 未満でも、従来どおり
+	// cooccurrence_boost の保持条件と件数上限を通過した候補であることを表す。
+	cooccurrenceRetained bool
 }
 
 // Format は fmt の全verbで生の Match と文脈詳細を出さない。テスト失敗時の
@@ -150,9 +157,14 @@ type DetectReason struct {
 
 // Detector は設定を適用済みの検出エンジン。
 type Detector struct {
-	rules   []rule.Rule
-	cfg     *config.Config
-	minConf rule.Confidence
+	rules []rule.Rule
+	cfg   *config.Config
+	// minConf は報告結果を決める設定本来の閾値。scanMinConf は CLI の
+	// --fail-on 判定用に返す finding の下限で、既定では minConf と同じ。
+	// 両者を分けることで、終了コード用の閾値を下げても共起昇格や報告結果を
+	// 変化させない。
+	minConf     rule.Confidence
+	scanMinConf rule.Confidence
 	// normStopwords は正規化済みの stopword（マッチ文字列は常に正規化済みのため）。
 	normStopwords []string
 	// ctxTokens は ASCII コンテキスト語をあらかじめ識別子トークン列に分割した
@@ -229,11 +241,21 @@ func New(cfg *config.Config) (*Detector, error) {
 		rules:             rules,
 		cfg:               cfg,
 		minConf:           minConf,
+		scanMinConf:       minConf,
 		normStopwords:     normStopwords,
 		ctxTokens:         ctxTokens,
 		crossLineName:     crossLineName,
 		cooccurrenceBoost: cfg.Rules.CooccurrenceBoost,
 	}, nil
+}
+
+// SetScanMinConfidence は、報告用 min_confidence を変えずに ScanContent 等が
+// 返す finding の下限だけを引き下げる。CLI の --fail-on が報告閾値より低い
+// 場合の終了判定・baseline 登録に使う。走査開始前に 1 回だけ呼ぶこと。
+func (d *Detector) SetScanMinConfidence(minConf rule.Confidence) {
+	if minConf != 0 && minConf < d.minConf {
+		d.scanMinConf = minConf
+	}
 }
 
 // Rules は有効なルール一覧を返す。
@@ -301,19 +323,30 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 		filtered = append(filtered, f)
 	}
 	candidates = filtered
+	// scanMinConf まで追加収集した候補は、従来の minConf 走査でも共起昇格用に
+	// 保持された候補だけを昇格対象にする。それ以外は終了判定専用であり、
+	// --fail-on の指定によって報告結果が変わらないようにする。
+	for i := range candidates {
+		if candidates[i].Confidence < d.minConf && !candidates[i].cooccurrenceRetained {
+			candidates[i].failOnly = true
+		}
+	}
 
 	if d.cooccurrenceBoost {
 		candidates = d.applyCooccurrenceBoost(candidates, lineContexts)
 	}
 
-	// Confidence < minConf のふるい落としをここでも行う（cooccurrence_boost 無効時は
-	// scanLineNoIgnoreWithContext 内で既に minConf 未満が除かれているため無害な
-	// 二重チェック。有効時は、昇格しなかった保持済み Low 候補をここで最終的に除く）。
+	// Confidence < scanMinConf のふるい落としをここでも行う。共起昇格後も
+	// minConf 未満の候補は report には出さないが、--fail-on 判定用に
+	// scanMinConf 以上なら返す。
 	filtered = candidates[:0]
 	for _, f := range candidates {
-		if f.Confidence < d.minConf {
+		if f.Confidence < d.scanMinConf {
 			d.recordDropped(f.RuleID, f.File, f.Line, f.Column, DropReasonBelowMinConfidence, f.Confidence)
 			continue
+		}
+		if f.Confidence < d.minConf {
+			f.failOnly = true
 		}
 		filtered = append(filtered, f)
 	}
@@ -418,7 +451,7 @@ func (d *Detector) applyCooccurrenceBoost(candidates []Finding, lineContexts []l
 
 	for i := range candidates {
 		f := &candidates[i]
-		if !cooccurrenceBoostRuleIDs[f.RuleID] || f.Confidence >= rule.High {
+		if f.failOnly || !cooccurrenceBoostRuleIDs[f.RuleID] || f.Confidence >= rule.High {
 			continue
 		}
 		if !(f.Reason.Validated || len(f.Reason.ContextKeywords) > 0) {
@@ -797,7 +830,7 @@ func (d *Detector) scanAdjacentLines(file string, firstLineNo int, first string,
 // プレースホルダ/組織名棄却）で検証する。同一行の強いラベルより厳しく辞書照合を
 // 必須にするのは、クロスラインの「次行＝値」前提が同一行ほど強くないため。
 func (d *Detector) scanCrossLineNames(file string, lines []string) []Finding {
-	if rule.Medium < d.minConf {
+	if rule.Medium < d.scanMinConf {
 		return nil
 	}
 	var out []Finding
@@ -1227,7 +1260,11 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 						scoreEvidence = contextEvidence
 					}
 				}
-				if conf < d.minConf && !retainForCooccurrenceBoost(retainBudget, r.ID, reason) {
+				retainedForCooccurrence := false
+				if conf < d.minConf {
+					retainedForCooccurrence = retainForCooccurrenceBoost(retainBudget, r.ID, reason)
+				}
+				if conf < d.scanMinConf && !retainedForCooccurrence {
 					if d.collectDropped {
 						d.recordDroppedMatch(r.ID, file, lineNo, norm, start, DropReasonBelowMinConfidence, conf)
 					}
@@ -1246,20 +1283,22 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 					origRunes = []rune(line)
 				}
 				finding := Finding{
-					RuleID:              r.ID,
-					Description:         r.Description,
-					File:                file,
-					Line:                lineNo,
-					Column:              rs + 1,
-					Match:               string(origRunes[rs:re]),
-					Confidence:          conf,
-					Reason:              reason,
-					start:               rs,
-					end:                 re,
-					matchStart:          mrs,
-					matchEnd:            mre,
-					negativeContextMode: p.NegativeContextMode,
-					scoreEvidence:       scoreEvidence,
+					RuleID:               r.ID,
+					Description:          r.Description,
+					File:                 file,
+					Line:                 lineNo,
+					Column:               rs + 1,
+					Match:                string(origRunes[rs:re]),
+					Confidence:           conf,
+					Reason:               reason,
+					start:                rs,
+					end:                  re,
+					matchStart:           mrs,
+					matchEnd:             mre,
+					negativeContextMode:  p.NegativeContextMode,
+					scoreEvidence:        scoreEvidence,
+					failOnly:             conf < d.minConf && !retainedForCooccurrence,
+					cooccurrenceRetained: retainedForCooccurrence,
 				}
 				finalizeFindingScore(&finding)
 				found = append(found, finding)

@@ -81,6 +81,11 @@ func better(a, b Finding) bool {
 	if a.Confidence != b.Confidence {
 		return a.Confidence > b.Confidence
 	}
+	// --fail-on 判定用に追加収集した候補が、従来から存在する報告・共起昇格
+	// 候補と同信頼度で重なっても、報告結果を変えない。
+	if a.failOnly != b.failOnly {
+		return !a.failOnly
+	}
 	if comparisonScore(a) != comparisonScore(b) {
 		return comparisonScore(a) > comparisonScore(b)
 	}

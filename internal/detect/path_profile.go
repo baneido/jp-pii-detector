@@ -59,7 +59,8 @@ func pathDemotionEligible(f Finding) bool {
 
 // applyPathDemotion はテスト経路の Medium 系検出を Low へ 1 段階だけ降格する
 // （既定の min_confidence=medium 運用で非表示になる）。無効化されていれば
-// 何もしない。降格後に min_confidence を下回った finding はここで除外する。
+// 何もしない。降格後に scanMinConf を下回った finding はここで除外し、
+// report 用 minConf だけを下回る場合は --fail-on 判定用として保持する。
 func (d *Detector) applyPathDemotion(findings []Finding) []Finding {
 	if !d.cfg.Rules.PathDemotion {
 		return findings
@@ -72,9 +73,12 @@ func (d *Detector) applyPathDemotion(findings []Finding) []Finding {
 			f.Reason.PathDemoted = true
 			finalizeFindingScore(&f)
 		}
-		if f.Confidence < d.minConf {
+		if f.Confidence < d.scanMinConf {
 			d.recordDropped(f.RuleID, f.File, f.Line, f.Column, DropReasonPathDemotionBelowMin, f.Confidence)
 			continue
+		}
+		if f.Confidence < d.minConf {
+			f.failOnly = true
 		}
 		out = append(out, f)
 	}

@@ -4,6 +4,7 @@ package source
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -73,10 +74,8 @@ func ScanPathsWithStats(d *detect.Detector, cfg *config.Config, paths []string) 
 	if err != nil {
 		return nil, nil, stats, err
 	}
-	findings, readWarnings, scanStats := scanFilesWithStats(d, cfg, files)
+	findings, readWarnings := scanFilesWithStats(d, cfg, files, &stats)
 	warnings = append(warnings, readWarnings...)
-	stats.FilesScanned = scanStats.FilesScanned
-	stats.SkippedBinary = scanStats.SkippedBinary
 	return findings, warnings, stats, nil
 }
 
@@ -118,7 +117,12 @@ func listFiles(cfg *config.Config, paths []string) ([]string, []error, ScanStats
 			}
 			info, err := ent.Info()
 			if err != nil {
-				warnings = append(warnings, fmt.Errorf("stat %s: %w", path, err))
+				// readdir と lstat の間に消えたファイルは通常の競合として扱い、
+				// フルスキャン全体を exit 2 にしない。その他の stat エラーだけを
+				// warning として残す。
+				if warning := statWarning(path, err); warning != nil {
+					warnings = append(warnings, warning)
+				}
 				return nil
 			}
 			stats.FilesDiscovered++
@@ -134,6 +138,13 @@ func listFiles(cfg *config.Config, paths []string) ([]string, []error, ScanStats
 		}
 	}
 	return files, warnings, stats, nil
+}
+
+func statWarning(path string, err error) error {
+	if err == nil || errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	return fmt.Errorf("stat %s: %w", path, err)
 }
 
 // pathAllowed は allowlist.paths を、走査時のパス表記とリポジトリルート
@@ -176,7 +187,7 @@ func gitRoot() string {
 	}
 }
 
-// scanFiles はファイル群を並列に読み込み・走査し、入力順の結果を返す。
+// scanFilesWithStats はファイル群を並列に読み込み・走査し、入力順の結果を返す。
 // Detector は走査中は読み取り専用のため、ゴルーチン間で安全に共有できる。
 //
 // 個々のファイルの読み取りエラーは致命的にせず warnings に集約して走査を
@@ -190,13 +201,8 @@ func gitRoot() string {
 // コストを避けるため。詳細は internal/external のパッケージコメントと CLAUDE.md を
 // 参照）。未設定時は runExternalRecognizer が即座に nil を返すため、この構造化に
 // よる追加コストは 2 つ目の jobs チャネルのセットアップ程度で無視できる。
-func scanFiles(d *detect.Detector, cfg *config.Config, files []string) ([]detect.Finding, []error) {
-	findings, warnings, _ := scanFilesWithStats(d, cfg, files)
-	return findings, warnings
-}
-
-// scanFilesWithStats は scanFiles と同じ処理に、内容判定後の走査・バイナリ除外件数を加える。
-func scanFilesWithStats(d *detect.Detector, cfg *config.Config, files []string) ([]detect.Finding, []error, ScanStats) {
+// stats は listFiles で作った同じ集計へ直接加算し、フィールドの手動コピー漏れを防ぐ。
+func scanFilesWithStats(d *detect.Detector, cfg *config.Config, files []string, stats *ScanStats) ([]detect.Finding, []error) {
 	workers := max(min(runtime.GOMAXPROCS(0), len(files)), 1)
 	texts := make([]string, len(files))
 	// skip[i] はバイナリ判定・読み取りエラーで走査対象外になったファイルを表す
@@ -276,7 +282,6 @@ func scanFilesWithStats(d *detect.Detector, cfg *config.Config, files []string) 
 
 	var findings []detect.Finding
 	var warnings []error
-	var stats ScanStats
 	for i := range files {
 		if errs[i] != nil {
 			warnings = append(warnings, errs[i])
@@ -289,7 +294,7 @@ func scanFilesWithStats(d *detect.Detector, cfg *config.Config, files []string) 
 		stats.FilesScanned++
 		findings = append(findings, results[i]...)
 	}
-	return findings, warnings, stats
+	return findings, warnings
 }
 
 // runExternalRecognizer は cfg.ExternalRecognizerEnabled() の場合のみ、読み取り済みの

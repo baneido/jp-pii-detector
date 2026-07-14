@@ -23,7 +23,7 @@ jp-pii-detect はこれらの置き換えではなく、シークレット検出
 
 ```sh
 brew install baneido/tap/jp-pii-detect
-jp-pii-detect --version
+jp-pii-detect version
 jp-pii-detect scan .
 ```
 
@@ -204,12 +204,13 @@ jobs:
           fetch-depth: 0
       - uses: baneido/jp-pii-detector@v0.4.2
         with:
+          # jp-pii-detect のバイナリ版を固定
+          version: v0.4.2
           args: scan --diff origin/${{ github.base_ref }}...HEAD --format github
 ```
 
-完全な semver タグ（例: `v0.4.2`）で Action を参照した場合、同じバージョンの
-バイナリを自動で使います。`v0`、ブランチ、コミット SHA を参照する場合に再現性を
-固定したいときは `with: { version: v0.4.2 }` を明示してください。
+Action の参照とダウンロードするバイナリ版は独立しています。再現性が必要な場合は、
+上記のように `uses:` のタグと `with.version` を同じ値で明示してください。
 
 > 次回リリース以降はムービングメジャータグ `v0` も利用でき、`baneido/jp-pii-detector@v0` で最新の v0 系を追従できます。
 
@@ -220,6 +221,8 @@ Medium 以上を表示しつつ High の検出だけで CI を失敗させるに
 ```yaml
       - uses: baneido/jp-pii-detector@v0.4.2
         with:
+          # jp-pii-detect のバイナリ版を固定
+          version: v0.4.2
           args: scan --diff origin/${{ github.base_ref }}...HEAD --format github --min-confidence medium --fail-on high
 ```
 

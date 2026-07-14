@@ -319,7 +319,7 @@ func sqlLineContexts(_ string, lines []string) []lineContext {
 // 割り当てる一般的な PositiveText/NegativeText 経由の文脈昇格では届かず、
 // csv_context.go の scanCSVNameColumns と同じ専用の値検証経路が必要になる。
 func (d *Detector) scanSQLNameColumns(file string, lines []string) []Finding {
-	if rule.Medium < d.minConf {
+	if rule.Medium < d.scanMinConf {
 		return nil
 	}
 	if d.crossLineName == nil {

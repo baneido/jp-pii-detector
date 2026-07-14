@@ -2,6 +2,7 @@ package source
 
 import (
 	"encoding/binary"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,16 @@ import (
 	"github.com/baneido/jp-pii-detector/internal/detect"
 	"github.com/baneido/jp-pii-detector/internal/testfixtures"
 )
+
+func TestStatWarningIgnoresDisappearedFiles(t *testing.T) {
+	if got := statWarning("gone.txt", os.ErrNotExist); got != nil {
+		t.Fatalf("os.ErrNotExist should be ignored: %v", got)
+	}
+	want := errors.New("permission denied")
+	if got := statWarning("denied.txt", want); got == nil || !errors.Is(got, want) {
+		t.Fatalf("non-ENOENT stat error should remain a warning: %v", got)
+	}
+}
 
 func writeFile(t *testing.T, path string, data []byte) {
 	t.Helper()

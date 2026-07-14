@@ -137,7 +137,7 @@ func (d *Detector) externalCandidateToFinding(file string, lines []string, c ext
 	if err != nil {
 		conf = rule.Low
 	}
-	if conf < d.minConf {
+	if conf < d.scanMinConf {
 		return Finding{}, false
 	}
 	finding := Finding{
@@ -148,6 +148,7 @@ func (d *Detector) externalCandidateToFinding(file string, lines []string, c ext
 		Column:      c.Column,
 		Match:       match,
 		Confidence:  conf,
+		failOnly:    conf < d.minConf,
 		Reason: DetectReason{
 			FinalConfidence: conf.String(),
 			External:        true,

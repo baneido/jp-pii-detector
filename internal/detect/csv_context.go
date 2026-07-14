@@ -366,7 +366,7 @@ func csvAssignColumnContexts(out []lineContext, lines []string, delim byte, head
 // フリガナ（カタカナ）列はラベル語彙としては一致しうるが、埋め込み姓名辞書が
 // 漢字ベースのため ValidCrossLineName が値を通さず、対象外になる。
 func (d *Detector) scanCSVNameColumns(file string, lines []string) []Finding {
-	if rule.Medium < d.minConf {
+	if rule.Medium < d.scanMinConf {
 		return nil
 	}
 	if d.crossLineName == nil {

@@ -74,6 +74,8 @@ jobs:
           fetch-depth: 0
       - uses: baneido/jp-pii-detector@v0.4.2
         with:
+          # jp-pii-detect のバイナリ版を固定
+          version: v0.4.2
           args: scan --diff origin/${{ github.base_ref }}...HEAD --format github
 ```
 

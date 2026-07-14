@@ -30,7 +30,7 @@ combined-setup guide.
 
 ```sh
 brew install baneido/tap/jp-pii-detect
-jp-pii-detect --version
+jp-pii-detect version
 jp-pii-detect scan .
 ```
 
@@ -156,11 +156,13 @@ jobs:
           fetch-depth: 0
       - uses: baneido/jp-pii-detector@v0.4.2
         with:
+          # Pin the jp-pii-detect binary version too
+          version: v0.4.2
           args: scan --diff origin/${{ github.base_ref }}...HEAD --format github
 ```
 
-An exact semver Action ref automatically installs the matching binary. When using a
-moving tag, branch, or commit SHA, set `version: v0.4.2` explicitly for reproducibility.
+The Action ref and downloaded binary version are resolved independently. For
+reproducible builds, explicitly set `with.version` to the same tag as `uses:`.
 
 ## Configuration
 

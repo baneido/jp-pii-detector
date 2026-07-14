@@ -201,12 +201,25 @@ func TestPreCommitScriptSupportsFullScan(t *testing.T) {
 	writeFakeReleaseArchive(t, releases)
 	cacheDir := filepath.Join(t.TempDir(), "cache")
 
-	out, code := runScript(t, "scripts/pre-commit.sh", distributionEnv("file://"+releases, cacheDir), "--full", "--summary")
+	out, code := runScript(t, "scripts/pre-commit-full.sh", distributionEnv("file://"+releases, cacheDir), "--summary")
 	if code != 0 {
-		t.Fatalf("pre-commit.sh --full exit=%d\n%s", code, out)
+		t.Fatalf("pre-commit-full.sh exit=%d\n%s", code, out)
 	}
-	if !strings.Contains(out, "fake-jp-pii-detect scan --summary .") {
+	if !strings.Contains(out, "fake-jp-pii-detect scan --full --summary") {
 		t.Fatalf("full hook should scan the repository, got:\n%s", out)
+	}
+}
+
+func TestPreCommitDefaultHookArgsCannotSwitchToFullMode(t *testing.T) {
+	releases := t.TempDir()
+	writeFakeReleaseArchive(t, releases)
+	cacheDir := filepath.Join(t.TempDir(), "cache")
+	out, code := runScript(t, "scripts/pre-commit.sh", distributionEnv("file://"+releases, cacheDir), "--full")
+	if code != 0 {
+		t.Fatalf("fake scanner exit=%d\n%s", code, out)
+	}
+	if !strings.Contains(out, "fake-jp-pii-detect scan --staged --full") {
+		t.Fatalf("default hook args must not switch the wrapper mode:\n%s", out)
 	}
 }
 
@@ -266,6 +279,7 @@ func TestActionAvoidsShellExpansionOfInputs(t *testing.T) {
 		"--version \"${{ inputs.version }}\"",
 		"jp-pii-detect ${{ inputs.args }}",
 		"GITHUB_PATH",
+		"ACTION_REF",
 	} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("action.yml should not contain %q:\n%s", forbidden, text)
@@ -273,8 +287,7 @@ func TestActionAvoidsShellExpansionOfInputs(t *testing.T) {
 	}
 	for _, want := range []string{
 		"INPUT_VERSION: ${{ inputs.version }}",
-		"ACTION_REF: ${{ github.action_ref }}",
-		`[[ "$ACTION_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]`,
+		"default: latest",
 		"INPUT_ARGS: ${{ inputs.args }}",
 		"shlex.split(os.environ[\"INPUT_ARGS\"])",
 		"subprocess.run([scanner, *args], check=False)",
@@ -391,13 +404,15 @@ func TestPreCommitHookUsesScriptWrapper(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	for _, want := range []string{
-		"id: jp-pii-detect-full",
-		"entry: scripts/pre-commit.sh --full",
-		"entry: scripts/pre-commit.sh",
-		"language: script",
-		"pass_filenames: false",
+	for _, re := range []*regexp.Regexp{
+		regexp.MustCompile(`(?m)^  entry: scripts/pre-commit\.sh$`),
+		regexp.MustCompile(`(?m)^  entry: scripts/pre-commit-full\.sh$`),
 	} {
+		if !re.MatchString(text) {
+			t.Fatalf(".pre-commit-hooks.yaml missing exact entry %q:\n%s", re, text)
+		}
+	}
+	for _, want := range []string{"id: jp-pii-detect-full", "language: script", "pass_filenames: false"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf(".pre-commit-hooks.yaml missing %q:\n%s", want, text)
 		}
@@ -555,6 +570,20 @@ func TestReadmeDocumentsTagPinnedInstaller(t *testing.T) {
 	}
 }
 
+func TestActionExamplesPinBinaryVersionExplicitly(t *testing.T) {
+	for _, rel := range []string{"README.md", "README.en.md", filepath.Join("docs", "integrations.md"), filepath.Join("docs", "comparison.md")} {
+		data, err := os.ReadFile(filepath.Join(repoRoot(t), rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(data)
+		uses := "uses: baneido/jp-pii-detector@" + docsVersion
+		if !strings.Contains(text, uses) || !strings.Contains(text, "version: "+docsVersion) {
+			t.Fatalf("%s should pin both the Action ref and jp-pii-detect binary version", rel)
+		}
+	}
+}
+
 // TestDocsVersionReferencesMatchDocsVersion は README / README.en / docs/integrations.md /
 // docs/comparison.md が案内するリリース版が docsVersion 定数と一致していることを検証する
 // （バージョン表記の陳腐化を防ぐオフライン検査。ネットワーク不要）。とくに comparison.md は
@@ -606,6 +635,28 @@ func TestDocsVersionReferencesMatchDocsVersion(t *testing.T) {
 					if m != docsVersion {
 						t.Errorf("%s:%d のバージョン表記 %q は docsVersion %q と一致しません", rel, i+1, m, docsVersion)
 					}
+				}
+			}
+
+			// release.yml と同じ「同一行または直前 2 行」の置換を模擬し、
+			// 現行版が 1 箇所も取り残されないことを確認する。現在値の整合だけを
+			// 見る検査では、マーカー窓の外にある新規表記を検出できないため。
+			simulated := append([]string(nil), lines...)
+			for i, line := range simulated {
+				inScope := false
+				for j := i; j >= 0 && j >= i-2; j-- {
+					if hasMarker(simulated[j]) {
+						inScope = true
+						break
+					}
+				}
+				if inScope {
+					simulated[i] = strings.ReplaceAll(line, docsVersion, "v9.9.9")
+				}
+			}
+			for i, line := range simulated {
+				if strings.Contains(line, docsVersion) {
+					t.Errorf("%s:%d は release docs 更新のマーカー窓外です: %s", rel, i+1, line)
 				}
 			}
 		})

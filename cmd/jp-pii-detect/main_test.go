@@ -353,6 +353,53 @@ func TestScanFailOnCanBeLowerThanReportThreshold(t *testing.T) {
 	}
 }
 
+func TestScanHiddenFailOnFindingIsDiagnosable(t *testing.T) {
+	dir := t.TempDir()
+	content := testfixtures.MustGet(t, "cmd.phone_mobile_nosep") + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, code := runWithStderr(t, dir, "scan", "--format", "github", "--summary", "--min-confidence", "high", "--fail-on", "medium", ".")
+	if code != 1 || stdout != "" {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	for _, want := range []string{"--min-confidence high", "--fail-on medium", "fail-only=1"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("hidden failure diagnostic missing %q: %s", want, stderr)
+		}
+	}
+}
+
+func TestFailOnDoesNotChangeCooccurrenceBoostOutputAtRetentionLimit(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, ".jp-pii.toml")
+	if err := os.WriteFile(cfgPath, []byte("min_confidence = \"high\"\n[rules]\ncooccurrence_boost = true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	name := testfixtures.MustGet(t, "detect.name_sato_hanako")
+	phone := testfixtures.MustGet(t, "cmd.phone_mobile_sep")
+	var content strings.Builder
+	// Detector の共起候補保持上限（2000）を越えた直後にアンカーを置く。
+	// --fail-on が内部 min_confidence を変更すると、上限外の候補まで昇格して
+	// stdout が変わる回帰を再現できる。
+	for range 2001 {
+		fmt.Fprintf(&content, "氏名: %s\n", name)
+	}
+	fmt.Fprintf(&content, "TEL: %s\n", phone)
+	if err := os.WriteFile(filepath.Join(dir, "records.txt"), []byte(content.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	without, codeWithout := run(t, dir, "scan", "--config", cfgPath, ".")
+	with, codeWith := run(t, dir, "scan", "--config", cfgPath, "--fail-on", "medium", ".")
+	if codeWithout != 1 || codeWith != 1 {
+		t.Fatalf("exit codes=%d/%d, want 1/1", codeWithout, codeWith)
+	}
+	if without != with {
+		t.Fatalf("--fail-on changed visible findings at retention limit\nwithout=%q\nwith=%q", without, with)
+	}
+}
+
 // TestScanFailOnExitZeroStillWins は --exit-zero が --fail-on より優先される
 // （既存の --exit-zero の意味を変えない）ことを確認する。
 func TestScanFailOnExitZeroStillWins(t *testing.T) {
@@ -426,16 +473,16 @@ func TestScanDoubleDashStopsFlagParsing(t *testing.T) {
 	}
 }
 
-// TestScanHyphenLeadingPathAfterDoubleDash は、ハイフン始まりの実ファイルを
-// 標準 CLI と同じく "--" の後へ置けば走査できることを確認する。
-func TestScanHyphenLeadingPathAfterDoubleDash(t *testing.T) {
+// TestScanHyphenLeadingPathAfterPositional は、PR 前から保証していた
+// 「位置引数の後ろの単一ハイフン始まりパス」を後方互換で走査できることを確認する。
+func TestScanHyphenLeadingPathAfterPositional(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{"a.txt", "-weird.txt"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("no pii\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, code := run(t, dir, "scan", ".", "--", "-weird.txt"); code != 0 {
+	if _, code := run(t, dir, "scan", ".", "-weird.txt"); code != 0 {
 		t.Errorf("exit = %d, want 0（-weird.txt はパスとして扱う）", code)
 	}
 }
@@ -467,12 +514,24 @@ func TestScanRejectsAmbiguousModesAndPaths(t *testing.T) {
 	for _, args := range [][]string{
 		{"scan", "--stdin", "--staged"},
 		{"scan", "--staged", "--diff", "HEAD~1"},
-		{"scan", "--staged", "."},
+		{"scan", "--full", "--diff", "HEAD~1"},
+		{"scan", "--full", "."},
 		{"scan", "--summary", "--quiet"},
 	} {
 		if _, code := run(t, dir, args...); code != 2 {
 			t.Errorf("%v: exit=%d, want 2", args, code)
 		}
+	}
+}
+
+func TestScanLegacyModePathsRemainIgnored(t *testing.T) {
+	// 旧 CLI は --stdin / --staged / --diff と位置引数を併用しても位置引数を
+	// 無視していた。pass_filenames=true の hook を壊さないよう維持する。
+	cmd := exec.Command(binPath, "scan", "--stdin", "ignored-path.txt")
+	cmd.Dir = t.TempDir()
+	cmd.Stdin = strings.NewReader("")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("mode path should be ignored: %v\n%s", err, out)
 	}
 }
 
@@ -846,6 +905,53 @@ func TestBaselineUpdateMergesWithExisting(t *testing.T) {
 	_, count, code := baselineJSON(t, dir, "scan", "--baseline", baselinePath, "--format", "json", ".")
 	if code != 0 || count != 0 {
 		t.Errorf("count = %d, code = %d, want 0/0（両方とも baseline 済み）", count, code)
+	}
+}
+
+func TestBaselineUpdateIncludesFailOnlyFindings(t *testing.T) {
+	dir := t.TempDir()
+	content := testfixtures.MustGet(t, "cmd.phone_mobile_nosep") + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	baselinePath := filepath.Join(dir, "baseline.json")
+	args := []string{"scan", "--min-confidence", "high", "--fail-on", "medium", "--baseline", baselinePath}
+	if _, code := run(t, dir, append(args, "--update-baseline", ".")...); code != 0 {
+		t.Fatalf("update-baseline exit=%d, want 0", code)
+	}
+	data, err := os.ReadFile(baselinePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Entries []json.RawMessage `json:"entries"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Entries) != 1 {
+		t.Fatalf("fail-only finding was not registered: %s", data)
+	}
+	stdout, stderr, code := runWithStderr(t, dir, append(args, ".")...)
+	if code != 0 || stdout != "" || stderr != "" {
+		t.Fatalf("baselined fail-only finding should be clean: exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+}
+
+func TestBaselineUpdateShowsSummaryAndIgnoresFormat(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("no pii\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, format := range []string{"github", "legacy-fixed-format"} {
+		baselinePath := filepath.Join(dir, format+".json")
+		_, stderr, code := runWithStderr(t, dir, "scan", "--baseline", baselinePath, "--update-baseline", "--format", format, "--summary", ".")
+		if code != 0 {
+			t.Fatalf("format=%s exit=%d stderr=%s", format, code, stderr)
+		}
+		if !strings.Contains(stderr, "summary:") {
+			t.Errorf("format=%s: update summary missing: %s", format, stderr)
+		}
 	}
 }
 

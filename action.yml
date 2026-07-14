@@ -9,29 +9,20 @@ inputs:
     required: false
     default: scan --format github .
   version:
-    description: インストールするバージョン。省略時は Action の完全な semver タグ、それ以外の参照では latest
+    description: インストールするバージョン（GitHub Releases のタグ、または latest）。再現性が必要な場合は明示指定を推奨
     required: false
-    default: ""
+    default: latest
 runs:
   using: composite
   steps:
     - id: install
       env:
         INPUT_VERSION: ${{ inputs.version }}
-        ACTION_REF: ${{ github.action_ref }}
       run: |
-        version="$INPUT_VERSION"
-        if [ -z "$version" ]; then
-          if [[ "$ACTION_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            version="$ACTION_REF"
-          else
-            version=latest
-          fi
-        fi
-        echo "jp-pii-detect version: $version"
+        echo "jp-pii-detect version: $INPUT_VERSION"
         install_dir="${RUNNER_TEMP}/jp-pii-detect/bin"
         "$GITHUB_ACTION_PATH/scripts/install.sh" \
-          --version "$version" \
+          --version "$INPUT_VERSION" \
           --install-dir "$install_dir"
       shell: bash
     - env:
