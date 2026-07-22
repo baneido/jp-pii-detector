@@ -1104,7 +1104,15 @@ func Builtin() []Rule {
 			ID:          "jp-yucho-account",
 			Description: "ゆうちょ銀行 記号番号",
 			Prefilter:   PrefilterDigit,
-			Context:     []string{"ゆうちょ", "郵便貯金", "記号", "日本郵政", "郵便局", "yucho", "japan post", "japan post bank"},
+			// 「通帳」「貯金」はゆうちょの公式用語（通帳記号・通帳番号・貯金
+			// 記号）由来。負文脈の採番ラベル接尾辞ヒューリスティック
+			// （internal/detect/negative_context.go の hasNumberingSuffixBefore）は
+			// 「〜番号」ラベルを抑制対象とみなすため、これらが Context に
+			// 無いと「通帳番号: [番号]」のような正当なラベル付きの値が保護規則
+			// （ラベル近傍に自ルールの正文脈語があれば抑制しない）から漏れて
+			// 誤って棄却される。値の形状（記号 1XXX0）と検査数字の検証が既に
+			// 厳しいため、語を広げても FP リスクは小さい。
+			Context: []string{"ゆうちょ", "郵便貯金", "記号", "日本郵政", "郵便局", "通帳", "貯金", "yucho", "japan post", "japan post bank"},
 			// 銀行名候補の専用経路は「ゆうちょ銀行」表記だけを文脈として使う。
 			// 任意の銀行名は通常の銀行口座ルール（jp-bank-account）側の文脈で扱う。
 			ContextPatterns: []ContextPattern{
@@ -1114,17 +1122,34 @@ func Builtin() []Rule {
 			RequireContextWindow: digitRuleRequireContextWindow,
 			Patterns: []Pattern{
 				// 記号（5 桁、先頭 "1"・末尾 "0"）＋番号（7〜8 桁、末尾は必ず
-				// "1"）をハイフンで相関させた表記。記号 4 桁目は、ゆうちょ銀行
-				// 公式変換サービスの公開 JavaScript にある検査式で検証する
-				// （checksum.YuchoAccount の出典コメントを参照）。
-				{Re: dgNoAlnumHyphen(`1\d{3}0-\d{6,7}1`), Base: High, RequireContext: true, Validate: validYuchoAccount},
+				// "1"）をハイフンで相関させた表記。通帳の再発行時は記号と番号の
+				// 間に 1 桁の再発行区分が挟まる（「記号-1桁-番号」。ゆうちょ銀行
+				// 公式変換サービスが「記号と番号の間の 1 桁の数字は入力しない」と
+				// 案内する、振込等で使用しない桁）ため、`\d-` を任意で許容する。
+				// 記号 4 桁目は、ゆうちょ銀行公式変換サービスの公開 JavaScript に
+				// ある検査式で検証する（checksum.YuchoAccount の出典コメントを
+				// 参照。再発行区分は parseYuchoDashForm が読み飛ばし、検査数字の
+				// 対象にならない）。
+				{Re: dgNoAlnumHyphen(`1\d{3}0-(?:\d-)?\d{6,7}1`), Base: High, RequireContext: true, Validate: validYuchoAccount},
+				// ハイフンの代わりに半角スペース 1 つで記号・番号を並べた表記
+				// （「記号番号 [記号5桁] [番号]」のような転記形。全角スペースは
+				// normalize.Line が半角へ畳む）。jp-bank-account の 3+4 桁スペース
+				// 区切り対応と同じ区切り表記ゆれの吸収で、形状・検査数字は
+				// ハイフン形と同一基準で検証する（数字だけを抽出して判定する
+				// validYuchoLabeledAccount をそのまま使う）。
+				{Re: dgNoAlnumHyphen(`1\d{3}0 \d{6,7}1`), Base: High, RequireContext: true, Validate: validYuchoLabeledAccount},
 				// 記号・番号のラベルが同一行で別々に書かれる形式（"記号 11111
 				// 番号 11111111" 相当の並び。ラベル直結・コロン・スペース区切り
-				// いずれも許容）。同一行のラベル形式は対応済み。別行形式も
+				// いずれも許容）。JSON/YAML の同一行ペア（"記号"・"番号" キーが
+				// 引用符で囲まれ、カンマ・読点で区切られる形）にも対応するため、
+				// ラベル・値を囲む引用符・鉤括弧と値間の区切り（カンマ・読点）を
+				// 任意で許容する（引用符等はグループ 1 に含まれうるが、
+				// validYuchoLabeledAccount は数字だけを抽出して判定する）。
+				// 同一行のラベル形式は対応済み。別行形式も
 				// ScanContent の専用ペア走査で対応済み（internal/detect/yucho_pair.go
 				// の scanCrossLineYuchoPairs。rule.CrossLineYuchoSymbolRe /
-				// CrossLineYuchoNumberRe / ValidCrossLineYuchoPair を使用。diff 走査の
-				// ScanDiffHunk は未対応で将来課題）。捕捉値（グループ1）は記号側の
+				// CrossLineYuchoNumberRe / ValidCrossLineYuchoPair を使用。diff 走査は
+				// scanCrossLineYuchoPairsDiff が対応）。捕捉値（グループ1）は記号側の
 				// 数字先頭から番号側の数字末尾まで（間の「番号」ラベルを含む）とし、
 				// ラベル語「記号」自体はグループ外に置く。間に非数字のラベルを挟む
 				// ため dg ヘルパーはグループを二重にしてしまい使えず、境界ガード
@@ -1132,7 +1157,7 @@ func Builtin() []Rule {
 				// dogfooding で自己検出されないよう、上の例は全桁同一のダミー値
 				// （Validate で棄却される形）だけを書く。
 				{Re: regexp.MustCompile(
-					`(?:^|[^0-9])記号\s*[:=]?\s*(1\d{3}0\s*[:=]?\s*番号\s*[:=]?\s*\d{6,7}1)(?:[^0-9]|$)`,
+					`(?:^|[^0-9])記号["']?\s*[:=]?\s*["'「]?(1\d{3}0["'」]?\s*[,、:=]?\s*["'「]?番号["']?\s*[:=]?\s*["'「]?\d{6,7}1)(?:[^0-9]|$)`,
 				), Base: High, RequireContext: true, Validate: validYuchoLabeledAccount},
 			},
 		},
@@ -1534,22 +1559,52 @@ func validKaigoInsurance(m string) bool {
 }
 
 // rejectYuchoAccountSuffix は、通常の 7 桁口座番号パターンが
-// 「ゆうちょ記号5桁-番号7桁」の番号部分だけを拾う隣接汚染を防ぐ。
+// 「ゆうちょ記号5桁-番号7桁」（再発行区分 1 桁が挟まる「記号-1桁-番号」、および
+// 半角スペース区切りの「記号 番号」を含む）の番号部分だけを拾う隣接汚染を防ぐ。
 // ゆうちょ形式全体は jp-yucho-account が専用の文脈と境界で判定する。
-func rejectYuchoAccountSuffix(line string, start, _ int) bool {
-	if start < 6 || line[start-1] != '-' {
+// スペース区切りはハイフンより偶発的な隣接（独立した別番号が並ぶだけ）が
+// 起きやすいため、記号の完全な形状（先頭 "1"・末尾 "0"）と番号末尾 "1" まで
+// 要求して、正当な 7 桁口座番号の巻き添え棄却を避ける。
+func rejectYuchoAccountSuffix(line string, start, end int) bool {
+	// yuchoSymbolBefore は line[sepIdx] の区切り文字の直前 5 バイトが
+	// ゆうちょ記号の候補（数字 5 桁・先頭 "1"。requireTrailingZero なら
+	// さらに末尾 "0"）かを返す。
+	yuchoSymbolBefore := func(sepIdx int, requireTrailingZero bool) bool {
+		if sepIdx < 5 {
+			return false
+		}
+		symbol := line[sepIdx-5 : sepIdx]
+		if symbol[0] != '1' || (requireTrailingZero && symbol[4] != '0') {
+			return false
+		}
+		for i := 1; i < len(symbol); i++ {
+			if symbol[i] < '0' || symbol[i] > '9' {
+				return false
+			}
+		}
 		return true
 	}
-	symbol := line[start-6 : start-1]
-	if symbol[0] != '1' {
+	if start < 1 {
 		return true
 	}
-	for i := 1; i < len(symbol); i++ {
-		if symbol[i] < '0' || symbol[i] > '9' {
-			return true
+	switch line[start-1] {
+	case '-':
+		// 記号-番号（従来形）。
+		if yuchoSymbolBefore(start-1, false) {
+			return false
+		}
+		// 記号-再発行区分1桁-番号（parseYuchoDashForm と同じ読み飛ばし）。
+		if start >= 3 && line[start-3] == '-' && line[start-2] >= '0' && line[start-2] <= '9' &&
+			yuchoSymbolBefore(start-3, false) {
+			return false
+		}
+	case ' ':
+		// 記号 番号（スペース区切り形）。
+		if end > start && line[end-1] == '1' && yuchoSymbolBefore(start-1, true) {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 // validHealthInsurance は健康保険の 8 桁番号では全桁同一ダミー値だけを棄却し、
@@ -1639,12 +1694,21 @@ func validPhone(m string) bool {
 
 // parseYuchoDashForm はゆうちょ銀行の記号（5 桁・先頭 "1"・末尾 "0"）・番号
 // （7〜8 桁・末尾 1）がハイフンで相関した表記（jp-yucho-account 第 1 パターンの
-// 捕捉値、例「1XXX0-XXXXXXX1」）を記号・番号へ分解する。桁数・先頭/末尾だけを
-// 見る形状検証で、検査数字・全桁同一の判定は行わない（呼び出し側が
-// yuchoAccountChecksumOK で行う）。
+// 捕捉値、例「1XXX0-XXXXXXX1」）を記号・番号へ分解する。通帳の再発行時は記号と
+// 番号の間に 1 桁の再発行区分が挟まる（「1XXX0-X-XXXXXXX1」。ゆうちょ銀行公式
+// 変換サービスが「記号と番号の間の 1 桁の数字は入力しない」と案内する、振込等で
+// 使用しない桁）ため、「数字 1 桁＋ハイフン」を任意で読み飛ばす。桁数・先頭/末尾
+// だけを見る形状検証で、検査数字・全桁同一の判定は行わない（呼び出し側が
+// yuchoAccountChecksumOK で行う。再発行区分は検査数字の対象にならない）。
 func parseYuchoDashForm(m string) (symbol, number string, ok bool) {
 	symbol, number, ok = strings.Cut(m, "-")
-	if !ok || len(symbol) != 5 || symbol[0] != '1' || symbol[4] != '0' ||
+	if !ok {
+		return "", "", false
+	}
+	if len(number) >= 2 && number[0] >= '0' && number[0] <= '9' && number[1] == '-' {
+		number = number[2:]
+	}
+	if len(symbol) != 5 || symbol[0] != '1' || symbol[4] != '0' ||
 		(len(number) != 7 && len(number) != 8) || number[len(number)-1] != '1' {
 		return "", "", false
 	}

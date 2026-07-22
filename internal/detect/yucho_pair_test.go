@@ -67,6 +67,37 @@ func TestCrossLineYuchoPairWithPrefixLabel(t *testing.T) {
 	}
 }
 
+// TestCrossLineYuchoPairQuotedAndPrefixed は、JSON/YAML のフィールド行
+// （ラベル・値が引用符で囲まれ、行末に区切りカンマが付く形）と、
+// 「通帳」「貯金」前置ラベルの別行ペアを確認する（CrossLineYuchoSymbolRe /
+// CrossLineYuchoNumberRe の引用符・行末カンマ・前置語対応）。
+func TestCrossLineYuchoPairQuotedAndPrefixed(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{"JSONフィールド行", "\"記号\": \"14030\",\n\"番号\": \"12345671\"\n"}, // jp-pii-detector:ignore
+		{"YAML引用符付き", "記号: \"14030\"\n番号: \"12345671\"\n"},           // jp-pii-detector:ignore
+		{"通帳前置ラベル", "通帳記号: 14030\n通帳番号: 12345671\n"},                 // jp-pii-detector:ignore
+		{"貯金前置ラベル", "貯金記号: 14030\n貯金番号: 12345671\n"},                 // jp-pii-detector:ignore
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanContent("f.txt", tt.content)
+			if len(fs) != 2 {
+				t.Fatalf("len(fs) = %d, want 2 (findings=%v)", len(fs), ruleIDs(fs))
+			}
+			if fs[0].RuleID != "jp-yucho-account" || fs[0].Line != 1 || fs[0].Match != "14030" {
+				t.Fatalf("fs[0] = rule=%s line=%d match=%q", fs[0].RuleID, fs[0].Line, fs[0].Match)
+			}
+			if fs[1].RuleID != "jp-yucho-account" || fs[1].Line != 2 || fs[1].Match != "12345671" {
+				t.Fatalf("fs[1] = rule=%s line=%d match=%q", fs[1].RuleID, fs[1].Line, fs[1].Match)
+			}
+		})
+	}
+}
+
 // TestCrossLineYuchoPairNegativeCases はペア検出が対象外とすべきケースを
 // まとめて確認する。want が nil のケースは jp-yucho-account の検出ゼロを意味する
 // （他ルールの単独行検出まで含めた完全一致は assertRules が行う）。
@@ -106,6 +137,12 @@ func TestCrossLineYuchoPairNegativeCases(t *testing.T) {
 		// 行全体をアンカーするため、値の後に何か（単位等）が付くとマッチしない
 		// （円建て金額等との混同を避ける）。
 		{"番号行に単位が付く", "記号: 14030\n番号: 12345671 円\n", nil}, // jp-pii-detector:ignore
+		// 行末に許容するのはカンマ・読点 1 つまで。その後にさらに何かが
+		// 続く行はフィールド行とみなさない。
+		{"行末カンマの後に文字列", "\"記号\": \"14030\", x\n\"番号\": \"12345671\"\n", nil}, // jp-pii-detector:ignore
+		// 「お客様番号」のような複合ラベルは、ゆうちょの番号ラベルとして
+		// 扱わない（許容する前置語は ゆうちょ/通帳/貯金 のみ）。
+		{"お客様番号ラベルは対象外", "記号: 14030\nお客様番号: 12345671\n", nil}, // jp-pii-detector:ignore
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
