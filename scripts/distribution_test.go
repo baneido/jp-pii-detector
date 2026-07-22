@@ -22,7 +22,7 @@ const (
 
 	// docsVersion は README / docs が案内する現行リリース版。README のバージョン表記と
 	// 一致させる（更新時はこの定数だけを直せば済むよう、期待文字列はここから組み立てる）。
-	docsVersion = "v0.4.2"
+	docsVersion = "v0.4.3"
 )
 
 func repoRoot(t *testing.T) string {
