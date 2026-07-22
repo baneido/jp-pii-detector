@@ -76,6 +76,7 @@ Examples below are all fictitious dummy values.
 
 Run `jp-pii-detect rules` to list all rules. See [docs/detection-methods.md](docs/detection-methods.md)
 (Japanese) for details on accuracy and methodology.
+See [docs/cli.md](docs/cli.md) (Japanese) for the full CLI reference (all commands, flags, and exit codes).
 
 ## Install
 
