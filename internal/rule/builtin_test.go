@@ -552,7 +552,12 @@ func TestValidYuchoAccount(t *testing.T) {
 		{"再発行区分が2桁", "12390-25-1234561", false},
 		{"検査数字が不一致", "10020-12345671", false},
 		{"記号の先頭が1以外", "22345-1234567", false},
-		{"記号の末尾が0以外", "12395-1234561", false},
+		// 記号5桁目が0以外は実在しない形状。従来は構文パース側で棄却していたが、
+		// パースは通し有効性判定（yuchoAccountChecksumOK の形状ゲート）で棄却する
+		// 経路に変わっても false のままであることを確認する。
+		{"記号の末尾が0以外・検査数字不成立", "12395-1234561", false},
+		// 記号5桁目が0以外だが公式検査式は偶然成立する値。形状ゲートで無効。
+		{"記号の末尾が0以外・検査式のみ成立（形状無効）", "18848-1357911", false},
 		{"記号が5桁でない", "1234-1234567", false},
 		{"番号が6桁", "12345-123451", false},
 		{"番号が8桁超", "12345-123456789", false},
@@ -574,7 +579,8 @@ func TestValidYuchoAccount(t *testing.T) {
 // Want帰属移行に使う唯一の情報源（YuchoValueChecksumStatus）の契約を固定する。
 // ハイフン形・ラベル形どちらの表記も対象になり、桁数・先頭/末尾が想定と異なる
 // 表記は「判定不能」（Unparseable）を返すことで、検査数字が不成立の場合
-// （Invalid）と区別できることを確認する。
+// （Invalid）と区別できることを確認する。検査数字不成立に加え、記号5桁目が
+// 0以外という実在しない形状も Invalid に含まれる（先頭1以外はパース不能のまま）。
 func TestYuchoValueChecksumStatus(t *testing.T) {
 	tests := []struct {
 		name string
@@ -588,6 +594,11 @@ func TestYuchoValueChecksumStatus(t *testing.T) {
 		{"パース不能・再発行区分が2桁", "12390-25-1234561", YuchoChecksumUnparseable},
 		{"ハイフン形・検査数字が不一致", "10020-12345671", YuchoChecksumInvalid},
 		{"ハイフン形・番号が全桁同一のダミー値", "12340-1111111", YuchoChecksumInvalid},
+		// 記号5桁目が0以外は実在しない形状。構文パースは通るが有効性判定で無効
+		// （YuchoChecksumInvalid）になり、検査式の成否を問わない。
+		{"5桁目0以外・検査数字不成立", "18858-1357911", YuchoChecksumInvalid},
+		{"5桁目0以外・検査式のみ成立（形状無効）", "18848-1357911", YuchoChecksumInvalid},
+		{"ラベル形・5桁目0以外", "18858 番号 1357911", YuchoChecksumInvalid},
 		{"スペース区切り形（ラベル形パーサで判定・検査数字成立）", "12390 1234561", YuchoChecksumValid},
 		{"ラベル形・検査数字成立（スペース区切り）", "14030 番号 12345671", YuchoChecksumValid},
 		{"ラベル形・検査数字成立（ラベル直結）", "14030番号12345671", YuchoChecksumValid},
