@@ -367,6 +367,19 @@ func yuchoInvalidChecksumValue(seed int) (symbol, number string) {
 	return string(b), number
 }
 
+// yuchoShapeInvalidValue は yuchoValidValue が返す記号の 5 桁目（構造上 0）を
+// 0 以外へずらし、「先頭 1 かつ 5 桁目 ≠0」という実在しない形状の記号を作る。
+// 桁数・先頭 1・番号末尾 1 は保つので構文パースは成功するが、rule 側の形状ゲート
+// （yuchoAccountChecksumOK の symbol[4]=='0' 要求）で無効化され、
+// rule.YuchoValueChecksumStatus は検査式の成否によらず YuchoChecksumInvalid を返す。
+func yuchoShapeInvalidValue(seed int) (symbol, number string) {
+	symbol, number = yuchoValidValue(seed)
+	b := []byte(symbol)
+	// yuchoValidValue の記号 5 桁目は常に '0'。0 以外へ倒して実在しない形状にする。
+	b[4] = '5'
+	return string(b), number
+}
+
 // spanOnLine は addressSpanFor と同じ「lineText内でvalueが最初に現れる位置」を
 // 探すロジックを使い、Content ケースなど対象行が1行目でない場合にも Line 番号を
 // 明示できるようにしたテスト用ヘルパー。
@@ -506,6 +519,34 @@ func TestUpgradePublishedV2ReclassifiesChecksumInvalidLabeledYucho(t *testing.T)
 	}
 	if len(got[0].Want) != 0 || len(got[0].Spans) != 0 || !hasTag(got[0].Tags, "polarity:negative") {
 		t.Fatalf("ラベル形の検査数字不成立ゆうちょ陽性が陰性へ再分類されていない: %+v", got[0])
+	}
+}
+
+// TestUpgradePublishedV2ReclassifiesShapeInvalidYucho は、記号 5 桁目が 0 以外
+// （「先頭 1 かつ 5 桁目 ≠0」という実在しない形状）のダッシュ形ゆうちょ陽性も、
+// 検査式の成否によらず YuchoChecksumInvalid と判定され、陰性へ再分類されることを
+// 確認する。legacy コーパスのこの形の陽性を陰性側へ移すための経路。
+func TestUpgradePublishedV2ReclassifiesShapeInvalidYucho(t *testing.T) {
+	symbol, number := yuchoShapeInvalidValue(760)
+	value := symbol + "-" + number
+	line := "ゆうちょ銀行 記号" + value
+	c := evalcase.Case{
+		ID: "native-yucho-shape-invalid", SourceClass: "legacy-curated", Line: line,
+		Want:  []string{"jp-yucho-account"},
+		Spans: []evalcase.Span{addressSpanFor(t, line, "jp-yucho-account", value)},
+	}
+	base := []evalcase.Case{c}
+	wantInput := cloneCases(base)
+
+	got, err := UpgradePublishedV2(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(base, wantInput) {
+		t.Fatal("UpgradePublishedV2 が入力を変更した")
+	}
+	if len(got[0].Want) != 0 || len(got[0].Spans) != 0 || !hasTag(got[0].Tags, "polarity:negative") {
+		t.Fatalf("記号5桁目が0以外（形状無効）のゆうちょ陽性が陰性へ再分類されていない: %+v", got[0])
 	}
 }
 

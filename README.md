@@ -1,6 +1,6 @@
 # jp-pii-detector
 
-![PII detection F1](https://img.shields.io/badge/PII検出_F1（評価データセット）-0.97-brightgreen)
+![PII detection F1](https://img.shields.io/badge/PII検出_F1（評価データセット）-0.98-brightgreen)
 
 [English](README.en.md) | 日本語
 
@@ -45,12 +45,12 @@ jp-pii-detect scan .
 | メールアドレス | `taro@example.jp` | ◎ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | パターン + IANA TLD 実在チェック + 予約ドメイン除外（高再現率では日本語 EAI / 限定 confusable も対象） |
 | 電話番号 | `090-XXXX-XXXX` | ◎ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 携帯/IP/固定/+81 + 桁数検証 |
 | 郵便番号 | `〒150-0043` | ◎ / ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 7 桁完全一致の実在チェック（〒付きは単独、なしは周辺の語が必要） |
-| 住所 | `東京都渋谷区道玄坂2-10-7` | ○ | ![F1 0.97](https://img.shields.io/badge/F1-0.97-brightgreen) | 都道府県〜番地のパターン |
+| 住所 | `東京都渋谷区道玄坂2-10-7` | ○ | ![F1 0.98](https://img.shields.io/badge/F1-0.98-brightgreen) | 都道府県〜番地のパターン |
 | 運転免許証番号 | `免許証番号: 305012345678` | ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 12 桁 + 周辺の語が必要 |
-| 旅券（パスポート）番号 | `パスポート: TK1234567` | ○ | ![F1 0.95](https://img.shields.io/badge/F1-0.95-brightgreen) | 英字2+数字7 + 周辺の語が必要 |
+| 旅券（パスポート）番号 | `パスポート: TK1234567` | ○ | ![F1 0.96](https://img.shields.io/badge/F1-0.96-brightgreen) | 英字2+数字7 + 周辺の語が必要 |
 | 基礎年金番号 | `年金番号: 1234-567890` | ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 4桁-6桁 + 周辺の語が必要 |
 | 在留カード番号 | `在留カード AB12345678CD` | ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 英2+数8+英2 + 周辺の語が必要 |
-| 銀行口座番号 | `口座番号: 1234567` | △ | ![F1 0.95](https://img.shields.io/badge/F1-0.95-brightgreen) | 7 桁 + 周辺の語が必要 |
+| 銀行口座番号 | `口座番号: 1234567` | △ | ![F1 0.97](https://img.shields.io/badge/F1-0.97-brightgreen) | 7 桁 + 周辺の語が必要 |
 | ゆうちょ銀行 記号番号 | `記号 1XX?0 / 番号 XXXXXX1` | ○ | ![F1 0.58](https://img.shields.io/badge/F1-0.58-orange) | 記号4桁目の検査数字 + 番号との相関 + ゆうちょ固有の周辺語が必要 |
 | 健康保険 保険者番号等 | `保険者番号: 12345678` | △ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 8 桁 + 周辺の語、または強ラベル直結の国保6桁保険者番号 |
 | 雇用保険被保険者番号 | `XXXX-XXXXXX-X` | ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 4桁-6桁-1桁 + 周辺の語が必要 |
