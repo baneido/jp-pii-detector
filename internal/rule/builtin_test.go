@@ -2,6 +2,7 @@ package rule
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/baneido/jp-pii-detector/internal/testfixtures"
@@ -139,6 +140,21 @@ func TestValidEmail(t *testing.T) {
 		{"ローカル部が dummy を含む", "dummyuser@company.co.jp", false},
 		{"ドメイン第1ラベルが foo", "user@foo.co.jp", false},
 		{"ローカル部が hogehoge", "hogehoge@company.co.jp", false},
+		// ---- 無効: 短いダミー語（foo/bar）はトークン一致で棄却する ----
+		{"ローカル部のトークンが bar", "foo.bar@company.co.jp", false},
+		{"ローカル部が連番付き foo", "foo01@company.co.jp", false},
+		// ---- 有効: 短いダミー語を部分文字列として含むだけの実在アドレス ----
+		// 以前は strings.Contains の部分一致だったためこれらを巻き添えで棄却していた。
+		{"bar を含む実在の人名ローカル部", "barry@company.co.jp", true},
+		{"bar を含む実在の人名ローカル部2", "barbara@company.co.jp", true},
+		{"bar を含む実在のドメイン", "info@barclays.co.jp", true},
+		{"foo を含む実在のドメイン", "info@foodservice.co.jp", true},
+		// ---- 無効: 長さ上限（RFC 5321 4.5.3.1 / RFC 1035 2.3.4）----
+		{"ローカル部が65文字", strings.Repeat("a", 65) + "@company.co.jp", false},
+		{"ローカル部が64文字（上限ちょうど）", strings.Repeat("a", 64) + "@company.co.jp", true},
+		{"ドメインラベルが64文字", "user@" + strings.Repeat("a", 64) + ".jp", false},
+		{"アドレス全体が255文字", strings.Repeat("a", 64) + "@" + strings.Repeat("b", 63) +
+			"." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 60) + ".com", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -508,6 +524,29 @@ func TestValidBirthdate(t *testing.T) {
 		{"昭和65年は存在しない", "昭和65年1月1日", false},
 		{"平成32年は存在しない", "平成32年1月1日", false},
 		{"大正16年は存在しない", "大正16年1月1日", false},
+		// ---- 和暦の元号有効期間（年の上限だけでは弾けない改元境界）----
+		// 昭和は1989年1月7日まで。昭和64年は1月1〜7日しか存在しない。
+		{"昭和64年の最終日", "昭和64年1月7日", true},
+		{"昭和64年3月1日は改元後で存在しない", "昭和64年3月1日", false},
+		{"昭和64年1月8日は改元後で存在しない", "昭和64年1月8日", false},
+		// 平成は1989年1月8日〜2019年4月30日。
+		{"平成31年の最終日", "平成31年4月30日", true},
+		{"平成31年5月1日は改元後で存在しない", "平成31年5月1日", false},
+		{"平成元年1月7日は改元前で存在しない", "平成元年1月7日", false},
+		// 令和は2019年5月1日以降。
+		{"令和元年4月30日は改元前で存在しない", "令和元年4月30日", false},
+		// 大正は1912年7月30日〜1926年12月25日（改元日は前元号の最終日と同日）。
+		{"大正元年の初日", "大正元年7月30日", true},
+		{"大正元年7月29日は改元前で存在しない", "大正元年7月29日", false},
+		{"大正15年の最終日", "大正15年12月25日", true},
+		{"大正15年12月26日は改元後で存在しない", "大正15年12月26日", false},
+		{"明治45年7月31日は改元後で存在しない", "明治45年7月31日", false},
+		// 単字略記でも同じ境界検証がかかる。
+		{"単字略記 昭和64年3月1日は存在しない", "S64.3.1", false},
+		// ---- 有効: 元号の単字略記は小文字表記も許容する ----
+		{"小文字 単字略記", "s60.1.2", true},
+		{"小文字 単字略記 + 元年", "r元.5.1", true},
+		{"小文字 単字略記も範囲外は棄却", "s65.1.1", false},
 		// ---- 無効: 和暦でも暦日が不正 ----
 		{"和暦で2月30日", "令和2年2月30日", false},
 		// ---- 有効: 元号の単字アルファベット略記（免許証・保険証転記で一般的）----

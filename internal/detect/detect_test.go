@@ -186,6 +186,35 @@ func TestNumericBoundariesAllowAdjacentIndependentValues(t *testing.T) {
 	}
 }
 
+// TestSpaceSeparatedPhoneAllowsSingleDigitPrefix は、空白区切り電話番号の直前に
+// 1 桁の数字（箇条書き番号・表のセル番号）があるだけでは棄却しないことを確認する。
+//
+// 空白・ドット区切りの電話パターンは幅 1 の隣接数字グループを棄却するが、その
+// 区切り集合からは半角スペースを外してある。ガードが本来狙うのは
+// "1.090.1234.5678" のようなバージョン文字列風のドット連結
+// （TestNumericSeparatorVariantsRejectLongTokenPrefixes が固定）であり、
+// 1-3-4-4 という数字グルーピングは現実の番号体系に存在しないため、スペース区切りで
+// 幅 1 の数字が隣接しても長いトークンの部分一致とはみなさない。
+func TestSpaceSeparatedPhoneAllowsSingleDigitPrefix(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"箇条書き番号の直後の空白区切り携帯", "電話 1 090 1234 5678", []string{"jp-phone-number"}},
+		{"空白区切り携帯の直後に単独の数字", "携帯 090 1234 5678 9", []string{"jp-phone-number"}},
+		{"箇条書き番号の直後の空白区切りIP電話", "連絡先 3 050 1234 5678", []string{"jp-phone-number"}},
+		// ドット連結（バージョン文字列風）は従来どおり棄却する。
+		{"ドット連結の直前に1桁", "電話番号: 1.090.1234.5678", nil},
+		{"ドット連結の直後に1桁", "電話番号: 090.1234.5678.9", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
 func TestNumericEntitiesInsideASCIIIdentifiersExcluded(t *testing.T) {
 	d := newDetector(t, "")
 	tests := []struct {
@@ -1784,12 +1813,18 @@ high_recall = true
 	}
 }
 
-// TestPersonNameASCIILabelCaseInsensitive は ASCII 強ラベル（full_name 等）と
-// 裸の name ラベルが大文字・キャメルケース表記でも検出されることを確認する
-// （#48）。normalize は ASCII の大小文字を変換しないため、ラベルの
-// `(?i:...)` 化と PrefilterLiterals 側の大小文字無視比較の両方が必要になる。
-// 弱いラベル（last_name/first_name 等）は今回のスコープ外で、大文字表記のままでは
-// 引き続き検出されないことも合わせて確認する。
+// TestPersonNameASCIILabelCaseInsensitive は person-name のすべての ASCII ラベルが
+// 大文字・キャメルケース表記でも検出されることを確認する。normalize は ASCII の
+// 大小文字を変換しないため、ラベルの `(?i:...)` 化と PrefilterLiterals 側の
+// 大小文字無視比較の両方が必要になる。
+//
+// #48 では強ラベル（full_name 等）と裸の name だけを `(?i:...)` 化し、弱いラベル
+// （last_name/first_name）・姓名不定キー（user_name 等）・助詞剥がしのフォールバック
+// 版はスコープ外として据え置いていた。その結果 `FULL_NAME:` は拾えるのに
+// `USER_NAME:` は拾えない、`Name: 山田太郎` は拾えるのに `Name: 山田さんに連絡`
+// （フォールバック経路）は拾えない、という同一ルール内の不整合が残っていたため、
+// ASCII ラベル全体へ統一した。値側は従来どおり姓名辞書で検証されるため
+// （validSurnameField 等）、ラベルの大小文字を問わなくしても FP リスクは増えない。
 func TestPersonNameASCIILabelCaseInsensitive(t *testing.T) {
 	d := newDetector(t, `min_confidence = "low"`)
 	tests := []struct {
@@ -1803,9 +1838,16 @@ func TestPersonNameASCIILabelCaseInsensitive(t *testing.T) {
 		{"大文字 裸 NAME", "NAME: 田中太郎", []string{"person-name"}},
 		{"混在 裸 Name", "Name: 山田花子", []string{"person-name"}},
 		{"JSON 風大文字キー", `{"FULL_NAME": "田中太郎"}`, []string{"person-name"}},
-		// スコープ外: 弱いラベル（last_name/first_name）は大文字表記では
-		// 引き続き検出しない（#48 の対応方針どおり強ラベル・裸 name のみ対応）。
-		{"弱いラベル大文字は対象外", "LAST_NAME: 田中太郎", nil},
+		// 弱いラベル（last_name/first_name）・姓名不定キー（user_name 系）も
+		// 大文字表記で検出する。
+		{"弱いラベル大文字 LAST_NAME", "LAST_NAME: 田中", []string{"person-name"}},
+		{"弱いラベル大文字 FIRST_NAME", "FIRST_NAME: 太郎", []string{"person-name"}},
+		{"姓名不定キー大文字 USER_NAME", "USER_NAME: 田中太郎", []string{"person-name"}},
+		{"姓名不定キー混在 AccountName", "AccountName: 田中太郎", []string{"person-name"}},
+		// フォールバック経路（値の直後に助詞・敬称が続く形）も plain 版と同じく
+		// 大文字表記に対応する。
+		{"裸 Name フォールバック", "Name: 田中さんに連絡", []string{"person-name"}},
+		{"大文字 USER_NAME フォールバック", "USER_NAME: 田中太郎さんへ", []string{"person-name"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
