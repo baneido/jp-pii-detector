@@ -27,22 +27,22 @@ high recall operationalの3プロファイルを別々に計測・CIゲートし
 
 | Confidence | TP | FP | 実測適合率 | Wilson 95%下限 | 基準 |
 |---|--:|--:|--:|--:|:--:|
-| `high` | 130 | 1 | 99.24% | 95.80% | PASS（≥97.5%） |
-| `medium` | 73 | 0 | 100.00% | 95.00% | PASS（≥92.0%） |
+| `high` | 154 | 1 | 99.35% | 96.44% | PASS（≥97.5%） |
+| `medium` | 111 | 0 | 100.00% | 96.65% | PASS（≥92.0%） |
 
 ### medium
 
 | Confidence | TP | FP | 実測適合率 | Wilson 95%下限 | 基準 |
 |---|--:|--:|--:|--:|:--:|
-| `high` | 130 | 1 | 99.24% | 95.80% | PASS（≥97.5%） |
-| `medium` | 73 | 0 | 100.00% | 95.00% | PASS（≥92.0%） |
+| `high` | 154 | 1 | 99.35% | 96.44% | PASS（≥97.5%） |
+| `medium` | 111 | 0 | 100.00% | 96.65% | PASS（≥92.0%） |
 
 ### high-recall
 
 | Confidence | TP | FP | 実測適合率 | Wilson 95%下限 | 基準 |
 |---|--:|--:|--:|--:|:--:|
-| `high` | 161 | 1 | 99.38% | 96.59% | PASS（≥97.5%） |
-| `medium` | 103 | 0 | 100.00% | 96.40% | PASS（≥92.0%） |
+| `high` | 185 | 1 | 99.46% | 97.02% | PASS（≥97.5%） |
+| `medium` | 146 | 0 | 100.00% | 97.44% | PASS（≥92.0%） |
 
 ## プロファイル: low
 
@@ -52,26 +52,26 @@ rule capability（min_confidence=low、高再現率ルール無効）。
 |---|:--:|:--:|:--:|--:|--:|--:|--:|--:|
 | `credit-card` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
 | `email-address` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-birthdate` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-drivers-license` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-employment-insurance` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-health-insurance` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-invoice-number` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-juminhyo-code` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-kaigo-insurance` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-my-number` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-pension-number` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-phone-number` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-postal-code` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-residence-card` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `person-name` | 1.00 | 1.00 | 1.00 | 14 | 0 | 0 | 0 | 0 |
-| `jp-address` | 0.97 | 1.00 | 0.95 | 19 | 0 | 1 | 0 | 0 |
-| `jp-passport` | 0.95 | 0.91 | 1.00 | 10 | 1 | 0 | 1 | 0 |
-| `jp-bank-account` | 0.95 | 1.00 | 0.90 | 9 | 0 | 1 | 0 | 0 |
-| `jp-yucho-account` | 0.58 | 1.00 | 0.41 | 7 | 0 | 10 | 0 | 0 |
-| **全体（マイクロ平均）** | **0.97** | **0.99** | **0.94** | 199 | 1 | 12 | 1 | 0 |
+| `jp-birthdate` | 1.00 | 1.00 | 1.00 | 13 | 0 | 0 | 0 | 0 |
+| `jp-drivers-license` | 1.00 | 1.00 | 1.00 | 12 | 0 | 0 | 0 | 0 |
+| `jp-employment-insurance` | 1.00 | 1.00 | 1.00 | 12 | 0 | 0 | 0 | 0 |
+| `jp-health-insurance` | 1.00 | 1.00 | 1.00 | 14 | 0 | 0 | 0 | 0 |
+| `jp-invoice-number` | 1.00 | 1.00 | 1.00 | 12 | 0 | 0 | 0 | 0 |
+| `jp-juminhyo-code` | 1.00 | 1.00 | 1.00 | 12 | 0 | 0 | 0 | 0 |
+| `jp-kaigo-insurance` | 1.00 | 1.00 | 1.00 | 14 | 0 | 0 | 0 | 0 |
+| `jp-my-number` | 1.00 | 1.00 | 1.00 | 15 | 0 | 0 | 0 | 0 |
+| `jp-pension-number` | 1.00 | 1.00 | 1.00 | 12 | 0 | 0 | 0 | 0 |
+| `jp-phone-number` | 1.00 | 1.00 | 1.00 | 18 | 0 | 0 | 0 | 0 |
+| `jp-postal-code` | 1.00 | 1.00 | 1.00 | 15 | 0 | 0 | 0 | 0 |
+| `jp-residence-card` | 1.00 | 1.00 | 1.00 | 12 | 0 | 0 | 0 | 0 |
+| `person-name` | 1.00 | 1.00 | 1.00 | 19 | 0 | 0 | 0 | 0 |
+| `jp-address` | 0.98 | 1.00 | 0.96 | 23 | 0 | 1 | 0 | 0 |
+| `jp-bank-account` | 0.97 | 1.00 | 0.94 | 17 | 0 | 1 | 0 | 0 |
+| `jp-passport` | 0.96 | 0.92 | 1.00 | 12 | 1 | 0 | 1 | 0 |
+| `jp-yucho-account` | 0.64 | 1.00 | 0.47 | 9 | 0 | 10 | 0 | 0 |
+| **全体（マイクロ平均）** | **0.98** | **1.00** | **0.96** | 261 | 1 | 12 | 1 | 0 |
 
-陰性ケース母数: 118。
+陰性ケース母数: 139。
 
 ### スパン評価
 
@@ -81,24 +81,24 @@ exactは完全一致、containmentは検出が期待値全体を含む場合、r
 |---|:--:|:--:|:--:|:--:|:--:|:--:|
 | `credit-card` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
 | `email-address` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-birthdate` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-drivers-license` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-employment-insurance` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-health-insurance` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-invoice-number` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-juminhyo-code` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-kaigo-insurance` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-my-number` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-pension-number` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-phone-number` | 1.00 | 1.00 | 1.00 | 11/0/0 | 11/0/0 | 11/0/0 |
-| `jp-postal-code` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-residence-card` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `person-name` | 1.00 | 1.00 | 1.00 | 14/0/0 | 14/0/0 | 14/0/0 |
-| `jp-address` | 0.97 | 0.97 | 0.97 | 19/0/1 | 19/0/1 | 19/0/1 |
-| `jp-passport` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-bank-account` | 0.95 | 0.95 | 0.95 | 9/0/1 | 9/0/1 | 9/0/1 |
-| `jp-yucho-account` | 0.67 | 0.67 | 0.67 | 10/0/10 | 10/0/10 | 10/0/10 |
-| **全体（マイクロ平均）** | **0.97** | **0.97** | **0.97** | 203/0/12 | 203/0/12 | 203/0/12 |
+| `jp-birthdate` | 1.00 | 1.00 | 1.00 | 13/0/0 | 13/0/0 | 13/0/0 |
+| `jp-drivers-license` | 1.00 | 1.00 | 1.00 | 12/0/0 | 12/0/0 | 12/0/0 |
+| `jp-employment-insurance` | 1.00 | 1.00 | 1.00 | 12/0/0 | 12/0/0 | 12/0/0 |
+| `jp-health-insurance` | 1.00 | 1.00 | 1.00 | 14/0/0 | 14/0/0 | 14/0/0 |
+| `jp-invoice-number` | 1.00 | 1.00 | 1.00 | 12/0/0 | 12/0/0 | 12/0/0 |
+| `jp-juminhyo-code` | 1.00 | 1.00 | 1.00 | 12/0/0 | 12/0/0 | 12/0/0 |
+| `jp-kaigo-insurance` | 1.00 | 1.00 | 1.00 | 14/0/0 | 14/0/0 | 14/0/0 |
+| `jp-my-number` | 1.00 | 1.00 | 1.00 | 15/0/0 | 15/0/0 | 15/0/0 |
+| `jp-pension-number` | 1.00 | 1.00 | 1.00 | 12/0/0 | 12/0/0 | 12/0/0 |
+| `jp-phone-number` | 1.00 | 1.00 | 1.00 | 19/0/0 | 19/0/0 | 19/0/0 |
+| `jp-postal-code` | 1.00 | 1.00 | 1.00 | 15/0/0 | 15/0/0 | 15/0/0 |
+| `jp-residence-card` | 1.00 | 1.00 | 1.00 | 12/0/0 | 12/0/0 | 12/0/0 |
+| `person-name` | 1.00 | 1.00 | 1.00 | 19/0/0 | 19/0/0 | 19/0/0 |
+| `jp-address` | 0.98 | 0.98 | 0.98 | 23/0/1 | 23/0/1 | 23/0/1 |
+| `jp-bank-account` | 0.97 | 0.97 | 0.97 | 17/0/1 | 17/0/1 | 17/0/1 |
+| `jp-passport` | 1.00 | 1.00 | 1.00 | 12/0/0 | 12/0/0 | 12/0/0 |
+| `jp-yucho-account` | 0.71 | 0.71 | 0.71 | 12/0/10 | 12/0/10 | 12/0/10 |
+| **全体（マイクロ平均）** | **0.98** | **0.98** | **0.98** | 265/0/12 | 265/0/12 | 265/0/12 |
 
 マクロ平均F1: exact 0.98 / containment 0.98 / relaxed 0.98。
 ## プロファイル: medium
@@ -109,26 +109,26 @@ default operational（min_confidence=medium、高再現率ルール無効）。
 |---|:--:|:--:|:--:|--:|--:|--:|--:|--:|
 | `credit-card` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
 | `email-address` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-birthdate` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-drivers-license` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-employment-insurance` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-health-insurance` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-invoice-number` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-juminhyo-code` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-kaigo-insurance` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-my-number` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-pension-number` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-phone-number` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-postal-code` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-residence-card` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `person-name` | 1.00 | 1.00 | 1.00 | 14 | 0 | 0 | 0 | 0 |
-| `jp-address` | 0.97 | 1.00 | 0.95 | 19 | 0 | 1 | 0 | 0 |
-| `jp-passport` | 0.95 | 0.91 | 1.00 | 10 | 1 | 0 | 1 | 0 |
-| `jp-bank-account` | 0.95 | 1.00 | 0.90 | 9 | 0 | 1 | 0 | 0 |
-| `jp-yucho-account` | 0.58 | 1.00 | 0.41 | 7 | 0 | 10 | 0 | 0 |
-| **全体（マイクロ平均）** | **0.97** | **0.99** | **0.94** | 199 | 1 | 12 | 1 | 0 |
+| `jp-birthdate` | 1.00 | 1.00 | 1.00 | 13 | 0 | 0 | 0 | 0 |
+| `jp-drivers-license` | 1.00 | 1.00 | 1.00 | 12 | 0 | 0 | 0 | 0 |
+| `jp-employment-insurance` | 1.00 | 1.00 | 1.00 | 12 | 0 | 0 | 0 | 0 |
+| `jp-health-insurance` | 1.00 | 1.00 | 1.00 | 14 | 0 | 0 | 0 | 0 |
+| `jp-invoice-number` | 1.00 | 1.00 | 1.00 | 12 | 0 | 0 | 0 | 0 |
+| `jp-juminhyo-code` | 1.00 | 1.00 | 1.00 | 12 | 0 | 0 | 0 | 0 |
+| `jp-kaigo-insurance` | 1.00 | 1.00 | 1.00 | 14 | 0 | 0 | 0 | 0 |
+| `jp-my-number` | 1.00 | 1.00 | 1.00 | 15 | 0 | 0 | 0 | 0 |
+| `jp-pension-number` | 1.00 | 1.00 | 1.00 | 12 | 0 | 0 | 0 | 0 |
+| `jp-phone-number` | 1.00 | 1.00 | 1.00 | 18 | 0 | 0 | 0 | 0 |
+| `jp-postal-code` | 1.00 | 1.00 | 1.00 | 15 | 0 | 0 | 0 | 0 |
+| `jp-residence-card` | 1.00 | 1.00 | 1.00 | 12 | 0 | 0 | 0 | 0 |
+| `person-name` | 1.00 | 1.00 | 1.00 | 19 | 0 | 0 | 0 | 0 |
+| `jp-address` | 0.98 | 1.00 | 0.96 | 23 | 0 | 1 | 0 | 0 |
+| `jp-bank-account` | 0.97 | 1.00 | 0.94 | 17 | 0 | 1 | 0 | 0 |
+| `jp-passport` | 0.96 | 0.92 | 1.00 | 12 | 1 | 0 | 1 | 0 |
+| `jp-yucho-account` | 0.64 | 1.00 | 0.47 | 9 | 0 | 10 | 0 | 0 |
+| **全体（マイクロ平均）** | **0.98** | **1.00** | **0.96** | 261 | 1 | 12 | 1 | 0 |
 
-陰性ケース母数: 118。
+陰性ケース母数: 139。
 
 ### スパン評価
 
@@ -138,24 +138,24 @@ exactは完全一致、containmentは検出が期待値全体を含む場合、r
 |---|:--:|:--:|:--:|:--:|:--:|:--:|
 | `credit-card` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
 | `email-address` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-birthdate` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-drivers-license` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-employment-insurance` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-health-insurance` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-invoice-number` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-juminhyo-code` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-kaigo-insurance` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-my-number` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-pension-number` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-phone-number` | 1.00 | 1.00 | 1.00 | 11/0/0 | 11/0/0 | 11/0/0 |
-| `jp-postal-code` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-residence-card` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `person-name` | 1.00 | 1.00 | 1.00 | 14/0/0 | 14/0/0 | 14/0/0 |
-| `jp-address` | 0.97 | 0.97 | 0.97 | 19/0/1 | 19/0/1 | 19/0/1 |
-| `jp-passport` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-bank-account` | 0.95 | 0.95 | 0.95 | 9/0/1 | 9/0/1 | 9/0/1 |
-| `jp-yucho-account` | 0.67 | 0.67 | 0.67 | 10/0/10 | 10/0/10 | 10/0/10 |
-| **全体（マイクロ平均）** | **0.97** | **0.97** | **0.97** | 203/0/12 | 203/0/12 | 203/0/12 |
+| `jp-birthdate` | 1.00 | 1.00 | 1.00 | 13/0/0 | 13/0/0 | 13/0/0 |
+| `jp-drivers-license` | 1.00 | 1.00 | 1.00 | 12/0/0 | 12/0/0 | 12/0/0 |
+| `jp-employment-insurance` | 1.00 | 1.00 | 1.00 | 12/0/0 | 12/0/0 | 12/0/0 |
+| `jp-health-insurance` | 1.00 | 1.00 | 1.00 | 14/0/0 | 14/0/0 | 14/0/0 |
+| `jp-invoice-number` | 1.00 | 1.00 | 1.00 | 12/0/0 | 12/0/0 | 12/0/0 |
+| `jp-juminhyo-code` | 1.00 | 1.00 | 1.00 | 12/0/0 | 12/0/0 | 12/0/0 |
+| `jp-kaigo-insurance` | 1.00 | 1.00 | 1.00 | 14/0/0 | 14/0/0 | 14/0/0 |
+| `jp-my-number` | 1.00 | 1.00 | 1.00 | 15/0/0 | 15/0/0 | 15/0/0 |
+| `jp-pension-number` | 1.00 | 1.00 | 1.00 | 12/0/0 | 12/0/0 | 12/0/0 |
+| `jp-phone-number` | 1.00 | 1.00 | 1.00 | 19/0/0 | 19/0/0 | 19/0/0 |
+| `jp-postal-code` | 1.00 | 1.00 | 1.00 | 15/0/0 | 15/0/0 | 15/0/0 |
+| `jp-residence-card` | 1.00 | 1.00 | 1.00 | 12/0/0 | 12/0/0 | 12/0/0 |
+| `person-name` | 1.00 | 1.00 | 1.00 | 19/0/0 | 19/0/0 | 19/0/0 |
+| `jp-address` | 0.98 | 0.98 | 0.98 | 23/0/1 | 23/0/1 | 23/0/1 |
+| `jp-bank-account` | 0.97 | 0.97 | 0.97 | 17/0/1 | 17/0/1 | 17/0/1 |
+| `jp-passport` | 1.00 | 1.00 | 1.00 | 12/0/0 | 12/0/0 | 12/0/0 |
+| `jp-yucho-account` | 0.71 | 0.71 | 0.71 | 12/0/10 | 12/0/10 | 12/0/10 |
+| **全体（マイクロ平均）** | **0.98** | **0.98** | **0.98** | 265/0/12 | 265/0/12 | 265/0/12 |
 
 マクロ平均F1: exact 0.98 / containment 0.98 / relaxed 0.98。
 ## プロファイル: high-recall
@@ -168,30 +168,30 @@ high recall operational（min_confidence=medium、高再現率ルール有効）
 | `email-address` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
 | `email-address-confusable` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
 | `email-address-eai` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-birthdate` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-drivers-license` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-employment-insurance` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-health-insurance` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-invoice-number` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-juminhyo-code` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-kaigo-insurance` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-my-number` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-pension-number` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-phone-number` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-postal-code` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-residence-card` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `person-name` | 1.00 | 1.00 | 1.00 | 14 | 0 | 0 | 0 | 0 |
+| `jp-birthdate` | 1.00 | 1.00 | 1.00 | 13 | 0 | 0 | 0 | 0 |
+| `jp-drivers-license` | 1.00 | 1.00 | 1.00 | 12 | 0 | 0 | 0 | 0 |
+| `jp-employment-insurance` | 1.00 | 1.00 | 1.00 | 12 | 0 | 0 | 0 | 0 |
+| `jp-health-insurance` | 1.00 | 1.00 | 1.00 | 14 | 0 | 0 | 0 | 0 |
+| `jp-invoice-number` | 1.00 | 1.00 | 1.00 | 12 | 0 | 0 | 0 | 0 |
+| `jp-juminhyo-code` | 1.00 | 1.00 | 1.00 | 12 | 0 | 0 | 0 | 0 |
+| `jp-kaigo-insurance` | 1.00 | 1.00 | 1.00 | 14 | 0 | 0 | 0 | 0 |
+| `jp-my-number` | 1.00 | 1.00 | 1.00 | 15 | 0 | 0 | 0 | 0 |
+| `jp-pension-number` | 1.00 | 1.00 | 1.00 | 12 | 0 | 0 | 0 | 0 |
+| `jp-phone-number` | 1.00 | 1.00 | 1.00 | 18 | 0 | 0 | 0 | 0 |
+| `jp-postal-code` | 1.00 | 1.00 | 1.00 | 15 | 0 | 0 | 0 | 0 |
+| `jp-residence-card` | 1.00 | 1.00 | 1.00 | 12 | 0 | 0 | 0 | 0 |
+| `person-name` | 1.00 | 1.00 | 1.00 | 19 | 0 | 0 | 0 | 0 |
 | `person-name-high-recall` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
 | `person-name-romaji` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `person-name-structured` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 | 0 | 0 |
-| `jp-address` | 0.97 | 1.00 | 0.95 | 19 | 0 | 1 | 0 | 0 |
+| `person-name-structured` | 1.00 | 1.00 | 1.00 | 15 | 0 | 0 | 0 | 0 |
+| `jp-address` | 0.98 | 1.00 | 0.96 | 23 | 0 | 1 | 0 | 0 |
+| `jp-bank-account` | 0.97 | 1.00 | 0.94 | 17 | 0 | 1 | 0 | 0 |
+| `jp-passport` | 0.96 | 0.92 | 1.00 | 12 | 1 | 0 | 1 | 0 |
 | `jp-address-high-recall` | 0.95 | 0.91 | 1.00 | 10 | 1 | 0 | 1 | 0 |
-| `jp-passport` | 0.95 | 0.91 | 1.00 | 10 | 1 | 0 | 1 | 0 |
-| `jp-bank-account` | 0.95 | 1.00 | 0.90 | 9 | 0 | 1 | 0 | 0 |
-| `jp-yucho-account` | 0.58 | 1.00 | 0.41 | 7 | 0 | 10 | 0 | 0 |
-| **全体（マイクロ平均）** | **0.97** | **0.99** | **0.96** | 259 | 2 | 12 | 2 | 0 |
+| `jp-yucho-account` | 0.64 | 1.00 | 0.47 | 9 | 0 | 10 | 0 | 0 |
+| **全体（マイクロ平均）** | **0.98** | **0.99** | **0.96** | 326 | 2 | 12 | 2 | 0 |
 
-陰性ケース母数: 118。
+陰性ケース母数: 139。
 
 ### スパン評価
 
@@ -203,28 +203,28 @@ exactは完全一致、containmentは検出が期待値全体を含む場合、r
 | `email-address` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
 | `email-address-confusable` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
 | `email-address-eai` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-birthdate` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-drivers-license` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-employment-insurance` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-health-insurance` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-invoice-number` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-juminhyo-code` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-kaigo-insurance` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-my-number` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-pension-number` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-phone-number` | 1.00 | 1.00 | 1.00 | 11/0/0 | 11/0/0 | 11/0/0 |
-| `jp-postal-code` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-residence-card` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `person-name` | 1.00 | 1.00 | 1.00 | 14/0/0 | 14/0/0 | 14/0/0 |
+| `jp-birthdate` | 1.00 | 1.00 | 1.00 | 13/0/0 | 13/0/0 | 13/0/0 |
+| `jp-drivers-license` | 1.00 | 1.00 | 1.00 | 12/0/0 | 12/0/0 | 12/0/0 |
+| `jp-employment-insurance` | 1.00 | 1.00 | 1.00 | 12/0/0 | 12/0/0 | 12/0/0 |
+| `jp-health-insurance` | 1.00 | 1.00 | 1.00 | 14/0/0 | 14/0/0 | 14/0/0 |
+| `jp-invoice-number` | 1.00 | 1.00 | 1.00 | 12/0/0 | 12/0/0 | 12/0/0 |
+| `jp-juminhyo-code` | 1.00 | 1.00 | 1.00 | 12/0/0 | 12/0/0 | 12/0/0 |
+| `jp-kaigo-insurance` | 1.00 | 1.00 | 1.00 | 14/0/0 | 14/0/0 | 14/0/0 |
+| `jp-my-number` | 1.00 | 1.00 | 1.00 | 15/0/0 | 15/0/0 | 15/0/0 |
+| `jp-pension-number` | 1.00 | 1.00 | 1.00 | 12/0/0 | 12/0/0 | 12/0/0 |
+| `jp-phone-number` | 1.00 | 1.00 | 1.00 | 19/0/0 | 19/0/0 | 19/0/0 |
+| `jp-postal-code` | 1.00 | 1.00 | 1.00 | 15/0/0 | 15/0/0 | 15/0/0 |
+| `jp-residence-card` | 1.00 | 1.00 | 1.00 | 12/0/0 | 12/0/0 | 12/0/0 |
+| `person-name` | 1.00 | 1.00 | 1.00 | 19/0/0 | 19/0/0 | 19/0/0 |
 | `person-name-high-recall` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
 | `person-name-romaji` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `person-name-structured` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-address` | 0.97 | 0.97 | 0.97 | 19/0/1 | 19/0/1 | 19/0/1 |
+| `person-name-structured` | 1.00 | 1.00 | 1.00 | 15/0/0 | 15/0/0 | 15/0/0 |
+| `jp-address` | 0.98 | 0.98 | 0.98 | 23/0/1 | 23/0/1 | 23/0/1 |
+| `jp-bank-account` | 0.97 | 0.97 | 0.97 | 17/0/1 | 17/0/1 | 17/0/1 |
+| `jp-passport` | 1.00 | 1.00 | 1.00 | 12/0/0 | 12/0/0 | 12/0/0 |
 | `jp-address-high-recall` | 0.95 | 0.95 | 0.95 | 10/1/0 | 10/1/0 | 10/1/0 |
-| `jp-passport` | 1.00 | 1.00 | 1.00 | 10/0/0 | 10/0/0 | 10/0/0 |
-| `jp-bank-account` | 0.95 | 0.95 | 0.95 | 9/0/1 | 9/0/1 | 9/0/1 |
-| `jp-yucho-account` | 0.67 | 0.67 | 0.67 | 10/0/10 | 10/0/10 | 10/0/10 |
-| **全体（マイクロ平均）** | **0.98** | **0.98** | **0.98** | 263/1/12 | 263/1/12 | 263/1/12 |
+| `jp-yucho-account` | 0.71 | 0.71 | 0.71 | 12/0/10 | 12/0/10 | 12/0/10 |
+| **全体（マイクロ平均）** | **0.98** | **0.98** | **0.98** | 330/1/12 | 330/1/12 | 330/1/12 |
 
 マクロ平均F1: exact 0.98 / containment 0.98 / relaxed 0.98。
 
@@ -233,34 +233,35 @@ exactは完全一致、containmentは検出が期待値全体を含む場合、r
 評価データセットはリポジトリ外（GCS）で管理され、レビュー時に中身が見えないため、
 PII やケース本文を含まない件数だけの統計をここに記録します。
 
-- 総ケース数: 388
-- 陽性ケース数: 270（うちスパン付与 270 件、付与率 100%）
-- 陰性ケース数: 118
+- 総ケース数: 471
+- 陽性ケース数: 332（うちスパン付与 332 件、付与率 100%）
+- 陰性ケース数: 139
 
 ### 入力種別別ケース数
 
 | 区分 | ケース数 |
 |---|--:|
-| `content` | 19 |
-| `diff` | 1 |
-| `line` | 368 |
+| `content` | 46 |
+| `diff` | 11 |
+| `line` | 414 |
 
 ### ファイル形式別ケース数
 
 | 区分 | ケース数 |
 |---|--:|
-| `csv` | 3 |
-| `json` | 7 |
-| `sql` | 3 |
-| `txt` | 5 |
-| `unspecified` | 370 |
+| `csv` | 11 |
+| `json` | 9 |
+| `sql` | 8 |
+| `txt` | 15 |
+| `unspecified` | 423 |
+| `yaml` | 5 |
 
 ### source class別ケース数
 
 | 区分 | ケース数 |
 |---|--:|
-| `curated-v2` | 212 |
-| `hard-negative` | 44 |
+| `curated-v2` | 274 |
+| `hard-negative` | 65 |
 | `legacy-curated` | 132 |
 
 ### ルール別陽性件数
@@ -271,27 +272,27 @@ PII やケース本文を含まない件数だけの統計をここに記録し�
 | `email-address` | 10 |
 | `email-address-confusable` | 10 |
 | `email-address-eai` | 10 |
-| `jp-address` | 20 |
+| `jp-address` | 24 |
 | `jp-address-high-recall` | 10 |
-| `jp-bank-account` | 10 |
-| `jp-birthdate` | 10 |
-| `jp-drivers-license` | 10 |
-| `jp-employment-insurance` | 10 |
-| `jp-health-insurance` | 10 |
-| `jp-invoice-number` | 10 |
-| `jp-juminhyo-code` | 10 |
-| `jp-kaigo-insurance` | 10 |
-| `jp-my-number` | 10 |
-| `jp-passport` | 10 |
-| `jp-pension-number` | 10 |
-| `jp-phone-number` | 10 |
-| `jp-postal-code` | 10 |
-| `jp-residence-card` | 10 |
-| `jp-yucho-account` | 17 |
-| `person-name` | 14 |
+| `jp-bank-account` | 18 |
+| `jp-birthdate` | 13 |
+| `jp-drivers-license` | 12 |
+| `jp-employment-insurance` | 12 |
+| `jp-health-insurance` | 14 |
+| `jp-invoice-number` | 12 |
+| `jp-juminhyo-code` | 12 |
+| `jp-kaigo-insurance` | 14 |
+| `jp-my-number` | 15 |
+| `jp-passport` | 12 |
+| `jp-pension-number` | 12 |
+| `jp-phone-number` | 18 |
+| `jp-postal-code` | 15 |
+| `jp-residence-card` | 12 |
+| `jp-yucho-account` | 19 |
+| `person-name` | 19 |
 | `person-name-high-recall` | 10 |
 | `person-name-romaji` | 10 |
-| `person-name-structured` | 10 |
+| `person-name-structured` | 15 |
 
 ## ケース種別別（medium）
 
@@ -299,10 +300,10 @@ PII やケース本文を含まない件数だけの統計をここに記録し�
 
 | ケース種別 | F1 | 適合率 | 再現率 | TP | FP | FN |
 |---|:--:|:--:|:--:|--:|--:|--:|
-| `line` | 0.97 | 0.99 | 0.94 | 194 | 1 | 12 |
-| `content` | 1.00 | 1.00 | 1.00 | 4 | 0 | 0 |
-| `diff` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
-| **全体（マイクロ平均）** | **0.97** | **0.99** | **0.94** | 199 | 1 | 12 |
+| `line` | 0.97 | 1.00 | 0.95 | 228 | 1 | 12 |
+| `content` | 1.00 | 1.00 | 1.00 | 25 | 0 | 0 |
+| `diff` | 1.00 | 1.00 | 1.00 | 8 | 0 | 0 |
+| **全体（マイクロ平均）** | **0.98** | **1.00** | **0.96** | 261 | 1 | 12 |
 
 ## タグ別（表記ゆれ等）
 
@@ -310,47 +311,116 @@ PII やケース本文を含まない件数だけの統計をここに記録し�
 
 | タグ | F1 | 適合率 | 再現率 | TP | FP | FN |
 |---|:--:|:--:|:--:|--:|--:|--:|
-| `file-format:csv` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
-| `file-format:json` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
-| `file-format:sql` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `brand:jcb` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `brand:mastercard` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `brand:visa` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `ctx:context-line-label` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `ctx:context-line-symbol` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `file-format:csv` | 1.00 | 1.00 | 1.00 | 6 | 0 | 0 |
+| `file-format:json` | 1.00 | 1.00 | 1.00 | 3 | 0 | 0 |
+| `file-format:sql` | 1.00 | 1.00 | 1.00 | 4 | 0 | 0 |
+| `file-format:yaml` | 1.00 | 1.00 | 1.00 | 4 | 0 | 0 |
 | `format:json` | 1.00 | 1.00 | 1.00 | 2 | 0 | 0 |
 | `label:chokin` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `label:colon` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `label:counter-ken` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `label:currency-suffix` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `label:currency-yen` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `label:hihokensha-sho` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `label:invoice` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `label:jp-alt` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
 | `label:kigou-bangou` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `label:last-first` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `label:numbering-build` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `label:numbering-denpyo` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `label:numbering-serial` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `label:numbering-version` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `label:space` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `label:surname-first-name-mixed` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `label:surname-given` | 1.00 | 1.00 | 1.00 | 3 | 0 | 0 |
+| `label:touroku-bangou` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
 | `label:tsuucho` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
-| `layout:content` | 1.00 | 1.00 | 1.00 | 4 | 0 | 0 |
-| `layout:diff` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
-| `layout:line` | 0.96 | 1.00 | 0.93 | 137 | 0 | 10 |
+| `label:youkaigo` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `layout:content` | 1.00 | 1.00 | 1.00 | 20 | 0 | 0 |
+| `layout:cross-line` | 1.00 | 1.00 | 1.00 | 2 | 0 | 0 |
+| `layout:cross-line-pair` | 1.00 | 1.00 | 1.00 | 5 | 0 | 0 |
+| `layout:diff` | 1.00 | 1.00 | 1.00 | 8 | 0 | 0 |
+| `layout:line` | 0.97 | 1.00 | 0.94 | 171 | 0 | 10 |
+| `layout:single-line` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `neg:checksum-mismatch` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `neg:context-only-value` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `neg:negative-context` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `notation:10digit` | 1.00 | 1.00 | 1.00 | 2 | 0 | 0 |
+| `notation:11digit` | 1.00 | 1.00 | 1.00 | 3 | 0 | 0 |
+| `notation:3-4` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `notation:4-4-4` | 1.00 | 1.00 | 1.00 | 3 | 0 | 0 |
+| `notation:4-6` | 1.00 | 1.00 | 1.00 | 2 | 0 | 0 |
+| `notation:4-6-1` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `notation:6digit-kokuho` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `notation:8digit` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `notation:bankcode-4-3-7` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `notation:bankname-branch-futsu` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `notation:cyrillic` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `notation:digits8` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
 | `notation:field-inline` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
 | `notation:field-multiline` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `notation:fullwidth` | 1.00 | 1.00 | 1.00 | 2 | 0 | 0 |
+| `notation:greek` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `notation:hiragana` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
 | `notation:hyphen-reissue` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `notation:intl-81` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `notation:kanji` | 1.00 | 1.00 | 1.00 | 4 | 0 | 0 |
+| `notation:kanji-banchi` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `notation:kanji-digit` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `notation:kanji-kana` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `notation:katakana` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `notation:label-no-mark` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `notation:label-no-prefecture` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `notation:lowercase` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `notation:lowercase-space` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `notation:mixed-cyrillic-greek` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
 | `notation:multiline-pair` | 1.00 | 1.00 | 1.00 | 2 | 0 | 0 |
+| `notation:nonexistent-code` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `notation:nonexistent-municipality` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `notation:parens-areacode` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `notation:quoted-json` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
 | `notation:space-separated` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `notation:uppercase` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `notation:uppercase-nospace` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `notation:wareki-abbrev-reiwa` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `notation:wareki-showa` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `notation:with-building` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `path:yucho-pair` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
 | `polarity:negative` | 0.00 | 0.00 | 0.00 | 0 | 1 | 0 |
-| `polarity:positive` | 0.97 | 1.00 | 0.93 | 142 | 0 | 10 |
+| `polarity:positive` | 0.98 | 1.00 | 0.95 | 204 | 0 | 10 |
 | `rule:credit-card` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 |
 | `rule:email-address` | 1.00 | 1.00 | 1.00 | 6 | 0 | 0 |
 | `rule:email-address-confusable` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
 | `rule:email-address-eai` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
-| `rule:jp-address` | 1.00 | 1.00 | 1.00 | 5 | 0 | 0 |
+| `rule:jp-address` | 1.00 | 1.00 | 1.00 | 9 | 0 | 0 |
 | `rule:jp-address-high-recall` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 |
-| `rule:jp-bank-account` | 1.00 | 1.00 | 1.00 | 6 | 0 | 0 |
-| `rule:jp-birthdate` | 1.00 | 1.00 | 1.00 | 7 | 0 | 0 |
-| `rule:jp-drivers-license` | 1.00 | 1.00 | 1.00 | 7 | 0 | 0 |
-| `rule:jp-employment-insurance` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 |
-| `rule:jp-health-insurance` | 1.00 | 1.00 | 1.00 | 8 | 0 | 0 |
-| `rule:jp-invoice-number` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 |
-| `rule:jp-juminhyo-code` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 |
-| `rule:jp-kaigo-insurance` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 |
-| `rule:jp-my-number` | 1.00 | 1.00 | 1.00 | 5 | 0 | 0 |
-| `rule:jp-passport` | 1.00 | 1.00 | 1.00 | 7 | 0 | 0 |
-| `rule:jp-pension-number` | 1.00 | 1.00 | 1.00 | 7 | 0 | 0 |
-| `rule:jp-phone-number` | 1.00 | 1.00 | 1.00 | 3 | 0 | 0 |
-| `rule:jp-postal-code` | 1.00 | 1.00 | 1.00 | 7 | 0 | 0 |
-| `rule:jp-residence-card` | 1.00 | 1.00 | 1.00 | 7 | 0 | 0 |
-| `rule:jp-yucho-account` | 0.58 | 1.00 | 0.41 | 7 | 0 | 10 |
+| `rule:jp-bank-account` | 1.00 | 1.00 | 1.00 | 14 | 0 | 0 |
+| `rule:jp-birthdate` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 |
+| `rule:jp-drivers-license` | 1.00 | 1.00 | 1.00 | 9 | 0 | 0 |
+| `rule:jp-employment-insurance` | 1.00 | 1.00 | 1.00 | 12 | 0 | 0 |
+| `rule:jp-health-insurance` | 1.00 | 1.00 | 1.00 | 12 | 0 | 0 |
+| `rule:jp-invoice-number` | 1.00 | 1.00 | 1.00 | 12 | 0 | 0 |
+| `rule:jp-juminhyo-code` | 1.00 | 1.00 | 1.00 | 12 | 0 | 0 |
+| `rule:jp-kaigo-insurance` | 1.00 | 1.00 | 1.00 | 14 | 0 | 0 |
+| `rule:jp-my-number` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 |
+| `rule:jp-passport` | 1.00 | 1.00 | 1.00 | 9 | 0 | 0 |
+| `rule:jp-pension-number` | 1.00 | 1.00 | 1.00 | 9 | 0 | 0 |
+| `rule:jp-phone-number` | 1.00 | 1.00 | 1.00 | 11 | 0 | 0 |
+| `rule:jp-postal-code` | 1.00 | 1.00 | 1.00 | 12 | 0 | 0 |
+| `rule:jp-residence-card` | 1.00 | 1.00 | 1.00 | 9 | 0 | 0 |
+| `rule:jp-yucho-account` | 0.64 | 1.00 | 0.47 | 9 | 0 | 10 |
+| `rule:person-name` | 1.00 | 1.00 | 1.00 | 5 | 0 | 0 |
 | `rule:person-name-high-recall` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
 | `rule:person-name-romaji` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
-| `rule:person-name-structured` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `rule:person-name-structured` | 1.00 | 1.00 | 1.00 | 5 | 0 | 0 |
+| `scenario:csv-column-context` | 1.00 | 1.00 | 1.00 | 6 | 0 | 0 |
+| `scenario:csv-column-context-negative` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `scenario:domain-japanese` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
 | `scenario:hard-negative-account-like` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
 | `scenario:hard-negative-address-like` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
 | `scenario:hard-negative-business-id` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
@@ -367,15 +437,37 @@ PII やケース本文を含まない件数だけの統計をここに記録し�
 | `scenario:hard-negative-reserved-email` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
 | `scenario:hard-negative-revision` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
 | `scenario:hard-negative-test-pan` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `scenario:homoglyph-domain` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `scenario:homoglyph-local` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `scenario:homoglyph-multi` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `scenario:homoglyph-tld` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
 | `scenario:hyphen-reissue-checksum-invalid` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `scenario:json-object-scope` | 1.00 | 1.00 | 1.00 | 2 | 0 | 0 |
 | `scenario:known-test-pan` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `scenario:local-and-domain-japanese` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `scenario:local-japanese` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
 | `scenario:multiline-pair-checksum-invalid` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `scenario:out-of-dictionary` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `scenario:placeholder-surname` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
 | `scenario:reissue-division-two-digit` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `scenario:reserved-domain` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `scenario:reserved-skeleton` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
 | `scenario:space-separated-checksum-invalid` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
-| `sep:hyphen` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
-| `sep:space` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `scenario:sql-insert-column` | 1.00 | 1.00 | 1.00 | 4 | 0 | 0 |
+| `scenario:sql-insert-column-negative` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `scenario:tld-japanese` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `scenario:unregistered-tld` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `scenario:yaml-object-scope` | 1.00 | 1.00 | 1.00 | 4 | 0 | 0 |
+| `scenario:yaml-object-scope-negative` | 0.00 | 0.00 | 0.00 | 0 | 0 | 0 |
+| `sep:dot` | 1.00 | 1.00 | 1.00 | 3 | 0 | 0 |
+| `sep:hyphen` | 1.00 | 1.00 | 1.00 | 10 | 0 | 0 |
+| `sep:none` | 1.00 | 1.00 | 1.00 | 4 | 0 | 0 |
+| `sep:slash` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| `sep:space` | 1.00 | 1.00 | 1.00 | 5 | 0 | 0 |
 | `sep:touten` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
-| `source:curated-v2` | 0.97 | 1.00 | 0.93 | 142 | 0 | 10 |
+| `source:curated-v2` | 0.97 | 1.00 | 0.94 | 161 | 0 | 10 |
 | `source:hard-negative` | 0.00 | 0.00 | 0.00 | 0 | 1 | 0 |
 | `source:legacy-curated` | 0.98 | 1.00 | 0.97 | 57 | 0 | 2 |
-| **全体（マイクロ平均）** | **0.97** | **1.00** | **0.94** | 640 | 3 | 42 |
+| `type:landline` | 1.00 | 1.00 | 1.00 | 2 | 0 | 0 |
+| `type:mobile` | 1.00 | 1.00 | 1.00 | 1 | 0 | 0 |
+| **全体（マイクロ平均）** | **0.98** | **1.00** | **0.96** | 962 | 3 | 42 |

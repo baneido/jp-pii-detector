@@ -1700,6 +1700,22 @@ func validPhone(m string) bool {
 // 使用しない桁）ため、「数字 1 桁＋ハイフン」を任意で読み飛ばす。桁数・先頭/末尾
 // だけを見る形状検証で、検査数字・全桁同一の判定は行わない（呼び出し側が
 // yuchoAccountChecksumOK で行う。再発行区分は検査数字の対象にならない）。
+//
+// 記号 5 桁目 = 0 を要求するのは、あくまで「振込可能な口座」（通常貯金・通常貯蓄
+// 貯金・振替）に限った制約であって、ゆうちょの記号一般の性質ではない。この制約は
+// 国税庁が配布する納付書記載要領
+// （https://www.nta.go.jp/taxes/nozei/nofu/pdf/24100030_5.pdf）と、ゆうちょ銀行
+// 公式変換サービスの公開 JavaScript が入力チェック（validate()）で記号の末尾 0 を
+// 要求することで裏付けられる。ただし後者はあくまで「このツールの対象外」を弾く
+// 入力サニティガードであり、変換ロジック本体（checkdigit）は 5 桁目を読んでいない。
+//
+// 二次情報では、記号 5 桁目は全体としては 0 以外（3・4・7 等）も取り、先頭 1 かつ
+// 5 桁目 ≠0 の甲種団体貯金、先頭 2〜5 の定額・定期・財形といった記号体系が実在
+// する。本実装はこれらの商品に未対応であり、既知の検出漏れである。誤って「実在
+// しない形状」と決めつけて無効判定へ倒すと、本物の PII を取りこぼすうえに
+// internal/corpusv2 が評価コーパスの陽性を陰性へ読み替えてしまうため、未対応の
+// 記号体系はここでパース不能（YuchoChecksumUnparseable = 判定不能）に留め、
+// コーパスの帰属を勝手に変えないようにしている。
 func parseYuchoDashForm(m string) (symbol, number string, ok bool) {
 	symbol, number, ok = strings.Cut(m, "-")
 	if !ok {
@@ -1721,7 +1737,9 @@ func parseYuchoDashForm(m string) (symbol, number string, ok bool) {
 // での自己検出を避けるため全桁同一のダミー値で例示する）を記号・番号へ
 // 分解する。捕捉値にはラベル文字「番号」や区切り文字（空白・コロン等）が
 // 混じるため、まず数字だけを抽出し、先頭 5 桁を記号・残りを番号とみなした上で
-// parseYuchoDashForm と同じ形状検証（桁数・先頭/末尾）を行う。
+// parseYuchoDashForm と同じ形状検証（桁数・先頭/末尾）を行う。記号 5 桁目 = 0 を
+// 要求する根拠と、それが「振込可能な口座」限定の制約であること（未対応の記号体系は
+// 判定不能に留めること）は parseYuchoDashForm のコメントを参照。
 func parseYuchoLabeledForm(m string) (symbol, number string, ok bool) {
 	digits := make([]byte, 0, len(m))
 	for i := 0; i < len(m); i++ {
@@ -1743,6 +1761,14 @@ func parseYuchoLabeledForm(m string) (symbol, number string, ok bool) {
 // parseYuchoLabeledForm 通過済み）の記号・番号について、全桁同一の
 // ダミー値でないことと、checksum.YuchoAccount（記号 4 桁目の公式検査数字。
 // ゆうちょ銀行公式変換サービスの公開 JavaScript による）を満たすことを返す。
+//
+// ここでは形状（記号 5 桁目 = 0 等）を再検査しない。5 桁目 = 0 は「振込可能な
+// 口座」限定の制約にすぎず、記号 5 桁目 ≠0 の商品（甲種団体貯金・財形等）も実在
+// するため、それを「実在しない形状」として無効（Invalid）へ倒すのは誤りである
+// （公式変換サービスの JS が validate() で末尾 0 を要求するのは、変換対象外の
+// 入力を弾くサニティガードであって実在性の否定ではない）。未対応の記号体系は
+// 形状検証側でパース不能（＝判定不能）に留める。詳細は parseYuchoDashForm の
+// コメントを参照。
 func yuchoAccountChecksumOK(symbol, number string) bool {
 	return !checksum.AllSame(symbol) && !checksum.AllSame(number) && checksum.YuchoAccount(symbol, number)
 }
@@ -1779,12 +1805,19 @@ const (
 	// YuchoChecksumUnparseable は、ハイフン形（parseYuchoDashForm）・ラベル形
 	// （parseYuchoLabeledForm）のどちらの形状にも一致しなかったことを表す。
 	// 呼び出し側はこれを「判定不能」として扱い、何も変更しないこと。
+	//
+	// 本実装が形状として受け付ける記号 5 桁目 = 0 は「振込可能な口座」（通常貯金・
+	// 通常貯蓄貯金・振替）限定の制約であり、記号 5 桁目 ≠0 の甲種団体貯金や先頭
+	// 2〜5 の定額・定期・財形といった記号体系も実在する（二次情報）。これらは本実装
+	// が未対応なだけで実在しないわけではないため、Invalid（客観的に無効）ではなく
+	// この Unparseable に落ちる。呼び出し側は「無効」と読み替えてはならない。
 	YuchoChecksumUnparseable YuchoChecksumStatus = iota
 	// YuchoChecksumValid は記号・番号として解釈でき、かつ公式検査数字（4桁目）を
 	// 満たすことを表す。
 	YuchoChecksumValid
 	// YuchoChecksumInvalid は記号・番号として解釈できたが、公式検査数字を
-	// 満たさない（全桁同一の明らかなダミー値を含む）ことを表す。
+	// 満たさない（全桁同一の明らかなダミー値を含む）ことを表す。形状が未対応な
+	// だけの値はここに含めない（YuchoChecksumUnparseable のコメントを参照）。
 	YuchoChecksumInvalid
 )
 

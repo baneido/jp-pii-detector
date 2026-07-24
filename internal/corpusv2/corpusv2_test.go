@@ -367,6 +367,20 @@ func yuchoInvalidChecksumValue(seed int) (symbol, number string) {
 	return string(b), number
 }
 
+// yuchoUnsupportedShapeValue は yuchoValidValue が返す記号の 5 桁目を 0 以外へ
+// ずらし、本実装が未対応の記号体系（記号 5 桁目 ≠0。甲種団体貯金等で実在する）
+// の値を作る。桁数・先頭 1・番号末尾 1 は保つが、rule 側の形状検証
+// （parseYuchoDashForm / parseYuchoLabeledForm の symbol[4]=='0' 要求）で落ちるため、
+// rule.YuchoValueChecksumStatus は検査式の成否によらず YuchoChecksumUnparseable
+// （判定不能）を返す。
+func yuchoUnsupportedShapeValue(seed int) (symbol, number string) {
+	symbol, number = yuchoValidValue(seed)
+	b := []byte(symbol)
+	// yuchoValidValue の記号 5 桁目は常に '0'。0 以外へ倒して未対応の記号体系にする。
+	b[4] = '5'
+	return string(b), number
+}
+
 // spanOnLine は addressSpanFor と同じ「lineText内でvalueが最初に現れる位置」を
 // 探すロジックを使い、Content ケースなど対象行が1行目でない場合にも Line 番号を
 // 明示できるようにしたテスト用ヘルパー。
@@ -506,6 +520,36 @@ func TestUpgradePublishedV2ReclassifiesChecksumInvalidLabeledYucho(t *testing.T)
 	}
 	if len(got[0].Want) != 0 || len(got[0].Spans) != 0 || !hasTag(got[0].Tags, "polarity:negative") {
 		t.Fatalf("ラベル形の検査数字不成立ゆうちょ陽性が陰性へ再分類されていない: %+v", got[0])
+	}
+}
+
+// TestUpgradePublishedV2KeepsUnsupportedShapeYucho は、記号 5 桁目が 0 以外
+// （甲種団体貯金等、本実装が未対応の記号体系）のゆうちょ陽性が再分類されず、
+// 陽性のまま残ることを確認する。記号 5 桁目 = 0 は「振込可能な口座」限定の制約で
+// あって実在性の要件ではないため、この形の値は本物の PII であり得る。判定不能
+// （YuchoChecksumUnparseable）として一切触らず、検出できない分は FN として
+// 正直に計上するのが正しい挙動。
+func TestUpgradePublishedV2KeepsUnsupportedShapeYucho(t *testing.T) {
+	symbol, number := yuchoUnsupportedShapeValue(760)
+	value := symbol + "-" + number
+	line := "ゆうちょ銀行 記号" + value
+	c := evalcase.Case{
+		ID: "native-yucho-unsupported-shape", SourceClass: "legacy-curated", Line: line,
+		Want:  []string{"jp-yucho-account"},
+		Spans: []evalcase.Span{addressSpanFor(t, line, "jp-yucho-account", value)},
+	}
+	base := []evalcase.Case{c}
+	wantInput := cloneCases(base)
+
+	got, err := UpgradePublishedV2(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(base, wantInput) {
+		t.Fatal("UpgradePublishedV2 が入力を変更した")
+	}
+	if !reflect.DeepEqual(got[0], c) {
+		t.Fatalf("未対応の記号体系（5桁目≠0）のゆうちょ陽性が変更された: %+v", got[0])
 	}
 }
 
