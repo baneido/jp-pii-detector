@@ -80,21 +80,23 @@ medium（`min_confidence=medium`、高再現率ルール無効）の実測値で
 
 ```console
 $ export JP_PII_FIXTURES=$PWD/pii-fixtures.json   # GCS から取得（取得手順は後述）
-$ go test ./internal/eval                                      # 実測値と docs/accuracy.json・README バッジの一致を検証
-$ go test ./internal/eval -run 'TestGenerateDoc|TestReadmeBadges' -update  # docs/accuracy.md・docs/accuracy.json・README のバッジを実測値で再生成
+$ go test ./internal/eval                                      # 実測値と docs/accuracy.json・README（日本語版/英語版）の精度表記の一致を検証
+$ go test ./internal/eval -run 'TestGenerateDoc|TestReadmeBadges' -update  # docs/accuracy.md・docs/accuracy.json・README.md/README.en.md を実測値で再生成
 ```
 
 `internal/eval/golden.go` が定義する `docs/accuracy.json` が、検出精度に関する
 単一の情報源（ゴールデンファイル）です。`eval_test.go` の `TestAccuracy` は実測結果を
 `BuildGolden` で組み立て、コミット済み `docs/accuracy.json` と `DiffGolden` で完全一致
-比較します（許容誤差なし）。`readme_test.go` の `TestReadmeBadges` は README の総合
-バッジとルール別バッジが実測値と一致するかを検証します。`dataset_quality_test.go` の
+比較します（許容誤差なし）。`readme_test.go` の `TestReadmeBadges` は README.md と README.en.md の
+総合バッジ・ルール別バッジ・本文中の素の F1 表記が実測値と一致するかを検証します
+（英語版はルール別 F1 列を持たないため総合バッジと本文表記のみが対象。バッジ URL の
+英訳ラベルを壊さないよう、数値と色の部分だけを書き換えます）。`dataset_quality_test.go` の
 `TestDatasetQuality` は、F1 の一致だけでは検出できないデータセット自体の劣化
 （`want`/`spans` の未知のルール ID・完全重複・ID/source class欠落・span未付与・
 ルール別陽性不足・入力形式やhard negativeの不足）を検証します。
 ルールやデータセットを変えて精度が動くと CI が落ちるので、**`go test ./internal/eval -run
 'TestGenerateDoc|TestReadmeBadges' -update` で `docs/accuracy.md`・`docs/accuracy.json`・
-README のバッジをまとめて再生成してコミット**してください（手動での数値編集は不要です）。
+README.md / README.en.md の精度表記をまとめて再生成してコミット**してください（手動での数値編集は不要です）。
 
 非公開コーパスへのアクセスがない環境（GitHub 上のブラウザのみ等）からでも、
 [`.github/workflows/accuracy-update.yml`](../.github/workflows/accuracy-update.yml) が

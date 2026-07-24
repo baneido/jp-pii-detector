@@ -1,7 +1,8 @@
 name: accuracy-update
 
 # 非公開評価コーパスに対する実測値で、検出精度のゴールデンファイル
-# （docs/accuracy.json）・docs/accuracy.md・README.md のバッジを再生成する。
+# （docs/accuracy.json）・docs/accuracy.md・README.md / README.en.md の精度表記を
+# 再生成する。
 #
 # 背景: 検出挙動を変える PR（例: #148/#149）がマージされると実測値とゴールデンが
 # ずれ、ci.yml の private-eval ジョブ（main への push ごとに実測とゴールデンの
@@ -97,7 +98,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          if git diff --quiet docs/accuracy.md docs/accuracy.json README.md; then
+          if git diff --quiet docs/accuracy.md docs/accuracy.json README.md README.en.md; then
             {
               echo "### golden は最新"
               echo "非公開評価コーパスに対する実測値と \`docs/accuracy.json\` に差分はありませんでした。PR は作成しません。"
@@ -114,8 +115,8 @@ jobs:
           git config user.name "jp-pii-detect-bot"
           git config user.email "contact@baneido.com" # jp-pii-detector:ignore bot の連絡先
           git checkout -b "$ACCURACY_BRANCH"
-          # 再生成された精度ドキュメント・ゴールデンファイル・README バッジのみを含める。
-          git add docs/accuracy.md docs/accuracy.json README.md
+          # 再生成された精度ドキュメント・ゴールデンファイル・README の精度表記のみを含める。
+          git add docs/accuracy.md docs/accuracy.json README.md README.en.md
           git commit -m "$title"
           # 同一リポジトリへの push。認証情報は URL に都度埋め、作業ツリーには残さない。
           git push -f \

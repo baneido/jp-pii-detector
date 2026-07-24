@@ -12,7 +12,7 @@ import (
 	"github.com/baneido/jp-pii-detector/internal/testfixtures"
 )
 
-var update = flag.Bool("update", false, "docs/accuracy.md・docs/accuracy.json・README.md のバッジを再生成する")
+var update = flag.Bool("update", false, "docs/accuracy.md・docs/accuracy.json・README.md/README.en.md の精度表記を再生成する")
 
 // accuracyMDPath / accuracyJSONPath は、検出精度のゴールデンファイル
 // （docs/accuracy.md・docs/accuracy.json）へのパス。README のバッジ・

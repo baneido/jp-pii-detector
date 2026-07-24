@@ -147,7 +147,7 @@ jobs:
           go test ./internal/privatecorpus ./internal/eval
       - run: |
           go test ./internal/eval -run 'TestGenerateDoc|TestReadmeBadges' -update
-          git diff --exit-code docs/accuracy.md docs/accuracy.json README.md
+          git diff --exit-code docs/accuracy.md docs/accuracy.json README.md README.en.md
       - name: Remove private corpus
         if: ${{ always() }}
         run: rm -f "${JP_PII_FIXTURES:-}"

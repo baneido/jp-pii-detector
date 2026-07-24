@@ -1,10 +1,10 @@
 非公開評価コーパスに対する実測値で、検出精度のゴールデンファイル（`docs/accuracy.json`）と
-`docs/accuracy.md`、README.md のバッジを再生成しました（`.github/workflows/accuracy-update.yml`）。
+`docs/accuracy.md`、README.md / README.en.md の精度表記を再生成しました（`.github/workflows/accuracy-update.yml`）。
 
 - 実行日時: __GENERATED_AT__
 - トリガー: workflow_dispatch（手動実行、実行者: __ACTOR__）
 - 実行ログ: __RUN_URL__
-- 変更対象: `docs/accuracy.md`、`docs/accuracy.json`、`README.md`
+- 変更対象: `docs/accuracy.md`、`docs/accuracy.json`、`README.md`、`README.en.md`
 - 再生成コマンド: `go test ./internal/eval -run 'TestGenerateDoc|TestReadmeBadges' -update`
 
 このPRをマージすると、main への push で実行される `ci.yml` の `private-eval` ジョブ
