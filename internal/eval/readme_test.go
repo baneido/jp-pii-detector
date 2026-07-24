@@ -58,7 +58,20 @@ var (
 	//   - 代替テキストは両 README とも英語表記で共通なので、行番号や出現順に依存せず
 	//     総合バッジだけを特定できる（ルール別バッジは代替テキストが `F1 x.xx` なので
 	//     この正規表現には一致しない）。
-	overallBadgeRe = regexp.MustCompile(`!\[PII detection F1\]\(https://img\.shields\.io/badge/.+-([0-9.]+-[a-z]+)\)`)
+	//
+	// ラベル部を `\S+?`（空白以外の最短一致）にしているのは、一致を Markdown リンク
+	// `](...)` の内側に閉じ込め、総合バッジ以外を捕捉しないため:
+	//   - 最短一致にしないと、同じ行に別の shields.io バッジが並んだとき貪欲な `.+` が
+	//     閉じ括弧を越えて 2 つ目のバッジの `<値>-<色>` まで食い込む。group1 の
+	//     「ちょうど 1 件一致」ガードは 1 件と数えるので素通りし、誤ったバッジを
+	//     比較・書き換えてしまう。`+?` なら最初の `-<値>-<色>)` で止まる。
+	//   - 文字クラスに `[^()]` を使う案は取れない。英語版のラベルには丸括弧が
+	//     そのまま入っている（`badge/PII%20detection%20F1%20(eval%20dataset)-...`）ため、
+	//     括弧を禁止すると英語版が 1 件も一致しなくなる。
+	//   - 一方 URL に空白は現れない（shields.io はラベル中の空白を `%20` や `_` に
+	//     エンコードする）ので `\S` で安全に絞れる。`\S` は改行も除外するため、
+	//     元の `.` と同じく「一致は 1 行内で閉じる」性質も保たれる。
+	overallBadgeRe = regexp.MustCompile(`!\[PII detection F1\]\(https://img\.shields\.io/badge/\S+?-([0-9.]+-[a-z]+)\)`)
 
 	// 英語版 README の Key features にある、バッジではない素の総合 F1 表記
 	// （`**F1 0.99** under the default medium profile ...`）。数値だけをグループ 1 で
@@ -128,6 +141,66 @@ func TestReadmeBadges(t *testing.T) {
 			t.Logf("%s の精度表記を実測値で更新しました", spec.path)
 		}
 		checkReadme(t, spec, readme, results)
+	}
+}
+
+// TestOverallBadgeRe は総合バッジの正規表現が、Markdown リンク `](...)` の内側だけを
+// 捕捉することを検証する。private コーパスに依存しない純粋な正規表現の回帰テスト。
+//
+// 主眼は「同じ行に 2 つ目の shields.io バッジがある」ケース。ラベル部が貪欲だと
+// 閉じ括弧を越えて 2 つ目のバッジの `<値>-<色>` を捕捉してしまい、しかも一致件数は
+// 1 件のままなので group1 のガードでは検出できず、checkReadme / replaceGroup1 が
+// 誤ったバッジを比較・書き換える。英語版のラベルには丸括弧が含まれるため、
+// 括弧を禁止する文字クラスでは直せない（その退行も併せて防ぐ）。
+func TestOverallBadgeRe(t *testing.T) {
+	const (
+		jaBadge  = "![PII detection F1](https://img.shields.io/badge/PII検出_F1（評価データセット）-0.99-brightgreen)"
+		enBadge  = "![PII detection F1](https://img.shields.io/badge/PII%20detection%20F1%20(eval%20dataset)-0.99-brightgreen)"
+		covBadge = "![coverage](https://img.shields.io/badge/coverage-92.5-green)"
+	)
+
+	tests := []struct {
+		name string
+		in   string
+	}{
+		{"日本語版のバッジ単独", jaBadge},
+		{"英語版のバッジ単独（ラベルに丸括弧を含む）", enBadge},
+		{"日本語版 + 同一行の別バッジ", jaBadge + " " + covBadge},
+		{"英語版 + 同一行の別バッジ", enBadge + " " + covBadge},
+		{"同一行で別バッジが先行", covBadge + " " + enBadge},
+		{"別バッジが空白なしで隣接", jaBadge + covBadge},
+		{"別バッジが後続行にある", "# jp-pii-detector\n\n" + enBadge + "\n\n" + covBadge + "\n"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := group1(tt.in, overallBadgeRe)
+			if err != nil {
+				t.Fatalf("総合バッジを特定できない: %v", err)
+			}
+			if want := "0.99-brightgreen"; got != want {
+				t.Errorf("捕捉した値が不一致: got %s, want %s", got, want)
+			}
+
+			// 書き換えでも、総合バッジのグループ 1 だけが差し替わり、
+			// 同じ行の別バッジやラベルはそのまま残ること。
+			replaced := replaceGroup1(tt.in, overallBadgeRe, "0.50-yellow")
+			if strings.Contains(replaced, "0.99-brightgreen") {
+				t.Errorf("総合バッジが書き換えられていない: %s", replaced)
+			}
+			if want := strings.Count(tt.in, covBadge); strings.Count(replaced, covBadge) != want {
+				t.Errorf("別バッジが書き換えられた: %s", replaced)
+			}
+			if wantN := strings.Count(tt.in, "0.50-yellow") + 1; strings.Count(replaced, "0.50-yellow") != wantN {
+				t.Errorf("置換箇所が 1 か所ではない: %s", replaced)
+			}
+		})
+	}
+
+	// 一致は 1 行内で閉じること（改行をまたいで別行の値を拾わない）。
+	broken := "![PII detection F1](https://img.shields.io/badge/PII%20detection%20F1\n-0.99-brightgreen)\n"
+	if m := overallBadgeRe.FindAllStringSubmatch(broken, -1); len(m) != 0 {
+		t.Errorf("改行をまたいで一致した: %v", m)
 	}
 }
 
