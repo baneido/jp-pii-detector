@@ -367,15 +367,16 @@ func yuchoInvalidChecksumValue(seed int) (symbol, number string) {
 	return string(b), number
 }
 
-// yuchoShapeInvalidValue は yuchoValidValue が返す記号の 5 桁目（構造上 0）を
-// 0 以外へずらし、「先頭 1 かつ 5 桁目 ≠0」という実在しない形状の記号を作る。
-// 桁数・先頭 1・番号末尾 1 は保つので構文パースは成功するが、rule 側の形状ゲート
-// （yuchoAccountChecksumOK の symbol[4]=='0' 要求）で無効化され、
-// rule.YuchoValueChecksumStatus は検査式の成否によらず YuchoChecksumInvalid を返す。
-func yuchoShapeInvalidValue(seed int) (symbol, number string) {
+// yuchoUnsupportedShapeValue は yuchoValidValue が返す記号の 5 桁目を 0 以外へ
+// ずらし、本実装が未対応の記号体系（記号 5 桁目 ≠0。甲種団体貯金等で実在する）
+// の値を作る。桁数・先頭 1・番号末尾 1 は保つが、rule 側の形状検証
+// （parseYuchoDashForm / parseYuchoLabeledForm の symbol[4]=='0' 要求）で落ちるため、
+// rule.YuchoValueChecksumStatus は検査式の成否によらず YuchoChecksumUnparseable
+// （判定不能）を返す。
+func yuchoUnsupportedShapeValue(seed int) (symbol, number string) {
 	symbol, number = yuchoValidValue(seed)
 	b := []byte(symbol)
-	// yuchoValidValue の記号 5 桁目は常に '0'。0 以外へ倒して実在しない形状にする。
+	// yuchoValidValue の記号 5 桁目は常に '0'。0 以外へ倒して未対応の記号体系にする。
 	b[4] = '5'
 	return string(b), number
 }
@@ -522,16 +523,18 @@ func TestUpgradePublishedV2ReclassifiesChecksumInvalidLabeledYucho(t *testing.T)
 	}
 }
 
-// TestUpgradePublishedV2ReclassifiesShapeInvalidYucho は、記号 5 桁目が 0 以外
-// （「先頭 1 かつ 5 桁目 ≠0」という実在しない形状）のダッシュ形ゆうちょ陽性も、
-// 検査式の成否によらず YuchoChecksumInvalid と判定され、陰性へ再分類されることを
-// 確認する。legacy コーパスのこの形の陽性を陰性側へ移すための経路。
-func TestUpgradePublishedV2ReclassifiesShapeInvalidYucho(t *testing.T) {
-	symbol, number := yuchoShapeInvalidValue(760)
+// TestUpgradePublishedV2KeepsUnsupportedShapeYucho は、記号 5 桁目が 0 以外
+// （甲種団体貯金等、本実装が未対応の記号体系）のゆうちょ陽性が再分類されず、
+// 陽性のまま残ることを確認する。記号 5 桁目 = 0 は「振込可能な口座」限定の制約で
+// あって実在性の要件ではないため、この形の値は本物の PII であり得る。判定不能
+// （YuchoChecksumUnparseable）として一切触らず、検出できない分は FN として
+// 正直に計上するのが正しい挙動。
+func TestUpgradePublishedV2KeepsUnsupportedShapeYucho(t *testing.T) {
+	symbol, number := yuchoUnsupportedShapeValue(760)
 	value := symbol + "-" + number
 	line := "ゆうちょ銀行 記号" + value
 	c := evalcase.Case{
-		ID: "native-yucho-shape-invalid", SourceClass: "legacy-curated", Line: line,
+		ID: "native-yucho-unsupported-shape", SourceClass: "legacy-curated", Line: line,
 		Want:  []string{"jp-yucho-account"},
 		Spans: []evalcase.Span{addressSpanFor(t, line, "jp-yucho-account", value)},
 	}
@@ -545,8 +548,8 @@ func TestUpgradePublishedV2ReclassifiesShapeInvalidYucho(t *testing.T) {
 	if !reflect.DeepEqual(base, wantInput) {
 		t.Fatal("UpgradePublishedV2 が入力を変更した")
 	}
-	if len(got[0].Want) != 0 || len(got[0].Spans) != 0 || !hasTag(got[0].Tags, "polarity:negative") {
-		t.Fatalf("記号5桁目が0以外（形状無効）のゆうちょ陽性が陰性へ再分類されていない: %+v", got[0])
+	if !reflect.DeepEqual(got[0], c) {
+		t.Fatalf("未対応の記号体系（5桁目≠0）のゆうちょ陽性が変更された: %+v", got[0])
 	}
 }
 

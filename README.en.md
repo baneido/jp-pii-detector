@@ -2,7 +2,7 @@
 
 English | [日本語](README.md)
 
-![PII detection F1](https://img.shields.io/badge/PII%20detection%20F1%20(eval%20dataset)-0.99-brightgreen)
+![PII detection F1](https://img.shields.io/badge/PII%20detection%20F1%20(eval%20dataset)-0.98-brightgreen)
 
 A Japan-specific **static PII detector**. It finds Japanese personal data — My Number,
 Japanese phone numbers, addresses, names, and more — that has leaked into a repository,
@@ -42,7 +42,7 @@ fixtures, or create a baseline for existing findings.
 
 - **19+ built-in rules** with checksum validation (My Number check digit, Luhn and brand detection for cards, known sandbox PAN exclusion)
 - **Japanese normalization**: folds full-width alphanumerics, hyphen variants, and digit-adjacent long-vowel marks to half-width; handles Japanese-era (和暦) dates
-- **F1 0.99** under the default medium profile on a labeled evaluation dataset, gated in CI so accuracy can't silently drift
+- **F1 0.98** under the default medium profile on a labeled evaluation dataset, gated in CI so accuracy can't silently drift
 - **Masked output by default** (`--unmask` for local use only)
 - **Baseline support** to freeze existing findings and fail only on newly added PII
 - **SARIF / JSON / GitHub annotations** output for CI integration
