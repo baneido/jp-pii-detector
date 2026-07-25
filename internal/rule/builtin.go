@@ -661,9 +661,214 @@ var (
 	birthdateLabelSep = `(?:[(（][^)）]{1,10}[)）])?\s*[:=]?\s*`
 )
 
+// phonePatternGroup は jp-phone-number のパターンを「そのパターンにマッチする
+// どの文字列にも必ず含まれるリテラル」ごとに分けた 1 グループ。literals が空でない
+// 場合、行がそのいずれも含まなければ internal/detect はグループ内の正規表現走査を
+// まるごと省略できる（Rule.PrefilterLiterals）。
+type phonePatternGroup struct {
+	// literals はグループ内の全パターンについて「マッチ文字列に必ず 1 つは含まれる」
+	// リテラル集合（OR 条件）。空なら常に正規表現を走査する。
+	literals []string
+	// patterns はこのグループのパターン（分割前の定義順を保つ）。
+	patterns []Pattern
+}
+
+// phoneRules は jp-phone-number ルールを、必須リテラルごとに分割した複数の Rule
+// エントリとして返す。
+//
+// なぜ分割するのか（性能）: 電話番号の各パターンは境界ガード
+// （dgNoDigitBeforeNoAlnumHyphenAfter の `(?:^|[^0-9])` …）で始まる。Go の regexp は
+// プログラム先頭が単一ルーンのリテラルでないと strings.Index による位置スキップ
+// （regexp.prefix）を使えず、行の全バイト位置からバックトラッカー（tryBacktrack）を
+// 起動する。実測（88 バイトの ASCII 数字行、1 パターンあたり
+// FindStringSubmatchIndex 1 回）では:
+//
+//	(?:^|[^0-9])(zzz)                     … 3.9µs  ← 走査足場だけでこの値
+//	(?:^|[^0-9])(0\d{1,4}-\d{1,4}-\d{3,4})… 4.0µs  ← 本体の寄与は 0.1µs 未満
+//	(0\d{9})                              … 0.09µs ← 先頭リテラルがあると 40 倍速い
+//
+// つまりコストはパターン本体の複雑さ（可変長量指定子の連結や桁数の組合せ）ではなく
+// 「正規表現を起動した回数」でほぼ決まる。境界ガードは検出挙動（マッチ集合と、
+// キャプチャ外ルーン数から決まる internal/detect の patternBoundContext 加点）に
+// 直結するため外せない。したがって高速化は正規表現の書き換えでは得られず、
+// 起動そのものを省くことで得る。
+//
+// なぜ検出挙動が変わらないのか:
+//
+//  1. 正規表現は 1 文字も変えていない（分割前と同一のソース・同一の Base・
+//     ValidateLine・RequireContext・NegativeContextMode）。
+//  2. パターンの評価順序も分割前と同じ（グループは定義順の連続した区間で、
+//     エントリも元の位置にまとめて挿入する）。同一ルール ID・同一スパン・同信頼度で
+//     重なる候補の採用は先着順（internal/detect の better/resolveOverlaps は
+//     同点時に RuleID でしか比較しない）ため、順序保存は等価性の前提になる。
+//  3. literals は各パターンの構文から導いた必要条件で、リテラルを 1 つも含まない行は
+//     そのパターンが構造的にマッチし得ない（下の各グループのコメント参照）。
+//     TestPhoneScanEquivalence が生成ケース・乱数ケースで「リテラル判定を挟んでも
+//     結果が変わらない」ことを固定する。
+func phoneRules() []Rule {
+	// base は全エントリが共有するメタデータ（Patterns / PrefilterLiterals 以外）。
+	base := Rule{
+		ID:          "jp-phone-number",
+		Description: "電話番号（携帯・固定・IP・国際表記）",
+		Prefilter:   PrefilterDigit,
+		Context:     []string{"電話", "携帯", "連絡先", "tel", "phone", "fax", "mobile", "denwa"},
+		// 桁ベースの区切りなし固定電話パターンは業務 ID・型番等と衝突しやすいため、
+		// 金額・数量・連番 ID 文脈で棄却する。区切りあり携帯・区切りなし携帯・
+		// 区切りあり固定・国際表記の 4 パターンは、汎用の負文脈クラス（金額・
+		// カウンタ・汎用窓語）まで適用すると既存の検出挙動を落としかねないため
+		// NegativeContextAdjacentLabelOnly に限定し、採番ラベル（型番・SKU 等）が
+		// 値に直接隣接する場合だけ棄却する（既知FP: 「電話機SKU: 090-...」
+		// 「電話API version: 03-...」。それ以外の検出挙動は維持する）。
+		NegativeContext:      digitRuleNegativeContext,
+		RequireContextWindow: digitRuleRequireContextWindow,
+		Validate:             validPhone,
+		// PhoneKind はフリーダイヤル等のサービス番号(0120/0800/0570/0990/0180)・
+		// IP電話(050)・携帯(060/070/080/090)・国際表記・固定電話を判別し、
+		// Reason.Kind に記録する（内訳は internal/rule/phone_kind.go）。
+		// [rules] exclude_kinds で下位種別ごとに除外できる（既定は全種別検出）。
+		Kind: PhoneKind,
+	}
+
+	groups := []phonePatternGroup{
+		{
+			// 区切りあり携帯・IP 電話（060/070/080/090/050）。3 文字目の "0" の直後は
+			// 必ずハイフンなので "0-" が必須リテラルになる。
+			literals: []string{"0-"},
+			patterns: []Pattern{
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0-\d{4}-\d{4}`), Base: High, NegativeContextMode: NegativeContextAdjacentLabelOnly},
+			},
+		},
+		{
+			// 空白・ドット区切り携帯・IP 電話。3 文字目の "0" の直後は必ず
+			// 半角スペースかドットなので "0 " または "0." が必須リテラルになる。
+			literals: []string{"0 ", "0."},
+			patterns: []Pattern{
+				// ValidateLine の区切り集合から半角スペースを外し、ドットだけを見る。
+				// この幅 1 ガードが本来狙っているのはバージョン文字列風の長いドット
+				// 連結で、実際に回帰テストで固定されているのもドット形だけである
+				// （TestNumericSeparatorVariantsRejectLongTokenPrefixes）。一方
+				// スペースを含めると、箇条書き番号・表のセル番号のような 1 桁の
+				// 数字が値の直前に来ただけで棄却されてしまう（1-3-4-4 という数字
+				// グルーピングは現実の番号体系に無く、長いトークンの部分一致である
+				// 可能性は低い。TestSpaceSeparatedPhoneAllowsSingleDigitPrefix）。
+				// 以下のドット区切り固定電話・混在区切り固定電話も同じ理由で
+				// スペースを外す。
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0[ .]\d{4}[ .]\d{4}`), Base: Medium,
+					ValidateLine: rejectSeparatedDigitGroup(".", 1)},
+			},
+		},
+		{
+			// スラッシュ区切り携帯・IP 電話。3 文字目の "0" の直後は必ずスラッシュ。
+			literals: []string{"0/"},
+			patterns: []Pattern{
+				// スラッシュは URL パス区切りとしても一般的で桁形状だけでは判別
+				// できないため（"https://.../090/1234/5678"「api/v2/090/1234/5678」等）、
+				// 他の区切りあり携帯パターンと異なり RequireContext を必須にして
+				// 構造的に FP を避ける。
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0/\d{4}/\d{4}`), Base: Medium, RequireContext: true,
+					ValidateLine: rejectSeparatedDigitGroup("/", 1)},
+			},
+		},
+		{
+			// 区切りなし携帯・IP 電話。区切り文字を持たないため強い必須リテラルが
+			// 無い（"0" だけでは事前判定の意味がほとんど無い）。代わりに
+			// internal/detect の patternGate が「連続 11 桁」を要求するため、
+			// 数字の短い行はリテラル判定なしでも正規表現に到達しない。
+			patterns: []Pattern{
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0\d{8}`), Base: Medium, NegativeContextMode: NegativeContextAdjacentLabelOnly},
+			},
+		},
+		{
+			// 区切りあり固定電話（市外局番 2〜5 桁）。末尾は 3〜4 桁を許容し、
+			// フリーダイヤル・ナビダイヤル等の末尾 3 桁表記も拾う。区切りは
+			// ハイフン 2 個で固定なので "-" が必須リテラル。
+			literals: []string{"-"},
+			patterns: []Pattern{
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}-\d{1,4}-\d{3,4}`), Base: Medium, NegativeContextMode: NegativeContextAdjacentLabelOnly},
+			},
+		},
+		{
+			// ドット区切り固定電話（携帯のドット区切りパターン、上の
+			// 空白・ドット区切り携帯・IP 電話に倣う）。区切りはドット 2 個で固定
+			// なので "." が必須リテラル。validPhone は 10 桁でハイフン・空白の
+			// いずれも含まない場合、区切りなし固定電話と同じ市外局番辞書
+			// （dict.ValidAreaCode）照合に落ちる（strings.ContainsAny による
+			// "-"/" " 判定にドットは該当しないため）。そのため、このパターン自体には
+			// 市外局番の実在性検証を追加しなくても、ドット区切り表記は自動的に
+			// 市外局番の実在性検証がかかる。
+			literals: []string{"."},
+			patterns: []Pattern{
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}\.\d{1,4}\.\d{3,4}`), Base: Medium,
+					ValidateLine: rejectSeparatedDigitGroup(".", 1)},
+			},
+		},
+		{
+			// 混在区切り固定電話（ドット+ハイフン、ハイフン+ドット）。どちらの
+			// 並びでもハイフンを 1 個必ず含むため "-" が必須リテラル（ドットも必須
+			// だが、OR 条件のリテラル集合は 1 つに絞るほど強く効くため、コード行で
+			// より出現しにくいハイフン側を選ぶ）。上のドット単独区切りパターンに
+			// 倣い RequireContext なし・Base Medium とする。ただし、上のコメントに
+			// ある「ドット単独区切りは自動的に市外局番辞書照合がかかる」仕組みには
+			// 乗らない: validPhone は strings.ContainsAny(m, "- ") でハイフン・空白の
+			// 有無だけを見て経路を分けるため、この混在形は必ずハイフンを含み、
+			// 区切りあり表記と同じ緩い判定（2 桁目が 0 でないことのみ）の経路になる
+			// （dict.ValidAreaCode は通らない）。桁構造自体が既に情報量の高い
+			// シグナルであるため、他の区切りあり電話パターンと同水準の検証で許容する。
+			literals: []string{"-"},
+			patterns: []Pattern{
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}\.\d{1,4}-\d{3,4}`), Base: Medium,
+					ValidateLine: rejectSeparatedDigitGroup(".-", 1)},
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}-\d{1,4}\.\d{3,4}`), Base: Medium,
+					ValidateLine: rejectSeparatedDigitGroup(".-", 1)},
+			},
+		},
+		{
+			// 括弧市外局番（市外局番の直後に市内局番を括弧書き）。開き括弧が必須。
+			literals: []string{"("},
+			patterns: []Pattern{
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}\(\d{1,4}\)\d{4}`), Base: Medium},
+			},
+		},
+		{
+			// 括弧市外局番（市外局番全体を括弧で囲む表記）。値は必ず "(0" で始まる。
+			literals: []string{"(0"},
+			patterns: []Pattern{
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`\(0\d{1,4}\)\s?\d{1,4}-?\d{4}`), Base: Medium},
+			},
+		},
+		{
+			// 区切りなし固定電話（10 桁）。裸の \d{10} は型番・伝票番号等との
+			// 衝突が非常に多く単独では出せないため、コンテキストキーワード必須
+			// （RequireContext）にした上で validPhone が市外局番辞書
+			// （dict.ValidAreaCode）で先頭一致の実在性を検証する。区切り文字を
+			// 持たないため、上の区切りなし携帯と同じ理由でリテラル事前判定は置かず、
+			// patternGate の「連続 10 桁」要求に任せる。
+			patterns: []Pattern{
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{9}`), Base: Medium, RequireContext: true},
+			},
+		},
+		{
+			// 国際表記 +81。値は必ず "+81" で始まる。
+			literals: []string{"+81"},
+			patterns: []Pattern{
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`\+81[- ]?\d{1,4}[- ]?\d{1,4}[- ]?\d{3,4}`), Base: High, NegativeContextMode: NegativeContextAdjacentLabelOnly},
+			},
+		},
+	}
+
+	rules := make([]Rule, 0, len(groups))
+	for _, g := range groups {
+		r := base
+		r.PrefilterLiterals = g.literals
+		r.Patterns = g.patterns
+		rules = append(rules, r)
+	}
+	return rules
+}
+
 // Builtin は組み込みルール一覧を返す。
 func Builtin() []Rule {
-	return []Rule{
+	rules := []Rule{
 		{
 			ID:              "jp-my-number",
 			Description:     "マイナンバー（個人番号）",
@@ -699,89 +904,13 @@ func Builtin() []Rule {
 				{Re: dgNoAlnumHyphen(`\(\d{6}\)\d{6}`), Base: Medium, RequireContext: true, RequireContextWindow: digitRuleRequireContextWindow},
 			},
 		},
-		{
-			ID:          "jp-phone-number",
-			Description: "電話番号（携帯・固定・IP・国際表記）",
-			Prefilter:   PrefilterDigit,
-			Context:     []string{"電話", "携帯", "連絡先", "tel", "phone", "fax", "mobile", "denwa"},
-			// 桁ベースの区切りなし固定電話パターンは業務 ID・型番等と衝突しやすいため、
-			// 金額・数量・連番 ID 文脈で棄却する。区切りあり携帯・区切りなし携帯・
-			// 区切りあり固定・国際表記の 4 パターンは、汎用の負文脈クラス（金額・
-			// カウンタ・汎用窓語）まで適用すると既存の検出挙動を落としかねないため
-			// NegativeContextAdjacentLabelOnly に限定し、採番ラベル（型番・SKU 等）が
-			// 値に直接隣接する場合だけ棄却する（既知FP: 「電話機SKU: 090-...」
-			// 「電話API version: 03-...」。それ以外の検出挙動は維持する）。
-			NegativeContext:      digitRuleNegativeContext,
-			RequireContextWindow: digitRuleRequireContextWindow,
-			Validate:             validPhone,
-			// PhoneKind はフリーダイヤル等のサービス番号(0120/0800/0570/0990/0180)・
-			// IP電話(050)・携帯(060/070/080/090)・国際表記・固定電話を判別し、
-			// Reason.Kind に記録する（内訳は internal/rule/phone_kind.go）。
-			// [rules] exclude_kinds で下位種別ごとに除外できる（既定は全種別検出）。
-			Kind: PhoneKind,
-			Patterns: []Pattern{
-				// 区切りあり携帯・IP 電話（060/070/080/090/050）
-				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0-\d{4}-\d{4}`), Base: High, NegativeContextMode: NegativeContextAdjacentLabelOnly},
-				// 空白・ドット区切り携帯・IP 電話。ValidateLine の区切り集合から
-				// 半角スペースを外し、ドットだけを見る。この幅 1 ガードが本来
-				// 狙っているのはバージョン文字列風の長いドット連結で、実際に
-				// 回帰テストで固定されているのもドット形だけである
-				// （TestNumericSeparatorVariantsRejectLongTokenPrefixes）。一方
-				// スペースを含めると、箇条書き番号・表のセル番号のような 1 桁の
-				// 数字が値の直前に来ただけで棄却されてしまう（1-3-4-4 という数字
-				// グルーピングは現実の番号体系に無く、長いトークンの部分一致である
-				// 可能性は低い。TestSpaceSeparatedPhoneAllowsSingleDigitPrefix）。
-				// 以下のドット区切り固定電話・混在区切り固定電話も同じ理由で
-				// スペースを外す。
-				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0[ .]\d{4}[ .]\d{4}`), Base: Medium,
-					ValidateLine: rejectSeparatedDigitGroup(".", 1)},
-				// スラッシュ区切り携帯・IP 電話。スラッシュは URL パス区切りとしても
-				// 一般的で桁形状だけでは判別できないため（"https://.../090/1234/5678"
-				// 「api/v2/090/1234/5678」等）、他の区切りあり携帯パターンと異なり
-				// RequireContext を必須にして構造的に FP を避ける。
-				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0/\d{4}/\d{4}`), Base: Medium, RequireContext: true,
-					ValidateLine: rejectSeparatedDigitGroup("/", 1)},
-				// 区切りなし携帯・IP 電話
-				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0\d{8}`), Base: Medium, NegativeContextMode: NegativeContextAdjacentLabelOnly},
-				// 区切りあり固定電話（市外局番 2〜5 桁）。末尾は 3〜4 桁を許容し、
-				// フリーダイヤル・ナビダイヤル等の末尾 3 桁表記も拾う。
-				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}-\d{1,4}-\d{3,4}`), Base: Medium, NegativeContextMode: NegativeContextAdjacentLabelOnly},
-				// ドット区切り固定電話（携帯のドット区切りパターン、上の
-				// 空白・ドット区切り携帯・IP 電話に倣う）。validPhone は 10 桁で
-				// ハイフン・空白のいずれも含まない場合、区切りなし固定電話と同じ
-				// 市外局番辞書（dict.ValidAreaCode）照合に落ちる（strings.ContainsAny
-				// による "-"/" " 判定にドットは該当しないため）。そのため、この
-				// パターン自体には市外局番の実在性検証を追加しなくても、ドット区切り
-				// 表記は自動的に市外局番の実在性検証がかかる。
-				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}\.\d{1,4}\.\d{3,4}`), Base: Medium,
-					ValidateLine: rejectSeparatedDigitGroup(".", 1)},
-				// 混在区切り固定電話（ドット+ハイフン、ハイフン+ドット）。上の
-				// ドット単独区切りパターンに倣い RequireContext なし・Base Medium と
-				// する。ただし、上のコメントにある「ドット単独区切りは自動的に
-				// 市外局番辞書照合がかかる」仕組みには乗らない: validPhone は
-				// strings.ContainsAny(m, "- ") でハイフン・空白の有無だけを見て
-				// 経路を分けるため、この混在形は必ずハイフンを含み、区切りあり
-				// 表記と同じ緩い判定（2 桁目が 0 でないことのみ）の経路になる
-				// （dict.ValidAreaCode は通らない）。桁構造自体が既に情報量の
-				// 高いシグナルであるため、他の区切りあり電話パターンと同水準の
-				// 検証で許容する。
-				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}\.\d{1,4}-\d{3,4}`), Base: Medium,
-					ValidateLine: rejectSeparatedDigitGroup(".-", 1)},
-				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}-\d{1,4}\.\d{3,4}`), Base: Medium,
-					ValidateLine: rejectSeparatedDigitGroup(".-", 1)},
-				// 括弧市外局番（市外局番の直後に市内局番を括弧書き、または
-				// 市外局番全体を括弧で囲む表記）。
-				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}\(\d{1,4}\)\d{4}`), Base: Medium},
-				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`\(0\d{1,4}\)\s?\d{1,4}-?\d{4}`), Base: Medium},
-				// 区切りなし固定電話（10 桁）。裸の \d{10} は型番・伝票番号等との
-				// 衝突が非常に多く単独では出せないため、コンテキストキーワード必須
-				// （RequireContext）にした上で validPhone が市外局番辞書
-				// （dict.ValidAreaCode）で先頭一致の実在性を検証する。
-				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{9}`), Base: Medium, RequireContext: true},
-				// 国際表記 +81
-				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`\+81[- ]?\d{1,4}[- ]?\d{1,4}[- ]?\d{3,4}`), Base: High, NegativeContextMode: NegativeContextAdjacentLabelOnly},
-			},
-		},
+	}
+	// jp-phone-number は「マッチに必ず含まれるリテラル」ごとに複数エントリへ
+	// 分割する（理由と等価性の根拠は phoneRules のコメント）。同一 ID の複数
+	// エントリは jp-address と同じ扱いで両立する。ルール間の相対順序を変えない
+	// よう、元の定義位置（jp-my-number の直後）にそのまま挿入する。
+	rules = append(rules, phoneRules()...)
+	rules = append(rules, []Rule{
 		{
 			ID:              "jp-postal-code",
 			Description:     "郵便番号",
@@ -1186,6 +1315,19 @@ func Builtin() []Rule {
 			ID:          "jp-birthdate",
 			Description: "生年月日（ラベル付き）",
 			Prefilter:   PrefilterDigit,
+			// 全パターンがラベル（前置の birthdateLabel、または後置の「生まれ」）を
+			// 必須とするため、そのラベル語を 1 つも含まない行は正規表現走査ごと
+			// スキップできる。境界ガードや文字クラスで始まる数字系ルールの正規表現は、
+			// Go regexp の先頭リテラル最適化（regexp.prefix）が効かず行の全位置から
+			// バックトラッカーが走るため、この事前判定が数字を含むコード行の
+			// ホットパスで効く（phoneRules のコメントに実測値）。
+			//
+			// リテラルが必要条件である根拠（TestBirthdatePrefilterLiteralsAreMandatory）:
+			// birthdateLabel の選択肢は 生年月日 / 誕生日 / birth date / birthdate /
+			// birthday / date_of_birth / date of birth / dob で、英語側はすべて
+			// "birth" か "dob" を部分文字列として含む（大小文字は containsAnyLiteral が
+			// 行側を小文字化して吸収する）。後置ラベルのパターンは「生まれ」を必須とする。
+			PrefilterLiterals: []string{"生年月日", "誕生日", "生まれ", "birth", "dob"},
 			// 形式（西暦・和暦・区切りなし8桁）だけでなく、実在する暦日かを検証する。
 			// 2023-99-99 や 2023-02-29（閏年でない）などを棄却する。
 			Validate: validBirthdate,
@@ -1515,7 +1657,8 @@ func Builtin() []Rule {
 				), Base: Medium},
 			},
 		},
-	}
+	}...)
+	return rules
 }
 
 // validMyNumber はマイナンバー（個人番号）の検査用数字に加え、ダミー値で
