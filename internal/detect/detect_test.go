@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/baneido/jp-pii-detector/internal/config"
+	"github.com/baneido/jp-pii-detector/internal/normalize"
 	"github.com/baneido/jp-pii-detector/internal/rule"
 	"github.com/baneido/jp-pii-detector/internal/testfixtures"
 )
@@ -4585,5 +4586,133 @@ func TestYuchoLabeledAccountRuleNegative(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assertRules(t, d.ScanLine("f.txt", 1, tt.line))
 		})
+	}
+}
+
+// TestLiteralsNeedCaseFold はリテラルプレフィルタの小文字化が必要かの判定
+// （New で 1 回だけ行い、行ごとの再判定を避けるためのフラグ）を確認する。
+// 電話番号ルールのように数字・記号だけのリテラルでは小文字化しても照合結果が
+// 変わらないため、小文字化コピーの確保を省略できる。
+func TestLiteralsNeedCaseFold(t *testing.T) {
+	tests := []struct {
+		name     string
+		literals []string
+		want     bool
+	}{
+		{"空", nil, false},
+		{"数字と記号のみ（電話・区切りあり携帯）", []string{"0-"}, false},
+		{"括弧・国際表記", []string{"(0", "+81"}, false},
+		{"かな漢字のみ（住所の都道府県）", []string{"都", "道", "府", "県"}, false},
+		{"ASCII 小文字を含む（裸の name ラベル）", []string{"name"}, true},
+		{"一部だけ ASCII 小文字を含む（住所）", []string{"住所", "所在地", "address"}, true},
+		{"ASCII 大文字のみ（小文字化しても一致し得ない）", []string{"NAME"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := literalsNeedCaseFold(tt.literals); got != tt.want {
+				t.Errorf("literalsNeedCaseFold(%q) = %v, want %v", tt.literals, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestPrefilterFoldPreservesLiteralMatching は、小文字化を省略するルール
+// （prefilterFold が false）について「常に小文字化していた従来の判定」と結果が
+// 完全に一致することを、有効な全ルール×大文字を含む行の組合せで確認する。
+// これが崩れると正規表現に到達する前に検出が落ちる（プレフィルタは必要条件の
+// 事前判定なので、取りこぼしは即 FN になる）。
+func TestPrefilterFoldPreservesLiteralMatching(t *testing.T) {
+	d := newDetector(t, `
+min_confidence = "low"
+[rules]
+high_recall = true
+`)
+	lines := []string{
+		"const maxRetries = 3; timeout := 250 * time.Millisecond // v1.2.3 build 4567",
+		"FULL_NAME: 田中太郎",
+		"Name: 山田花子",
+		"ADDRESS: 東京都千代田区1-2-3",
+		"TEL: 090-1234-5678",
+		"Phone=+81-90-1234-5678",
+		"DOB: 1990/01/02",
+		"BIRTH_DATE = 1990-01-02",
+		"CustomerName,Address,Tel",
+		"担当: 山田太郎（TEL (03)1234-5678）",
+		"MUNICIPALITY: 札幌市中央区",
+		"",
+	}
+	for ri := range d.rules {
+		r := &d.rules[ri]
+		if len(r.PrefilterLiterals) == 0 {
+			continue
+		}
+		for _, line := range lines {
+			norm := normalize.Line(line)
+			// 常に小文字化する従来実装（fold=true）を期待値とする。
+			want := containsAnyLiteralFold(norm, r.PrefilterLiterals, true, nil)
+			got := containsAnyLiteralFold(norm, r.PrefilterLiterals, d.prefilterFold[ri], nil)
+			if got != want {
+				t.Errorf("rule %q literals %q, line %q: fold 省略で結果が変化した (got %v, want %v)",
+					r.ID, r.PrefilterLiterals, line, got, want)
+			}
+		}
+	}
+}
+
+// TestPrefilterFoldAvoidsLowerCopy は、小文字を含まないリテラル集合の照合が
+// 小文字化コピーを一切確保しないこと（＝ホットパスの無駄な確保が復活していない
+// こと）と、小文字化が必要なルールが複数あっても lowerCache で行あたり 1 回に
+// 収まることを固定する。以前は containsAnyLiteral がリテラル不一致かつ行に ASCII
+// 大文字がある全ルールで strings.ToLower を呼んでいたため、数字を含む ASCII の
+// コード行 1 行あたり 9 回の確保が発生していた
+// （BenchmarkScanLineASCIIDigitsNoMatch: 9 allocs/op・868 B/op）。
+//
+// ScanLine 全体の allocs を数える形にしないのは、-race では正規表現エンジン側の
+// 確保が支配的になり（本修正後も 8 allocs/op・約 56 KB/op）閾値が意味を持たない
+// ため。プレフィルタの照合単体を測ることで race 有無に依存しない検査になる。
+func TestPrefilterFoldAvoidsLowerCopy(t *testing.T) {
+	// ASCII 大文字を含む（＝従来なら小文字化していた）典型的なコード行。
+	line := normalize.Line(`const maxRetries = 3; timeout := 250 * time.Millisecond // retry budget v1.2.3 build 4567`)
+	if !hasASCIIUpper(line) {
+		t.Fatal("前提が崩れている: 行に ASCII 大文字が含まれない")
+	}
+	// 電話番号ルールのリテラル（数字・記号のみ）は小文字化不要と判定される。
+	phoneLits := []string{"0-"}
+	if literalsNeedCaseFold(phoneLits) {
+		t.Fatalf("前提が崩れている: %q が小文字化必要と判定された", phoneLits)
+	}
+	if n := testing.AllocsPerRun(50, func() {
+		containsAnyLiteralFold(line, phoneLits, false, nil)
+	}); n != 0 {
+		t.Errorf("fold=false の allocs/op = %v, want 0（無駄な小文字化が復活している）", n)
+	}
+	// 小文字化が必要なルールが複数あっても、lowerCache を共有すれば確保は 1 回。
+	var lc lowerCache
+	for _, lits := range [][]string{{"address"}, {"name"}, {"birth", "dob"}} {
+		containsAnyLiteralFold(line, lits, true, &lc)
+	}
+	if !lc.cached || lc.lower != strings.ToLower(line) {
+		t.Errorf("lowerCache が共有されていない: cached=%v", lc.cached)
+	}
+}
+
+// TestPhoneRulePrefilterFoldDisabled は、電話番号ルールの全エントリで小文字化が
+// 省略される（フラグの配線が効いている）ことを確認する。リテラルが数字・記号のみ
+// という前提が崩れた場合はここで気付ける。
+func TestPhoneRulePrefilterFoldDisabled(t *testing.T) {
+	d := newDetector(t, "")
+	found := 0
+	for ri := range d.rules {
+		r := &d.rules[ri]
+		if r.ID != "jp-phone-number" || len(r.PrefilterLiterals) == 0 {
+			continue
+		}
+		found++
+		if d.prefilterFold[ri] {
+			t.Errorf("jp-phone-number のリテラル %q が小文字化必要と判定された", r.PrefilterLiterals)
+		}
+	}
+	if found == 0 {
+		t.Fatal("リテラルプレフィルタを持つ jp-phone-number エントリが見つからない")
 	}
 }

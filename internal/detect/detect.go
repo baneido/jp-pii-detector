@@ -174,6 +174,10 @@ type Detector struct {
 	// ctxTokens は ASCII コンテキスト語をあらかじめ識別子トークン列に分割した
 	// キャッシュ（キーワードは静的なので行ごとに再分割しないため）。
 	ctxTokens map[string][]string
+	// prefilterFold は rules と同じ添字で並ぶ「リテラルプレフィルタの照合に
+	// 行の小文字化が必要か」のフラグ。リテラル集合は静的なので New で 1 回だけ
+	// 判定し、行ごとの再判定を避ける（literalsNeedCaseFold 参照）。
+	prefilterFold []bool
 	// crossLineName は person-name-structured ルール（有効時のみ非 nil）。構造化・
 	// 複数行の氏名検出を ScanContent で行うかの判定と、検出結果の ID・説明の
 	// 単一の出所として使う。高再現率モードでのみ有効になる。
@@ -242,12 +246,14 @@ func New(cfg *config.Config) (*Detector, error) {
 		}
 	}
 	patternGates := make([][]patternGate, len(rules))
+	prefilterFold := make([]bool, len(rules))
 	for i, r := range rules {
 		gates := make([]patternGate, len(r.Patterns))
 		for j, p := range r.Patterns {
 			gates[j] = gateForPattern(p.Re.String())
 		}
 		patternGates[i] = gates
+		prefilterFold[i] = literalsNeedCaseFold(r.PrefilterLiterals)
 	}
 	return &Detector{
 		rules:             rules,
@@ -257,6 +263,7 @@ func New(cfg *config.Config) (*Detector, error) {
 		scanMinConf:       minConf,
 		normStopwords:     normStopwords,
 		ctxTokens:         ctxTokens,
+		prefilterFold:     prefilterFold,
 		crossLineName:     crossLineName,
 		cooccurrenceBoost: cfg.Rules.CooccurrenceBoost,
 	}, nil
@@ -1134,6 +1141,9 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 	// 必要になるまで遅延させる（大半の行はどのパターンにもマッチしない）。
 	var normRunes []rune
 	var origRunes []rune
+	// リテラルプレフィルタの小文字化コピーは、必要とするルールが複数あっても
+	// 行あたり 1 回に抑える（ルールごとに確保していた分の削減）。
+	var normLower lowerCache
 
 	var found []Finding
 	for ri := range d.rules {
@@ -1156,7 +1166,8 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 		}
 		// リテラルプレフィルタ: ラベル語を 1 つも含まない行は、このルールの
 		// 正規表現走査をまるごとスキップする（氏名ルールのホットパス最適化）。
-		if len(r.PrefilterLiterals) > 0 && !containsAnyLiteral(norm, r.PrefilterLiterals) {
+		if len(r.PrefilterLiterals) > 0 &&
+			!containsAnyLiteralFold(norm, r.PrefilterLiterals, d.prefilterFold[ri], &normLower) {
 			continue
 		}
 		// ctxForMatch は window>0 のときだけマッチ前後 window ルーンに限定して
@@ -1482,22 +1493,76 @@ func isMarkerTokenChar(r rune) bool {
 // も大文字小文字を無視しないと FULL_NAME: 等の行が正規表現に到達する前にスキップ
 // されてしまう。大半の行（正規化済みでも ASCII 大文字を含まない行）では最初の
 // ループで決着し、小文字化コピーを確保しない。
+//
+// リテラル集合が静的な経路（ルールの PrefilterLiterals）では、小文字化が結果を
+// 変え得るかを New で 1 回だけ判定した上で containsAnyLiteralFold を直接呼ぶこと。
 func containsAnyLiteral(haystack string, literals []string) bool {
+	return containsAnyLiteralFold(haystack, literals, literalsNeedCaseFold(literals), nil)
+}
+
+// containsAnyLiteralFold は containsAnyLiteral の本体。fold が false なら
+// 小文字化再照合を行わない（literalsNeedCaseFold が false のリテラル集合では
+// 小文字化しても照合結果が変わらないため、コピーの確保が完全に無駄になる）。
+// lower が非 nil なら小文字化コピーを行単位で共有する（同じ行に対して複数の
+// ルールが fold を必要とする場合でも strings.ToLower は 1 回で済む）。
+func containsAnyLiteralFold(haystack string, literals []string, fold bool, lower *lowerCache) bool {
 	for _, lit := range literals {
 		if strings.Contains(haystack, lit) {
 			return true
 		}
 	}
-	if !hasASCIIUpper(haystack) {
+	if !fold || !hasASCIIUpper(haystack) {
 		return false
 	}
-	lower := strings.ToLower(haystack)
+	var lowered string
+	if lower != nil {
+		lowered = lower.get(haystack)
+	} else {
+		lowered = strings.ToLower(haystack)
+	}
 	for _, lit := range literals {
-		if strings.Contains(lower, lit) {
+		if strings.Contains(lowered, lit) {
 			return true
 		}
 	}
 	return false
+}
+
+// literalsNeedCaseFold は、リテラル集合の照合に haystack の小文字化が必要か
+// （小文字化すると照合結果が変わり得るか）を返す。strings.ToLower は大文字を
+// 小文字に置き換えるだけなので、小文字を 1 つも含まないリテラル（電話番号ルールの
+// "0-" / "(0" / "+81" や、住所ルールの "都" "県" のような数字・記号・かな漢字だけの
+// リテラル）は、小文字化後の文字列にも小文字化前と同じようにしか現れない。
+// そのようなルールでは小文字化コピーの確保が純粋な無駄になるため、
+// 事前にフラグ化して省略する。
+func literalsNeedCaseFold(literals []string) bool {
+	for _, lit := range literals {
+		for _, r := range lit {
+			if unicode.IsLower(r) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// lowerCache は 1 行の走査中に小文字化コピーを 1 回だけ生成して使い回すキャッシュ。
+// 小文字化を必要とするルールが複数あっても、確保は行あたり 1 回に収まる。
+// 走査 1 回分のローカル変数として使うため、ゴルーチン間で共有してはならない。
+type lowerCache struct {
+	src    string
+	lower  string
+	cached bool
+}
+
+// get は s の小文字化コピーを返す。同じ s に対する 2 回目以降はキャッシュを返す。
+func (c *lowerCache) get(s string) string {
+	if !c.cached || c.src != s {
+		c.src = s
+		c.lower = strings.ToLower(s)
+		c.cached = true
+	}
+	return c.lower
 }
 
 // hasASCIIUpper は s に ASCII 大文字が 1 つでも含まれるかを返す。マルチバイト
