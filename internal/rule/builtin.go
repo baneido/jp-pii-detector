@@ -414,9 +414,13 @@ var (
 	)
 	// personNameUserNameRe は姓名どちらが入るか不定の ASCII キー
 	// （user_name / account_name / contact_name）用パターン。
+	// personNameLabelASCIIStrong と同じく `(?i:...)` で大文字・キャメルケース表記
+	// （USER_NAME: / UserName: 等）も拾う。normalize は ASCII の大小文字を変換
+	// しないため、これがないと同じ ASCII ラベルでも full_name 系だけが大文字表記に
+	// 対応し、user_name 系だけ取りこぼすという不整合になる。
 	personNameUserNameRe = regexp.MustCompile(
 		personNameBoundary +
-			`(?:user_?name|account_?name|contact_?name)` +
+			`(?i:user_?name|account_?name|contact_?name)` +
 			personNameSep +
 			`(` + personNameValueShort + `)`,
 	)
@@ -432,15 +436,18 @@ var (
 	// 見逃し修正フォールバック版（personNameValueShortFallback を使い、値の
 	// 直後に助詞・敬称が続くケースを拾う）。twin と同様、Medium/Low の 2
 	// Pattern で正規表現オブジェクトを共有する。
+	// フォールバック版も plain 版と同じ `(?i:...)` を使う。plain 版だけ大文字対応
+	// だと、大文字ラベルでは plain 形（値が単独）は拾えるのに、値の直後に助詞・
+	// 敬称が続くフォールバック形だけ拾えない、という twin 内での不整合になる。
 	personNameUserNameFallbackRe = regexp.MustCompile(
 		personNameBoundary +
-			`(?:user_?name|account_?name|contact_?name)` +
+			`(?i:user_?name|account_?name|contact_?name)` +
 			personNameSep +
 			personNameValueShortFallback,
 	)
 	personNameBareFallbackRe = regexp.MustCompile(
 		personNameBareNameBoundary +
-			`name` +
+			`(?i:name)` +
 			personNameSep +
 			personNameValueShortFallback,
 	)
@@ -715,9 +722,19 @@ func Builtin() []Rule {
 			Patterns: []Pattern{
 				// 区切りあり携帯・IP 電話（060/070/080/090/050）
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0-\d{4}-\d{4}`), Base: High, NegativeContextMode: NegativeContextAdjacentLabelOnly},
-				// 空白・ドット区切り携帯・IP 電話
+				// 空白・ドット区切り携帯・IP 電話。ValidateLine の区切り集合から
+				// 半角スペースを外し、ドットだけを見る。この幅 1 ガードが本来
+				// 狙っているのはバージョン文字列風の長いドット連結で、実際に
+				// 回帰テストで固定されているのもドット形だけである
+				// （TestNumericSeparatorVariantsRejectLongTokenPrefixes）。一方
+				// スペースを含めると、箇条書き番号・表のセル番号のような 1 桁の
+				// 数字が値の直前に来ただけで棄却されてしまう（1-3-4-4 という数字
+				// グルーピングは現実の番号体系に無く、長いトークンの部分一致である
+				// 可能性は低い。TestSpaceSeparatedPhoneAllowsSingleDigitPrefix）。
+				// 以下のドット区切り固定電話・混在区切り固定電話も同じ理由で
+				// スペースを外す。
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0[ .]\d{4}[ .]\d{4}`), Base: Medium,
-					ValidateLine: rejectSeparatedDigitGroup(" .", 1)},
+					ValidateLine: rejectSeparatedDigitGroup(".", 1)},
 				// スラッシュ区切り携帯・IP 電話。スラッシュは URL パス区切りとしても
 				// 一般的で桁形状だけでは判別できないため（"https://.../090/1234/5678"
 				// 「api/v2/090/1234/5678」等）、他の区切りあり携帯パターンと異なり
@@ -737,7 +754,7 @@ func Builtin() []Rule {
 				// パターン自体には市外局番の実在性検証を追加しなくても、ドット区切り
 				// 表記は自動的に市外局番の実在性検証がかかる。
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}\.\d{1,4}\.\d{3,4}`), Base: Medium,
-					ValidateLine: rejectSeparatedDigitGroup(" .", 1)},
+					ValidateLine: rejectSeparatedDigitGroup(".", 1)},
 				// 混在区切り固定電話（ドット+ハイフン、ハイフン+ドット）。上の
 				// ドット単独区切りパターンに倣い RequireContext なし・Base Medium と
 				// する。ただし、上のコメントにある「ドット単独区切りは自動的に
@@ -749,9 +766,9 @@ func Builtin() []Rule {
 				// 高いシグナルであるため、他の区切りあり電話パターンと同水準の
 				// 検証で許容する。
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}\.\d{1,4}-\d{3,4}`), Base: Medium,
-					ValidateLine: rejectSeparatedDigitGroup(" .-", 1)},
+					ValidateLine: rejectSeparatedDigitGroup(".-", 1)},
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}-\d{1,4}\.\d{3,4}`), Base: Medium,
-					ValidateLine: rejectSeparatedDigitGroup(" .-", 1)},
+					ValidateLine: rejectSeparatedDigitGroup(".-", 1)},
 				// 括弧市外局番（市外局番の直後に市内局番を括弧書き、または
 				// 市外局番全体を括弧で囲む表記）。
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}\(\d{1,4}\)\d{4}`), Base: Medium},
@@ -1178,7 +1195,7 @@ func Builtin() []Rule {
 				// 年（1-2 桁の数字、または改元年を表す「元」）。
 				{Re: regexp.MustCompile(
 					birthdateLabel + birthdateLabelSep +
-						`((?:(?:19|20)\d{2}|(?:明治|大正|昭和|平成|令和|[MTSHR])(?:元|\d{1,2}))[年/.-]\d{1,2}[月/.-]\d{1,2}日?)`,
+						`((?:(?:19|20)\d{2}|(?:明治|大正|昭和|平成|令和|[MTSHRmtshr])(?:元|\d{1,2}))[年/.-]\d{1,2}[月/.-]\d{1,2}日?)`,
 				), Base: Medium},
 				// ラベル直結・区切りなしの 8 桁連結（YYYYMMDD）。DB エクスポート等で
 				// 最頻出の表記。月日のレンジをパターン側で絞り込み、ラベルへの
@@ -1194,7 +1211,7 @@ func Builtin() []Rule {
 				// 流用し、前方に数字境界ガード（(?:^|[^0-9])）、後方に「生まれ」を
 				// 必須とする。区切りなし8桁の後置ラベル形は実測未確認のため対象外。
 				{Re: regexp.MustCompile(
-					`(?:^|[^0-9])((?:(?:19|20)\d{2}|(?:明治|大正|昭和|平成|令和|[MTSHR])(?:元|\d{1,2}))[年/.-]\d{1,2}[月/.-]\d{1,2}日?)生まれ`,
+					`(?:^|[^0-9])((?:(?:19|20)\d{2}|(?:明治|大正|昭和|平成|令和|[MTSHRmtshr])(?:元|\d{1,2}))[年/.-]\d{1,2}[月/.-]\d{1,2}日?)生まれ`,
 				), Base: Medium},
 			},
 		},
@@ -1347,7 +1364,7 @@ func Builtin() []Rule {
 				// 分割できる氏名のみ許可）のため、Base は Medium。
 				{Re: regexp.MustCompile(
 					personNameBoundary +
-						`(?:姓|名字|苗字|last_?name)` +
+						`(?:姓|名字|苗字|(?i:last_?name))` +
 						personNameSep +
 						`(` + personNameValueShort + `)`,
 				), Base: Medium, Validate: validSurnameField},
@@ -1358,7 +1375,7 @@ func Builtin() []Rule {
 				// 同じ validSurnameField で検証されるため Base も同じ Medium。
 				{Re: regexp.MustCompile(
 					personNameBoundary +
-						`(?:姓|名字|苗字|last_?name)` +
+						`(?:姓|名字|苗字|(?i:last_?name))` +
 						personNameSep +
 						personNameValueShortFallback,
 				), Base: Medium, Validate: validSurnameField},
@@ -1368,14 +1385,14 @@ func Builtin() []Rule {
 				// のため、Base は Medium。
 				{Re: regexp.MustCompile(
 					personNameBoundary +
-						`(?:名|first_?name)` +
+						`(?:名|(?i:first_?name))` +
 						personNameSep +
 						`(` + personNameValueShort + `)`,
 				), Base: Medium, Validate: validGivenField},
 				// 名側の見逃し修正フォールバック（姓側と同様）。
 				{Re: regexp.MustCompile(
 					personNameBoundary +
-						`(?:名|first_?name)` +
+						`(?:名|(?i:first_?name))` +
 						personNameSep +
 						personNameValueShortFallback,
 				), Base: Medium, Validate: validGivenField},
@@ -1489,9 +1506,10 @@ func Builtin() []Rule {
 				), Base: Medium},
 				// 裸の name ラベル。kebab-case / dotted key は除外する
 				// （personNameBareNameBoundary、person-name ルールと同様）。
+				// 大文字表記（NAME: / Name:）も person-name の同ラベルと同様に拾う。
 				{Re: regexp.MustCompile(
 					personNameBareNameBoundary +
-						`name` +
+						`(?i:name)` +
 						personNameSep +
 						`(` + romajiNameValue + `)` + romajiNameEndBoundary,
 				), Base: Medium},
@@ -1857,7 +1875,7 @@ func YuchoValueChecksumStatus(value string) YuchoChecksumStatus {
 // 3=和暦年（数字、または改元年を表す「元」）/ 4=月 / 5=日。区切りはルールの
 // 正規表現と同じ（年→月は [年/.-]、月→日は [月/.-]、末尾 日?）。
 var birthdateRe = regexp.MustCompile(
-	`^(?:((?:19|20)\d{2})|(明治|大正|昭和|平成|令和|[MTSHR])(元|\d{1,2}))[年/.-](\d{1,2})[月/.-](\d{1,2})日?$`)
+	`^(?:((?:19|20)\d{2})|(明治|大正|昭和|平成|令和|[MTSHRmtshr])(元|\d{1,2}))[年/.-](\d{1,2})[月/.-](\d{1,2})日?$`)
 
 // birthdateDigitsRe は jp-birthdate の「ラベル直結・区切りなし8桁」捕捉値
 // （YYYYMMDD）を分解する。月日のレンジは検出側の正規表現で既に絞り込み済み
@@ -1865,7 +1883,9 @@ var birthdateRe = regexp.MustCompile(
 var birthdateDigitsRe = regexp.MustCompile(`^((?:19|20)\d{2})(\d{2})(\d{2})$`)
 
 // birthdateEraAbbrev は運転免許証・保険証等の転記で一般的な元号の単字
-// アルファベット略記を正式名称へ変換する。
+// アルファベット略記を正式名称へ変換する。キーは大文字で、参照側が
+// strings.ToUpper してから引くことで小文字表記（s63.1.2 等）にも対応する
+// （漢字の元号名は ToUpper で変化しないため、同じ経路を通しても影響しない）。
 var birthdateEraAbbrev = map[string]string{
 	"M": "明治",
 	"T": "大正",
@@ -1874,30 +1894,70 @@ var birthdateEraAbbrev = map[string]string{
 	"R": "令和",
 }
 
-// warekiEra は元号の改元年（西暦）と、その元号で取りうる最大の和暦年を返す。
-// 改元年を元年（1 年）とし、西暦 = start + 和暦年 - 1 で換算する。令和は
-// 現時点で終期がないため正規表現の上限（2 桁）まで許容する。
-func warekiEra(era string) (start, maxYear int, ok bool) {
-	switch era {
-	case "明治": // 1868–1912（明治45年7月30日まで）
-		return 1868, 45, true
-	case "大正": // 1912–1926（大正15年12月25日まで）
-		return 1912, 15, true
-	case "昭和": // 1926–1989（昭和64年1月7日まで）
-		return 1926, 64, true
-	case "平成": // 1989–2019（平成31年4月30日まで）
-		return 1989, 31, true
-	case "令和": // 2019–（終期なし）
-		return 2019, 99, true
+// warekiEraInfo は元号 1 つの換算基準と有効期間。
+type warekiEraInfo struct {
+	// startYear は元年に対応する西暦年。西暦 = startYear + 和暦年 - 1 で換算する。
+	startYear int
+	// maxYear はその元号で取りうる最大の和暦年（令和は終期がないため、
+	// 正規表現側の上限である 2 桁いっぱいまで許容する）。
+	maxYear int
+	// firstDay / lastDay は改元日・元号最終日（西暦）。年の上限だけでは弾けない
+	// 実在しない日付（昭和64年3月1日 = 昭和は1989年1月7日まで、平成31年5月1日 =
+	// 平成は2019年4月30日まで 等）を棄却するために使う。ゼロ値は「その側の境界を
+	// 検証しない」ことを表す。
+	firstDay, lastDay time.Time
+}
+
+// contains は西暦日付 t が元号の有効期間内かを返す（ゼロ値の境界は検証しない）。
+func (e warekiEraInfo) contains(t time.Time) bool {
+	if !e.firstDay.IsZero() && t.Before(e.firstDay) {
+		return false
 	}
-	return 0, 0, false
+	return e.lastDay.IsZero() || !t.After(e.lastDay)
+}
+
+// warekiEra は元号の換算基準と有効期間を返す。改元年を元年（1 年）とする。
+// 改元日は前元号の最終日と同日になることがある（明治45年7月30日＝大正元年7月30日、
+// 大正15年12月25日＝昭和元年12月25日）ため、その日はどちらの元号でも有効とする。
+//
+// 明治の firstDay だけはゼロ値（開始側を検証しない）にする。明治1〜5年は太陰太陽暦
+// （改暦は明治5年12月3日＝1873年1月1日）で、startYear からの単純な年換算が西暦日付と
+// 一致しないため、開始境界を課すとかえって実在する表記を落とす。終了側（明治45年
+// 7月30日）は改暦後で西暦と一対一に対応するため検証できる。
+func warekiEra(era string) (warekiEraInfo, bool) {
+	switch era {
+	case "明治": // 〜1912年7月30日（明治45年7月30日まで）
+		return warekiEraInfo{startYear: 1868, maxYear: 45,
+			lastDay: gregorianDate(1912, 7, 30)}, true
+	case "大正": // 1912年7月30日〜1926年12月25日
+		return warekiEraInfo{startYear: 1912, maxYear: 15,
+			firstDay: gregorianDate(1912, 7, 30), lastDay: gregorianDate(1926, 12, 25)}, true
+	case "昭和": // 1926年12月25日〜1989年1月7日
+		return warekiEraInfo{startYear: 1926, maxYear: 64,
+			firstDay: gregorianDate(1926, 12, 25), lastDay: gregorianDate(1989, 1, 7)}, true
+	case "平成": // 1989年1月8日〜2019年4月30日
+		return warekiEraInfo{startYear: 1989, maxYear: 31,
+			firstDay: gregorianDate(1989, 1, 8), lastDay: gregorianDate(2019, 4, 30)}, true
+	case "令和": // 2019年5月1日〜（終期なし）
+		return warekiEraInfo{startYear: 2019, maxYear: 99,
+			firstDay: gregorianDate(2019, 5, 1)}, true
+	}
+	return warekiEraInfo{}, false
+}
+
+// gregorianDate は西暦の年月日を UTC の time.Time にする（元号境界の比較用）。
+func gregorianDate(year, month, day int) time.Time {
+	return time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC)
 }
 
 // validBirthdate は捕捉した生年月日が実在する暦日かを検証する。形式上は
 // 成立しても暦として無効な値（2023-99-99 / 2023-02-29 / 昭和65年… 等）を棄却する。
-// 未来日や年齢の妥当性までは判定しない（信頼度ではなく検出可否のみを扱うため）。
-// まず区切りなし8桁（YYYYMMDD）として解釈を試み、ダメなら区切りあり形式
-// （西暦 or 和暦、単字アルファベット略記・元年を含む）として解釈する。
+// 和暦は年の上限（昭和65年）だけでなく元号の有効期間（昭和64年3月1日・平成31年
+// 5月1日のように、年としては成立するが改元をまたいで実在しない日付）も検証する
+// （warekiEraInfo.contains）。未来日や年齢の妥当性までは判定しない（信頼度では
+// なく検出可否のみを扱うため）。まず区切りなし8桁（YYYYMMDD）として解釈を試み、
+// ダメなら区切りあり形式（西暦 or 和暦、単字アルファベット略記・元年を含む）と
+// して解釈する。
 func validBirthdate(m string) bool {
 	if sub := birthdateDigitsRe.FindStringSubmatch(m); sub != nil {
 		year, _ := strconv.Atoi(sub[1])
@@ -1909,29 +1969,31 @@ func validBirthdate(m string) bool {
 	if sub == nil {
 		return false
 	}
-	var year int
-	if sub[1] != "" {
-		year, _ = strconv.Atoi(sub[1])
-	} else {
-		era := sub[2]
-		if full, ok := birthdateEraAbbrev[era]; ok {
-			era = full
-		}
-		var eraYear int
-		if sub[3] == "元" {
-			eraYear = 1
-		} else {
-			eraYear, _ = strconv.Atoi(sub[3])
-		}
-		start, maxYear, ok := warekiEra(era)
-		if !ok || eraYear < 1 || eraYear > maxYear {
-			return false
-		}
-		year = start + eraYear - 1
-	}
 	month, _ := strconv.Atoi(sub[4])
 	day, _ := strconv.Atoi(sub[5])
-	return validCalendarDate(year, month, day)
+	if sub[1] != "" {
+		year, _ := strconv.Atoi(sub[1])
+		return validCalendarDate(year, month, day)
+	}
+	// 単字アルファベット略記は大小文字を問わない（正規表現側が両方許容する）。
+	// 漢字の元号名は ToUpper で変化しないため、同じ経路を通してよい。
+	era := sub[2]
+	if full, ok := birthdateEraAbbrev[strings.ToUpper(era)]; ok {
+		era = full
+	}
+	eraYear := 1
+	if sub[3] != "元" {
+		eraYear, _ = strconv.Atoi(sub[3])
+	}
+	info, ok := warekiEra(era)
+	if !ok || eraYear < 1 || eraYear > info.maxYear {
+		return false
+	}
+	year := info.startYear + eraYear - 1
+	if !validCalendarDate(year, month, day) {
+		return false
+	}
+	return info.contains(gregorianDate(year, month, day))
 }
 
 // validCalendarDate は西暦の年月日が実在する日付かを time.Date の
@@ -1940,7 +2002,7 @@ func validCalendarDate(year, month, day int) bool {
 	if month < 1 || month > 12 || day < 1 || day > 31 {
 		return false
 	}
-	t := time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC)
+	t := gregorianDate(year, month, day)
 	return t.Year() == year && int(t.Month()) == month && t.Day() == day
 }
 
@@ -1989,34 +2051,66 @@ func notCalendarDateBanchiAndRealTown(v string) bool {
 	return notCalendarDateBanchi(v) && dict.MunicipalityThenTownMatch(v)
 }
 
-// emailDummyWords はメールのダミー値でよく使われるローカル部・ドメイン第 1
-// ラベルの語（personNamePlaceholders と同じ「部分一致 denylist」方式で棄却）。
-// 既知の限界: 部分一致のため、これらの語を偶然含む実在のローカル部・ドメイン
-// （barclays.co.jp の "bar" 等）を巻き添えで棄却しうる。hoge@fuga.co.jp や
-// test1@sample.com のような明らかなダミー値の抑制を優先するトレードオフ。
-var emailDummyWords = []string{"hoge", "fuga", "dummy", "hogehoge", "sample", "foo", "bar"}
+// emailDummySubstringWords / emailDummyTokenWords はメールのダミー値でよく使われる
+// ローカル部・ドメイン第 1 ラベルの語（denylist で棄却）。照合の厳しさを語の
+// 弁別力で 2 段に分ける。
+//
+//   - emailDummySubstringWords は部分一致で棄却する。いずれも実在の人名・企業名に
+//     偶然現れることがまず無い弁別力の高い語なので、dummyuser のような合成形
+//     （ダミー語 + 一般語）まで広く抑制できる部分一致が有効に働く。
+//   - emailDummyTokenWords は 3 文字と短く、実在の語の一部として頻出するため
+//     （barry / barbara / barclays / foodservice 等）、部分一致だと実在アドレスを
+//     巻き添えで落としてしまう。こちらはトークン一致に留める。
+var (
+	emailDummySubstringWords = []string{"hoge", "fuga", "dummy", "hogehoge", "sample"}
+	emailDummyTokenWords     = []string{"foo", "bar"}
+)
 
-// containsEmailDummyWord は s（ローカル部またはドメイン第 1 ラベル）が
-// emailDummyWords のいずれかを部分一致で含むかを返す。
+// containsEmailDummyWord は s（ローカル部またはドメイン第 1 ラベル）がダミー語を
+// 含むかを返す。emailDummySubstringWords は部分一致、emailDummyTokenWords は
+// トークン一致（s を区切り文字 . _ % + - で分割し、各トークンの前後に付いた連番を
+// 取り除いてから完全一致）で判定する。
 func containsEmailDummyWord(s string) bool {
 	s = strings.ToLower(s)
-	for _, w := range emailDummyWords {
+	for _, w := range emailDummySubstringWords {
 		if strings.Contains(s, w) {
+			return true
+		}
+	}
+	for _, token := range strings.FieldsFunc(s, isEmailLocalSeparator) {
+		if slices.Contains(emailDummyTokenWords, strings.Trim(token, "0123456789")) {
 			return true
 		}
 	}
 	return false
 }
 
+// isEmailLocalSeparator はローカル部・ドメインラベル内のトークン区切り文字かを返す
+// （emailASCIIRe が許容する記号のうち、語を区切りうるもの）。
+func isEmailLocalSeparator(r rune) bool {
+	switch r {
+	case '.', '_', '%', '+', '-':
+		return true
+	}
+	return false
+}
+
 // validEmail は予約済みドメイン（RFC 2606/6761）・ダミー値でよく使われる
-// ローカル部/ドメイン語等を除外する。
+// ローカル部/ドメイン語等を除外する。長さ上限（アドレス全体 254 文字・ローカル部
+// 64 文字・ドメインラベル 63 文字。RFC 5321 4.5.3.1 / RFC 1035 2.3.4）も検証し、
+// EAI 版（validEAIEmail）と判定基準を揃える。ASCII 版だけ上限が無いと、長大な
+// 英数字列にたまたま "@" が挟まったトークンをメールアドレスとして報告しうる。
 func validEmail(m string) bool {
+	if len(m) > 254 {
+		return false
+	}
 	at := strings.LastIndexByte(m, '@')
 	if at <= 0 || at == len(m)-1 {
 		return false
 	}
 	local := m[:at]
-	if strings.HasPrefix(local, ".") || strings.HasSuffix(local, ".") || strings.Contains(local, "..") {
+	if len(local) > 64 || strings.HasPrefix(local, ".") || strings.HasSuffix(local, ".") ||
+		strings.Contains(local, "..") {
 		return false
 	}
 	if !containsASCIIAlnum(local) {
@@ -2025,7 +2119,8 @@ func validEmail(m string) bool {
 	domain := strings.ToLower(m[at+1:])
 	labels := strings.Split(domain, ".")
 	for _, label := range labels {
-		if label == "" || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+		if label == "" || len(label) > 63 ||
+			strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
 			return false
 		}
 	}

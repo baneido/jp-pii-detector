@@ -58,13 +58,15 @@ var (
 	// （ignore マーカーを含む）が付くとその行自体がマッチしなくなり、抑制は
 	// 自然に値が乗る行基準になる（CrossLineNameLabelRe / CrossLineNameValueRe と
 	// 同じ設計。呼び出し側で明示的な ignore 判定は不要）。
+	// ASCII ラベルは person-name の同ラベルと同じく `(?i:...)` で大文字表記
+	// （LAST_NAME: 等）も拾う（normalize は ASCII の大小文字を変換しないため）。
 	CrossLineSurnameLabelRe = regexp.MustCompile(
-		`^\s*["']?(?:姓|名字|苗字|last_?name)["']?\s*[:=]\s*["'「]?(` + personNameValueShort + `)["'」]?\s*$`,
+		`^\s*["']?(?:姓|名字|苗字|(?i:last_?name))["']?\s*[:=]\s*["'「]?(` + personNameValueShort + `)["'」]?\s*$`,
 	)
 	// CrossLineGivenLabelRe は CrossLineSurnameLabelRe の名側版（名・first_name）。
 	// 設計・用途は同じ。
 	CrossLineGivenLabelRe = regexp.MustCompile(
-		`^\s*["']?(?:名|first_?name)["']?\s*[:=]\s*["'「]?(` + personNameValueShort + `)["'」]?\s*$`,
+		`^\s*["']?(?:名|(?i:first_?name))["']?\s*[:=]\s*["'「]?(` + personNameValueShort + `)["'」]?\s*$`,
 	)
 	// CrossLineYuchoSymbolRe / CrossLineYuchoNumberRe は、ゆうちょ銀行の記号・番号が
 	// フォームでそれぞれ独立したラベル付きフィールドとして別行に分かれる表記
@@ -112,7 +114,8 @@ func ValidCrossLineName(v string) bool {
 // ValidCrossLineSurnameGivenPair は、姓ラベル行から取り出した値 sei と名ラベル行
 // から取り出した値 mei が、姓+名のペアとして妥当かを返す。クロスラインは同一行
 // より前提が弱いため、ValidCrossLineName と同じ思想で辞書一致を必須にする
-// （dict.IsSurname(sei) && dict.IsGivenName(mei)）。姓ラベル・名ラベルという
+// （dict.IsSurname(sei) && dict.IsGivenNameExtended(mei)。名側は ValidCrossLineName が
+// validStrictFullNameExtended を使うのと揃え、高再現率用カタカナ名まで許す）。姓ラベル・名ラベルという
 // 構造的な手がかりが既にあるため、姓+名一括の分割検証（dict.SplitFullName）は
 // 使わず、姓辞書・名辞書とそれぞれ直接照合する。プレースホルダ（未定 等、
 // notPlaceholderName）は両方の値に適用して棄却する。
