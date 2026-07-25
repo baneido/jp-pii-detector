@@ -57,9 +57,33 @@ func Fingerprint(salt, ruleID, file, match string) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
+// pathNormalizer は fingerprint 計算前にファイルパスへ適用する正規化関数
+// （既定は恒等）。フルスキャンの報告パスは走査時のカレントディレクトリ相対、
+// --staged / --diff の報告パスはリポジトリルート相対と基準が異なるため、
+// 正規化しないと「サブディレクトリで作った baseline がルートからの実行で
+// 効かない」といったモード間の不一致が生じる。CLI 起動時（走査開始前の
+// 単一 goroutine）に SetPathNormalizer で一度だけ設定し、以降は読み取り
+// 専用として使う。
+var pathNormalizer = func(path string) string { return path }
+
+// SetPathNormalizer は fingerprint 計算時のパス正規化関数を設定する。
+// cmd/jp-pii-detect がフルスキャン時にリポジトリルート相対へ正規化する
+// ために使う。nil は恒等へのリセット（--staged / --diff のようにパスが
+// 既にルート相対のモードや、テスト間の状態リーク防止に使う）。
+// 並列走査の開始前の単一 goroutine から呼ぶこと。
+func SetPathNormalizer(norm func(string) string) {
+	if norm == nil {
+		norm = func(path string) string { return path }
+	}
+	pathNormalizer = norm
+}
+
 // FindingFingerprint は detect.Finding から Fingerprint を計算する。
+// ファイルパスには SetPathNormalizer で設定した正規化を適用する（report の
+// JSON 出力が載せる fingerprint と baseline 照合が常に一致するよう、計算は
+// 必ずこの関数を経由すること）。
 func FindingFingerprint(salt string, f detect.Finding) string {
-	return Fingerprint(salt, f.RuleID, f.File, f.Match)
+	return Fingerprint(salt, f.RuleID, pathNormalizer(f.File), f.Match)
 }
 
 // NewSalt はランダムな 16 バイトの salt を生成し、16 進文字列で返す。

@@ -62,7 +62,13 @@ jobs:
 
   test:
     name: test
-    runs-on: ubuntu-latest
+    # 配布対象の macOS でも公開テストレーンを検証する（Homebrew / mise 利用者向け。
+    # Windows バイナリは配布のみでサポート外）。
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: read
     steps:

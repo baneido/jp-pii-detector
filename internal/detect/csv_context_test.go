@@ -102,6 +102,51 @@ func TestSplitCSVLinePreservesInitialSpaceInUnquotedField(t *testing.T) {
 	}
 }
 
+// 行頭（先頭フィールド）の半角空白を挟んだ引用フィールドも認識する。
+// UTF-8 BOM が normalize で空白へ写像された「Excel の CSV UTF-8 ＋引用符付き
+// ヘッダ」で、ファイル全体の列コンテキストが失われる回帰の単体レベル確認。
+func TestSplitCSVLineLeadingSpaceBeforeQuotedFirstField(t *testing.T) {
+	line := ` "口座番号","備考"`
+	fields, terminated := splitCSVLine(line, ',')
+	if !terminated {
+		t.Fatal("terminated = false, want true")
+	}
+	want := []string{"口座番号", "備考"}
+	if len(fields) != len(want) {
+		t.Fatalf("fields = %d 件, want %d: %+v", len(fields), len(want), fields)
+	}
+	for i, f := range fields {
+		if got := line[f.start:f.end]; got != want[i] {
+			t.Errorf("fields[%d] = %q, want %q", i, got, want[i])
+		}
+	}
+}
+
+// UTF-8 BOM ＋引用符付きヘッダ（Excel「CSV UTF-8」形式）でも、ヘッダの
+// 2 行下以降のデータ行へ列文脈が届くこと（end-to-end の回帰テスト）。
+// 実際の走査経路では internal/source が BOM を読み込み時に取り除くが、
+// 万一 BOM がテキストへ残っても normalize の空白写像＋行頭空白スキップで
+// ヘッダ解析が壊れないことを検証する。
+func TestCSVColumnContextQuotedHeaderWithBOM(t *testing.T) {
+	d := newDetector(t, "")
+	content := "\uFEFF\"郵便番号\",\"口座番号\"\n" +
+		"100-0001,1234567\n" +
+		"100-0001,1234567\n" +
+		"100-0001,1234567\n"
+	fs := d.ScanContent("data.csv", content)
+	gotBank := map[int]bool{}
+	for _, f := range fs {
+		if f.RuleID == "jp-bank-account" {
+			gotBank[f.Line] = true
+		}
+	}
+	for _, line := range []int{2, 3, 4} {
+		if !gotBank[line] {
+			t.Errorf("jp-bank-account not found at line %d (BOM 付き引用符ヘッダで列文脈が失われている)", line)
+		}
+	}
+}
+
 // "" はエスケープされた引用符 1 個として扱い、フィールドを終端しない。
 func TestSplitCSVLineEscapedQuoteDoesNotTerminateField(t *testing.T) {
 	line := `a,"b""c",d`

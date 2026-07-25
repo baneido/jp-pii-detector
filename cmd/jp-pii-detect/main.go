@@ -3,11 +3,13 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 
@@ -253,15 +255,23 @@ func runScan(args []string) int {
 	var warnings []error
 	var scanStats source.ScanStats
 	mode := "full"
+	// baseline fingerprint のパス正規化はモードごとに毎回設定する（--staged /
+	// --diff / --stdin のパスは既に基準が定まっているため恒等へリセット。
+	// 同一プロセスで run を繰り返すテストでの状態リークも防ぐ）。
+	baseline.SetPathNormalizer(nil)
 	switch {
 	case *full:
+		// baseline fingerprint のパス正規化は下の default（フルスキャン）と同じ。
+		baseline.SetPathNormalizer(repoRelativeNormalizer())
 		findings, warnings, scanStats, err = source.ScanPathsWithStats(det, cfg, []string{"."})
 	case *stdin:
 		mode = "stdin"
 		var data []byte
 		data, err = io.ReadAll(os.Stdin)
 		if err == nil {
-			text := string(data)
+			// UTF-8 BOM はフルスキャン（internal/source）と同じ理由で走査前に
+			// 取り除く（normalize が空白へ写像して CSV ヘッダ解析等を壊すため）。
+			text := strings.TrimPrefix(string(data), "\uFEFF")
 			// フルスキャン（internal/source の scanFiles）の最終段と同じ JSON
 			// \uXXXX エスケープの復号ビュー（source.DecodeEscapedView）を適用
 			// する。stdin はまさに JSON をそのままパイプで流し込む用途（外部
@@ -307,6 +317,12 @@ func runScan(args []string) int {
 		if len(paths) == 0 {
 			paths = []string{"."}
 		}
+		// フルスキャンの報告パスは走査時のカレントディレクトリ相対だが、
+		// --staged / --diff はリポジトリルート相対で報告する。baseline の
+		// fingerprint はモード間・実行ディレクトリ間で一致してほしいので、
+		// フルスキャンではルート相対へ正規化してから計算する（サブディレクトリで
+		// 作成した baseline がルートからの --staged でも一致する）。
+		baseline.SetPathNormalizer(repoRelativeNormalizer())
 		findings, warnings, scanStats, err = source.ScanPathsWithStats(det, cfg, paths)
 	}
 	if err != nil {
@@ -399,6 +415,29 @@ func shouldFail(findings []detect.Finding, threshold rule.Confidence) bool {
 		}
 	}
 	return false
+}
+
+// repoRelativeNormalizer は baseline の fingerprint 計算用に、フルスキャンの
+// 報告パス（カレントディレクトリ相対）をリポジトリルート相対のスラッシュ
+// 区切りへ写す正規化関数を返す。リポジトリ外での実行（ルートなし）や
+// リポジトリ外を指すパスは正規化せずそのまま返す（従来の fingerprint と
+// 同一になり、既存 baseline との互換を保つ）。
+func repoRelativeNormalizer() func(string) string {
+	root := source.RepoRoot()
+	if root == "" {
+		return nil // SetPathNormalizer は nil を無視し、恒等のまま
+	}
+	return func(path string) string {
+		abs, err := filepath.Abs(filepath.FromSlash(path))
+		if err != nil {
+			return path
+		}
+		rel, err := filepath.Rel(root, abs)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return path
+		}
+		return filepath.ToSlash(rel)
+	}
 }
 
 // updateBaselineFile は現在の findings でベースラインファイルを新規作成、
@@ -503,23 +542,23 @@ func fail(err error) int {
 	return 2
 }
 
-type outputRenderer func(findings []detect.Finding, det *detect.Detector, unmask, explain bool, dropped []detect.DroppedCandidate, droppedTruncated bool, fpArgs []string) error
+type outputRenderer func(w io.Writer, findings []detect.Finding, det *detect.Detector, unmask, explain bool, dropped []detect.DroppedCandidate, droppedTruncated bool, fpArgs []string) error
 
 // outputRenderers を format の検証と描画の単一の出所にする。format を追加したのに
 // renderer が無く、無出力のまま終了コードだけ 1 になる不整合を防ぐ。
 var outputRenderers = map[string]outputRenderer{
-	"text": func(findings []detect.Finding, _ *detect.Detector, unmask, explain bool, dropped []detect.DroppedCandidate, droppedTruncated bool, _ []string) error {
-		report.Text(os.Stdout, findings, unmask, explain, dropped, droppedTruncated)
+	"text": func(w io.Writer, findings []detect.Finding, _ *detect.Detector, unmask, explain bool, dropped []detect.DroppedCandidate, droppedTruncated bool, _ []string) error {
+		report.Text(w, findings, unmask, explain, dropped, droppedTruncated)
 		return nil
 	},
-	"json": func(findings []detect.Finding, _ *detect.Detector, unmask, explain bool, dropped []detect.DroppedCandidate, droppedTruncated bool, fpArgs []string) error {
-		return report.JSON(os.Stdout, findings, unmask, explain, dropped, droppedTruncated, fpArgs...)
+	"json": func(w io.Writer, findings []detect.Finding, _ *detect.Detector, unmask, explain bool, dropped []detect.DroppedCandidate, droppedTruncated bool, fpArgs []string) error {
+		return report.JSON(w, findings, unmask, explain, dropped, droppedTruncated, fpArgs...)
 	},
-	"sarif": func(findings []detect.Finding, det *detect.Detector, unmask, _ bool, _ []detect.DroppedCandidate, _ bool, _ []string) error {
-		return report.SARIF(os.Stdout, findings, det.Rules(), unmask)
+	"sarif": func(w io.Writer, findings []detect.Finding, det *detect.Detector, unmask, _ bool, _ []detect.DroppedCandidate, _ bool, _ []string) error {
+		return report.SARIF(w, findings, det.Rules(), unmask)
 	},
-	"github": func(findings []detect.Finding, _ *detect.Detector, unmask, _ bool, _ []detect.DroppedCandidate, _ bool, _ []string) error {
-		report.GitHub(os.Stdout, findings, unmask)
+	"github": func(w io.Writer, findings []detect.Finding, _ *detect.Detector, unmask, _ bool, _ []detect.DroppedCandidate, _ bool, _ []string) error {
+		report.GitHub(w, findings, unmask)
 		return nil
 	},
 }
@@ -574,7 +613,14 @@ func writeReport(format string, findings []detect.Finding, det *detect.Detector,
 	if !ok {
 		return fmt.Errorf("unknown format %q (text|json|sarif|github)", format)
 	}
-	return render(findings, det, unmask, explain, dropped, droppedTruncated, fpArgs)
+	// 検出 1 件ごとの write システムコールを避けるためバッファリングする
+	// （検出が大量の場合の出力コスト対策）。エラー時も書き出し済み分は flush する。
+	w := bufio.NewWriter(os.Stdout)
+	if err := render(w, findings, det, unmask, explain, dropped, droppedTruncated, fpArgs); err != nil {
+		w.Flush()
+		return err
+	}
+	return w.Flush()
 }
 
 func shouldPrintSummary(force, quiet bool, format string) bool {

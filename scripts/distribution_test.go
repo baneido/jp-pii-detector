@@ -253,6 +253,146 @@ func TestPreCommitLatestRefetchesOnEveryRun(t *testing.T) {
 	}
 }
 
+// setupHookRepo は scripts/{install,pre-commit}.sh を一時 git リポジトリへコピーし、
+// HEAD にリリースタグ（と必要ならムービングメジャータグ）を付けた状態を作る。
+// pre-commit フレームワークが hook リポジトリをタグで checkout した状態を模す。
+func setupHookRepo(t *testing.T, tags ...string) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := t.TempDir()
+	scriptsDir := filepath.Join(repo, "scripts")
+	if err := os.MkdirAll(scriptsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"install.sh", "pre-commit.sh"} {
+		data, err := os.ReadFile(filepath.Join(repoRoot(t), "scripts", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(scriptsDir, name), data, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gitArgs := [][]string{
+		{"init", "-q", "-b", "main"},
+		{"config", "user.email", "test@example.com"},
+		{"config", "user.name", "test"},
+		{"config", "commit.gpgsign", "false"},
+		{"add", "."},
+		{"commit", "-q", "-m", "init"},
+	}
+	for _, tag := range tags {
+		gitArgs = append(gitArgs, []string{"tag", tag})
+	}
+	for _, args := range gitArgs {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	return repo
+}
+
+func runHookScript(t *testing.T, repo string, env []string) (string, int) {
+	t.Helper()
+	cmd := exec.Command("sh", filepath.Join(repo, "scripts", "pre-commit.sh"))
+	cmd.Dir = repo
+	cmd.Env = append(os.Environ(), env...)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return string(out), 0
+	}
+	exit, ok := err.(*exec.ExitError)
+	if !ok {
+		t.Fatalf("pre-commit.sh: %v\n%s", err, out)
+	}
+	return string(out), exit.ExitCode()
+}
+
+// リリースワークフローはムービングメジャータグ（v0 等）をリリースタグと同じ
+// コミットへ付けるため、フックのバージョン解決が v0 を拾うと
+// releases/download/v0/... が 404 になりコミットが失敗していた（回帰テスト）。
+func TestPreCommitResolvesReleaseTagWhenMovingMajorTagPresent(t *testing.T) {
+	repo := setupHookRepo(t, "v9", "v9.9.9")
+	releases := t.TempDir()
+	writeFakeReleaseArchiveFor(t, releases, "v9.9.9", "#!/bin/sh\necho fake-jp-pii-detect \"$@\"\n")
+	cacheDir := filepath.Join(t.TempDir(), "cache")
+	env := []string{
+		"JP_PII_DETECT_VERSION=", // git describe による解決を通す
+		"JP_PII_DETECT_OS=" + testOS,
+		"JP_PII_DETECT_ARCH=" + testArch,
+		"JP_PII_DETECT_RELEASE_BASE_URL=file://" + releases,
+		"JP_PII_DETECT_CACHE_DIR=" + cacheDir,
+	}
+
+	out, code := runHookScript(t, repo, env)
+	if code != 0 {
+		t.Fatalf("pre-commit.sh exit=%d\n%s", code, out)
+	}
+	if !strings.Contains(out, "fake-jp-pii-detect scan --staged") {
+		t.Fatalf("hook should run the scanner, got:\n%s", out)
+	}
+	// v9 や latest ではなく、リリース資産が実在する v9.9.9 に解決されること。
+	if _, err := os.Stat(filepath.Join(cacheDir, "v9.9.9", "jp-pii-detect")); err != nil {
+		t.Fatalf("binary should be cached under the release tag: %v\n%s", err, out)
+	}
+}
+
+// ダウンロード失敗（オフライン等）時、キャッシュ済みバイナリがあれば
+// 警告して続行し、コミット自体を止めないこと。
+func TestPreCommitFallsBackToCachedBinaryWhenDownloadFails(t *testing.T) {
+	releases := t.TempDir()
+	writeFakeReleaseArchiveFor(t, releases, "latest", "#!/bin/sh\necho cached-latest \"$@\"\n")
+	cacheDir := filepath.Join(t.TempDir(), "cache")
+	env := func(baseURL string) []string {
+		return []string{
+			"JP_PII_DETECT_VERSION=latest",
+			"JP_PII_DETECT_OS=" + testOS,
+			"JP_PII_DETECT_ARCH=" + testArch,
+			"JP_PII_DETECT_RELEASE_BASE_URL=" + baseURL,
+			"JP_PII_DETECT_CACHE_DIR=" + cacheDir,
+		}
+	}
+
+	out, code := runScript(t, "scripts/pre-commit.sh", env("file://"+releases))
+	if code != 0 {
+		t.Fatalf("first pre-commit.sh exit=%d\n%s", code, out)
+	}
+
+	out, code = runScript(t, "scripts/pre-commit.sh", env("file://"+filepath.Join(releases, "missing")))
+	if code != 0 {
+		t.Fatalf("offline pre-commit.sh should fall back to cache, exit=%d\n%s", code, out)
+	}
+	if !strings.Contains(out, "cached-latest scan --staged") {
+		t.Fatalf("offline run should execute the cached binary, got:\n%s", out)
+	}
+	if !strings.Contains(out, "キャッシュ済み") {
+		t.Fatalf("offline run should warn about using the cache, got:\n%s", out)
+	}
+}
+
+// キャッシュも無くダウンロードにも失敗した場合は、明確なエラーで失敗すること。
+func TestPreCommitFailsClearlyWithoutCacheOrNetwork(t *testing.T) {
+	cacheDir := filepath.Join(t.TempDir(), "cache")
+	env := []string{
+		"JP_PII_DETECT_VERSION=latest",
+		"JP_PII_DETECT_OS=" + testOS,
+		"JP_PII_DETECT_ARCH=" + testArch,
+		"JP_PII_DETECT_RELEASE_BASE_URL=file://" + filepath.Join(t.TempDir(), "missing"),
+		"JP_PII_DETECT_CACHE_DIR=" + cacheDir,
+	}
+	out, code := runScript(t, "scripts/pre-commit.sh", env)
+	if code == 0 {
+		t.Fatalf("pre-commit.sh should fail without cache or network:\n%s", out)
+	}
+	if !strings.Contains(out, "キャッシュ済みバイナリもありません") {
+		t.Fatalf("failure should explain the missing cache, got:\n%s", out)
+	}
+}
+
 func TestActionUsesPrebuiltBinaryInstaller(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(repoRoot(t), "action.yml"))
 	if err != nil {
@@ -292,10 +432,19 @@ func TestActionAvoidsShellExpansionOfInputs(t *testing.T) {
 		"shlex.split(os.environ[\"INPUT_ARGS\"])",
 		"subprocess.run([scanner, *args], check=False)",
 		"raise SystemExit(completed.returncode)",
+		// python3 の無い self-hosted ランナー向けフォールバック。
+		// eval を使わない（$(...) 等のシェル展開を INPUT_ARGS に許さない）こと。
+		"command -v python3",
+		"set -f",
+		`exec "$scanner" "$@"`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("action.yml missing shell-injection guard %q:\n%s", want, text)
 		}
+	}
+	// コマンドとしての eval のみ禁止する（説明コメント中の語は許容）。
+	if regexp.MustCompile(`(?m)^\s*eval\b`).MatchString(text) {
+		t.Fatalf("action.yml must not eval user-controlled args:\n%s", text)
 	}
 }
 
@@ -465,6 +614,23 @@ func TestGitHubWorkflowActionsArePinnedToCommitSHA(t *testing.T) {
 			if !isCommitSHA(ref) {
 				t.Fatalf("%s:%d uses action ref %q; repository policy requires commit SHA pinning", workflow, i+1, ref)
 			}
+		}
+	}
+}
+
+// 配布対象の macOS でも公開テストレーンが走ること（Windows はサポート外）。
+func TestCIWorkflowRunsTestJobOnUbuntuAndMacOS(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"os: [ubuntu-latest, macos-latest]",
+		"runs-on: ${{ matrix.os }}",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("ci workflow should run tests on ubuntu and macos; missing %q", want)
 		}
 	}
 }
@@ -676,6 +842,8 @@ func TestDockerfileBuildsCrossCompiledScannerImage(t *testing.T) {
 		"-X main.version=${VERSION}",
 		// CI ジョブコンテナとして使えるよう git / ssh / CA 証明書を同梱する
 		"apk add --no-cache ca-certificates git openssh-client",
+		// bind mount したリポジトリで git が dubious ownership にならないようにする
+		"git config --system --add safe.directory '*'",
 		`ENTRYPOINT ["jp-pii-detect"]`,
 		`CMD ["scan", "."]`,
 		// GHCR のパッケージをリポジトリに紐付ける

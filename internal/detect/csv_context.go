@@ -47,9 +47,10 @@ type csvField struct {
 
 // splitCSVLine は正規化済みの 1 行を RFC 4180 準拠の引用符処理（"" は
 // リテラルな引用符 1 個にエスケープ）でフィールドに分割する。実務でよくある
-// 区切り文字直後の半角空白を挟んだ引用フィールドも認識する。ただし、引用符が
-// 続かない空白は従来どおりフィールド本文に含める。フィールド内改行で引用符が
-// 行末までに閉じないレコードや、閉じ引用符の後に区切り文字以外が続くなど
+// 区切り文字直後・行頭の半角空白を挟んだ引用フィールドも認識する（行頭は
+// UTF-8 BOM が normalize で空白へ写像された残滓のケースを含む）。ただし、
+// 引用符が続かない空白は従来どおりフィールド本文に含める。フィールド内改行で
+// 引用符が行末までに閉じないレコードや、閉じ引用符の後に区切り文字以外が続くなど
 // 引用符の構文が不正なレコードは terminated=false を返す。
 // この関数は 1 行だけを見るため、そのようなレコード（複数物理行にまたがる
 // 1 論理行）を正しく再構成することはできない。呼び出し側は terminated=false
@@ -59,14 +60,11 @@ type csvField struct {
 // ためにファイル全体の文脈を失わないようにする）。
 func splitCSVLine(line string, delim byte) (fields []csvField, terminated bool) {
 	i, n := 0, len(line)
-	afterDelimiter := false
 	for {
 		var f csvField
 		quoteStart := i
-		if afterDelimiter {
-			for quoteStart < n && line[quoteStart] == ' ' {
-				quoteStart++
-			}
+		for quoteStart < n && line[quoteStart] == ' ' {
+			quoteStart++
 		}
 		if quoteStart < n && line[quoteStart] == '"' {
 			i = quoteStart
@@ -114,7 +112,6 @@ func splitCSVLine(line string, delim byte) (fields []csvField, terminated bool) 
 			break
 		}
 		i++ // 区切り文字を読み飛ばす
-		afterDelimiter = true
 	}
 	return fields, true
 }

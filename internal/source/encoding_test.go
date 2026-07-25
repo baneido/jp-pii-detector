@@ -89,6 +89,35 @@ func TestScanPathsDecodesLegacyJapaneseEncodings(t *testing.T) {
 	}
 }
 
+// UTF-8 BOM（Excel の「CSV UTF-8」等）は読み込み時に取り除かれ、引用符付き
+// ヘッダの CSV でもヘッダから離れたデータ行へ列コンテキストが届くこと。
+// BOM が残ると normalize が空白へ写像し、先頭フィールドの引用符認識が壊れて
+// ファイル全体の列コンテキストが失われていた（回帰テスト）。
+func TestScanPathsStripsUTF8BOM(t *testing.T) {
+	tmp := t.TempDir()
+	content := "\uFEFF\"口座番号\",\"備考\"\nx,a\ny,b\nz,c\n1234567,d\n"
+	writeFile(t, filepath.Join(tmp, "excel_utf8.csv"), []byte(content))
+
+	cfg := config.Default()
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, warnings, err := ScanPaths(d, cfg, []string{tmp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v, want none", warnings)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("findings = %+v, want jp-bank-account を 1 件", findings)
+	}
+	if f := findings[0]; f.RuleID != "jp-bank-account" || f.Line != 5 {
+		t.Errorf("finding = %+v, want jp-bank-account at line 5", f)
+	}
+}
+
 // ScanPaths が BOM 無し UTF-16（LE/BE）を検出できること（フル走査の
 // end-to-end）。BOM 付き UTF-16 の TestScanPathsDecodesUTF16 と対になる。
 func TestScanPathsDecodesUTF16NoBOM(t *testing.T) {

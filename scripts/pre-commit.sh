@@ -19,7 +19,12 @@ repo_root=$(CDPATH= cd -- "${script_dir}/.." && pwd)
 
 version=${JP_PII_DETECT_VERSION:-}
 if [ -z "$version" ] && command -v git >/dev/null 2>&1; then
-	version=$(git -C "$repo_root" describe --tags --exact-match 2>/dev/null || true)
+	# リリースワークフローはムービングメジャータグ（v0 等）をリリースタグと同じ
+	# コミットへ付けるため、無条件の describe は v0 を返しうる。v0 という名前の
+	# GitHub Release は存在せずダウンロードが 404 になるので、リリース資産が
+	# 実在する vX.Y.Z 形式のタグだけに限定して解決する。
+	version=$(git -C "$repo_root" describe --tags --exact-match \
+		--match 'v[0-9]*.[0-9]*.[0-9]*' 2>/dev/null || true)
 fi
 if [ -z "$version" ]; then
 	version=latest
@@ -39,7 +44,15 @@ bin_name=$(bin_name_for_os "${JP_PII_DETECT_OS:-$(uname -s)}")
 bin="${install_dir}/${bin_name}"
 
 if [ "$version" = "latest" ] || [ ! -x "$bin" ]; then
-	JP_PII_DETECT_VERSION="$version" "$script_dir/install.sh" --version "$version" --install-dir "$install_dir"
+	# ダウンロード失敗（オフライン・GitHub 障害等）でコミット自体を止めない。
+	# キャッシュ済みバイナリがあれば警告してそれで走査を続行する。
+	if ! JP_PII_DETECT_VERSION="$version" "$script_dir/install.sh" --version "$version" --install-dir "$install_dir"; then
+		if [ -x "$bin" ]; then
+			printf '%s\n' "jp-pii-detect pre-commit: ダウンロードに失敗したためキャッシュ済みの ${bin} を使用します" >&2
+		else
+			die "jp-pii-detect ${version} をインストールできず、キャッシュ済みバイナリもありません"
+		fi
+	fi
 fi
 
 case "${JP_PII_DETECT_PRE_COMMIT_MODE:-staged}" in

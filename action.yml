@@ -28,6 +28,12 @@ runs:
     - env:
         INPUT_ARGS: ${{ inputs.args }}
       run: |
+        # inputs.args はスクリプト本文へ展開せず環境変数経由で受け取る
+        # （script injection 対策）。python3 があれば shlex で引用符も含めて
+        # 忠実に分割し、無い self-hosted ランナーでは空白分割へフォールバック
+        # する（グロブ展開は set -f で無効化。eval しないため $(...) 等の
+        # シェル展開は行われない）。
+        if command -v python3 >/dev/null 2>&1; then
         python3 - <<'PY'
         import os
         import shlex
@@ -41,4 +47,12 @@ runs:
         completed = subprocess.run([scanner, *args], check=False)
         raise SystemExit(completed.returncode)
         PY
+        else
+        scanner="$RUNNER_TEMP/jp-pii-detect/bin/jp-pii-detect"
+        set -f
+        # shellcheck disable=SC2086 # 空白分割が目的（引用符の解釈はしない）
+        set -- $INPUT_ARGS
+        set +f
+        exec "$scanner" "$@"
+        fi
       shell: bash

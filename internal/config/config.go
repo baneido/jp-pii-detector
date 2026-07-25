@@ -161,22 +161,38 @@ func Load(path string) (*Config, error) {
 
 // findUpward はカレントディレクトリから親方向に DefaultFileName を探す。
 // .git を持つディレクトリ（リポジトリルート）より上には遡らない。
+//
+// .git がどこにも見つからない（git リポジトリ外で実行された）場合は、
+// カレントディレクトリ以外で見つけた設定ファイルを採用しない。設定ファイルは
+// [external_recognizer] で任意コマンドを実行できるため、リポジトリという
+// 信頼境界なしに $HOME や / 直下などの祖先ディレクトリから設定を拾うのは
+// 危険なため（tarball 展開や CI のエクスポート先など .git の無いツリーは
+// 実在する）。カレントディレクトリ直下の設定は従来どおり常に使う。
 func findUpward() (string, error) {
-	dir, err := os.Getwd()
+	start, err := os.Getwd()
 	if err != nil {
 		return "", fmt.Errorf("config: %w", err)
 	}
+	dir := start
+	found := ""
 	for {
-		candidate := filepath.Join(dir, DefaultFileName)
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate, nil
+		if found == "" {
+			candidate := filepath.Join(dir, DefaultFileName)
+			if _, err := os.Stat(candidate); err == nil {
+				if dir == start {
+					return candidate, nil
+				}
+				// 祖先で見つけた候補は、リポジトリルートの実在が確認できてから
+				// 採用する（.git が無ければ捨てる）。
+				found = candidate
+			}
 		}
 		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-			return "", nil // リポジトリルートに到達
+			return found, nil // リポジトリルートに到達
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return "", nil // ファイルシステムルートに到達
+			return "", nil // .git の無いままファイルシステムルートに到達
 		}
 		dir = parent
 	}
