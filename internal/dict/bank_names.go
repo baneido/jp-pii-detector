@@ -3,6 +3,7 @@ package dict
 import (
 	"embed"
 	"strings"
+	"sync"
 )
 
 // bank_names.txt は著名な金融機関名（本体＋業態サフィックスを含む完全名）を
@@ -14,7 +15,12 @@ import (
 //go:embed bank_names.txt
 var bankNamesFS embed.FS
 
-var bankNames = loadBankNameSet("bank_names.txt")
+// bankNameSet は銀行名辞書の遅延ロード（sync.OnceValue）。起動時ではなく
+// 初回参照時に一度だけマップ化する（辞書ごとに個別の Once を持たせ、実際に
+// 使われた辞書だけをロードする）。並行安全。
+var bankNameSet = sync.OnceValue(func() map[string]bool {
+	return loadBankNameSet("bank_names.txt")
+})
 
 func loadBankNameSet(name string) map[string]bool {
 	data, err := bankNamesFS.ReadFile(name)
@@ -37,4 +43,4 @@ func loadBankNameSet(name string) map[string]bool {
 //
 // この辞書は代表サブセットであり、収録外の実在金融機関は false になりうる
 // （適合率優先の existence-check であり、網羅的な allowlist ではない）。
-func IsBankName(s string) bool { return bankNames[s] }
+func IsBankName(s string) bool { return bankNameSet()[s] }

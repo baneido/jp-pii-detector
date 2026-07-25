@@ -3,6 +3,7 @@ package dict
 import (
 	"embed"
 	"strings"
+	"sync"
 )
 
 // romaji_surnames.txt / romaji_given_names.txt は、ローマ字（ヘボン式）表記の
@@ -13,9 +14,16 @@ import (
 //go:embed romaji_surnames.txt romaji_given_names.txt
 var romajiFS embed.FS
 
+// romajiSurnameSet / romajiGivenNameSet はローマ字姓名辞書の遅延ロード
+// （sync.OnceValue）。person-name-romaji は高再現率モード限定（既定オフ）の
+// ルールなので、既定の走査では一度もロードされない。並行安全。
 var (
-	romajiSurnames   = loadRomaji(romajiFS, "romaji_surnames.txt")
-	romajiGivenNames = loadRomaji(romajiFS, "romaji_given_names.txt")
+	romajiSurnameSet = sync.OnceValue(func() map[string]bool {
+		return loadRomaji(romajiFS, "romaji_surnames.txt")
+	})
+	romajiGivenNameSet = sync.OnceValue(func() map[string]bool {
+		return loadRomaji(romajiFS, "romaji_given_names.txt")
+	})
 )
 
 // loadRomaji は loadNameSet で読み込んだワープロ式ローマ字表記
@@ -135,8 +143,8 @@ func isRomajiVowel(r rune) bool {
 
 // IsRomajiSurname は s（小文字化済みのローマ字表記を想定）が収録済みの姓の
 // ローマ字表記かを返す。呼び出し側で strings.ToLower 済みの値を渡すこと。
-func IsRomajiSurname(s string) bool { return romajiSurnames[s] }
+func IsRomajiSurname(s string) bool { return romajiSurnameSet()[s] }
 
 // IsRomajiGivenName は s（小文字化済みのローマ字表記を想定）が収録済みの名の
 // ローマ字表記かを返す。呼び出し側で strings.ToLower 済みの値を渡すこと。
-func IsRomajiGivenName(s string) bool { return romajiGivenNames[s] }
+func IsRomajiGivenName(s string) bool { return romajiGivenNameSet()[s] }

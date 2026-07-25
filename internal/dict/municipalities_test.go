@@ -71,6 +71,7 @@ func TestNormalizeMunicipalityKa(t *testing.T) {
 // TestMunicipalitiesDictSanity は municipalities.txt の件数が現実的な範囲にあり、
 // 空行・重複がないことを保証する（生成物の破損・切り詰めの検知）。
 func TestMunicipalitiesDictSanity(t *testing.T) {
+	municipalities := municipalitySet()
 	if len(municipalities) < 1800 {
 		t.Errorf("municipalities count = %d, want >= 1800 (municipalities.txt が壊れているか切り詰められている可能性)", len(municipalities))
 	}

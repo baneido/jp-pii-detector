@@ -49,7 +49,8 @@ func TestNameDictIntegrity(t *testing.T) {
 	dupCheck("given_names_katakana_org.txt", mustRead("given_names_katakana_org.txt"))
 	dupCheck("name_homographs.txt", mustRead("name_homographs.txt"))
 
-	for s := range surnames {
+	givenNames := givenNameSet()
+	for s := range surnameSet() {
 		if givenNames[s] {
 			t.Errorf("%q が姓・名の両方に収録されている（どちらかに統一すること）", s)
 		}
@@ -140,8 +141,8 @@ func TestSurnameSampleAndGivenNameSample(t *testing.T) {
 
 	// n が辞書サイズを超えたら全件（パニックしない）。
 	all := SurnameSample(1 << 30)
-	if len(all) == 0 || len(all) != len(surnameList) {
-		t.Fatalf("SurnameSample(oversized) len = %d, want %d (full dictionary)", len(all), len(surnameList))
+	if len(all) == 0 || len(all) != len(sortedSurnames()) {
+		t.Fatalf("SurnameSample(oversized) len = %d, want %d (full dictionary)", len(all), len(sortedSurnames()))
 	}
 	if got := SurnameSample(0); got != nil {
 		t.Fatalf("SurnameSample(0) = %v, want nil", got)
@@ -224,6 +225,9 @@ func TestFourCharacterSurname(t *testing.T) {
 }
 
 func TestExtendedGivenNameDictIntegrity(t *testing.T) {
+	extendedGivenNames := extendedGivenNameSet()
+	givenNames := givenNameSet()
+	surnames := surnameSet()
 	if len(extendedGivenNames) < 7000 || len(extendedGivenNames) > 10000 {
 		t.Fatalf("extended given-name count = %d, want 7000..10000", len(extendedGivenNames))
 	}

@@ -3,6 +3,7 @@ package dict
 import (
 	_ "embed"
 	"strings"
+	"sync"
 
 	"golang.org/x/text/unicode/norm"
 )
@@ -16,7 +17,12 @@ import (
 //go:embed municipalities.txt
 var municipalitiesRaw string
 
-var municipalities = loadMunicipalitySet(municipalitiesRaw)
+// municipalitySet は市区町村名辞書の遅延ロード（sync.OnceValue）。全行に
+// NormalizeMunicipalityKa（NFKC）を適用するためロードは軽くなく、住所ルールを
+// 使わないプロセスでは不要なので初回参照時に一度だけ構築する。並行安全。
+var municipalitySet = sync.OnceValue(func() map[string]bool {
+	return loadMunicipalitySet(municipalitiesRaw)
+})
 
 func loadMunicipalitySet(raw string) map[string]bool {
 	out := map[string]bool{}
@@ -74,6 +80,8 @@ func NormalizeMunicipalityKa(s string) string {
 func MunicipalitySuffixMatch(s string) bool {
 	norm := NormalizeMunicipalityKa(s)
 	rs := []rune(norm)
+	// 走査ループの内側で毎回 Once を経由しないよう、辞書は先にローカルへ束ねる。
+	municipalities := municipalitySet()
 	for end, r := range rs {
 		if r != '市' && r != '区' && r != '町' && r != '村' {
 			continue

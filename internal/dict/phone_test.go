@@ -45,8 +45,8 @@ func TestValidAreaCode(t *testing.T) {
 // 全件ロード失敗するような回帰を検知する）。件数はシードデータの縮小・拡大を
 // 妨げないよう、ゆるい下限のみを確認する。
 func TestEmbeddedAreaCodesLoaded(t *testing.T) {
-	if len(areaCodes) < 10 {
-		t.Fatalf("area_codes.txt から %d 件しか読み込めていません（gen の出力を確認してください）", len(areaCodes))
+	if codes := areaCodeSet().codes; len(codes) < 10 {
+		t.Fatalf("area_codes.txt から %d 件しか読み込めていません（gen の出力を確認してください）", len(codes))
 	}
 }
 

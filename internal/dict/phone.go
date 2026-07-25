@@ -3,6 +3,7 @@ package dict
 import (
 	_ "embed"
 	"strings"
+	"sync"
 )
 
 // area_codes.txt は日本の市外局番（先頭の "0" を含む全体表記。例: "03" "052"）の
@@ -14,7 +15,22 @@ import (
 //go:embed area_codes.txt
 var areaCodesRaw string
 
-var areaCodes, areaCodeMinLen, areaCodeMaxLen = loadAreaCodes(areaCodesRaw)
+// areaCodeTable は市外局番の集合と桁数の下限・上限をまとめて保持する。
+// sync.OnceValue は 1 値しか返せないため（sync.OnceValues も 2 値まで）、
+// 3 値を 1 つの構造体に束ねて遅延ロードする。
+type areaCodeTable struct {
+	codes  map[string]bool
+	minLen int
+	maxLen int
+}
+
+// areaCodeSet は市外局番辞書の遅延ロード（sync.OnceValue）。起動時のパッケージ
+// 変数初期化をやめ、電話番号ルールが実際に市外局番を照合したときだけコストを
+// 払う。sync.OnceValue は並行安全なので並列走査のワーカーから同時に呼んでよい。
+var areaCodeSet = sync.OnceValue(func() areaCodeTable {
+	codes, minLen, maxLen := loadAreaCodes(areaCodesRaw)
+	return areaCodeTable{codes: codes, minLen: minLen, maxLen: maxLen}
+})
 
 func loadAreaCodes(raw string) (codes map[string]bool, minLen, maxLen int) {
 	codes = map[string]bool{}
@@ -45,7 +61,8 @@ func loadAreaCodes(raw string) (codes map[string]bool, minLen, maxLen int) {
 // 一致する符号のうち最長のものを優先的に選ぶ。一致すれば市外局番の桁数
 // （先頭の 0 を含む）と true を返す。
 func ValidAreaCode(digits string) (codeLen int, ok bool) {
-	return matchAreaCode(areaCodes, areaCodeMinLen, areaCodeMaxLen, digits)
+	t := areaCodeSet()
+	return matchAreaCode(t.codes, t.minLen, t.maxLen, digits)
 }
 
 // matchAreaCode は ValidAreaCode の下請け。埋め込みデータから切り離してあり、
