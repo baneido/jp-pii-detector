@@ -167,6 +167,13 @@ func pathAllowed(cfg *config.Config, repoRoot, path string) bool {
 	return cfg.PathAllowed(filepath.ToSlash(rel))
 }
 
+// RepoRoot はリポジトリルートの絶対パスを返す（リポジトリ外なら空文字列）。
+// cmd/jp-pii-detect が baseline の fingerprint 用パス正規化（ルート相対化）に
+// 使う公開ラッパ。
+func RepoRoot() string {
+	return gitRoot()
+}
+
 // gitRoot はカレントディレクトリから親方向に .git を探し、リポジトリ
 // ルートの絶対パスを返す（リポジトリ外なら空文字列）。設定ファイルの
 // 上方探索（config.Load）と同じ基準でルートを決める。
@@ -195,90 +202,132 @@ func gitRoot() string {
 // findings を握りつぶさないため）。呼び出し元（ScanPaths）が warnings の
 // 有無を呼び出し元にさらに伝える。
 //
-// 読み取り・デコードと走査を 2 段の並列フェーズに分けている。cfg.ExternalRecognizerEnabled()
-// の場合、その間に runExternalRecognizer が全ファイルのテキストをまとめて
-// internal/external.Run へ 1 回だけ渡す（ファイルごとに子プロセスを起動する
-// コストを避けるため。詳細は internal/external のパッケージコメントと CLAUDE.md を
-// 参照）。未設定時は runExternalRecognizer が即座に nil を返すため、この構造化に
-// よる追加コストは 2 つ目の jobs チャネルのセットアップ程度で無視できる。
+// 既定（外部レコグナイザ未設定）では、各ワーカーが 1 ファイルを読み込んだら
+// その場で走査してテキストを解放する融合フェーズで動く。ピークメモリは
+// 「同時に処理中の workers 個分のテキスト」程度に抑えられ、全ファイルの
+// テキストを一括保持しない（巨大リポジトリでの OOM 防止）。
+//
+// cfg.ExternalRecognizerEnabled() の場合のみ、読み取り・デコードと走査を
+// 2 段の並列フェーズに分け、その間に runExternalRecognizer が全ファイルの
+// テキストをまとめて internal/external.Run へ 1 回だけ渡す（ファイルごとに
+// 子プロセスを起動するコストを避けるため。詳細は internal/external の
+// パッケージコメントと CLAUDE.md を参照）。この経路は全テキストを同時に
+// メモリへ保持するトレードオフを含むが、opt-in 機能に限定される。
 // stats は listFiles で作った同じ集計へ直接加算し、フィールドの手動コピー漏れを防ぐ。
 func scanFilesWithStats(d *detect.Detector, cfg *config.Config, files []string, stats *ScanStats) ([]detect.Finding, []error) {
 	workers := max(min(runtime.GOMAXPROCS(0), len(files)), 1)
-	texts := make([]string, len(files))
 	// skip[i] はバイナリ判定・読み取りエラーで走査対象外になったファイルを表す
 	// （テキストが空文字列の 0 バイトファイルと区別するために必要）。
 	skip := make([]bool, len(files))
 	results := make([][]detect.Finding, len(files))
 	errs := make([]error, len(files))
 
-	readJobs := make(chan int)
+	// readText はファイル i を読み込み、デコード済みテキストを返す
+	// （融合フェーズ・2 段フェーズの両経路で共通）。走査対象外なら ok=false を
+	// 返し、skip[i]（と読み取りエラー時は errs[i]）へ記録する。
+	readText := func(i int) (string, bool) {
+		path := files[i]
+		data, err := os.ReadFile(path)
+		if err != nil {
+			errs[i] = fmt.Errorf("read %s: %w", path, err)
+			skip[i] = true
+			return "", false
+		}
+		text, ok := decodeUTF16(data)
+		if !ok {
+			text, ok = decodeLegacyJapanese(data)
+		}
+		if !ok {
+			if isBinary(data) {
+				skip[i] = true
+				return "", false
+			}
+			text = string(data)
+		}
+		// UTF-8 BOM（Excel の「CSV UTF-8」等が付ける）は走査前に取り除く。
+		// 残すと normalize が空白へ写像し、先頭フィールドが引用符で始まる
+		// CSV ヘッダの解析（csv_context.go）を壊して列コンテキストが
+		// ファイル全体で失われる。除去により 1 行目の列位置は元ファイルの
+		// バイトオフセットと 1 ルーンずれるが、これは decodeUTF16 等の
+		// 復号経路と同じ既知のトレードオフ（CLAUDE.md 参照）。
+		text = strings.TrimPrefix(text, "\uFEFF")
+		// 上記いずれの経路で得た最終的な UTF-8 テキストに対しても、
+		// 後段として \uXXXX エスケープ（ensure_ascii=True 出力・.ipynb
+		// 等）→ HTML 数値文字参照（&#...; 等）→ URL パーセントエンコード
+		// （%XX の連続列）の順に適用する復号ビューの直列チェーン
+		// （decodeEscapedViews）を適用する。DecodeEscapedView（scan
+		// --stdin 経路、cmd/jp-pii-detect/main.go）も同じ
+		// decodeEscapedViews を呼ぶため、フルスキャンと stdin の両経路は
+		// 常に同じ復号チェーンを通る。1 箇所も復号できなければ text は
+		// そのまま変わらない。
+		if unescaped, ok := decodeEscapedViews(text); ok {
+			text = unescaped
+		}
+		return text, true
+	}
+
 	var wg sync.WaitGroup
-	for range workers {
-		wg.Go(func() {
-			for i := range readJobs {
-				path := files[i]
-				data, err := os.ReadFile(path)
-				if err != nil {
-					errs[i] = fmt.Errorf("read %s: %w", path, err)
-					skip[i] = true
-					continue
+	if cfg.ExternalRecognizerEnabled() {
+		texts := make([]string, len(files))
+
+		readJobs := make(chan int)
+		for range workers {
+			wg.Go(func() {
+				for i := range readJobs {
+					if text, ok := readText(i); ok {
+						texts[i] = text
+					}
 				}
-				text, ok := decodeUTF16(data)
-				if !ok {
-					text, ok = decodeLegacyJapanese(data)
-				}
-				if !ok {
-					if isBinary(data) {
-						skip[i] = true
+			})
+		}
+		for i := range files {
+			readJobs <- i
+		}
+		close(readJobs)
+		wg.Wait()
+
+		extByFile := runExternalRecognizer(cfg, files, texts, skip)
+
+		scanJobs := make(chan int)
+		for range workers {
+			wg.Go(func() {
+				for i := range scanJobs {
+					if skip[i] {
 						continue
 					}
-					text = string(data)
+					path := filepath.ToSlash(files[i])
+					findings := d.ScanContent(path, texts[i])
+					if cand := extByFile[path]; len(cand) > 0 {
+						findings = d.MergeExternalFindings(path, texts[i], findings, cand)
+					}
+					results[i] = findings
 				}
-				// 上記いずれの経路で得た最終的な UTF-8 テキストに対しても、
-				// 後段として \uXXXX エスケープ（ensure_ascii=True 出力・.ipynb
-				// 等）→ HTML 数値文字参照（&#...; 等）→ URL パーセントエンコード
-				// （%XX の連続列）の順に適用する復号ビューの直列チェーン
-				// （decodeEscapedViews）を適用する。DecodeEscapedView（scan
-				// --stdin 経路、cmd/jp-pii-detect/main.go）も同じ
-				// decodeEscapedViews を呼ぶため、フルスキャンと stdin の両経路は
-				// 常に同じ復号チェーンを通る。1 箇所も復号できなければ text は
-				// そのまま変わらない。
-				if unescaped, ok := decodeEscapedViews(text); ok {
-					text = unescaped
+			})
+		}
+		for i := range files {
+			scanJobs <- i
+		}
+		close(scanJobs)
+		wg.Wait()
+	} else {
+		jobs := make(chan int)
+		for range workers {
+			wg.Go(func() {
+				for i := range jobs {
+					text, ok := readText(i)
+					if !ok {
+						continue
+					}
+					results[i] = d.ScanContent(filepath.ToSlash(files[i]), text)
 				}
-				texts[i] = text
-			}
-		})
+			})
+		}
+		for i := range files {
+			jobs <- i
+		}
+		close(jobs)
+		wg.Wait()
 	}
-	for i := range files {
-		readJobs <- i
-	}
-	close(readJobs)
-	wg.Wait()
-
-	extByFile := runExternalRecognizer(cfg, files, texts, skip)
-
-	scanJobs := make(chan int)
-	for range workers {
-		wg.Go(func() {
-			for i := range scanJobs {
-				if skip[i] {
-					continue
-				}
-				path := filepath.ToSlash(files[i])
-				findings := d.ScanContent(path, texts[i])
-				if cand := extByFile[path]; len(cand) > 0 {
-					findings = d.MergeExternalFindings(path, texts[i], findings, cand)
-				}
-				results[i] = findings
-			}
-		})
-	}
-	for i := range files {
-		scanJobs <- i
-	}
-	close(scanJobs)
-	wg.Wait()
 
 	var findings []detect.Finding
 	var warnings []error

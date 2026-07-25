@@ -22,7 +22,13 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build \
 # ベースにし、--staged / --diff スキャンと各 CI の checkout に必要な git を同梱する
 # （openssh-client は CircleCI などの SSH ベース checkout 用）。
 FROM alpine:3.23
-RUN apk add --no-cache ca-certificates git openssh-client
+# safe.directory '*': CI やローカルの `docker run -v "$PWD:/scan"` では
+# bind mount したリポジトリの所有者がコンテナ内ユーザーと一致せず、git が
+# "dubious ownership" で全操作を拒否して --staged / --diff が exit 2 になる。
+# このイメージは使い捨てのスキャン実行環境で、マウントされたリポジトリを
+# 信頼する前提のため全ディレクトリを許可する。
+RUN apk add --no-cache ca-certificates git openssh-client \
+ && git config --system --add safe.directory '*'
 COPY --from=build /out/jp-pii-detect /usr/local/bin/jp-pii-detect
 LABEL org.opencontainers.image.title="jp-pii-detect" \
       org.opencontainers.image.description="日本特化の個人情報（PII）静的検出器" \

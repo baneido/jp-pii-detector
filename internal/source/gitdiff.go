@@ -53,15 +53,17 @@ func scanGitDiff(d *detect.Detector, cfg *config.Config, extra []string, postIma
 	// 常に b/ 固定にする。これが揺れると下流の TrimPrefix(file, "b/") が
 	// 効かず（例: "+++ i/path"）、報告パスに接頭辞が残って allowlist.paths
 	// が一致しなくなる。
+	//
+	// --no-relative: gitconfig の diff.relative=true を無効化する。有効なままだと
+	// サブディレクトリからの実行時に (1) サブディレクトリ外の変更が diff から
+	// 落ちて走査されず（検出漏れ）、(2) パスが cwd 相対になり allowlist 評価と
+	// `git show <rev>:<path>`（リポジトリルート相対前提）の両方が壊れる。
 	args := append([]string{"-c", "core.quotePath=false",
-		"diff", "-U3", "--no-color", "--no-ext-diff", "--diff-filter=ACMRT",
+		"diff", "-U3", "--no-color", "--no-ext-diff", "--no-relative", "--diff-filter=ACMRT",
 		"--src-prefix=a/", "--dst-prefix=b/"}, extra...)
 	out, err := exec.Command("git", args...).Output()
 	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("git %s: %s", strings.Join(args, " "), strings.TrimSpace(string(ee.Stderr)))
-		}
-		return nil, fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+		return nil, gitDiffError(args, err)
 	}
 	// CSV/TSV ファイルの post-image ヘッダ行（1 行目）・JSON/YAML ファイルの
 	// post-image 全文を、実際にそのファイルの hunk が現れたときだけ遅延取得して
@@ -76,6 +78,44 @@ func scanGitDiff(d *detect.Detector, cfg *config.Config, extra []string, postIma
 		findings = append(findings, scanHunk(d, cfg, h, postImageRevSpec, postImageRevOK, headerCache, postImageCache)...)
 	}
 	return findings, nil
+}
+
+// gitDiffError は git diff の失敗を利用者向けの 1 件のエラーへ整形する。
+// git リポジトリ外で `git diff --staged` を実行すると git は --no-index モードに
+// 解釈し、「unknown option `staged'」に続けて usage 全文（100 行超）を stderr へ
+// 出力する。これをそのまま伝播すると初見の利用者には原因が分からないため、
+// リポジトリ外であることを先に判定して明確なメッセージを返し、それ以外の失敗も
+// stderr の先頭行だけに要約する。
+func gitDiffError(args []string, err error) error {
+	ee, ok := err.(*exec.ExitError)
+	if !ok {
+		// git が見つからない等（exec.ErrNotFound を含む）。
+		return fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+	}
+	if exec.Command("git", "rev-parse", "--is-inside-work-tree").Run() != nil {
+		return fmt.Errorf("git リポジトリではありません（--staged / --diff は git リポジトリ内で実行してください）")
+	}
+	return fmt.Errorf("git %s: %s", strings.Join(args, " "), firstStderrLine(ee.Stderr))
+}
+
+// firstStderrLine は stderr の最初の非空行を返す（後続行があれば省略を明示する）。
+// git の usage 全文のような長大な stderr をエラーメッセージへ丸ごと含めないため。
+func firstStderrLine(stderr []byte) string {
+	lines := strings.Split(strings.TrimSpace(string(stderr)), "\n")
+	first := ""
+	for _, l := range lines {
+		if s := strings.TrimSpace(l); s != "" {
+			first = s
+			break
+		}
+	}
+	if first == "" {
+		return "(stderr なし)"
+	}
+	if len(lines) > 1 {
+		first += " …"
+	}
+	return first
 }
 
 // scanHunk は 1 つの diff hunk を走査し、検出値が追加行に乗っているものだけを
@@ -202,7 +242,9 @@ func firstLine(b []byte) string {
 	if i := bytes.IndexByte(b, '\n'); i >= 0 {
 		b = b[:i]
 	}
-	return strings.TrimSuffix(string(b), "\r")
+	// UTF-8 BOM 付き CSV（Excel の「CSV UTF-8」等）でもヘッダ解析が壊れない
+	// よう取り除く（フルスキャン側 scanFilesWithStats と同じ扱い）。
+	return strings.TrimPrefix(strings.TrimSuffix(string(b), "\r"), "\uFEFF")
 }
 
 // cachedPostImage は fetchPostImage の結果をファイルパスごとにキャッシュする
@@ -243,7 +285,8 @@ func fetchPostImage(revSpec, path string) string {
 	if isBinary(out) {
 		return ""
 	}
-	return string(out)
+	// UTF-8 BOM は firstLine と同じ理由で取り除く（行数には影響しない）。
+	return strings.TrimPrefix(string(out), "\uFEFF")
 }
 
 // diffLine は diff hunk 内の新ファイル側 1 行。

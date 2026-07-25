@@ -144,6 +144,60 @@ func TestScanStagedJapaneseFilename(t *testing.T) {
 	}
 }
 
+// gitconfig の diff.relative=true があっても、サブディレクトリからの実行で
+// サブディレクトリ外の変更が黙って走査から漏れないこと（--no-relative の回帰テスト）。
+func TestScanStagedIgnoresDiffRelativeConfig(t *testing.T) {
+	repo := initTestRepo(t)
+	git(t, "config", "diff.relative", "true")
+	phone := testfixtures.MustGet(t, "source.phone_mobile_sep")
+	if err := os.MkdirAll(filepath.Join(repo, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "outer.txt"), []byte("TEL: "+phone+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, "add", "outer.txt")
+	t.Chdir(filepath.Join(repo, "sub"))
+
+	cfg := config.Default()
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, err := ScanStaged(d, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 || findings[0].File != "outer.txt" {
+		t.Errorf("findings = %+v, want outer.txt を 1 件（diff.relative でサブディレクトリ外が漏れている）", findings)
+	}
+}
+
+// git リポジトリ外での --staged は、git の usage 全文ではなく
+// 原因が分かる簡潔なエラーを返すこと。
+func TestScanStagedOutsideGitRepoReturnsClearError(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	t.Chdir(t.TempDir())
+
+	cfg := config.Default()
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = ScanStaged(d, cfg)
+	if err == nil {
+		t.Fatal("ScanStaged outside a git repo should fail")
+	}
+	if !strings.Contains(err.Error(), "git リポジトリではありません") {
+		t.Errorf("error should explain the missing repository, got: %v", err)
+	}
+	if n := len(err.Error()); n > 200 {
+		t.Errorf("error message should be short, got %d bytes: %v", n, err)
+	}
+}
+
 func TestScanStagedSplitLabelAndValue(t *testing.T) {
 	repo := initTestRepo(t)
 	name := "pii.txt"

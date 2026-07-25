@@ -76,6 +76,57 @@ func piiDir(t *testing.T) string {
 	return dir
 }
 
+// gitIn は dir で git コマンドを実行するテストヘルパー。
+func gitIn(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+// サブディレクトリからのフルスキャンで作成した baseline が、リポジトリルート
+// からの --staged スキャンでも一致すること。fingerprint のファイルパスは
+// リポジトリルート相対へ正規化されるため、走査モードや実行ディレクトリが
+// 変わっても記録済みの検出は再発火しない（回帰テスト）。
+func TestBaselineConsistentAcrossModesAndCwd(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := t.TempDir()
+	for _, args := range [][]string{
+		{"init", "-q", "-b", "main"},
+		{"config", "user.email", "test@example.com"},
+		{"config", "user.name", "test"},
+		{"config", "commit.gpgsign", "false"},
+	} {
+		gitIn(t, repo, args...)
+	}
+	sub := filepath.Join(repo, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "TEL: " + testfixtures.MustGet(t, "cmd.phone_mobile_sep") + "\n"
+	if err := os.WriteFile(filepath.Join(sub, "users.csv"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	blPath := filepath.Join(repo, ".jp-pii-baseline.json")
+	if out, code := run(t, sub, "scan", "--baseline", blPath, "--update-baseline", "."); code != 0 {
+		t.Fatalf("update-baseline exit = %d, want 0\n%s", code, out)
+	}
+
+	gitIn(t, repo, "add", ".")
+	if out, code := run(t, repo, "scan", "--staged", "--baseline", blPath); code != 0 {
+		t.Errorf("staged scan exit = %d, want 0（サブディレクトリで作った baseline がモード間で一致していない）\n%s", code, out)
+	}
+	// 同じ baseline はルートからのフルスキャンでも一致する。
+	if out, code := run(t, repo, "scan", "--baseline", blPath, "."); code != 0 {
+		t.Errorf("full scan from root exit = %d, want 0\n%s", code, out)
+	}
+}
+
 func TestScanExitCodes(t *testing.T) {
 	dir := piiDir(t)
 	out, code := run(t, dir, "scan", ".")

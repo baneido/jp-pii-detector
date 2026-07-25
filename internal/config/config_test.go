@@ -321,6 +321,45 @@ func TestLoadStopsAtRepoRoot(t *testing.T) {
 	}
 }
 
+// .git がどこにも無い（git リポジトリ外の）ツリーでは、祖先ディレクトリの
+// 設定ファイルを採用しない。設定は [external_recognizer] で任意コマンドを
+// 実行できるため、信頼境界（リポジトリルート）なしで $HOME 等から拾うのは
+// 危険（安全側の回帰テスト）。
+func TestLoadIgnoresAncestorConfigOutsideGitRepo(t *testing.T) {
+	outer := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outer, DefaultFileName), []byte(`min_confidence = "low"`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(outer, "extracted", "project")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(sub)
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MinConfidence != "medium" {
+		t.Errorf("MinConfidence = %q, want medium（.git 無しでは祖先の設定を読んではならない）", cfg.MinConfidence)
+	}
+}
+
+// git リポジトリ外でも、カレントディレクトリ直下の設定は従来どおり読む。
+func TestLoadUsesCurrentDirConfigOutsideGitRepo(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, DefaultFileName), []byte(`min_confidence = "high"`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MinConfidence != "high" {
+		t.Errorf("MinConfidence = %q, want high（カレントディレクトリの設定は使うべき）", cfg.MinConfidence)
+	}
+}
+
 func containsString(xs []string, want string) bool {
 	for _, x := range xs {
 		if x == want {
