@@ -1256,7 +1256,7 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 				}
 				pos = next
 				entity := norm[start:end]
-				if insideUUIDv4Token(norm, start, end) {
+				if insideUUIDToken(norm, start, end) {
 					if d.collectDropped {
 						d.recordDroppedMatch(r.ID, file, lineNo, norm, start, DropReasonUUIDToken, p.Base)
 					}
@@ -1576,10 +1576,10 @@ func classifyLine(s string) lineFeatures {
 	return f
 }
 
-// insideUUIDv4Token は検出候補 [start,end) が UUIDv4 トークンの内部に
+// insideUUIDToken は検出候補 [start,end) が UUID トークンの内部に
 // 完全に含まれるかを返す。UUID は PII ではないため、内部の数字列や
 // 英数字列を郵便番号・口座番号などとして部分一致させない。
-func insideUUIDv4Token(s string, start, end int) bool {
+func insideUUIDToken(s string, start, end int) bool {
 	if start < 0 || end < start || end > len(s) {
 		return false
 	}
@@ -1591,10 +1591,10 @@ func insideUUIDv4Token(s string, start, end int) bool {
 		right++
 	}
 	token := s[left:right]
-	return isHyphenatedUUIDv4(token) || isCompactUUIDv4(token)
+	return isHyphenatedUUID(token) || isCompactUUID(token)
 }
 
-func isHyphenatedUUIDv4(s string) bool {
+func isHyphenatedUUID(s string) bool {
 	if len(s) != 36 {
 		return false
 	}
@@ -1610,10 +1610,10 @@ func isHyphenatedUUIDv4(s string) bool {
 			}
 		}
 	}
-	return s[14] == '4' && isUUIDVariantByte(s[19])
+	return isUUIDVersionVariant(s[14], s[19]) || isNilOrMaxUUID(s)
 }
 
-func isCompactUUIDv4(s string) bool {
+func isCompactUUID(s string) bool {
 	if len(s) != 32 {
 		return false
 	}
@@ -1622,7 +1622,7 @@ func isCompactUUIDv4(s string) bool {
 			return false
 		}
 	}
-	return s[12] == '4' && isUUIDVariantByte(s[16])
+	return isUUIDVersionVariant(s[12], s[16]) || isNilOrMaxUUID(s)
 }
 
 func isUUIDTokenByte(c byte) bool {
@@ -1633,6 +1633,44 @@ func isHexByte(c byte) bool {
 	return (c >= '0' && c <= '9') ||
 		(c >= 'a' && c <= 'f') ||
 		(c >= 'A' && c <= 'F')
+}
+
+// isUUIDVersionVariant はバージョン桁とバリアント桁の組が RFC 9562 の
+// 定義に沿うかを返す。s は呼び出し前に形状（長さ・ハイフン位置・hex 桁）
+// を検証済みであることを前提とする。
+//
+// バージョンは 1〜8 を許容する。v1（時刻）/v4（乱数）だけでなく、DB の
+// 主キーとして普及した v7（Unix 時刻ベース・ソート可能）や v8（カスタム）も
+// UUID なので抑制対象にする。0 と f は Nil/Max UUID 専用の値なので
+// ここでは扱わず isNilOrMaxUUID に任せ、それ以外（9〜e）は RFC 9562 が
+// 定義していないため UUID とみなさない。
+//
+// バリアント桁は RFC 9562 変種（上位 2 ビットが 10）を表す 8/9/a/b に
+// 限定したままにする。ここを 16 通り全部に緩めると形状チェックの
+// 選択性が落ち、「UUID に似ただけの hex 列」の内部に埋まった本物の PII を
+// 取りこぼすため、バージョン許容範囲だけを広げる。
+func isUUIDVersionVariant(version, variant byte) bool {
+	return version >= '1' && version <= '8' && isUUIDVariantByte(variant)
+}
+
+// isNilOrMaxUUID は RFC 9562 が特別扱いする Nil UUID（全桁 0）と
+// Max UUID（全桁 f）を判定する。どちらもバージョン桁・バリアント桁が
+// 定義外の値になるため isUUIDVersionVariant では拾えない。
+// s は形状検証済み（ハイフン以外は hex 桁）であることを前提とする。
+func isNilOrMaxUUID(s string) bool {
+	allZero, allF := true, true
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case c == '-':
+		case c == '0':
+			allF = false
+		case c == 'f' || c == 'F':
+			allZero = false
+		default:
+			return false
+		}
+	}
+	return allZero || allF
 }
 
 func isUUIDVariantByte(c byte) bool {
