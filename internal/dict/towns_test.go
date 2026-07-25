@@ -110,6 +110,7 @@ func TestMunicipalityThenTownMatch(t *testing.T) {
 // （生成物の破損・切り詰め・フィルタ漏れの検知。TestMunicipalitiesDictSanity と
 // 同じ方針）。
 func TestTownsDictSanity(t *testing.T) {
+	towns, _ := townSet()
 	if len(towns) < 50000 {
 		t.Errorf("towns count = %d, want >= 50000（towns.txt が壊れているか切り詰められている可能性）", len(towns))
 	}

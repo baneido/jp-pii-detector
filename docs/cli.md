@@ -236,5 +236,7 @@ $ jp-pii-detect --version   # -version でも可
 - 設定ファイル（`.jp-pii.toml`）の全項目: README の
   [「設定（.jp-pii.toml）」節](../README.md#設定jp-piitoml)
 - CI/CD・開発環境への組み込みレシピ: [docs/integrations.md](integrations.md)
+- メモリ上限（`GOMEMLIMIT`）・大きなデータファイルでの実行時間:
+  [docs/integrations.md「リソース制限下での実行」節](integrations.md#リソース制限下での実行メモリ実行時間)
 - 検出手法・信頼度の仕組み: [docs/detection-methods.md](detection-methods.md)
 - ベースラインの設計判断: [docs/detection-methods.md 4.7 節](detection-methods.md#47-ベースライン方式既存検出の凍結)

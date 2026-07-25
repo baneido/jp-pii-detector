@@ -4,24 +4,33 @@ import (
 	"embed"
 	"sort"
 	"strings"
+	"sync"
 )
 
 //go:embed surnames.txt given_names.txt given_names_katakana_org.txt name_homographs.txt
 var namesFS embed.FS
 
+// 各辞書は sync.OnceValue による遅延ロード。パッケージ変数の初期化でマップ化
+// すると、姓名判定を使わないプロセス（version サブコマンド等）でも起動時に必ず
+// 数十 ms のコストを払うことになるため、初回参照時に一度だけ構築する。辞書ごとに
+// 個別の Once を持たせているので、実際に参照された辞書だけがロードされる
+// （例: extendedGivenNameSet は high-recall 経路だけ）。sync.OnceValue は
+// 並行安全なので、並列走査の複数ワーカーから同時に呼んでも構築は一度で済む。
 var (
-	surnames   = loadNameSet(namesFS, "surnames.txt")
-	givenNames = loadNameSet(namesFS, "given_names.txt")
-	// extendedGivenNames は org 版の読みから既定（opti）との差分だけを収録した
+	surnameSet   = sync.OnceValue(func() map[string]bool { return loadNameSet(namesFS, "surnames.txt") })
+	givenNameSet = sync.OnceValue(func() map[string]bool { return loadNameSet(namesFS, "given_names.txt") })
+	// extendedGivenNameSet は org 版の読みから既定（opti）との差分だけを収録した
 	// 高再現率用カタカナ名。既定 person-name の精度を変えず、明示的な
 	// high-recall 経路だけで使う。
-	extendedGivenNames = loadNameSet(namesFS, "given_names_katakana_org.txt")
-	// surnameList / givenNameList は SurnameSample / GivenNameSample 用に、
+	extendedGivenNameSet = sync.OnceValue(func() map[string]bool {
+		return loadNameSet(namesFS, "given_names_katakana_org.txt")
+	})
+	// sortedSurnames / sortedGivenNames は SurnameSample / GivenNameSample 用に、
 	// 辞書を決定的な（バイト列順にソート済みの）スライスへ複製したもの。
 	// map のイテレーション順は不定なため、合成ケース生成のような再現性が
 	// 必要な用途向けに別途保持する。
-	surnameList   = sortedKeys(surnames)
-	givenNameList = sortedKeys(givenNames)
+	sortedSurnames   = sync.OnceValue(func() []string { return sortedKeys(surnameSet()) })
+	sortedGivenNames = sync.OnceValue(func() []string { return sortedKeys(givenNameSet()) })
 )
 
 // loadNameSet は fsys に go:embed された name（改行区切り、# 始まりはコメント）を
@@ -59,7 +68,10 @@ const nameComponentMaxRunes = 4
 // ない固有名詞（品種名・地名等）の denylist。山田錦は山田（姓）+錦（名）に分割
 // でき、両要素とも辞書に収録されているため SplitFullName の分割ループ単体では
 // 弾けない（姓側 2 ルーン・名側 1 ルーンで「両方 1 ルーン」制約の対象外）。
-var nonPersonHomographs = loadNameSet(namesFS, "name_homographs.txt")
+// 他の辞書と同様、sync.OnceValue で遅延ロードする。
+var nonPersonHomographSet = sync.OnceValue(func() map[string]bool {
+	return loadNameSet(namesFS, "name_homographs.txt")
+})
 
 // NameMatch は MatchPersonName が返す判定根拠。二値の是非だけでなく、
 // 呼び出し側が信頼度を作り分けられるよう根拠を区別する。
@@ -125,9 +137,11 @@ func SplitFullNameCandidate(s string) (surname, given string, ok bool) {
 
 func splitFullName(s string, includeExtended, applyDenylist bool) (surname, given string, ok bool) {
 	s = ComposeKana(strings.TrimSpace(s))
-	if s == "" || (applyDenylist && nonPersonHomographs[s]) {
+	if s == "" || (applyDenylist && nonPersonHomographSet()[s]) {
 		return "", "", false
 	}
+	// 分割ループの内側で毎回 Once を経由しないよう、姓辞書は先にローカルへ束ねる。
+	surnames := surnameSet()
 	if strings.ContainsAny(s, " 　") {
 		fields := strings.FieldsFunc(s, func(r rune) bool { return r == ' ' || r == '　' })
 		if len(fields) == 2 && surnames[fields[0]] && isGivenName(fields[1], includeExtended) {
@@ -160,16 +174,16 @@ func SplitsAsFullName(s string) bool {
 }
 
 // IsSurname は s が収録済みの姓かを返す。
-func IsSurname(s string) bool { return surnames[s] }
+func IsSurname(s string) bool { return surnameSet()[s] }
 
 // IsGivenName は s が収録済みの名かを返す。
-func IsGivenName(s string) bool { return givenNames[s] }
+func IsGivenName(s string) bool { return givenNameSet()[s] }
 
 // IsGivenNameExtended は既定辞書に加え、高再現率用 org 版カタカナ名も照合する。
 func IsGivenNameExtended(s string) bool { return isGivenName(s, true) }
 
 func isGivenName(s string, includeExtended bool) bool {
-	return givenNames[s] || (includeExtended && extendedGivenNames[s])
+	return givenNameSet()[s] || (includeExtended && extendedGivenNameSet()[s])
 }
 
 // MatchPersonName は候補文字列 s が人名らしいかを姓名辞書で検証し、その判定
@@ -189,9 +203,9 @@ func MatchPersonName(s string) NameMatch {
 		return FullNameSplit
 	}
 	switch {
-	case surnames[s]:
+	case surnameSet()[s]:
 		return SurnameOnly
-	case givenNames[s]:
+	case givenNameSet()[s]:
 		return GivenOnly
 	default:
 		return NoMatch
@@ -226,17 +240,17 @@ func IsPersonNameExtended(s string) bool {
 	if _, _, ok := SplitFullNameExtended(s); ok {
 		return true
 	}
-	return surnames[s] || isGivenName(s, true)
+	return surnameSet()[s] || isGivenName(s, true)
 }
 
 // SurnameSample は姓辞書から先頭 n 件を決定的に返す（バイト列でソート済み）。
 // n が辞書サイズを超える場合は辞書全体を返す。合成テストケース生成
 // （internal/fixturegen）や、辞書に実在する値だけを使いたいテストのための
 // 列挙用エクスポート関数で、非公開の map を外部から直読みさせないために用意する。
-func SurnameSample(n int) []string { return sampleList(surnameList, n) }
+func SurnameSample(n int) []string { return sampleList(sortedSurnames(), n) }
 
 // GivenNameSample は名辞書から先頭 n 件を決定的に返す。SurnameSample を参照。
-func GivenNameSample(n int) []string { return sampleList(givenNameList, n) }
+func GivenNameSample(n int) []string { return sampleList(sortedGivenNames(), n) }
 
 func sampleList(list []string, n int) []string {
 	if n <= 0 {

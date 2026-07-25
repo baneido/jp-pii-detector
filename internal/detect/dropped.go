@@ -60,7 +60,7 @@ const (
 	// （path_profile.go）で Low に落ち、min_confidence 未満になって
 	// 破棄されたことを表す。
 	DropReasonPathDemotionBelowMin = "path-demotion-below-min"
-	// DropReasonUUIDToken は候補が UUIDv4 トークンの内部に完全に含まれる
+	// DropReasonUUIDToken は候補が UUID トークンの内部に完全に含まれる
 	// ため破棄されたことを表す。
 	DropReasonUUIDToken = "uuid-token"
 )

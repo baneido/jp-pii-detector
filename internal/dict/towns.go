@@ -3,6 +3,7 @@ package dict
 import (
 	_ "embed"
 	"strings"
+	"sync"
 )
 
 // towns.txt はデジタル庁アドレス・ベース・レジストリ（ABR）「全国 町字マスター」
@@ -15,7 +16,16 @@ import (
 //go:embed towns.txt
 var townsRaw string
 
-var towns, townsMaxRuneLen = loadTownSet(townsRaw)
+// townSet は町字辞書（集合と最大ルーン長）の遅延ロード（sync.OnceValues）。
+// towns.txt は約 1.2MB・10 万件超あり、全行に NormalizeMunicipalityKa（NFKC）を
+// 適用するため本パッケージで最も重いロードになる。起動時のパッケージ変数
+// 初期化で行うと、町字辞書を参照しないプロセス（version サブコマンドや
+// high-recall 無効時の走査）でも必ずコストを払うことになるため、初回参照時に
+// 一度だけ構築する。sync.OnceValues は並行安全なので、並列走査の複数ワーカーから
+// 同時に呼んでも構築は一度で済む。
+var townSet = sync.OnceValues(func() (map[string]bool, int) {
+	return loadTownSet(townsRaw)
+})
 
 func loadTownSet(raw string) (map[string]bool, int) {
 	out := map[string]bool{}
@@ -48,6 +58,7 @@ func loadTownSet(raw string) (map[string]bool, int) {
 func TownPrefixMatch(s string) (matchLen int, ok bool) {
 	norm := NormalizeMunicipalityKa(s)
 	rs := []rune(norm)
+	towns, townsMaxRuneLen := townSet()
 	maxLen := townsMaxRuneLen
 	if len(rs) < maxLen {
 		maxLen = len(rs)
@@ -67,8 +78,8 @@ func TownPrefixMatch(s string) (matchLen int, ok bool) {
 // 出現位置ごとに、その位置で終わる部分文字列が municipalities（実在市区町村名
 // 辞書）のいずれかと一致し、かつ続くギャップの先頭が TownPrefixMatch に
 // 一致するかを調べる（MunicipalitySuffixMatch と同じ市区町村マーカー走査を
-// 独立に行う。municipalities マップは同一パッケージ内の municipalities.go が
-// 所有するデータをそのまま参照するだけで、municipalities.go 自体は変更しない）。
+// 独立に行う。市区町村名の集合は同一パッケージ内の municipalities.go が所有する
+// データ（municipalitySet）をそのまま参照するだけ）。
 //
 // jp-address-high-recall の Pattern 単位 Validate に使う: 従来の Rule 単位
 // Validate（MunicipalitySuffixMatch、Base Medium 判定）に加えて、続く
@@ -79,6 +90,8 @@ func TownPrefixMatch(s string) (matchLen int, ok bool) {
 func MunicipalityThenTownMatch(s string) bool {
 	norm := NormalizeMunicipalityKa(s)
 	rs := []rune(norm)
+	// 走査ループの内側で毎回 Once を経由しないよう、辞書は先にローカルへ束ねる。
+	municipalities := municipalitySet()
 	for end, r := range rs {
 		if r != '市' && r != '区' && r != '町' && r != '村' {
 			continue

@@ -32,6 +32,68 @@ docker run --rm -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.4.3
 docker run --rm -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.4.3 scan --format json /scan
 ```
 
+## リソース制限下での実行（メモリ・実行時間）
+
+### メモリ上限を課すなら `GOMEMLIMIT` を併せて設定する
+
+フルスキャンはワーカーごとに読み込みと走査を融合しているため、同時に保持する
+テキスト量はワーカー数 × 最大 5MB（それを超えるファイルはスキップ）に収まり、
+Go の live heap は 30MB 前後で定常です。**ただしこれは保持量であってプロセスの
+RSS ではありません。** 既定の GC 設定では回収の余裕分とアロケータが OS へ返さない
+スパンが積み上がるため、5MB 級のファイルを 4 ワーカーで並列走査すると RSS は
+最大 498MB まで伸びました。保持量の目安（数十MB）を根拠に `--memory=64m` のような
+小さな上限を設定すると OOM Kill されます。
+
+上限を課す環境では、同じ上限を `GOMEMLIMIT` でランタイム側にも伝えてください。
+128MiB を指定した実測では RSS が 125MB 前後に収まり、実行時間の悪化は計測誤差の
+範囲でした。コンテナ側の上限は `GOMEMLIMIT`（Go ヒープのソフト上限）より
+少し大きめに取ります:
+
+```sh
+docker run --rm --memory=192m -e GOMEMLIMIT=128MiB \
+  -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.4.3
+```
+
+GitLab CI / Kubernetes ではジョブの環境変数として渡します:
+
+```yaml
+# .gitlab-ci.yml（ジョブ定義に追記）
+  variables:
+    GOMEMLIMIT: 128MiB
+```
+
+```yaml
+# Kubernetes（Pod / Job のコンテナ定義）
+    env:
+      - name: GOMEMLIMIT
+        value: 128MiB
+    resources:
+      limits:
+        memory: 192Mi
+```
+
+64MiB まで絞ると GC が過剰に走って CPU 時間が 5 割ほど増えるため、
+128MiB 未満は推奨しません。メモリに余裕がある CI ランナーでは設定不要です。
+
+### 大きなデータファイルを含むリポジトリ
+
+数字が密に並ぶデータファイル（CSV / SQL ダンプ / ログ）は 1 行あたりの検出候補が
+多く、通常のソースコードに比べて実測で 12〜15 倍遅くなります。
+4MB の CSV をステージした `scan --staged` は 13 秒ほどかかり、commit hook としては
+体感できる待ちになります。
+
+走査しなくてよいデータディレクトリは `.jp-pii.toml` の allowlist で除外してください:
+
+```toml
+[allowlist]
+paths = ["^fixtures/large/", "^logs/", "\\.sql$"]
+```
+
+ただしデータファイルは本来 PII が入りやすい場所です。除外するのは「本物の個人情報を
+含まないと確認済み」のパスに限り、判断がつかない場合は commit hook 側だけを軽くして
+（除外を書いた設定を `--config` で hook 専用に渡す）、CI では除外なしのフルスキャンを
+回す構成にしてください。
+
 ## GitHub Actions
 
 最小構成（README 再掲）:
@@ -194,6 +256,11 @@ pipeline {
 [pre-commit フレームワーク](https://pre-commit.com)を使う場合はバイナリの用意が不要です
 （README 参照）。それ以外のマネージャでは、開発者のマシンに jp-pii-detect が
 インストールされている前提になります（Homebrew / install.sh / mise など）。
+
+大きな CSV / SQL ダンプ / ログをステージすると commit hook の待ち時間が数秒から
+十数秒に伸びます。対処は
+[大きなデータファイルを含むリポジトリ](#大きなデータファイルを含むリポジトリ)を
+参照してください。
 
 ### lefthook
 

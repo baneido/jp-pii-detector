@@ -174,6 +174,10 @@ type Detector struct {
 	// ctxTokens は ASCII コンテキスト語をあらかじめ識別子トークン列に分割した
 	// キャッシュ（キーワードは静的なので行ごとに再分割しないため）。
 	ctxTokens map[string][]string
+	// prefilterFold は rules と同じ添字で並ぶ「リテラルプレフィルタの照合に
+	// 行の小文字化が必要か」のフラグ。リテラル集合は静的なので New で 1 回だけ
+	// 判定し、行ごとの再判定を避ける（literalsNeedCaseFold 参照）。
+	prefilterFold []bool
 	// crossLineName は person-name-structured ルール（有効時のみ非 nil）。構造化・
 	// 複数行の氏名検出を ScanContent で行うかの判定と、検出結果の ID・説明の
 	// 単一の出所として使う。高再現率モードでのみ有効になる。
@@ -242,12 +246,14 @@ func New(cfg *config.Config) (*Detector, error) {
 		}
 	}
 	patternGates := make([][]patternGate, len(rules))
+	prefilterFold := make([]bool, len(rules))
 	for i, r := range rules {
 		gates := make([]patternGate, len(r.Patterns))
 		for j, p := range r.Patterns {
 			gates[j] = gateForPattern(p.Re.String())
 		}
 		patternGates[i] = gates
+		prefilterFold[i] = literalsNeedCaseFold(r.PrefilterLiterals)
 	}
 	return &Detector{
 		rules:             rules,
@@ -257,6 +263,7 @@ func New(cfg *config.Config) (*Detector, error) {
 		scanMinConf:       minConf,
 		normStopwords:     normStopwords,
 		ctxTokens:         ctxTokens,
+		prefilterFold:     prefilterFold,
 		crossLineName:     crossLineName,
 		cooccurrenceBoost: cfg.Rules.CooccurrenceBoost,
 	}, nil
@@ -1134,6 +1141,9 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 	// 必要になるまで遅延させる（大半の行はどのパターンにもマッチしない）。
 	var normRunes []rune
 	var origRunes []rune
+	// リテラルプレフィルタの小文字化コピーは、必要とするルールが複数あっても
+	// 行あたり 1 回に抑える（ルールごとに確保していた分の削減）。
+	var normLower lowerCache
 
 	var found []Finding
 	for ri := range d.rules {
@@ -1156,7 +1166,8 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 		}
 		// リテラルプレフィルタ: ラベル語を 1 つも含まない行は、このルールの
 		// 正規表現走査をまるごとスキップする（氏名ルールのホットパス最適化）。
-		if len(r.PrefilterLiterals) > 0 && !containsAnyLiteral(norm, r.PrefilterLiterals) {
+		if len(r.PrefilterLiterals) > 0 &&
+			!containsAnyLiteralFold(norm, r.PrefilterLiterals, d.prefilterFold[ri], &normLower) {
 			continue
 		}
 		// ctxForMatch は window>0 のときだけマッチ前後 window ルーンに限定して
@@ -1256,7 +1267,7 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 				}
 				pos = next
 				entity := norm[start:end]
-				if insideUUIDv4Token(norm, start, end) {
+				if insideUUIDToken(norm, start, end) {
 					if d.collectDropped {
 						d.recordDroppedMatch(r.ID, file, lineNo, norm, start, DropReasonUUIDToken, p.Base)
 					}
@@ -1482,22 +1493,76 @@ func isMarkerTokenChar(r rune) bool {
 // も大文字小文字を無視しないと FULL_NAME: 等の行が正規表現に到達する前にスキップ
 // されてしまう。大半の行（正規化済みでも ASCII 大文字を含まない行）では最初の
 // ループで決着し、小文字化コピーを確保しない。
+//
+// リテラル集合が静的な経路（ルールの PrefilterLiterals）では、小文字化が結果を
+// 変え得るかを New で 1 回だけ判定した上で containsAnyLiteralFold を直接呼ぶこと。
 func containsAnyLiteral(haystack string, literals []string) bool {
+	return containsAnyLiteralFold(haystack, literals, literalsNeedCaseFold(literals), nil)
+}
+
+// containsAnyLiteralFold は containsAnyLiteral の本体。fold が false なら
+// 小文字化再照合を行わない（literalsNeedCaseFold が false のリテラル集合では
+// 小文字化しても照合結果が変わらないため、コピーの確保が完全に無駄になる）。
+// lower が非 nil なら小文字化コピーを行単位で共有する（同じ行に対して複数の
+// ルールが fold を必要とする場合でも strings.ToLower は 1 回で済む）。
+func containsAnyLiteralFold(haystack string, literals []string, fold bool, lower *lowerCache) bool {
 	for _, lit := range literals {
 		if strings.Contains(haystack, lit) {
 			return true
 		}
 	}
-	if !hasASCIIUpper(haystack) {
+	if !fold || !hasASCIIUpper(haystack) {
 		return false
 	}
-	lower := strings.ToLower(haystack)
+	var lowered string
+	if lower != nil {
+		lowered = lower.get(haystack)
+	} else {
+		lowered = strings.ToLower(haystack)
+	}
 	for _, lit := range literals {
-		if strings.Contains(lower, lit) {
+		if strings.Contains(lowered, lit) {
 			return true
 		}
 	}
 	return false
+}
+
+// literalsNeedCaseFold は、リテラル集合の照合に haystack の小文字化が必要か
+// （小文字化すると照合結果が変わり得るか）を返す。strings.ToLower は大文字を
+// 小文字に置き換えるだけなので、小文字を 1 つも含まないリテラル（電話番号ルールの
+// "0-" / "(0" / "+81" や、住所ルールの "都" "県" のような数字・記号・かな漢字だけの
+// リテラル）は、小文字化後の文字列にも小文字化前と同じようにしか現れない。
+// そのようなルールでは小文字化コピーの確保が純粋な無駄になるため、
+// 事前にフラグ化して省略する。
+func literalsNeedCaseFold(literals []string) bool {
+	for _, lit := range literals {
+		for _, r := range lit {
+			if unicode.IsLower(r) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// lowerCache は 1 行の走査中に小文字化コピーを 1 回だけ生成して使い回すキャッシュ。
+// 小文字化を必要とするルールが複数あっても、確保は行あたり 1 回に収まる。
+// 走査 1 回分のローカル変数として使うため、ゴルーチン間で共有してはならない。
+type lowerCache struct {
+	src    string
+	lower  string
+	cached bool
+}
+
+// get は s の小文字化コピーを返す。同じ s に対する 2 回目以降はキャッシュを返す。
+func (c *lowerCache) get(s string) string {
+	if !c.cached || c.src != s {
+		c.src = s
+		c.lower = strings.ToLower(s)
+		c.cached = true
+	}
+	return c.lower
 }
 
 // hasASCIIUpper は s に ASCII 大文字が 1 つでも含まれるかを返す。マルチバイト
@@ -1576,10 +1641,10 @@ func classifyLine(s string) lineFeatures {
 	return f
 }
 
-// insideUUIDv4Token は検出候補 [start,end) が UUIDv4 トークンの内部に
+// insideUUIDToken は検出候補 [start,end) が UUID トークンの内部に
 // 完全に含まれるかを返す。UUID は PII ではないため、内部の数字列や
 // 英数字列を郵便番号・口座番号などとして部分一致させない。
-func insideUUIDv4Token(s string, start, end int) bool {
+func insideUUIDToken(s string, start, end int) bool {
 	if start < 0 || end < start || end > len(s) {
 		return false
 	}
@@ -1591,10 +1656,10 @@ func insideUUIDv4Token(s string, start, end int) bool {
 		right++
 	}
 	token := s[left:right]
-	return isHyphenatedUUIDv4(token) || isCompactUUIDv4(token)
+	return isHyphenatedUUID(token) || isCompactUUID(token)
 }
 
-func isHyphenatedUUIDv4(s string) bool {
+func isHyphenatedUUID(s string) bool {
 	if len(s) != 36 {
 		return false
 	}
@@ -1610,10 +1675,10 @@ func isHyphenatedUUIDv4(s string) bool {
 			}
 		}
 	}
-	return s[14] == '4' && isUUIDVariantByte(s[19])
+	return isUUIDVersionVariant(s[14], s[19]) || isNilOrMaxUUID(s)
 }
 
-func isCompactUUIDv4(s string) bool {
+func isCompactUUID(s string) bool {
 	if len(s) != 32 {
 		return false
 	}
@@ -1622,7 +1687,7 @@ func isCompactUUIDv4(s string) bool {
 			return false
 		}
 	}
-	return s[12] == '4' && isUUIDVariantByte(s[16])
+	return isUUIDVersionVariant(s[12], s[16]) || isNilOrMaxUUID(s)
 }
 
 func isUUIDTokenByte(c byte) bool {
@@ -1633,6 +1698,44 @@ func isHexByte(c byte) bool {
 	return (c >= '0' && c <= '9') ||
 		(c >= 'a' && c <= 'f') ||
 		(c >= 'A' && c <= 'F')
+}
+
+// isUUIDVersionVariant はバージョン桁とバリアント桁の組が RFC 9562 の
+// 定義に沿うかを返す。s は呼び出し前に形状（長さ・ハイフン位置・hex 桁）
+// を検証済みであることを前提とする。
+//
+// バージョンは 1〜8 を許容する。v1（時刻）/v4（乱数）だけでなく、DB の
+// 主キーとして普及した v7（Unix 時刻ベース・ソート可能）や v8（カスタム）も
+// UUID なので抑制対象にする。0 と f は Nil/Max UUID 専用の値なので
+// ここでは扱わず isNilOrMaxUUID に任せ、それ以外（9〜e）は RFC 9562 が
+// 定義していないため UUID とみなさない。
+//
+// バリアント桁は RFC 9562 変種（上位 2 ビットが 10）を表す 8/9/a/b に
+// 限定したままにする。ここを 16 通り全部に緩めると形状チェックの
+// 選択性が落ち、「UUID に似ただけの hex 列」の内部に埋まった本物の PII を
+// 取りこぼすため、バージョン許容範囲だけを広げる。
+func isUUIDVersionVariant(version, variant byte) bool {
+	return version >= '1' && version <= '8' && isUUIDVariantByte(variant)
+}
+
+// isNilOrMaxUUID は RFC 9562 が特別扱いする Nil UUID（全桁 0）と
+// Max UUID（全桁 f）を判定する。どちらもバージョン桁・バリアント桁が
+// 定義外の値になるため isUUIDVersionVariant では拾えない。
+// s は形状検証済み（ハイフン以外は hex 桁）であることを前提とする。
+func isNilOrMaxUUID(s string) bool {
+	allZero, allF := true, true
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case c == '-':
+		case c == '0':
+			allF = false
+		case c == 'f' || c == 'F':
+			allZero = false
+		default:
+			return false
+		}
+	}
+	return allZero || allF
 }
 
 func isUUIDVariantByte(c byte) bool {
