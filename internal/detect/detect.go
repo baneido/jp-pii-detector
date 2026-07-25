@@ -159,6 +159,10 @@ type DetectReason struct {
 type Detector struct {
 	rules []rule.Rule
 	cfg   *config.Config
+	// patternGates は rules と同じ添字で並ぶ、パターンごとの正規表現スキップ
+	// ゲート（構文木から導出したマッチ成立の必要条件。pattern_gate.go 参照）。
+	// New で 1 回だけ構築し、走査中は読み取り専用。
+	patternGates [][]patternGate
 	// minConf は報告結果を決める設定本来の閾値。scanMinConf は CLI の
 	// --fail-on 判定用に返す finding の下限で、既定では minConf と同じ。
 	// 両者を分けることで、終了コード用の閾値を下げても共起昇格や報告結果を
@@ -237,9 +241,18 @@ func New(cfg *config.Config) (*Detector, error) {
 			}
 		}
 	}
+	patternGates := make([][]patternGate, len(rules))
+	for i, r := range rules {
+		gates := make([]patternGate, len(r.Patterns))
+		for j, p := range r.Patterns {
+			gates[j] = gateForPattern(p.Re.String())
+		}
+		patternGates[i] = gates
+	}
 	return &Detector{
 		rules:             rules,
 		cfg:               cfg,
+		patternGates:      patternGates,
 		minConf:           minConf,
 		scanMinConf:       minConf,
 		normStopwords:     normStopwords,
@@ -261,13 +274,63 @@ func (d *Detector) SetScanMinConfidence(minConf rule.Confidence) {
 // Rules は有効なルール一覧を返す。
 func (d *Detector) Rules() []rule.Rule { return d.rules }
 
+// lineScanState は 1 行分の走査前計算（正規化結果と行の特徴量）のキャッシュ。
+// ScanContent / ScanDiffHunkOpts が行ごとに 1 回だけ計算し、単一行走査と
+// 隣接行ペア走査で再利用する（従来は各行が単一行走査＋前後 2 つのペア走査で
+// 最大 3 回正規化・特徴量計算されていた）。
+type lineScanState struct {
+	norm  string
+	feats lineFeatures
+	// unchanged は正規化が元行を変えなかった（norm が元行と値として等しい）
+	// ことを表す。隣接行ペアの結合文字列の再利用可否判定に使う。
+	unchanged bool
+}
+
+func newLineScanState(line string) lineScanState {
+	norm := normalize.Line(line)
+	return lineScanState{norm: norm, feats: classifyLine(norm), unchanged: norm == line}
+}
+
+// combineLineStates は論理隣接する 2 行の状態を、結合文字列
+// （first+"\n"+second）に対する状態へ合成する。正規化はルーン単位の 1:1
+// 変換で '\n' を跨ぐ相互作用を持たない（長音記号の数字隣接判定も間に '\n' が
+// 挟まると成立しない）ため、normalize.Line(a+"\n"+b) ==
+// normalize.Line(a)+"\n"+normalize.Line(b) が常に成り立つ。特徴量も同様に、
+// 数字の連続桁数は '\n' を跨いで伸びないため、総数は和・最長桁数は最大値で
+// 正確に合成できる。
+func combineLineStates(combined string, first, second *lineScanState) lineScanState {
+	// 双方の行が正規化で変化していない場合、first.norm+"\n"+second.norm は
+	// 呼び出し側が既に構築した combined と値として等しい。連結をもう 1 本
+	// 割り当てず combined を再利用する（フルスキャンの割り当ての最大要因）。
+	norm := combined
+	if !first.unchanged || !second.unchanged {
+		norm = first.norm + "\n" + second.norm
+	}
+	return lineScanState{
+		norm: norm,
+		feats: lineFeatures{
+			hasDigit:    first.feats.hasDigit || second.feats.hasDigit,
+			hasAt:       first.feats.hasAt || second.feats.hasAt,
+			hasCJK:      first.feats.hasCJK || second.feats.hasCJK,
+			digits:      first.feats.digits + second.feats.digits,
+			maxDigitRun: max(first.feats.maxDigitRun, second.feats.maxDigitRun),
+		},
+	}
+}
+
 // ScanContent はファイル内容全体を行に分割して走査する。
 func (d *Detector) ScanContent(file, content string) []Finding {
-	var lines []string
+	// 行数は既知のため 1 回で確保する（append の段階的な再確保と
+	// 旧バッファのコピーを避ける）。
+	lines := make([]string, 0, strings.Count(content, "\n")+1)
 	for line := range strings.SplitSeq(content, "\n") {
 		lines = append(lines, strings.TrimSuffix(line, "\r"))
 	}
 	lineContexts := sourceLineContexts(file, lines)
+	states := make([]lineScanState, len(lines))
+	for i, line := range lines {
+		states[i] = newLineScanState(line)
+	}
 
 	// cooccurrence_boost が有効なときだけ、minConf 未満でも昇格候補となりうる
 	// Low 候補（Validated またはコンテキスト有りの cooccurrenceBoostRuleIDs）を
@@ -282,7 +345,7 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 
 	var candidates []Finding
 	for i, line := range lines {
-		candidates = append(candidates, d.scanLineWithContext(file, i+1, line, lineContexts[i], retainBudget)...)
+		candidates = append(candidates, d.scanLineWithContext(file, i+1, line, &states[i], lineContexts[i], retainBudget)...)
 	}
 	// 論理的に隣接する（間が空白のみの行に限り最大 maxAdjacentLineGap 行差までの）
 	// 行ペアを走査する。
@@ -294,7 +357,7 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 		if j < 0 {
 			continue
 		}
-		candidates = append(candidates, d.scanAdjacentLines(file, i+1, lines[i], j+1, lines[j], lineContexts[i], lineContexts[j])...)
+		candidates = append(candidates, d.scanAdjacentLines(file, i+1, lines[i], j+1, lines[j], &states[i], &states[j], lineContexts[i], lineContexts[j])...)
 	}
 	candidates = append(candidates, d.scanCrossLineYuchoPairs(file, lines)...)
 	if d.crossLineName != nil {
@@ -679,13 +742,18 @@ func (d *Detector) ScanDiffHunkOpts(file string, lines []DiffLine, opts DiffScan
 	// （applyObjectScopeContextForDiff 参照）。
 	applyObjectScopeContextForDiff(lineContexts, file, texts, opts.PostImage, opts.HunkStartLine)
 
+	states := make([]lineScanState, len(texts))
+	for i, line := range texts {
+		states[i] = newLineScanState(line)
+	}
+
 	var candidates []Finding
 	// 追加行は単独走査（同一行コンテキスト・同一行抑制が正しく適用される）。
 	// cooccurrence_boost は ScanContent（フルスキャン）専用のため retainBudget は
 	// 常に nil を渡す（diff hunk は文脈行を昇格の根拠にしない設計を維持する）。
 	for i, line := range texts {
 		if added[i] {
-			candidates = append(candidates, d.scanLineWithContext(file, i+1, line, lineContexts[i], nil)...)
+			candidates = append(candidates, d.scanLineWithContext(file, i+1, line, &states[i], lineContexts[i], nil)...)
 		}
 	}
 	// 論理的に隣接する行ペアを文脈行ラベルで昇格させる（間は空白のみ・最大
@@ -699,7 +767,7 @@ func (d *Detector) ScanDiffHunkOpts(file string, lines []DiffLine, opts DiffScan
 			continue
 		}
 		candidates = append(candidates,
-			d.scanAdjacentLinesDiff(file, i+1, texts[i], j+1, texts[j], added[i], added[j], lineContexts[i], lineContexts[j])...)
+			d.scanAdjacentLinesDiff(file, i+1, texts[i], j+1, texts[j], added[i], added[j], &states[i], &states[j], lineContexts[i], lineContexts[j])...)
 	}
 	// ゆうちょ別行ペア（yucho_pair.go の scanCrossLineYuchoPairs）の diff 版。
 	// 記号・番号ラベルの構造的な組を hunk 全体（文脈行＋追加行）に対して
@@ -766,14 +834,17 @@ func itoa(n int) string {
 // ignore マーカーは結合文字列ではなく値が乗る行ごとに判定する（scanLineNoIgnore を
 // 使い ScanLine の全体判定を経由しない）ため、ラベル側だけの marker が値側の
 // 検出を消さない（scanAdjacentLinesDiff と対称）。
-func (d *Detector) scanAdjacentLines(file string, firstLineNo int, first string, secondLineNo int, second string, firstCtx, secondCtx lineContext) []Finding {
+func (d *Detector) scanAdjacentLines(file string, firstLineNo int, first string, secondLineNo int, second string, firstSt, secondSt *lineScanState, firstCtx, secondCtx lineContext) []Finding {
 	combined := first + "\n" + second
-	firstRunes := []rune(first)
-	secondRunes := []rune(second)
-	sep := len(firstRunes)
+	combinedSt := combineLineStates(combined, firstSt, secondSt)
+	sep := utf8.RuneCountInString(first)
+	// ルーン列は finding が実際に出た行についてだけ遅延構築する（大半の行ペアは
+	// マッチしないため、毎回 2 本の []rune を確保するとフルスキャンの
+	// アロケーションが支配的になる）。
+	var firstRunes, secondRunes []rune
 
 	var out []Finding
-	for _, f := range d.scanLineNoIgnore(file, firstLineNo, combined, crossLinePromotionWindow) {
+	for _, f := range d.scanLineNoIgnoreWithContext(file, firstLineNo, combined, &combinedSt, lineContext{}, crossLinePromotionWindow, nil) {
 		switch {
 		case f.end <= sep: // 値は 1 行目
 			// person-name は専用の scanCrossLineNames と重複する越境候補だけを
@@ -783,6 +854,9 @@ func (d *Detector) scanAdjacentLines(file string, firstLineNo int, first string,
 			}
 			if ignoredLine(first) {
 				continue
+			}
+			if firstRunes == nil {
+				firstRunes = []rune(first)
 			}
 			f.Line = firstLineNo
 			f.Column = f.start + 1
@@ -796,6 +870,9 @@ func (d *Detector) scanAdjacentLines(file string, firstLineNo int, first string,
 			}
 			if ignoredLine(second) {
 				continue
+			}
+			if secondRunes == nil {
+				secondRunes = []rune(second)
 			}
 			start := f.start - sep - 1
 			end := f.end - sep - 1
@@ -890,17 +967,19 @@ func (d *Detector) scanCrossLineNames(file string, lines []string) []Finding {
 // 非 RequireContext ルールは crossLinePromotionWindow ルーン以内のラベルでのみ
 // 昇格する）。文脈行の ignore マーカーでは抑制せず（scanLineNoIgnore を使う）、
 // 抑制判定は値が乗る行（必ず追加行）に対してのみ行う。
-func (d *Detector) scanAdjacentLinesDiff(file string, firstLineNo int, first string, secondLineNo int, second string, firstAdded, secondAdded bool, firstCtx, secondCtx lineContext) []Finding {
+func (d *Detector) scanAdjacentLinesDiff(file string, firstLineNo int, first string, secondLineNo int, second string, firstAdded, secondAdded bool, firstSt, secondSt *lineScanState, firstCtx, secondCtx lineContext) []Finding {
 	if !firstAdded && !secondAdded {
 		return nil
 	}
 	combined := first + "\n" + second
-	firstRunes := []rune(first)
-	secondRunes := []rune(second)
-	sep := len(firstRunes)
+	combinedSt := combineLineStates(combined, firstSt, secondSt)
+	sep := utf8.RuneCountInString(first)
+	// scanAdjacentLines と同じく、ルーン列は finding が出た行についてだけ
+	// 遅延構築する。
+	var firstRunes, secondRunes []rune
 
 	var out []Finding
-	for _, f := range d.scanLineNoIgnore(file, firstLineNo, combined, crossLinePromotionWindow) {
+	for _, f := range d.scanLineNoIgnoreWithContext(file, firstLineNo, combined, &combinedSt, lineContext{}, crossLinePromotionWindow, nil) {
 		switch {
 		case f.end <= sep: // 値は 1 行目
 			// scanAdjacentLines と同じく person-name の越境候補だけを抑制する。
@@ -909,6 +988,9 @@ func (d *Detector) scanAdjacentLinesDiff(file string, firstLineNo int, first str
 			}
 			if !firstAdded || ignoredLine(first) {
 				continue
+			}
+			if firstRunes == nil {
+				firstRunes = []rune(first)
 			}
 			f.Line = firstLineNo
 			f.Column = f.start + 1
@@ -922,6 +1004,9 @@ func (d *Detector) scanAdjacentLinesDiff(file string, firstLineNo int, first str
 			}
 			if !secondAdded || ignoredLine(second) {
 				continue
+			}
+			if secondRunes == nil {
+				secondRunes = []rune(second)
 			}
 			start := f.start - sep - 1
 			end := f.end - sep - 1
@@ -1007,11 +1092,11 @@ func (d *Detector) ScanLine(file string, lineNo int, line string) []Finding {
 // コンテキスト有りの cooccurrenceBoostRuleIDs）を一時的に保持する
 // （ScanContent 専用の保持モード。ScanLine/ScanDiffHunk の経路は常に nil を渡し
 // 既存挙動を変えない）。
-func (d *Detector) scanLineWithContext(file string, lineNo int, line string, lineCtx lineContext, retainBudget *int) []Finding {
+func (d *Detector) scanLineWithContext(file string, lineNo int, line string, st *lineScanState, lineCtx lineContext, retainBudget *int) []Finding {
 	if line == "" || ignoredLine(line) {
 		return nil
 	}
-	return d.scanLineNoIgnoreWithContext(file, lineNo, line, lineCtx, 0, retainBudget)
+	return d.scanLineNoIgnoreWithContext(file, lineNo, line, st, lineCtx, 0, retainBudget)
 }
 
 // scanLineNoIgnore は ScanLine の本体（ignore マーカー判定を除く）。差分・
@@ -1021,7 +1106,7 @@ func (d *Detector) scanLineWithContext(file string, lineNo int, line string, lin
 // defaultPromotionContextWindow、隣接行相関では crossLinePromotionWindow）。
 // cooccurrence_boost 用の候補保持は行わない。
 func (d *Detector) scanLineNoIgnore(file string, lineNo int, line string, promotionWindow int) []Finding {
-	return d.scanLineNoIgnoreWithContext(file, lineNo, line, lineContext{}, promotionWindow, nil)
+	return d.scanLineNoIgnoreWithContext(file, lineNo, line, nil, lineContext{}, promotionWindow, nil)
 }
 
 // scanLineNoIgnoreWithContext が本体。retainBudget が非 nil かつ残数 > 0 の場合のみ、
@@ -1030,12 +1115,20 @@ func (d *Detector) scanLineNoIgnore(file string, lineNo int, line string, promot
 // 前提。ScanLine/ScanDiffHunk からの呼び出しは retainBudget=nil のため従来どおり
 // minConf 未満は即座に破棄する）。promotionWindow は非 RequireContext ルールの
 // 昇格窓で、0 以下なら defaultPromotionContextWindow に解決する。
-func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line string, lineCtx lineContext, promotionWindow int, retainBudget *int) []Finding {
+// st は行の走査前計算のキャッシュ（nil なら本関数内で計算する。ScanContent /
+// ScanDiffHunkOpts の経路は行ごとに 1 回だけ計算した状態を渡して再計算を避ける）。
+func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line string, st *lineScanState, lineCtx lineContext, promotionWindow int, retainBudget *int) []Finding {
 	if line == "" {
 		return nil
 	}
-	norm := normalize.Line(line)
-	hasDigit, hasAt, hasCJK := classifyLine(norm)
+	var state lineScanState
+	if st != nil {
+		state = *st
+	} else {
+		state = newLineScanState(line)
+	}
+	norm := state.norm
+	feats := state.feats
 
 	// コンテキスト判定・元行のルーン展開はコストが高いため、
 	// 必要になるまで遅延させる（大半の行はどのパターンにもマッチしない）。
@@ -1043,20 +1136,21 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 	var origRunes []rune
 
 	var found []Finding
-	for _, r := range d.rules {
+	for ri := range d.rules {
+		r := &d.rules[ri]
 		// 必須文字種を含まない行はパターンマッチ自体をスキップする。
 		// 大半のルールは数字必須のため、数字のないコード行がほぼ無コストになる。
 		switch r.Prefilter {
 		case rule.PrefilterDigit:
-			if !hasDigit {
+			if !feats.hasDigit {
 				continue
 			}
 		case rule.PrefilterAt:
-			if !hasAt {
+			if !feats.hasAt {
 				continue
 			}
 		case rule.PrefilterCJK:
-			if !hasCJK {
+			if !feats.hasCJK {
 				continue
 			}
 		}
@@ -1127,7 +1221,15 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 			}
 			return d.hasNegativeContextNear(norm, start, end, negativeContextWindowRunes, &normRunes, r.NegativeContext, r.Context, mode)
 		}
-		for _, p := range r.Patterns {
+		for pi := range r.Patterns {
+			p := &r.Patterns[pi]
+			// 正規表現のマッチに最低限必要な数字の総数・連続桁数・CJK 文字が
+			// 行に足りない場合、正規表現評価をまるごとスキップする（ゲートは
+			// 構文木から導出した保証下限のため、スキップされるのは絶対に
+			// マッチしない行だけ。pattern_gate.go 参照）。
+			if d.patternGates[ri][pi].skips(feats) {
+				continue
+			}
 			requireContextWindow := r.RequireContextWindow
 			if p.RequireContextWindow > 0 {
 				requireContextWindow = p.RequireContextWindow
@@ -1409,22 +1511,69 @@ func hasASCIIUpper(s string) bool {
 	return false
 }
 
-// classifyLine は Prefilter 判定に使う文字種の有無を 1 パスで調べる。
-func classifyLine(s string) (hasDigit, hasAt, hasCJK bool) {
-	for _, r := range s {
-		switch {
-		case r >= '0' && r <= '9':
-			hasDigit = true
-		case r == '@':
-			hasAt = true
-		case r >= 0x3000: // CJK 記号・かな・漢字はすべて U+3000 以上
-			hasCJK = true
+// cjkRuneMin は「CJK 文字」とみなす最小コードポイント。CJK 記号・かな・漢字は
+// すべて U+3000 以上（classifyLine の hasCJK と patternGate.needsCJK の両側で
+// 同じ閾値を使い、判定がずれないようにする）。
+const cjkRuneMin = 0x3000
+
+// lineFeatures は classifyLine が 1 パスで数える行の特徴量。Prefilter 判定
+// （文字種の有無）に加え、patternGate による正規表現スキップ判定に使う
+// 数字の総数・最長連続桁数を持つ。
+type lineFeatures struct {
+	hasDigit, hasAt, hasCJK bool
+	// digits は行内の ASCII 数字の総数、maxDigitRun は最長の連続数字列長。
+	digits, maxDigitRun int
+}
+
+// classifyLine は Prefilter・patternGate 判定に使う行の特徴量を 1 パスで数える。
+// ASCII バイト（< 0x80）とそれ以外を分けて扱うハイブリッド走査:
+//
+//   - 数字・'@' の判定対象は ASCII だけであり、UTF-8 の多バイト文字は先頭・
+//     継続バイトとも常に 0x80 以上で ASCII と衝突しないため、ASCII 部分は
+//     バイトのまま数えられる（純 ASCII 行はこの分岐だけを通る速い経路）。
+//   - CJK 判定（ルーン U+3000 以上）だけは、0x80 以上のバイトに出会った時点で
+//     utf8.DecodeRuneInString でルーンを取り出して行う。不正な UTF-8 シーケンス
+//     に対して DecodeRuneInString は U+FFFD を返し、U+FFFD >= cjkRuneMin のため
+//     CJK 扱いになる。これはルーン走査（for range）していた旧実装と同じ挙動で、
+//     かつ保守側（走査をスキップしない方向）に倒れる。
+//
+// CJK を 1 つ見つけた後はデコードを打ち切り、多バイト部分を 1 バイトずつ
+// 読み飛ばす（多バイト文字の内部に ASCII の数字・'@' は現れないため安全）。
+func classifyLine(s string) lineFeatures {
+	var f lineFeatures
+	run := 0
+	for i := 0; i < len(s); {
+		c := s[i]
+		if c < utf8.RuneSelf {
+			if c >= '0' && c <= '9' {
+				f.hasDigit = true
+				f.digits++
+				run++
+				if run > f.maxDigitRun {
+					f.maxDigitRun = run
+				}
+			} else {
+				run = 0
+				if c == '@' {
+					f.hasAt = true
+				}
+			}
+			i++
+			continue
 		}
-		if hasDigit && hasAt && hasCJK {
-			break
+		// 多バイト文字（または不正バイト）。数字の連なりはここで途切れる。
+		run = 0
+		if f.hasCJK {
+			i++
+			continue
 		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r >= cjkRuneMin {
+			f.hasCJK = true
+		}
+		i += size
 	}
-	return
+	return f
 }
 
 // insideUUIDv4Token は検出候補 [start,end) が UUIDv4 トークンの内部に
