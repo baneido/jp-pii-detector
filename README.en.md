@@ -50,29 +50,31 @@ fixtures, or create a baseline for existing findings.
 
 ## Supported PII
 
-Examples below are all fictitious dummy values.
+Examples below are all fictitious dummy values. Measured F1 is the per-rule F1 score on the
+labeled evaluation dataset, under the default profile (`min_confidence=medium`, high-recall
+rules disabled).
 
-| Type | How it is detected |
-|---|---|
-| My Number (individual number) | 12 digits + check digit (statutory algorithm) |
-| Credit card number | Luhn + brand detection (Visa/Master/JCB/Amex, etc.) + known sandbox PAN exclusion |
-| Email address | Pattern + IANA TLD existence check + reserved-domain exclusion; Japanese EAI and limited confusables in high-recall mode |
-| Phone number | Mobile / IP / landline / +81 + digit-count validation |
-| Postal code | Exact 7-digit match against real Japan-Post codes |
-| Address | Prefecture-to-street-number pattern |
-| Driver's license number | 12 digits + nearby context keyword required |
-| Passport number | 2 letters + 7 digits + nearby context keyword required |
-| Basic pension number | 4-digit + 6-digit + nearby context keyword required |
-| Residence card number | 2 letters + 8 digits + 2 letters + context required |
-| Bank account number | 7 digits + context keyword required |
-| Japan Post Bank symbol/number | Official symbol check digit + correlated number + Japan Post Bank context required |
-| Health insurance number | 8 digits + context keyword required |
-| Employment insurance number | 4-6-1 digit structure + context keyword required |
-| Long-term care insurance number | 10 digits + context keyword required |
-| Resident record code | 11 digits + context keyword required |
-| Qualified invoice issuer number | `T` + 13 digits + corporate-number checksum |
-| Date of birth | Labeled; supports Western and Japanese-era dates |
-| Person name | Label (e.g. `氏名:`) + surname/given-name dictionary match |
+| Type | Measured F1 | How it is detected |
+|---|:---:|---|
+| My Number (individual number) | **1.00** | 12 digits + check digit (statutory algorithm) |
+| Credit card number | **1.00** | Luhn + brand detection (Visa/Master/JCB/Amex, etc.) + known sandbox PAN exclusion |
+| Email address | **1.00** | Pattern + IANA TLD existence check + reserved-domain exclusion; Japanese EAI and limited confusables in high-recall mode |
+| Phone number | **1.00** | Mobile / IP / landline / +81 + digit-count validation |
+| Postal code | **1.00** | Exact 7-digit match against real Japan-Post codes |
+| Address | **0.98** | Prefecture-to-street-number pattern |
+| Driver's license number | **1.00** | 12 digits + nearby context keyword required |
+| Passport number | **0.96** | 2 letters + 7 digits + nearby context keyword required |
+| Basic pension number | **1.00** | 4-digit + 6-digit + nearby context keyword required |
+| Residence card number | **1.00** | 2 letters + 8 digits + 2 letters + context required |
+| Bank account number | **0.97** | 7 digits + context keyword required |
+| Japan Post Bank symbol/number | **0.64** | Official symbol check digit + correlated number + Japan Post Bank context required |
+| Health insurance number | **1.00** | 8 digits + context keyword required |
+| Employment insurance number | **1.00** | 4-6-1 digit structure + context keyword required |
+| Long-term care insurance number | **1.00** | 10 digits + context keyword required |
+| Resident record code | **1.00** | 11 digits + context keyword required |
+| Qualified invoice issuer number | **1.00** | `T` + 13 digits + corporate-number checksum |
+| Date of birth | **1.00** | Labeled; supports Western and Japanese-era dates |
+| Person name | **1.00** | Label (e.g. `氏名:`) + surname/given-name dictionary match |
 
 Run `jp-pii-detect rules` to list all rules. See [docs/detection-methods.md](docs/detection-methods.md)
 (Japanese) for details on accuracy and methodology.

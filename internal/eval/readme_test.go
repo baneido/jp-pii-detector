@@ -39,10 +39,37 @@ var readmeRow = map[string]string{
 	"person-name":             "氏名",
 }
 
+// readmeRowEN は英語版 README の Supported PII 表の行ラベル（Type 列）とルール ID の対応。
+// 表に行を追加・改名したらここも更新する。
+var readmeRowEN = map[string]string{
+	"jp-my-number":            "My Number (individual number)",
+	"credit-card":             "Credit card number",
+	"email-address":           "Email address",
+	"jp-phone-number":         "Phone number",
+	"jp-postal-code":          "Postal code",
+	"jp-address":              "Address",
+	"jp-drivers-license":      "Driver's license number",
+	"jp-passport":             "Passport number",
+	"jp-pension-number":       "Basic pension number",
+	"jp-residence-card":       "Residence card number",
+	"jp-bank-account":         "Bank account number",
+	"jp-yucho-account":        "Japan Post Bank symbol/number",
+	"jp-health-insurance":     "Health insurance number",
+	"jp-employment-insurance": "Employment insurance number",
+	"jp-kaigo-insurance":      "Long-term care insurance number",
+	"jp-juminhyo-code":        "Resident record code",
+	"jp-invoice-number":       "Qualified invoice issuer number",
+	"jp-birthdate":            "Date of birth",
+	"person-name":             "Person name",
+}
+
 var (
-	// 表の各行のルール別バッジ。ラベルは URL 中も代替テキスト中も `F1` の
-	// 固定文字列で翻訳の余地がないため、バッジ全体をまとめて置換する。
-	ruleBadgeRe = regexp.MustCompile(`!\[F1 [0-9.]+\]\(https://img\.shields\.io/badge/F1-[0-9.]+-[a-z]+\)`)
+	// 表の各行のルール別 F1（太字の数値 `**x.xx**`）。数値部分に翻訳の余地が
+	// ないため、両言語の表で同じパターンを使える。置換は行ラベルで特定した
+	// 表の行に限って行うので、表外の太字数値を誤って書き換えることはない。
+	// 英語版本文の総合 F1 表記 `**F1 x.xx**` は太字が `F1 ` で始まるため
+	// このパターンには一致しない。
+	ruleF1Re = regexp.MustCompile(`\*\*[0-9]+\.[0-9]{2}\*\*`)
 
 	// 先頭の総合バッジ（マイクロ平均 F1）。
 	//
@@ -85,9 +112,8 @@ var (
 //
 // 片方のファイルにしか存在しない表記の扱い: 存在する側のファイルだけを検証・更新の
 // 対象とし、無い側ではその項目を単に対象外にする（欠落を理由に失敗させない）。
-//   - ルール別 F1 バッジ: 日本語版のみ。英語版の Supported PII 表は
-//     Type / How it is detected の 2 列でルール別 F1 列を持たないため ruleRows は nil。
-//     英語版に F1 列を追加したら ruleRows を設定すれば同じ検証が効く。
+//   - ルール別 F1（表中の太字数値）: 両言語版。行ラベルはそれぞれ
+//     readmeRow / readmeRowEN で対応付ける。
 //   - 本文中の素の総合 F1 表記: 英語版のみ（plainF1Re）。
 //
 // ただし「宣言したのに見つからない」は失敗させる（文面の書き換えでゲートが
@@ -101,7 +127,7 @@ type readmeSpec struct {
 func readmeSpecs() []readmeSpec {
 	return []readmeSpec{
 		{path: readmePath, ruleRows: readmeRow},
-		{path: readmeENPath, plainF1Re: plainF1Re},
+		{path: readmeENPath, ruleRows: readmeRowEN, plainF1Re: plainF1Re},
 	}
 }
 
@@ -208,14 +234,14 @@ func TestOverallBadgeRe(t *testing.T) {
 func checkReadme(t *testing.T, spec readmeSpec, readme string, results []Result) {
 	t.Helper()
 
-	// ルール別バッジ列を持つファイル（日本語版）のみ、行ごとのバッジを検証する。
+	// ルール別 F1 列を持つファイルのみ、行ごとの表記を検証する。
 	for _, r := range results {
 		if spec.ruleRows == nil {
 			break
 		}
 		label, ok := spec.ruleRows[r.RuleID]
 		if !ok {
-			t.Errorf("%s: ルール %q の行ラベルが未登録（readmeRow に追加してください）", spec.path, r.RuleID)
+			t.Errorf("%s: ルール %q の行ラベルが未登録（readmeRow / readmeRowEN に追加してください）", spec.path, r.RuleID)
 			continue
 		}
 		row := findRow(readme, label)
@@ -223,8 +249,8 @@ func checkReadme(t *testing.T, spec readmeSpec, readme string, results []Result)
 			t.Errorf("%s: 精度表に行 %q が見つからない", spec.path, label)
 			continue
 		}
-		if want := BadgeMarkdown(r.F1); !strings.Contains(row, want) {
-			t.Errorf("%s: %q 行のバッジが実測値と不一致: want %s（-update で更新できます）",
+		if want := F1Markdown(r.F1); !strings.Contains(row, want) {
+			t.Errorf("%s: %q 行の実測 F1 が実測値と不一致: want %s（-update で更新できます）",
 				spec.path, label, want)
 		}
 	}
@@ -302,7 +328,7 @@ func rewriteBadges(readme string, spec readmeSpec, results []Result) string {
 		for i, line := range lines {
 			for id, label := range spec.ruleRows {
 				if strings.HasPrefix(line, "| "+label+" |") {
-					lines[i] = ruleBadgeRe.ReplaceAllString(line, BadgeMarkdown(f1[id]))
+					lines[i] = ruleF1Re.ReplaceAllString(line, F1Markdown(f1[id]))
 					break
 				}
 			}
