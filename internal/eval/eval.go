@@ -647,8 +647,8 @@ func Badge(f1 float64) (text, color string) {
 	return text, color
 }
 
-// BadgeMarkdown は README の表に埋め込む shields.io バッジの Markdown を返す。
-func BadgeMarkdown(f1 float64) string {
-	text, color := Badge(f1)
-	return fmt.Sprintf("![F1 %s](https://img.shields.io/badge/F1-%s-%s)", text, text, color)
+// F1Markdown は README の精度表に埋め込むルール別 F1 の Markdown を返す。
+// バッジ画像は表中では視認性が低いため、太字の数値をそのまま記載する。
+func F1Markdown(f1 float64) string {
+	return fmt.Sprintf("**%.2f**", f1)
 }

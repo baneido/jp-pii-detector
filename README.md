@@ -40,25 +40,25 @@ jp-pii-detect scan .
 
 | 種別 | 例（すべて架空のダミー） | 精度 | 実測 F1 | 検出の決め手 |
 |---|---|:---:|:---:|---|
-| マイナンバー（個人番号） | `1234-5678-9018` | ◎ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 12 桁 + 検査用数字（総務省令のアルゴリズム） |
-| クレジットカード番号 | `4000-0012-3456-7899` | ◎ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | Luhn + ブランド判定（Visa/Master/JCB/Amex 等）+ 公知テストPAN除外 |
-| メールアドレス | `taro@example.jp` | ◎ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | パターン + IANA TLD 実在チェック + 予約ドメイン除外（高再現率では日本語 EAI / 限定 confusable も対象） |
-| 電話番号 | `090-XXXX-XXXX` | ◎ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 携帯/IP/固定/+81 + 桁数検証 |
-| 郵便番号 | `〒150-0043` | ◎ / ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 7 桁完全一致の実在チェック（〒付きは単独、なしは周辺の語が必要） |
-| 住所 | `東京都渋谷区道玄坂2-10-7` | ○ | ![F1 0.98](https://img.shields.io/badge/F1-0.98-brightgreen) | 都道府県〜番地のパターン |
-| 運転免許証番号 | `免許証番号: 305012345678` | ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 12 桁 + 周辺の語が必要 |
-| 旅券（パスポート）番号 | `パスポート: TK1234567` | ○ | ![F1 0.96](https://img.shields.io/badge/F1-0.96-brightgreen) | 英字2+数字7 + 周辺の語が必要 |
-| 基礎年金番号 | `年金番号: 1234-567890` | ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 4桁-6桁 + 周辺の語が必要 |
-| 在留カード番号 | `在留カード AB12345678CD` | ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 英2+数8+英2 + 周辺の語が必要 |
-| 銀行口座番号 | `口座番号: 1234567` | △ | ![F1 0.97](https://img.shields.io/badge/F1-0.97-brightgreen) | 7 桁 + 周辺の語が必要 |
-| ゆうちょ銀行 記号番号 | `記号 1XX?0 / 番号 XXXXXX1` | ○ | ![F1 0.64](https://img.shields.io/badge/F1-0.64-orange) | 記号4桁目の検査数字 + 番号との相関 + ゆうちょ固有の周辺語が必要 |
-| 健康保険 保険者番号等 | `保険者番号: 12345678` | △ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 8 桁 + 周辺の語、または強ラベル直結の国保6桁保険者番号 |
-| 雇用保険被保険者番号 | `XXXX-XXXXXX-X` | ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 4桁-6桁-1桁 + 周辺の語が必要 |
-| 介護保険被保険者番号 | `XXXXXXXXXX` | △ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 10 桁 + 周辺の語が必要 |
-| 住民票コード | `XXXXXXXXXXX` | ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 11 桁 + 周辺の語が必要（全桁同一は除外） |
-| インボイス登録番号 | `TXXXXXXXXXXXXX` | ◎ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | T + 13 桁 + 法人番号の検査用数字 |
-| 生年月日 | `生年月日: 1990年1月23日` | △ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | ラベル付き。西暦・和暦・区切りなし8桁に対応（詳細は docs/detection-methods.md） |
-| 氏名 | `氏名: 山田 太郎` | △ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | ラベル付き（`氏名:` 等）+ 姓名辞書照合。辞書一致は `medium`（既定で報告）、不一致は `low`（既定非表示、詳細は docs/detection-methods.md） |
+| マイナンバー（個人番号） | `1234-5678-9018` | ◎ | **1.00** | 12 桁 + 検査用数字（総務省令のアルゴリズム） |
+| クレジットカード番号 | `4000-0012-3456-7899` | ◎ | **1.00** | Luhn + ブランド判定（Visa/Master/JCB/Amex 等）+ 公知テストPAN除外 |
+| メールアドレス | `taro@example.jp` | ◎ | **1.00** | パターン + IANA TLD 実在チェック + 予約ドメイン除外（高再現率では日本語 EAI / 限定 confusable も対象） |
+| 電話番号 | `090-XXXX-XXXX` | ◎ | **1.00** | 携帯/IP/固定/+81 + 桁数検証 |
+| 郵便番号 | `〒150-0043` | ◎ / ○ | **1.00** | 7 桁完全一致の実在チェック（〒付きは単独、なしは周辺の語が必要） |
+| 住所 | `東京都渋谷区道玄坂2-10-7` | ○ | **0.98** | 都道府県〜番地のパターン |
+| 運転免許証番号 | `免許証番号: 305012345678` | ○ | **1.00** | 12 桁 + 周辺の語が必要 |
+| 旅券（パスポート）番号 | `パスポート: TK1234567` | ○ | **0.96** | 英字2+数字7 + 周辺の語が必要 |
+| 基礎年金番号 | `年金番号: 1234-567890` | ○ | **1.00** | 4桁-6桁 + 周辺の語が必要 |
+| 在留カード番号 | `在留カード AB12345678CD` | ○ | **1.00** | 英2+数8+英2 + 周辺の語が必要 |
+| 銀行口座番号 | `口座番号: 1234567` | △ | **0.97** | 7 桁 + 周辺の語が必要 |
+| ゆうちょ銀行 記号番号 | `記号 1XX?0 / 番号 XXXXXX1` | ○ | **0.64** | 記号4桁目の検査数字 + 番号との相関 + ゆうちょ固有の周辺語が必要 |
+| 健康保険 保険者番号等 | `保険者番号: 12345678` | △ | **1.00** | 8 桁 + 周辺の語、または強ラベル直結の国保6桁保険者番号 |
+| 雇用保険被保険者番号 | `XXXX-XXXXXX-X` | ○ | **1.00** | 4桁-6桁-1桁 + 周辺の語が必要 |
+| 介護保険被保険者番号 | `XXXXXXXXXX` | △ | **1.00** | 10 桁 + 周辺の語が必要 |
+| 住民票コード | `XXXXXXXXXXX` | ○ | **1.00** | 11 桁 + 周辺の語が必要（全桁同一は除外） |
+| インボイス登録番号 | `TXXXXXXXXXXXXX` | ◎ | **1.00** | T + 13 桁 + 法人番号の検査用数字 |
+| 生年月日 | `生年月日: 1990年1月23日` | △ | **1.00** | ラベル付き。西暦・和暦・区切りなし8桁に対応（詳細は docs/detection-methods.md） |
+| 氏名 | `氏名: 山田 太郎` | △ | **1.00** | ラベル付き（`氏名:` 等）+ 姓名辞書照合。辞書一致は `medium`（既定で報告）、不一致は `low`（既定非表示、詳細は docs/detection-methods.md） |
 
 > **既定で報告される範囲**: 信頼度 `medium` 以上のみを報告します（`min_confidence` で変更可）。
 > 氏名は姓名辞書に一致すれば `medium`（既定でも報告）、一致しない収録外の実在人名は
@@ -72,8 +72,8 @@ jp-pii-detect scan .
 
 「実測 F1」はラベル付き評価データセットに対する F1 スコア（適合率と再現率の調和平均）です。
 データセットは実在しうる PII を含むためリポジトリ外で管理しており、取得方法は
-[docs/development.md](docs/development.md) を参照してください。バッジは利用者の既定運用に対応する
-`min_confidence=medium`・高再現率ルール無効で計測しています。low / medium / high-recall の
+[docs/development.md](docs/development.md) を参照してください。表中の実測 F1 と冒頭のバッジは
+利用者の既定運用に対応する `min_confidence=medium`・高再現率ルール無効で計測しています。low / medium / high-recall の
 3プロファイルはそれぞれ独立して公開・CIゲートしています。評価データセットに対する
 値であり、あらゆる入力での精度を保証するものではありません。ルール別の内訳は [docs/accuracy.md](docs/accuracy.md)、数値の検証・
 更新は `JP_PII_FIXTURES` を設定した `go test ./internal/eval`（CI ゲート）で行います。
