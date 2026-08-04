@@ -30,7 +30,7 @@ CI/CD への組み込みレシピは [docs/integrations.md](integrations.md) を
 | コマンド | 説明 |
 |---|---|
 | `jp-pii-detect scan [flags] [path...]` | PII を走査する（本ツールの主機能） |
-| `jp-pii-detect rules [--config <path>] [--high-recall]` | 実効ルール一覧を表示する |
+| `jp-pii-detect rules [--config <path>] [--high-recall] [--name-roster]` | 実効ルール一覧を表示する |
 | `jp-pii-detect version` \| `--version` \| `-version` | バージョンを表示する |
 | `jp-pii-detect help` \| `-h` \| `--help` | usage を表示する |
 
@@ -103,6 +103,7 @@ $ jp-pii-detect scan -- -weird-filename.txt
 | `--explain` | 無効 | 検出理由（コンテキスト昇格・検証有無など）を text/json 出力に追加する |
 | `--explain-dropped` | 無効 | 検出候補がどの段階で棄却されたかを text/json 出力に追加する（FN 分析用。`json` 出力の `dropped` 配列に検出値そのものは含まれません） |
 | `--high-recall` | 無効 | 偽陽性リスクの高い再現率重視ルールを有効化する |
+| `--name-roster` | 無効 | 氏名だけが改行区切りで並ぶ名簿ファイルの判定（`person-name-roster`）を有効化する |
 | `--exit-zero` | 無効 | 検出があっても終了コード `0` を返す |
 | `--baseline <path>` | 未指定 | ベースラインファイルを読み込み、記録済みの検出を結果と終了コードから除外する |
 | `--update-baseline` | 無効 | 現在の検出内容でベースラインファイルを作成・追記して終了する |
@@ -197,18 +198,18 @@ README の [「1. CLI として利用」](../README.md#1-cli-として利用)、
 ## rules サブコマンド
 
 ```console
-$ jp-pii-detect rules [--config <path>] [--high-recall]
+$ jp-pii-detect rules [--config <path>] [--high-recall] [--name-roster]
 ```
 
-`--config` / `--high-recall` を反映した**実効ルール一覧**を表示します。
+`--config` / `--high-recall` / `--name-roster` を反映した**実効ルール一覧**を表示します。
 `scan` が実際に使うルール集合と同じ合成ロジック（builtin + カスタムルール）を
 経由するため、`scan` に指定するのと同じフラグ・設定ファイルを渡せば、
 本番の走査で有効になるルールをそのまま確認できます。
 
 - 設定ファイルで無効化したルールも一覧からは外れず、状態タグで「無効」と
   表示されます。
-- 状態タグは「有効」または「無効」、加えて高再現率ルールには「高再現率」が
-  付きます。
+- 状態タグは「有効」または「無効」、加えて高再現率ルールには「高再現率」、
+  名簿ファイル判定のルールには「名簿判定」が付きます。
 - コンテキストキーワードが検出の前提条件になっているルールには
   「(コンテキストキーワード必須)」の注記が付きます。
 - `.jp-pii.toml` のカスタムルールも一覧に含まれます。

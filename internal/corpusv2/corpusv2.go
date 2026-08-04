@@ -518,8 +518,12 @@ func removeTag(tags []string, remove string) []string {
 	return out
 }
 
+// newDetector は注釈用の検出器を作る。highRecall=true のときは高再現率ルールに
+// 加えて名簿ファイル判定（name_roster）も有効にする。どちらも既定オフの opt-in
+// で、コーパス注釈では「既定で有効なルール」と「opt-in を全部入れたルール」の
+// 2 系統があれば足りるため、opt-in ごとに検出器を増やさない。
 func newDetector(highRecall bool) (*detect.Detector, error) {
-	cfg, err := config.Parse(fmt.Sprintf("min_confidence = %q\n[rules]\nhigh_recall = %t\n", "low", highRecall))
+	cfg, err := config.Parse(fmt.Sprintf("min_confidence = %q\n[rules]\nhigh_recall = %t\nname_roster = %t\n", "low", highRecall, highRecall))
 	if err != nil {
 		return nil, err
 	}
@@ -540,8 +544,13 @@ func annotateCase(low, high *detect.Detector, c *evalcase.Case) error {
 	if len(expected) == 0 {
 		return nil
 	}
+	// opt-in ルール（高再現率・名簿ファイル判定）は既定オフのため、これらを
+	// 期待するケースは opt-in 有効側の検出器で注釈する。
 	highIDs := map[string]bool{}
 	for _, id := range rule.HighRecallRuleIDs() {
+		highIDs[id] = true
+	}
+	for _, id := range rule.NameRosterRuleIDs() {
 		highIDs[id] = true
 	}
 	d := low
@@ -620,6 +629,12 @@ func allRuleIDs() []string {
 		}
 	}
 	for _, id := range rule.HighRecallRuleIDs() {
+		if !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	for _, id := range rule.NameRosterRuleIDs() {
 		if !seen[id] {
 			seen[id] = true
 			ids = append(ids, id)
@@ -740,8 +755,23 @@ func positiveCandidates(id string, seed int) []evalcase.Case {
 			// 帰属して row FP/FN が発生する（internal/rule/builtin.go の jp-address
 			// 第 3 エントリのコメント参照）。
 			out = append(out, lineCase(fmt.Sprintf("渋谷区神南%d-%d-%d", i%9+1, i%20+1, i%15+1)))
-		case "person-name-high-recall":
+		case "person-name-role-label":
 			out = append(out, lineCase(casePrefix+"担当: "+name))
+		case "person-name-high-recall":
+			// 敬称アンカー専用になったため、担当ラベル形ではなく敬称付きの形を
+			// 合成する（担当ラベルは既定ルール person-name-role-label が持つ）。
+			honorific := []string{"様", "さん", "氏", "殿"}[i%4]
+			out = append(out, lineCase(casePrefix+name+honorific))
+		case "person-name-roster":
+			// ラベルも敬称も無い羅列。ケース識別子を行として置くと
+			// 「非空行に占める氏名行の割合」を下げてしまうため、casePrefix は
+			// 使わず氏名の組み合わせ自体でケースを一意にする。
+			roster := rosterNames(i)
+			out = append(out, evalcase.Case{
+				File:    fmt.Sprintf("roster_%02d.txt", i+1),
+				Content: strings.Join(roster, "\n"),
+				Tags:    []string{"layout:content"},
+			})
 		case "person-name-structured":
 			switch i % 3 {
 			case 0:
@@ -956,6 +986,26 @@ func romajiNames() []string {
 
 func syntheticFullName() string {
 	return strings.Join([]string{"山田", "太郎"}, "")
+}
+
+// rosterSurnames / rosterGivens は名簿ケース用の合成部品。姓と名を別々の
+// リテラルとして持ち、実行時に連結する（syntheticFullName と同じ理由で、
+// このソース自体が自己走査で氏名として検出されないようにするため）。
+var (
+	rosterSurnames = []string{"山田", "佐藤", "鈴木", "高橋", "田中", "伊藤", "渡辺", "中村", "小林", "加藤"}
+	rosterGivens   = []string{"太郎", "花子", "一郎", "健太", "美咲", "次郎", "三郎", "陽子", "直樹", "恵子"}
+)
+
+// rosterNames は i 番目の名簿ケースに使う氏名を 3 件返す。姓・名のずらし方を
+// 変えることで、ケース間で完全重複しない組み合わせを決定的に生成する。
+func rosterNames(i int) []string {
+	n := len(rosterSurnames)
+	offsets := [][2]int{{0, 0}, {3, 7}, {5, 2}}
+	out := make([]string, 0, len(offsets))
+	for _, off := range offsets {
+		out = append(out, rosterSurnames[(i+off[0])%n]+rosterGivens[(i+off[1])%n])
+	}
+	return out
 }
 
 // wellKnownTestPANs は決済事業者のsandboxで公知の非稼働番号だけを返す。

@@ -58,6 +58,12 @@ type Config struct {
 		// HighRecall は高再現率ルールを明示的に有効化する。
 		// 偽陽性リスクが高いため既定では無効。
 		HighRecall bool `toml:"high_recall"`
+		// NameRoster は「名簿ファイル判定」（person-name-roster）を有効化する。
+		// ラベルも敬称も無く氏名だけが改行区切りで並ぶファイルを、ファイル全体の
+		// 統計（姓名辞書に一致する行の割合）から名簿とみなして検出する。行単位の
+		// 手がかりを一切使わない別種の判定のため、HighRecall とは独立した
+		// opt-in にしている（rule.NameRosterRuleIDs のコメント参照）。既定では無効。
+		NameRoster bool `toml:"name_roster"`
 		// CooccurrenceBoost は、氏名系ルール（person-name 等）の Low / Medium
 		// 候補を、同一ファイル内の近傍に検証済み/ラベル
 		// 付きの高信頼 PII（電話番号・郵便番号・マイナンバー等）があるときだけ
@@ -127,7 +133,7 @@ type Config struct {
 // Default は既定値の設定を返す。
 func Default() *Config {
 	cfg := defaultConfig()
-	cfg.SetHighRecall(false)
+	cfg.applyOptInRuleDefaults()
 	return cfg
 }
 
@@ -225,7 +231,7 @@ func Parse(data string) (*Config, error) {
 
 func (c *Config) compile() error {
 	c.explicitDisabled = append([]string{}, c.Rules.Disabled...)
-	c.SetHighRecall(c.Rules.HighRecall)
+	c.applyOptInRuleDefaults()
 	for _, p := range c.Allowlist.Paths {
 		re, err := compilePathPattern(p)
 		if err != nil {
@@ -365,18 +371,38 @@ func compilePathGlob(pattern string) (*regexp.Regexp, error) {
 // SetHighRecall は高再現率ルールの有効/無効を切り替える。
 // 明示的に disabled されたルールは維持し、自動で付与した既定無効化だけを更新する。
 func (c *Config) SetHighRecall(enabled bool) {
+	c.Rules.HighRecall = enabled
+	c.applyOptInRuleDefaults()
+}
+
+// SetNameRoster は名簿ファイル判定（person-name-roster）の有効/無効を切り替える。
+// SetHighRecall と同じ規約で、明示的に disabled されたルールは維持する。
+func (c *Config) SetNameRoster(enabled bool) {
+	c.Rules.NameRoster = enabled
+	c.applyOptInRuleDefaults()
+}
+
+// applyOptInRuleDefaults は opt-in フラグ（HighRecall / NameRoster）の現在値から
+// Rules.Disabled を組み立て直す。フラグごとに Disabled を書き換えると、後から
+// 呼んだ側が先に呼んだ側の既定無効化を消してしまうため、両方の軸を毎回まとめて
+// 適用する（explicitDisabled = 利用者が明示的に無効化した ID が土台）。
+func (c *Config) applyOptInRuleDefaults() {
 	if c.explicitDisabled == nil {
 		c.explicitDisabled = append([]string{}, c.Rules.Disabled...)
 	}
-	c.Rules.HighRecall = enabled
 	c.Rules.Disabled = append([]string{}, c.explicitDisabled...)
-	if enabled {
-		return
-	}
-	for _, id := range rule.HighRecallRuleIDs() {
-		if !slices.Contains(c.Rules.Disabled, id) {
-			c.Rules.Disabled = append(c.Rules.Disabled, id)
+	disableAll := func(ids []string) {
+		for _, id := range ids {
+			if !slices.Contains(c.Rules.Disabled, id) {
+				c.Rules.Disabled = append(c.Rules.Disabled, id)
+			}
 		}
+	}
+	if !c.Rules.HighRecall {
+		disableAll(rule.HighRecallRuleIDs())
+	}
+	if !c.Rules.NameRoster {
+		disableAll(rule.NameRosterRuleIDs())
 	}
 }
 

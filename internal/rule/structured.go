@@ -24,6 +24,27 @@ var (
 		`^\s*["']?(?:` + personNameLabelJP + `|` + personNameLabelASCIIStrong + `)["']?` +
 			`\s*[:=]\s*["'「『（(]?\s*$`,
 	)
+	// CrossLineNameHeaderRe は、区切り記号（:/=）を伴わない氏名系の強いラベル
+	// だけからなる行にマッチする。CSV のヘッダセル（CSVNameHeaderRe）が区切りを
+	// 持たないのと同じ構造で、プレーンテキストの名簿では
+	//
+	//	氏名
+	//	山田太郎
+	//	佐藤花子
+	//
+	// のようにコロン無しの見出し行が使われる。CrossLineNameLabelRe が区切りを
+	// 必須にしているため、この形はラベル行として認識されず名簿全体を取りこぼして
+	// いた。
+	//
+	// 区切りが無いぶん「ラベル行である」という手がかりは弱い（本文中に
+	// 「氏名」とだけ書かれた行もありうる）。そのため detect.scanCrossLineNames は
+	// この行を採用しても、続く行が姓名辞書を通らなければ何も報告しない
+	// （検出の可否は最終的に値側の ValidCrossLineName が決める）。
+	// Markdown の見出し（`## 氏名`）や表のセル（`| 氏名 |`）は行頭の記号・
+	// パイプがあるためこの行全体アンカーに一致しない。
+	CrossLineNameHeaderRe = regexp.MustCompile(
+		`^\s*["']?(?:` + personNameLabelJP + `|` + personNameLabelASCIIStrong + `)["']?\s*$`,
+	)
 	// CrossLineNameValueRe は氏名の値だけからなる行にマッチし、値をグループ 1 で
 	// 返す。前後のインデント・引用符・括弧を許容する。`名:` のようなラベル行
 	// （コロンを含む）はマッチしないため、ラベル行と値行を取り違えない。
@@ -109,6 +130,18 @@ var (
 func ValidCrossLineName(v string) bool {
 	v = strings.TrimSpace(v)
 	return notPlaceholderName(v) && notOrgName(v) && validStrictFullNameExtended(v)
+}
+
+// ValidRosterName は、ラベルも敬称も無い羅列（名簿ファイル判定、
+// detect.scanNameRosterFile）で 1 行の値 v を氏名として採用してよいかを返す。
+//
+// ValidCrossLineName より 1 段厳しく、org 版の高再現率カタカナ名を含まない
+// 姓名辞書（validStrictFullName）だけで判定する。クロスラインには「直前の行に
+// 氏名ラベルがある」という構造的な手がかりがあるのに対し、名簿判定には行単位の
+// 手がかりが一切無く、ファイル全体の統計だけが根拠になるため。
+func ValidRosterName(v string) bool {
+	v = strings.TrimSpace(v)
+	return notPlaceholderName(v) && notOrgName(v) && validStrictFullName(v)
 }
 
 // ValidCrossLineSurnameGivenPair は、姓ラベル行から取り出した値 sei と名ラベル行

@@ -103,6 +103,7 @@ Scan flags:
   --explain-dropped        検出候補がどの段階で棄却されたかを text/json 出力に追加する
                            （FN 分析用。json 出力の dropped 配列に生の値は含めない）
   --high-recall            偽陽性リスクの高い再現率重視ルールを有効化
+  --name-roster            氏名だけが並ぶ名簿ファイルの判定を有効化
   --exit-zero              検出があっても終了コード 0 を返す
   --baseline <path>        ベースラインファイルを読み込み、記録済み（fingerprint が
                            一致）の検出を結果と終了コードから除外する。--staged /
@@ -159,6 +160,7 @@ func runScan(args []string) int {
 	explain := fs.Bool("explain", false, "")
 	explainDropped := fs.Bool("explain-dropped", false, "")
 	highRecall := fs.Bool("high-recall", false, "")
+	nameRoster := fs.Bool("name-roster", false, "")
 	exitZero := fs.Bool("exit-zero", false, "")
 	baselinePath := fs.String("baseline", "", "")
 	updateBaseline := fs.Bool("update-baseline", false, "")
@@ -230,6 +232,9 @@ func runScan(args []string) int {
 	}
 	if *highRecall {
 		cfg.SetHighRecall(true)
+	}
+	if *nameRoster {
+		cfg.SetNameRoster(true)
 	}
 	reportThreshold, err := rule.ParseConfidence(cfg.MinConfidence)
 	if err != nil {
@@ -465,7 +470,7 @@ func updateBaselineFile(path string, findings []detect.Finding) int {
 }
 
 // runRules は --config を反映した実効ルール一覧（builtin + custom の合成後）を
-// 状態タグ（有効/無効・高再現率）付きで表示する。detect.New と同じ合成ロジック
+// 状態タグ（有効/無効・高再現率・名簿判定）付きで表示する。detect.New と同じ合成ロジック
 // を経由するため、scan コマンドが実際に使うルール集合と一致する。disabled 指定や
 // high_recall（および --high-recall）の効果で実際に有効なルールがどれかを、
 // 無効化されたルールも一覧から外さずそのまま確認できる。
@@ -478,6 +483,7 @@ func runRules(args []string) int {
 	fs.SetOutput(io.Discard)
 	configPath := fs.String("config", "", "")
 	highRecall := fs.Bool("high-recall", false, "")
+	nameRoster := fs.Bool("name-roster", false, "")
 	help := fs.Bool("help", false, "")
 	fs.BoolVar(help, "h", false, "")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
@@ -499,9 +505,16 @@ func runRules(args []string) int {
 	if *highRecall {
 		cfg.SetHighRecall(true)
 	}
+	if *nameRoster {
+		cfg.SetNameRoster(true)
+	}
 	disabled := map[string]bool{}
 	for _, id := range cfg.Rules.Disabled {
 		disabled[id] = true
+	}
+	nameRosterIDs := map[string]bool{}
+	for _, id := range rule.NameRosterRuleIDs() {
+		nameRosterIDs[id] = true
 	}
 	highRecallIDs := map[string]bool{}
 	for _, id := range rule.HighRecallRuleIDs() {
@@ -524,6 +537,9 @@ func runRules(args []string) int {
 		tags := []string{status}
 		if highRecallIDs[r.ID] {
 			tags = append(tags, "高再現率")
+		}
+		if nameRosterIDs[r.ID] {
+			tags = append(tags, "名簿判定")
 		}
 		ctx := ""
 		for _, p := range r.Patterns {

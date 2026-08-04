@@ -696,3 +696,69 @@ typo_key = "x"
 		t.Errorf("Warnings() = %v, want it to mention %q", warnings, "typo_key")
 	}
 }
+
+// TestNameRosterDisabledByDefault は名簿ファイル判定が既定で無効なことを
+// 確認する。行単位の手がかりを持たない判定のため、高再現率とは別軸の
+// opt-in にしている。
+func TestNameRosterDisabledByDefault(t *testing.T) {
+	cfg, err := Parse("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range rule.NameRosterRuleIDs() {
+		if !containsString(cfg.Rules.Disabled, id) {
+			t.Fatalf("Disabled = %v, want name-roster rule %q to be disabled by default", cfg.Rules.Disabled, id)
+		}
+	}
+}
+
+// TestNameRosterNotEnabledByHighRecall は、--high-recall だけでは名簿ファイル
+// 判定が有効にならないことを確認する。opt-in の軸が独立していることが、この
+// 変更で最も壊れやすい前提のため固定する。
+func TestNameRosterNotEnabledByHighRecall(t *testing.T) {
+	cfg, err := Parse(`
+[rules]
+high_recall = true
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range rule.NameRosterRuleIDs() {
+		if !containsString(cfg.Rules.Disabled, id) {
+			t.Fatalf("Disabled = %v, want name-roster rule %q to stay disabled under high_recall", cfg.Rules.Disabled, id)
+		}
+	}
+}
+
+// TestOptInAxesCompose は、2 つの opt-in を順に切り替えても互いの既定無効化を
+// 消し合わないことを確認する。フラグごとに Rules.Disabled を組み立て直す実装
+// （applyOptInRuleDefaults 導入前）では、後から呼んだ側が先の無効化を消していた。
+func TestOptInAxesCompose(t *testing.T) {
+	cfg, err := Parse("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.SetNameRoster(true)
+	for _, id := range rule.HighRecallRuleIDs() {
+		if !containsString(cfg.Rules.Disabled, id) {
+			t.Fatalf("Disabled = %v, want high-recall rule %q to stay disabled after SetNameRoster", cfg.Rules.Disabled, id)
+		}
+	}
+	cfg.SetHighRecall(true)
+	for _, id := range rule.NameRosterRuleIDs() {
+		if containsString(cfg.Rules.Disabled, id) {
+			t.Fatalf("Disabled = %v, want name-roster rule %q to remain enabled after SetHighRecall", cfg.Rules.Disabled, id)
+		}
+	}
+	cfg.SetNameRoster(false)
+	for _, id := range rule.NameRosterRuleIDs() {
+		if !containsString(cfg.Rules.Disabled, id) {
+			t.Fatalf("Disabled = %v, want name-roster rule %q disabled again", cfg.Rules.Disabled, id)
+		}
+	}
+	for _, id := range rule.HighRecallRuleIDs() {
+		if containsString(cfg.Rules.Disabled, id) {
+			t.Fatalf("Disabled = %v, want high-recall rule %q to stay enabled", cfg.Rules.Disabled, id)
+		}
+	}
+}
