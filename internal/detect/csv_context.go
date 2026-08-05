@@ -248,6 +248,15 @@ func parseCSVHeader(lines []string, delim byte) (csvHeader, bool) {
 	if !terminated || !looksLikeCSVHeader(norm, fields) {
 		return csvHeader{}, false
 	}
+	return columnHeaderFromFields(norm, fields), true
+}
+
+// columnHeaderFromFields は分割済みのヘッダフィールドから列ごとの
+// PositiveText / NegativeText を組み立てる。CSV/TSV（parseCSVHeader）と
+// Markdown テーブル（markdown_table.go の parseMarkdownHeader）が、
+// フィールド分割の方式だけを変えて共有する（csvColumnSignal の適用箇所を
+// 1 つに保ち、列文脈の意味づけが分割方式ごとにずれないようにする）。
+func columnHeaderFromFields(norm string, fields []csvField) csvHeader {
 	h := csvHeader{
 		text:     make([]string, len(fields)),
 		positive: make([]string, len(fields)),
@@ -263,7 +272,7 @@ func parseCSVHeader(lines []string, delim byte) (csvHeader, bool) {
 		h.positive[i] = positive
 		h.negative[i] = negative
 	}
-	return h, true
+	return h
 }
 
 // csvLineContexts は CSV/TSV ファイルのヘッダ列名から、以降の全データ行の
@@ -402,48 +411,70 @@ func (d *Detector) scanCSVNameColumns(file string, lines []string) []Finding {
 			li = next - 1
 			continue
 		}
-		var origRunes []rune
 		for fi, f := range fields {
-			if !nameCols[fi] || f.start >= f.end {
+			if !nameCols[fi] {
 				continue
 			}
-			field := norm[f.start:f.end]
-			m := rule.CSVNameValueRe.FindStringSubmatchIndex(field)
-			if m == nil || m[2] < 0 {
-				continue
+			if finding, ok := d.columnNameFinding(file, li+1, lines[li], norm, f); ok {
+				out = append(out, finding)
 			}
-			entity := field[m[2]:m[3]]
-			if !rule.ValidCrossLineName(entity) || d.allowlisted(entity) {
-				continue
-			}
-			rs := len([]rune(norm[:f.start+m[2]]))
-			re := rs + len([]rune(entity))
-			if origRunes == nil {
-				origRunes = []rune(lines[li])
-			}
-			if re > len(origRunes) {
-				continue
-			}
-			finding := Finding{
-				RuleID:      d.crossLineName.ID,
-				Description: d.crossLineName.Description,
-				File:        file,
-				Line:        li + 1,
-				Column:      rs + 1,
-				Match:       string(origRunes[rs:re]),
-				Confidence:  rule.Medium,
-				Reason: DetectReason{
-					BaseConfidence:  rule.Medium.String(),
-					FinalConfidence: rule.Medium.String(),
-					Validated:       true,
-				},
-				start:         rs,
-				end:           re,
-				scoreEvidence: confidenceScoreEvidence{structuredPair: true},
-			}
-			finalizeFindingScore(&finding)
-			out = append(out, finding)
 		}
 	}
 	return out
+}
+
+// columnNameFinding は、ヘッダが氏名系の強いラベルだった列の 1 フィールドに
+// ついて、値が氏名として妥当なら person-name-structured の Finding を組み立てる
+// （妥当でなければ ok=false）。CSV/TSV 版（scanCSVNameColumns）と Markdown
+// テーブル版（markdown_table.go の scanMarkdownTableNameColumns）で共有し、
+// 値の検証・スパン算出・信頼度の付け方が経路ごとにずれないようにする。
+//
+// norm は正規化済みの行、origLine は元行、f は norm に対するフィールドの
+// byte offset。正規化は 1:1（ルーン数保存）のため、norm 上のルーン位置は
+// 元行と一致する（scanCrossLineNames と同じ前提）。
+func (d *Detector) columnNameFinding(file string, lineNo int, origLine, norm string, f csvField) (Finding, bool) {
+	if f.start >= f.end {
+		return Finding{}, false
+	}
+	// 列コンテキスト経由の氏名検出は、他の経路と違って行全体をアンカーする
+	// 正規表現を通らないため、ignore マーカーが自然には効かない（マーカーは
+	// 最終列の本文の一部として読み飛ばされるだけ）。値が乗る行に対して明示的に
+	// 判定する（scanLineWithContext と同じ「値が乗る行基準」）。
+	if ignoredLine(origLine) {
+		return Finding{}, false
+	}
+	field := norm[f.start:f.end]
+	m := rule.CSVNameValueRe.FindStringSubmatchIndex(field)
+	if m == nil || m[2] < 0 {
+		return Finding{}, false
+	}
+	entity := field[m[2]:m[3]]
+	if !rule.ValidCrossLineName(entity) || d.allowlisted(entity) {
+		return Finding{}, false
+	}
+	rs := len([]rune(norm[:f.start+m[2]]))
+	re := rs + len([]rune(entity))
+	origRunes := []rune(origLine)
+	if re > len(origRunes) {
+		return Finding{}, false
+	}
+	finding := Finding{
+		RuleID:      d.crossLineName.ID,
+		Description: d.crossLineName.Description,
+		File:        file,
+		Line:        lineNo,
+		Column:      rs + 1,
+		Match:       string(origRunes[rs:re]),
+		Confidence:  rule.Medium,
+		Reason: DetectReason{
+			BaseConfidence:  rule.Medium.String(),
+			FinalConfidence: rule.Medium.String(),
+			Validated:       true,
+		},
+		start:         rs,
+		end:           re,
+		scoreEvidence: confidenceScoreEvidence{structuredPair: true},
+	}
+	finalizeFindingScore(&finding)
+	return finding, true
 }

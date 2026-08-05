@@ -625,7 +625,8 @@ func validStrictFullNameExtended(v string) bool {
 }
 
 // validPersonNameFullSplit は姓+名の分割（dict.FullNameSplit）が成立する
-// 場合のみ許可する。担当ラベル（person-name-high-recall）の Medium パターン用。
+// 場合のみ許可する。担当ラベル（person-name-role-label）の Medium パターンと、
+// 空白入りの敬称アンカー（person-name-high-recall）で使う。
 // 単独の姓一致（SurnameOnly）は validPersonNameSurnameOnly 側の Low パターンで
 // 別途扱うため、ここには含めない（渋谷・大和・本田のような地名・企業名と同形の
 // 姓が Medium に一律昇格するのを避ける）。
@@ -634,7 +635,7 @@ func validPersonNameFullSplit(v string) bool {
 }
 
 // validPersonNameSurnameOnly は単独の姓一致（dict.SurnameOnly）の場合のみ許可
-// する。担当ラベル（person-name-high-recall）の Low パターン用。
+// する。担当ラベル（person-name-role-label）の Low パターン用。
 func validPersonNameSurnameOnly(v string) bool {
 	return dict.MatchPersonName(strings.TrimSpace(v)) == dict.SurnameOnly
 }
@@ -1565,10 +1566,18 @@ func Builtin() []Rule {
 			},
 		},
 		{
-			ID:                "person-name-high-recall",
-			Description:       "氏名（敬称・担当者アンカー付き・高再現率）",
+			// 担当者・宛名・連絡先ラベルは既定で有効にする（高再現率オプトイン
+			// 不要）。日本語の業務文書では「担当:」「宛名:」は「氏名:」と同等の
+			// 頻度で使われるアンカーであり、既定で取りこぼすと初見の利用者が
+			// 「氏名が検出されない」と受け取るため。敬称アンカー
+			// （person-name-high-recall）と分離したのは、敬称の側が「現行仕様」
+			// 「非一様」「実在氏名」のように日常語の内部と衝突して既定に置けない
+			// のに対し、こちらは姓名辞書ゲートだけで実測の誤検出を抑えられる
+			// ため（判定根拠が違うので信頼度プロファイルも別になる）。
+			ID:                "person-name-role-label",
+			Description:       "氏名（担当者・宛名ラベル付き）",
 			Prefilter:         PrefilterCJK,
-			PrefilterLiterals: []string{"担当", "宛名", "連絡先", "様", "さん", "氏", "殿"},
+			PrefilterLiterals: []string{"担当", "宛名", "連絡先"},
 			Validate:          notPlaceholderName,
 			Patterns: []Pattern{
 				// 担当者・宛名・連絡先ラベル。敬称のような強い人物シグナルが無いため、
@@ -1589,6 +1598,15 @@ func Builtin() []Rule {
 					`(?:担当|担当者|宛名|連絡先)` + personNameSep +
 						`([` + kanji + `]{2,8}(?:[ ][` + kanji + `]{1,8})?)`,
 				), Base: Low, Validate: validPersonNameSurnameOnly},
+			},
+		},
+		{
+			ID:                "person-name-high-recall",
+			Description:       "氏名（敬称アンカー付き・高再現率）",
+			Prefilter:         PrefilterCJK,
+			PrefilterLiterals: []string{"様", "さん", "氏", "殿"},
+			Validate:          notPlaceholderName,
+			Patterns: []Pattern{
 				// 敬称アンカー（氏名の漢字表記 + 様/さん/氏/殿）。組織語尾
 				// （notOrgName）は常に棄却し、辞書一致（dict.IsPersonName）を
 				// 優先しつつ、辞書に無い値は職業・役割・部署の語尾 denylist
@@ -1600,6 +1618,25 @@ func Builtin() []Rule {
 					`(?:^|[^` + kanji + hiragana + katakana + `])` +
 						`([` + kanji + `]{2,8})(?:様|さん|氏|殿)`,
 				), Base: Medium, Validate: honorificPersonNameValid},
+				// 敬称の直前に空白が入る形（「鈴木一郎 様」）と、姓名の間に空白が
+				// 入る形（「山田 太郎様」）。上の無空白パターンは値と敬称が地続きの
+				// ときしか一致しないため、フォーム・宛名書きで一般的なこの表記を
+				// 取りこぼしていた。
+				//
+				// 空白入りは「対応 様」「現行 仕様」のようなテンプレート断片・
+				// 分かち書きとも衝突しうるため、辞書未収録値を通す
+				// honorificPersonNameValid（notRoleWord フォールバック）は使わず、
+				// 姓+名の分割が成立する値だけを許可する（validPersonNameFullSplit）。
+				// 無空白パターンより検証を厳しくするのは、区切りが増えるぶん
+				// 「たまたま敬称の前に置かれた 2 文字漢字」の可能性が上がるため。
+				{Re: regexp.MustCompile(
+					`(?:^|[^` + kanji + hiragana + katakana + `])` +
+						`([` + kanji + `]{1,8}[ ][` + kanji + `]{1,8})[ ]?(?:様|さん|氏|殿)`,
+				), Base: Medium, Validate: validPersonNameFullSplit},
+				{Re: regexp.MustCompile(
+					`(?:^|[^` + kanji + hiragana + katakana + `])` +
+						`([` + kanji + `]{2,8})[ ](?:様|さん|氏|殿)`,
+				), Base: Medium, Validate: validPersonNameFullSplit},
 				// 敬称アンカー（ひらがな・カタカナの氏名 + 様/さん/氏/殿）。この
 				// 文字種には notRoleWord のような語尾 denylist が効かないほど
 				// 日常語との衝突が多いため、辞書一致必須の allowlist 方式
@@ -1622,6 +1659,18 @@ func Builtin() []Rule {
 			// クロスライン走査（scanCrossLineNames）が CrossLineNameLabelRe /
 			// CrossLineNameValueRe / ValidCrossLineName を使って検出する。
 			// 高再現率モードでのみ有効（HighRecallRuleIDs）。
+		},
+		{
+			ID:          "person-name-roster",
+			Description: "氏名（名簿ファイル・オプトイン）",
+			Prefilter:   PrefilterCJK,
+			// このルールも単一行パターンを持たない。ラベルも敬称も無く氏名だけが
+			// 改行区切りで並ぶファイル（名簿・宛名リスト）を、
+			// detect.scanNameRosterFile がファイル全体の統計（行全体が氏名の形を
+			// していて、かつ ValidRosterName を通る行の割合）から判定する。
+			// 行単位の手がかりが一切無いため、既定でも --high-recall でも無効で、
+			// 専用の opt-in（[rules] name_roster / --name-roster）でのみ有効になる
+			// （NameRosterRuleIDs）。
 		},
 		{
 			ID:          "person-name-romaji",

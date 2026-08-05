@@ -687,17 +687,25 @@ func TestInternationalEmailHighRecall(t *testing.T) {
 
 	tests := []struct {
 		name, line, ruleID string
+		// wantDefault は高再現率オフ（既定）で期待するルール。国際化メール自体は
+		// 既定では検出しないが、行に含まれる他の PII が既定ルールに拾われる
+		// ケースはここに明記する。
+		wantDefault []string
 	}{
-		{"日本語ローカル部", "連絡先: 山田太郎@kaisha.co.jp", "email-address-eai"},
-		{"日本語ドメインと全角記号", "連絡先：ｕｓｅｒ＠例え．ｊｐ", "email-address-eai"},
-		{"Unicode TLD", "連絡先: 担当@例え.みんな", "email-address-eai"},
-		{"CSV 第2列", "管理番号,山田@例え.jp", "email-address-eai"},
-		{"ローカル部のキリル confusable", "連絡先: usеr@kaisha.co.jp", "email-address-confusable"},
-		{"TLD のギリシャ confusable", "連絡先: user@kaisha.cοm", "email-address-confusable"},
+		// ローカル部が漢字氏名の場合、既定では EAI として検出しない一方で、
+		// 直前の「連絡先:」ラベルにより person-name-role-label（既定ルール）が
+		// 氏名として拾う。high_recall 有効時は、より長いスパンを持つ
+		// email-address-eai が resolveOverlaps で優先される。
+		{"日本語ローカル部", "連絡先: 山田太郎@kaisha.co.jp", "email-address-eai", []string{"person-name-role-label"}},
+		{"日本語ドメインと全角記号", "連絡先：ｕｓｅｒ＠例え．ｊｐ", "email-address-eai", nil},
+		{"Unicode TLD", "連絡先: 担当@例え.みんな", "email-address-eai", nil},
+		{"CSV 第2列", "管理番号,山田@例え.jp", "email-address-eai", nil},
+		{"ローカル部のキリル confusable", "連絡先: usеr@kaisha.co.jp", "email-address-confusable", nil},
+		{"TLD のギリシャ confusable", "連絡先: user@kaisha.cοm", "email-address-confusable", nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assertRules(t, disabled.ScanLine("f.txt", 1, tt.line))
+			assertRules(t, disabled.ScanLine("f.txt", 1, tt.line), tt.wantDefault...)
 			fs := enabled.ScanLine("f.txt", 1, tt.line)
 			assertRules(t, fs, tt.ruleID)
 			if fs[0].Match == "" {
@@ -1463,7 +1471,42 @@ func TestPersonNameConfidencePromotion(t *testing.T) {
 func TestHighRecallRulesDisabledByDefault(t *testing.T) {
 	d := newDetector(t, "")
 	assertRules(t, d.ScanLine("f.txt", 1, "勤務地: "+testfixtures.MustGet(t, "detect.address_shibuya_ward")))
-	assertRules(t, d.ScanLine("f.txt", 1, "担当: "+testfixtures.MustGet(t, "detect.name_full")))
+	// 敬称アンカー（person-name-high-recall）は既定では無効のまま。
+	assertRules(t, d.ScanLine("f.txt", 1, testfixtures.MustGet(t, "detect.name_full")+"様"))
+}
+
+// TestRoleLabelRuleEnabledByDefault は、担当・宛名・連絡先ラベルの氏名検出
+// （person-name-role-label）が高再現率オプトイン無しで有効なことを確認する。
+// 分割前は person-name-high-recall に同居していたため --high-recall が必須で、
+// 日本語の業務文書で頻出する「担当:」形を既定で取りこぼしていた。
+func TestRoleLabelRuleEnabledByDefault(t *testing.T) {
+	d := newDetector(t, "")
+	name := testfixtures.MustGet(t, "detect.name_full")
+	for _, label := range []string{"担当", "担当者", "宛名", "連絡先"} {
+		t.Run(label, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, label+": "+name), "person-name-role-label")
+		})
+	}
+}
+
+// TestRoleLabelRuleNegatives は、既定で有効になった担当ラベルが組織名・部署名・
+// プレースホルダを拾わないことを確認する。姓名辞書ゲート（FullNameSplit）が
+// 唯一の抑制手段のため、既定化にあたって実測した負例をそのまま固定する。
+func TestRoleLabelRuleNegatives(t *testing.T) {
+	d := newDetector(t, "")
+	for _, line := range []string{
+		"担当: 営業部",
+		"担当: システム管理者",
+		"担当者: 未定",
+		"担当: 開発チーム",
+		"担当: 経理課",
+		"連絡先: 総務部",
+		"宛名: 株式会社サンプル",
+	} {
+		t.Run(line, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, line))
+		})
+	}
 }
 
 func TestHighRecallRulesOptIn(t *testing.T) {
@@ -1472,7 +1515,7 @@ func TestHighRecallRulesOptIn(t *testing.T) {
 high_recall = true
 `)
 	assertRules(t, d.ScanLine("f.txt", 1, "勤務地: "+testfixtures.MustGet(t, "detect.address_shibuya_ward")), "jp-address-high-recall")
-	assertRules(t, d.ScanLine("f.txt", 1, "担当: "+testfixtures.MustGet(t, "detect.name_full")), "person-name-high-recall")
+	assertRules(t, d.ScanLine("f.txt", 1, testfixtures.MustGet(t, "detect.name_full")+"様"), "person-name-high-recall")
 }
 
 func TestPersonNameLabeledExpansion(t *testing.T) {
@@ -1673,7 +1716,9 @@ high_recall = true
 	}{
 		// 姓名辞書に載る人名は敬称・担当ラベルで検出する。
 		{"敬称 + 姓", testfixtures.MustGet(t, "detect.name_sei") + "様より連絡あり", []string{"person-name-high-recall"}},
-		{"担当 + 姓名", "担当: " + testfixtures.MustGet(t, "detect.name_full"), []string{"person-name-high-recall"}},
+		// 担当ラベルは既定ルール person-name-role-label へ分離済み。high_recall を
+		// 有効にしたこの検出器でも、帰属するルール ID は分離後のものになる。
+		{"担当 + 姓名", "担当: " + testfixtures.MustGet(t, "detect.name_full"), []string{"person-name-role-label"}},
 		// 敬称は人物を強く示すため、辞書未収録の実在人名も取りこぼさない（レビュー #5）。
 		{"敬称 + 辞書外の姓", testfixtures.MustGet(t, "detect.name_dict_external_full") + "様より連絡", []string{"person-name-high-recall"}},
 		{"敬称 + 1文字名", testfixtures.MustGet(t, "detect.name_sei_plus_one_mei") + "様", []string{"person-name-high-recall"}},
@@ -1763,7 +1808,8 @@ func TestPersonNameWeakFieldTrailingParticleFallbackUnaffected(t *testing.T) {
 }
 
 // TestPersonNameChargeLabelConfidenceSplit は issue #59 段階1: 担当ラベル
-// （person-name-high-recall）が判定根拠（dict.MatchPersonName）に応じて
+// （person-name-role-label。分割前は person-name-high-recall に同居）が
+// 判定根拠（dict.MatchPersonName）に応じて
 // 信頼度を作り分けることを確認する。姓+名の分割（FullNameSplit）は Medium の
 // まま、単独の姓一致（SurnameOnly、渋谷・大和・本田のような地名・企業名と
 // 同形の姓を含む）は Low に降格し、Medium への一律昇格を避ける。
@@ -1785,7 +1831,7 @@ high_recall = true
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fs := d.ScanLine("f.txt", 1, tt.line)
-			assertRules(t, fs, "person-name-high-recall")
+			assertRules(t, fs, "person-name-role-label")
 			if fs[0].Confidence != tt.wantConfidence {
 				t.Errorf("confidence = %v, want %v", fs[0].Confidence, tt.wantConfidence)
 			}
@@ -3998,10 +4044,9 @@ cooccurrence_boost = true
 	assertRules(t, d.ScanContent("f.txt", content), "jp-address")
 }
 
-// TestCooccurrenceBoostHighRecallMediumToHigh は person-name-high-recall
-// （Base:Medium）が近傍アンカーで Medium→High まで昇格しうることを確認する
-// （「まれに Medium→High」の 1 段昇格。high_recall と cooccurrence_boost の
-// 両方が opt-in されて初めて効く）。
+// TestCooccurrenceBoostHighRecallMediumToHigh は担当ラベルの氏名検出
+// （person-name-role-label、Base:Medium）が近傍アンカーで Medium→High まで
+// 昇格しうることを確認する（「まれに Medium→High」の 1 段昇格）。
 func TestCooccurrenceBoostHighRecallMediumToHigh(t *testing.T) {
 	d := newDetector(t, `
 min_confidence = "high"
@@ -4012,10 +4057,10 @@ cooccurrence_boost = true
 `)
 	content := "担当: 田中太郎\n電話: 090-1234-5678"
 	fs := d.ScanContent("f.txt", content)
-	assertRules(t, fs, "person-name-high-recall", "jp-phone-number")
+	assertRules(t, fs, "person-name-role-label", "jp-phone-number")
 	for _, f := range fs {
-		if f.RuleID == "person-name-high-recall" && f.Confidence != rule.High {
-			t.Errorf("person-name-high-recall confidence = %v, want %v", f.Confidence, rule.High)
+		if f.RuleID == "person-name-role-label" && f.Confidence != rule.High {
+			t.Errorf("person-name-role-label confidence = %v, want %v", f.Confidence, rule.High)
 		}
 	}
 }

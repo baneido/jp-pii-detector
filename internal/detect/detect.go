@@ -182,6 +182,11 @@ type Detector struct {
 	// 複数行の氏名検出を ScanContent で行うかの判定と、検出結果の ID・説明の
 	// 単一の出所として使う。高再現率モードでのみ有効になる。
 	crossLineName *rule.Rule
+	// nameRoster は person-name-roster ルール（有効時のみ非 nil）。ラベルの無い
+	// 氏名の羅列をファイル単位で判定する走査（name_roster.go）を ScanContent で
+	// 行うかの判定と、検出結果の ID・説明の単一の出所として使う。専用の
+	// opt-in（[rules] name_roster）でのみ有効になる。
+	nameRoster *rule.Rule
 	// cooccurrenceBoost は [rules] cooccurrence_boost の opt-in フラグ。
 	// ScanContent のみで使う（ScanLine/ScanDiffHunk の既定挙動は変えない）。
 	cooccurrenceBoost bool
@@ -209,12 +214,17 @@ func New(cfg *config.Config) (*Detector, error) {
 	}
 	var rules []rule.Rule
 	var crossLineName *rule.Rule
+	var nameRoster *rule.Rule
 	for _, r := range rule.Builtin() {
 		if !disabled[r.ID] {
 			rules = append(rules, r)
-			if r.ID == "person-name-structured" {
+			switch r.ID {
+			case "person-name-structured":
 				cr := r
 				crossLineName = &cr
+			case "person-name-roster":
+				nr := r
+				nameRoster = &nr
 			}
 		}
 	}
@@ -265,6 +275,7 @@ func New(cfg *config.Config) (*Detector, error) {
 		ctxTokens:         ctxTokens,
 		prefilterFold:     prefilterFold,
 		crossLineName:     crossLineName,
+		nameRoster:        nameRoster,
 		cooccurrenceBoost: cfg.Rules.CooccurrenceBoost,
 	}, nil
 }
@@ -367,6 +378,9 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 		candidates = append(candidates, d.scanAdjacentLines(file, i+1, lines[i], j+1, lines[j], &states[i], &states[j], lineContexts[i], lineContexts[j])...)
 	}
 	candidates = append(candidates, d.scanCrossLineYuchoPairs(file, lines)...)
+	// 名簿ファイル判定は crossLineName（高再現率）とは独立した opt-in のため、
+	// nil ガードの外側で呼ぶ。
+	candidates = append(candidates, d.scanNameRosterFile(file, lines)...)
 	if d.crossLineName != nil {
 		candidates = append(candidates, d.scanCrossLineNames(file, lines)...)
 		candidates = append(candidates, d.scanCrossLineSurnameGivenPairs(file, lines)...)
@@ -379,6 +393,10 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 			candidates = append(candidates, d.scanCSVNameColumns(file, lines)...)
 		case sourceKindSQL:
 			candidates = append(candidates, d.scanSQLNameColumns(file, lines)...)
+		case sourceKindMarkdown:
+			// Markdown 版は markdown_table.go。CSV と同じ「ヘッダセルが
+			// ラベル・同じ列の全データ行が値」という構造を使う。
+			candidates = append(candidates, d.scanMarkdownTableNameColumns(file, lines)...)
 		}
 	}
 
@@ -456,6 +474,10 @@ const cooccurrenceWindowLines = 5
 var cooccurrenceBoostRuleIDs = map[string]bool{
 	"person-name":             true,
 	"person-name-high-recall": true,
+	// person-name-role-label は person-name-high-recall から担当ラベル部分を
+	// 切り出した既定ルール。分割前と同じく共起昇格の対象に含める
+	// （分割はルール ID の帰属を変えるだけで、値の性質は変わらないため）。
+	"person-name-role-label": true,
 }
 
 // cooccurrenceAnchorRuleIDs は昇格の根拠として使う、他カテゴリの PII ルール。
@@ -913,6 +935,13 @@ func (d *Detector) scanAdjacentLines(file string, firstLineNo int, first string,
 // 値は CrossLineNameValueRe で取り出し、ValidCrossLineName（姓名辞書照合・
 // プレースホルダ/組織名棄却）で検証する。同一行の強いラベルより厳しく辞書照合を
 // 必須にするのは、クロスラインの「次行＝値」前提が同一行ほど強くないため。
+//
+// ラベル行は 2 系統を受け付ける:
+//   - CrossLineNameLabelRe: 区切り（:/=）を伴う形（`氏名:`）
+//   - CrossLineNameHeaderRe: 区切りを伴わない見出し形（`氏名` のみの行）
+//
+// 後者は手がかりが弱いが、値側の辞書照合を通らなければ何も報告しないため、
+// 「氏名」とだけ書かれた本文行が単独で誤検出を生むことはない。
 func (d *Detector) scanCrossLineNames(file string, lines []string) []Finding {
 	if rule.Medium < d.scanMinConf {
 		return nil
@@ -922,21 +951,50 @@ func (d *Detector) scanCrossLineNames(file string, lines []string) []Finding {
 		if strings.TrimSpace(lines[i]) == "" {
 			continue
 		}
+		// ラベル行・値行はそれぞれ「ラベルと区切りだけ」「氏名だけ」をアンカー付きで
+		// 要求するため、行末コメント（jp-pii-detector:ignore を含む）が付くと正規表現が
+		// マッチせず自然に抑制される。明示的な ignore マーカー判定は不要。
+		normLabel := normalize.Line(lines[i])
+		if !rule.CrossLineNameLabelRe.MatchString(normLabel) &&
+			!rule.CrossLineNameHeaderRe.MatchString(normLabel) {
+			continue
+		}
 		j := nextNonBlankIndex(lines, i, maxAdjacentLineGap)
 		if j < 0 {
 			continue
 		}
-		label, value := lines[i], lines[j]
-		// ラベル行・値行はそれぞれ「ラベルと区切りだけ」「氏名だけ」をアンカー付きで
-		// 要求するため、行末コメント（jp-pii-detector:ignore を含む）が付くと正規表現が
-		// マッチせず自然に抑制される。明示的な ignore マーカー判定は不要。
-		if !rule.CrossLineNameLabelRe.MatchString(normalize.Line(label)) {
-			continue
-		}
-		normValue := normalize.Line(value)
+		out = append(out, d.crossLineNameValues(file, lines, j)...)
+	}
+	return out
+}
+
+// crossLineNameValues は、ラベル行に続く値行の並びから氏名の Finding を集める。
+// ラベルの直下 1 行だけを見ていた従来の実装では
+//
+//	氏名:
+//	山田太郎
+//	佐藤花子
+//	鈴木一郎
+//
+// のような名簿で先頭の 1 件しか拾えなかった（列という構造を持つ CSV だけが
+// csv_context.go の列コンテキストで全行を拾えていた）。ここでは値の「形」
+// （CrossLineNameValueRe = 行全体が氏名の文字種）が続く限り同じラベルを効かせ、
+// 形が崩れた行で打ち切る。
+//
+// 形は満たすが姓名辞書を通らない行（`住所` `電話番号` のような他のラベル語や
+// 一般語）は、その行だけを飛ばして走査を続ける。辞書未収録の氏名が 1 件挟まった
+// だけで名簿の残り全部を落とすのを避けるため。打ち切りは「氏名の形をしていない
+// 行」（空行・記号や英数字を含む行・長すぎる行）でのみ行う。
+//
+// from はラベル行の論理隣接（nextNonBlankIndex）で求めた最初の値行。以降は
+// 物理的に連続する行だけを見る（空行はここで必ず形の判定に落ちて打ち切りになる）。
+func (d *Detector) crossLineNameValues(file string, lines []string, from int) []Finding {
+	var out []Finding
+	for j := from; j < len(lines); j++ {
+		normValue := normalize.Line(lines[j])
 		m := rule.CrossLineNameValueRe.FindStringSubmatchIndex(normValue)
 		if m == nil || m[2] < 0 {
-			continue
+			break
 		}
 		entity := normValue[m[2]:m[3]]
 		if !rule.ValidCrossLineName(entity) || d.allowlisted(entity) {
@@ -945,7 +1003,7 @@ func (d *Detector) scanCrossLineNames(file string, lines []string) []Finding {
 		// 正規化は 1:1（ルーン数保存）のため、norm 上のルーン位置は元行と一致する。
 		rs := len([]rune(normValue[:m[2]]))
 		re := rs + len([]rune(entity))
-		origRunes := []rune(value)
+		origRunes := []rune(lines[j])
 		finding := Finding{
 			RuleID:      d.crossLineName.ID,
 			Description: d.crossLineName.Description,
