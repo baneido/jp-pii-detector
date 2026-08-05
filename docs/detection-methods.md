@@ -374,7 +374,7 @@ exclude_kinds = ["public-business"]
   半数以上を占めるときだけ、その該当行を報告する。値の検証は `ValidRosterName` で、
   クロスライン用の `ValidCrossLineName` より 1 段厳しく org 版カタカナ名を含まない。
   この割合の閾値が、氏名と同形の語が少数混ざる大きなリストとの切り分けになる（実測では
-  `internal/dict/towns.txt` の 94,964 行のうち姓名辞書に一致するのは 124 行＝約 0.13%）。
+  `internal/dict/towns.txt` の非空 95,007 行のうちこの条件を満たすのは 184 行＝約 0.19%）。
   行単位の根拠がゼロであるため、既定でも `--high-recall` でも有効にはならず、専用の
   opt-in（`[rules] name_roster` / `--name-roster`）でのみ動く。
 
