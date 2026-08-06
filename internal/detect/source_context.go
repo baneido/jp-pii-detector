@@ -21,6 +21,11 @@ const (
 	// パーサでは誤解釈するため sourceExtensions には追加せず、sql_context.go
 	// の専用パーサへ分岐する。
 	sourceKindSQL
+	// sourceKindMarkdown は .md/.markdown 用の種別。パイプテーブル
+	// （`| 氏名 | 部署 |`）のヘッダを列ラベルとして扱うため、markdown_table.go
+	// の専用パーサへ分岐する。散文中のコロンを代入とみなす汎用のコード文
+	// パーサは Markdown には合わないため sourceExtensions には追加しない。
+	sourceKindMarkdown
 )
 
 type statementContext struct {
@@ -157,6 +162,8 @@ func sourceKindForPath(path string) sourceKind {
 		return sourceKindCSV
 	case ".sql":
 		return sourceKindSQL
+	case ".md", ".markdown":
+		return sourceKindMarkdown
 	}
 	if sourceExtensions[ext] {
 		return sourceKindCode
@@ -179,6 +186,12 @@ func sourceLineContexts(file string, lines []string) []lineContext {
 		return csvLineContexts(file, lines)
 	case sourceKindSQL:
 		return sqlLineContexts(file, lines)
+	case sourceKindMarkdown:
+		// Markdown はパイプテーブルのヘッダセルだけを列ラベルとして使う
+		// （markdown_table.go）。CSV/SQL と同じくフル走査限定で、diff 走査
+		// （sourceLineContextsForDiff）では hunk がヘッダ行を含まないことが
+		// 多いため使わない。
+		return markdownLineContexts(lines)
 	}
 	out, ok := baseSourceLineContexts(file, lines)
 	if !ok {

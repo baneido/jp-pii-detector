@@ -99,14 +99,14 @@ brew install baneido/tap/jp-pii-detect
 利用側の環境に Go は不要です。
 
 ```sh
-mise use -g github:baneido/jp-pii-detector@v0.5.0
+mise use -g github:baneido/jp-pii-detector@v0.6.0
 ```
 
 プロジェクトローカルでバージョンを固定したい場合は `mise.toml` に以下を追加して `mise install` を実行します。
 
 ```toml
 [tools]
-"github:baneido/jp-pii-detector" = "v0.5.0"
+"github:baneido/jp-pii-detector" = "v0.6.0"
 ```
 
 ### Option 3. バイナリをインストール
@@ -115,7 +115,7 @@ GitHub Releases のビルド済みバイナリを取得してインストール�
 インストール先は既定で `$HOME/.local/bin` です。変更する場合は `JP_PII_DETECT_INSTALL_DIR=/path/to/bin` を指定してください。
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detector/v0.5.0/scripts/install.sh | JP_PII_DETECT_VERSION=v0.5.0 sh
+curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detector/v0.6.0/scripts/install.sh | JP_PII_DETECT_VERSION=v0.6.0 sh
 ```
 
 ### Option 4. Go install
@@ -131,7 +131,7 @@ curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detector/v0.5.0/scri
 GitLab CI などのジョブイメージとしてそのまま使えます（[docs/integrations.md](docs/integrations.md)）。
 
 ```sh
-docker run --rm -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.5.0
+docker run --rm -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.6.0
 ```
 
 ## 使い方
@@ -143,6 +143,7 @@ $ jp-pii-detect scan .                        # カレントディレクトリ�
 $ jp-pii-detect scan --staged                 # ステージ済み変更の追加行のみ（pre-commit 用）
 $ jp-pii-detect scan --diff origin/main...HEAD  # PR の追加行のみ（CI 用）
 $ jp-pii-detect scan --high-recall .          # 偽陽性リスクを許容して再現率重視ルールも有効化
+$ jp-pii-detect scan --name-roster .          # 氏名だけが並ぶ名簿ファイルの判定を有効化
 $ jp-pii-detect rules                         # 検出ルール一覧
 ```
 
@@ -165,7 +166,7 @@ users.csv:4:6   [high]  jp-phone-number 電話番号（携帯・固定・IP・�
 ```yaml
 repos:
   - repo: https://github.com/baneido/jp-pii-detector
-    rev: v0.5.0
+    rev: v0.6.0
     hooks:
       - id: jp-pii-detect
 ```
@@ -204,10 +205,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: baneido/jp-pii-detector@v0.5.0
+      - uses: baneido/jp-pii-detector@v0.6.0
         with:
           # jp-pii-detect のバイナリ版を固定
-          version: v0.5.0
+          version: v0.6.0
           args: scan --diff origin/${{ github.base_ref }}...HEAD --format github
 ```
 
@@ -221,10 +222,10 @@ Action の参照とダウンロードするバイナリ版は独立していま�
 Medium 以上を表示しつつ High の検出だけで CI を失敗させるには、次のように指定します。
 
 ```yaml
-      - uses: baneido/jp-pii-detector@v0.5.0
+      - uses: baneido/jp-pii-detector@v0.6.0
         with:
           # jp-pii-detect のバイナリ版を固定
-          version: v0.5.0
+          version: v0.6.0
           args: scan --diff origin/${{ github.base_ref }}...HEAD --format github --min-confidence medium --fail-on high
 ```
 
@@ -256,10 +257,13 @@ min_confidence = "medium"
 [rules]
 # 無効化するルール ID（`jp-pii-detect rules` で一覧表示）
 disabled = ["person-name"]
-# 都道府県なし住所・担当者/敬称アンカー付き氏名・ラベルと値が別行の氏名（フォーム形式）など、
+# 都道府県なし住所・敬称アンカー付き氏名・ラベルと値が別行の氏名（フォーム形式）など、
 # 偽陽性リスクの高い追加ルールを有効化
 high_recall = false
-# 氏名系ルール（person-name / person-name-high-recall）の low / medium 候補を、
+# ラベルも敬称も無く氏名だけが改行区切りで並ぶ名簿ファイルの判定（person-name-roster）を有効化。
+# 行単位の手がかりを一切使わずファイル全体の統計だけで判断するため、high_recall とは別の opt-in
+name_roster = false
+# 氏名系ルール（person-name / person-name-role-label / person-name-high-recall）の low / medium 候補を、
 # 同一ファイル内の近傍（±5行）に電話番号・郵便番号・マイナンバー等の検証済み高信頼 PII が
 # あるときだけ 1 段昇格（low→medium、まれに medium→high）させる。CSV/DB ダンプ監査など、
 # 強めの検出をしたい場合のみ opt-in する（既定では既存の出力に影響しない）
