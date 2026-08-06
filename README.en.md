@@ -91,13 +91,13 @@ brew install baneido/tap/jp-pii-detect
 ### mise (macOS / Linux)
 
 ```sh
-mise use -g github:baneido/jp-pii-detector@v0.5.0
+mise use -g github:baneido/jp-pii-detector@v0.6.0
 ```
 
 ### Binary (install.sh)
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detector/v0.5.0/scripts/install.sh | JP_PII_DETECT_VERSION=v0.5.0 sh
+curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detector/v0.6.0/scripts/install.sh | JP_PII_DETECT_VERSION=v0.6.0 sh
 ```
 
 ### Go install
@@ -109,7 +109,7 @@ go install github.com/baneido/jp-pii-detector/cmd/jp-pii-detect@latest
 ### Docker
 
 ```sh
-docker run --rm -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.5.0
+docker run --rm -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.6.0
 ```
 
 ## Usage
@@ -130,7 +130,7 @@ jp-pii-detect rules                            # list detection rules
 ```yaml
 repos:
   - repo: https://github.com/baneido/jp-pii-detector
-    rev: v0.5.0
+    rev: v0.6.0
     hooks:
       - id: jp-pii-detect
 ```
@@ -157,10 +157,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: baneido/jp-pii-detector@v0.5.0
+      - uses: baneido/jp-pii-detector@v0.6.0
         with:
           # Pin the jp-pii-detect binary version too
-          version: v0.5.0
+          version: v0.6.0
           args: scan --diff origin/${{ github.base_ref }}...HEAD --format github
 ```
 
