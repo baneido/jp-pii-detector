@@ -82,6 +82,13 @@ jobs:
 
       # 公開テストレーンは認証・非公開コーパスに依存せず、fork PR でも同じ範囲を実行する。
       - run: go vet ./...
+      # --model-dir 用の ORT 推論コード（internal/model の `cgo && ort` タグ付きファイル）は
+      # 既定のビルドと配布バイナリ（CGO_ENABLED=0）に含まれず、上の vet でも型検査されない。
+      # 壊れたまま気づかないことを防ぐため、タグ付きでも vet する（ORT 本体は実行時に
+      # dlopen するので、ここでは共有ライブラリもモデルも不要）。
+      - run: go vet -tags ort ./...
+        env:
+          CGO_ENABLED: "1"
       - run: go test -race ./...
       - run: go build ./cmd/jp-pii-detect
       - run: ./jp-pii-detect scan --format github .
