@@ -102,6 +102,9 @@ func formatReason(r detect.DetectReason) string {
 	if r.External {
 		parts = append(parts, "外部レコグナイザ=true")
 	}
+	if r.Model {
+		parts = append(parts, "モデル=true")
+	}
 	return strings.Join(parts, " ")
 }
 

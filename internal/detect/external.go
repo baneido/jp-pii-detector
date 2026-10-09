@@ -90,6 +90,12 @@ func (d *Detector) externalCandidateToFinding(file string, lines []string, c ext
 	if !strings.HasSuffix(c.RuleID, externalRuleIDSuffix) {
 		return Finding{}, false
 	}
+	return d.candidateToFinding(file, lines, c, false)
+}
+
+// candidateToFinding は外部レコグナイザとモデル（fromModel）の候補に共通する検証
+// （手順 2〜6）を行い、Finding へ変換する。
+func (d *Detector) candidateToFinding(file string, lines []string, c external.Candidate, fromModel bool) (Finding, bool) {
 	if slices.Contains(d.cfg.Rules.Disabled, c.RuleID) {
 		return Finding{}, false
 	}
@@ -151,10 +157,14 @@ func (d *Detector) externalCandidateToFinding(file string, lines []string, c ext
 		failOnly:    conf < d.minConf,
 		Reason: DetectReason{
 			FinalConfidence: conf.String(),
-			External:        true,
+			External:        !fromModel,
+			Model:           fromModel,
 		},
 		start: start,
 		end:   end,
+	}
+	if fromModel {
+		finding.Description = fmt.Sprintf("モデルによる検出（%s）", c.RuleID)
 	}
 	finalizeFindingScore(&finding)
 	return finding, true

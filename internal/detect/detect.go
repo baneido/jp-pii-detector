@@ -153,6 +153,9 @@ type DetectReason struct {
 	// MergeExternalFindings が設定する）。外部候補はチェックサム等の内部検証を
 	// 一切行わないため、Validated は常に false のままになる。
 	External bool `json:"external,omitempty"`
+	// Model はローカル推論モデル（--model-dir、internal/model）由来の検出である
+	// ことを示す（internal/detect/model.go が設定する）。
+	Model bool `json:"model,omitempty"`
 }
 
 // Detector は設定を適用済みの検出エンジン。
@@ -200,6 +203,11 @@ type Detector struct {
 	droppedMu        sync.Mutex
 	dropped          []DroppedCandidate
 	droppedTruncated bool
+	// model はモデル起点の認識器（SetModel で設定したときだけ非 nil）。modelErr は
+	// 走査中に起きた最初の推論エラー（model.go）。
+	model    Model
+	modelMu  sync.Mutex
+	modelErr error
 }
 
 // New は設定に基づいて Detector を構築する。
@@ -438,6 +446,9 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 		}
 		filtered = append(filtered, f)
 	}
+	// モデル起点の候補（--model-dir 指定時のみ）。パス降格と重複解決は組み込み
+	// ルールの検出と同じ規則で受ける。
+	filtered = append(filtered, d.modelFindings(file, content, lines, nil)...)
 
 	// テスト経路（testdata/ 等）の Medium 系検出は Finding 確定後・重複解決前に
 	// 降格する（path_profile.go）。降格であって除外ではないため、allowlist /
@@ -824,6 +835,11 @@ func (d *Detector) ScanDiffHunkOpts(file string, lines []DiffLine, opts DiffScan
 		}
 		filtered = append(filtered, f)
 	}
+	// モデル起点の候補は hunk 全体（文脈行＋追加行）を読ませ、検出値が追加行に
+	// 乗るものだけを残す。モデルは抑制の概念を持たないので、文脈行が抑制を
+	// 駆動しないという上記の原則はそのまま保たれる。
+	filtered = append(filtered, d.modelFindings(file, strings.Join(texts, "\n"), texts,
+		func(line int) bool { return added[line-1] })...)
 	// テスト経路の Medium 系検出降格は ScanContent と同様、重複解決より先に
 	// 適用する（降格後の信頼度で重複解決の勝敗判定が行われるようにするため）。
 	demoted := d.applyPathDemotion(filtered)

@@ -15,6 +15,9 @@ go vet ./...
 go build ./cmd/jp-pii-detect
 go test -run TestName ./internal/detect   # single test
 go test -bench . -benchmem ./internal/normalize/ ./internal/detect/   # hot-path benchmarks
+CGO_ENABLED=1 go build -tags ort ./cmd/jp-pii-detect   # experimental --model-dir build (internal/model, ONNX Runtime via cgo)
+CGO_ENABLED=1 go vet -tags ort ./...                    # vet the ort-tagged files too
+JP_PII_MODEL_DIR=<sumi dir> go test ./internal/model/  # tokenizer golden test (skipped without the model; add -tags ort for the real-model test)
 ```
 
 Run the built binary against this repo (what CI dogfoods): `./jp-pii-detect scan --format github .`
