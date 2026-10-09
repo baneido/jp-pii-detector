@@ -104,6 +104,7 @@ $ jp-pii-detect scan -- -weird-filename.txt
 | `--explain-dropped` | 無効 | 検出候補がどの段階で棄却されたかを text/json 出力に追加する（FN 分析用。`json` 出力の `dropped` 配列に検出値そのものは含まれません） |
 | `--high-recall` | 無効 | 偽陽性リスクの高い再現率重視ルールを有効化する |
 | `--name-roster` | 無効 | 氏名だけが改行区切りで並ぶ名簿ファイルの判定（`person-name-roster`）を有効化する |
+| `--model-dir <dir>` | 未指定 | 試験的機能。ローカル推論モデル（Sumi、ONNX INT8）による検出を組み込みルールに追加する。`dir` には `model.int8.onnx`・`tokenizer.json`・`sumi_labels.json`・`calibrator.json` を置く。`CGO_ENABLED=1 go build -tags ort` でビルドしたバイナリでのみ使え、配布バイナリでは終了コード `2` になる。ONNX Runtime の共有ライブラリは環境変数 `JP_PII_ORT_LIBRARY` か `dir` 内から探す。設計は [design-ai-detection.md](design-ai-detection.md) |
 | `--exit-zero` | 無効 | 検出があっても終了コード `0` を返す |
 | `--baseline <path>` | 未指定 | ベースラインファイルを読み込み、記録済みの検出を結果と終了コードから除外する |
 | `--update-baseline` | 無効 | 現在の検出内容でベースラインファイルを作成・追記して終了する |

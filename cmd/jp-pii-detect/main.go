@@ -17,6 +17,7 @@ import (
 	"github.com/baneido/jp-pii-detector/internal/config"
 	"github.com/baneido/jp-pii-detector/internal/detect"
 	"github.com/baneido/jp-pii-detector/internal/external"
+	"github.com/baneido/jp-pii-detector/internal/model"
 	"github.com/baneido/jp-pii-detector/internal/report"
 	"github.com/baneido/jp-pii-detector/internal/rule"
 	"github.com/baneido/jp-pii-detector/internal/source"
@@ -104,6 +105,11 @@ Scan flags:
                            （FN 分析用。json 出力の dropped 配列に生の値は含めない）
   --high-recall            偽陽性リスクの高い再現率重視ルールを有効化
   --name-roster            氏名だけが並ぶ名簿ファイルの判定を有効化
+  --model-dir <dir>        ローカル推論モデル（Sumi、ONNX）による検出を組み込みルールに
+                           追加する（試験的）。dir には model.int8.onnx・tokenizer.json・
+                           sumi_labels.json・calibrator.json を置く。-tags ort かつ
+                           cgo 有効でビルドしたバイナリでのみ使える。ONNX Runtime の
+                           共有ライブラリは JP_PII_ORT_LIBRARY か dir 内から探す
   --exit-zero              検出があっても終了コード 0 を返す
   --baseline <path>        ベースラインファイルを読み込み、記録済み（fingerprint が
                            一致）の検出を結果と終了コードから除外する。--staged /
@@ -161,6 +167,7 @@ func runScan(args []string) int {
 	explainDropped := fs.Bool("explain-dropped", false, "")
 	highRecall := fs.Bool("high-recall", false, "")
 	nameRoster := fs.Bool("name-roster", false, "")
+	modelDir := fs.String("model-dir", "", "")
 	exitZero := fs.Bool("exit-zero", false, "")
 	baselinePath := fs.String("baseline", "", "")
 	updateBaseline := fs.Bool("update-baseline", false, "")
@@ -255,6 +262,16 @@ func runScan(args []string) int {
 	if *explainDropped {
 		det.CollectDropped(true)
 	}
+	// モデルを読み込めないときは走査せずに失敗させる（モデルなしの走査を黙って
+	// 成功扱いにしない。docs/design-ai-detection.md §6.8）。
+	if *modelDir != "" {
+		rec, err := model.Open(*modelDir)
+		if err != nil {
+			return fail(fmt.Errorf("--model-dir: %w", err))
+		}
+		defer rec.Close()
+		det.SetModel(rec)
+	}
 
 	var findings []detect.Finding
 	var warnings []error
@@ -332,6 +349,11 @@ func runScan(args []string) int {
 	}
 	if err != nil {
 		return fail(err)
+	}
+	// モデルの推論エラーはファイルの読み取りエラーと同じく、走査が不完全な
+	// ことを示す警告として扱う（exit 2）。
+	if err := det.ModelError(); err != nil {
+		warnings = append(warnings, err)
 	}
 	// 個々のファイルの読み取りエラーは致命的にせず、収集済みの findings は
 	// 通常どおり出力する。ただし黙って exit 0 にすると走査が不完全なまま
