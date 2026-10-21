@@ -19,6 +19,10 @@ const ortLibraryEnv = "JP_PII_ORT_LIBRARY"
 // 置いたディレクトリ）のモデルを読み込む。ONNX Runtime の共有ライブラリは
 // JP_PII_ORT_LIBRARY、dir 内の libonnxruntime.*、システムの既定の検索パスの順に探す。
 func Open(dir string) (*Recognizer, error) {
+	// ONNX Runtime を読み込む前に、AMX を使わせないようにする（amx_linux_amd64.go）。
+	if err := disableAMX(); err != nil {
+		fmt.Fprintf(os.Stderr, "jp-pii-detector: 警告: AMX を無効にできませんでした（仮想マシンでは INT8 推論の結果が不安定になることがあります）: %v\n", err)
+	}
 	if lib := ortLibraryPath(dir); lib != "" {
 		ort.SetSharedLibraryPath(lib)
 	}
