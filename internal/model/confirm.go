@@ -73,6 +73,148 @@ func matchesRule(ruleID, value string) bool {
 	return false
 }
 
+// confirmSpan は 1 行に収まったスパン runes[ps:pe] を確かめ、報告するルール ID と
+// （必要なら狭めた）区間を返す。confirm（値だけを見る確認）に加え、次を補う。
+//
+//   - 口座番号: Sumi は「見本銀行 架空支店 普通 （7 桁の番号）」のように銀行名・支店・種別まで
+//     含めて BANK_ACCOUNT とすることが多く、数字列だけでないため confirm では落ちる。
+//     スパン自体が銀行の語を含み、確率が highProb 以上なら、スパン内の最後の数字列を
+//     口座番号の書式で確かめて報告する（モデルのスパンを周辺語の代わりに使う）。
+//   - 1 文字の姓: 「森さん」の「森」は nameShape（2 文字以上）で落ちる。直後に敬称が
+//     続き、確率が highProb 以上のときだけ残す（「森の中を歩いて」のような地の文は
+//     敬称が続かないので残らない）。
+//   - 組織名: Sumi は振込先の「フリーギンコウ」のような片仮名の銀行名・会社名を
+//     NAME とすることがある。銀行・会社を表す語を含む NAME は報告しない。
+//   - 語の一部: 「フリーギンコウ」の「ギン」のように、片仮名語や英字の識別子の途中だけを
+//     NAME としたスパンは報告しない（前後が同じ種類の文字に続いている）。
+//   - ローマ字の氏名: Sumi は「Taro Yamada」を EMAIL と付けることがある。@ を含まず、
+//     2 語がローマ字の姓・名の辞書に一致するときだけ氏名として報告する。
+//
+// 英字だけの氏名スパン（コード中の識別子 os, def など）は、ローマ字辞書に一致するか、
+// 確率が highProb 以上で「John Smith」のように大文字始まりの 2 語以上のときだけ報告する。
+func confirmSpan(sp span, runes []rune, ps, pe int) (ruleID string, start, end int, ok bool) {
+	value := string(runes[ps:pe])
+	switch {
+	case sp.typ == "BANK_ACCOUNT" && !numericShape(normalize.Line(value)):
+		if sp.prob < highProb || !bankWordRe.MatchString(value) {
+			return "", 0, 0, false
+		}
+		locs := digitRunRe.FindAllStringIndex(value, -1)
+		if len(locs) == 0 {
+			return "", 0, 0, false
+		}
+		last := locs[len(locs)-1]
+		ds := ps + len([]rune(value[:last[0]]))
+		de := ds + len([]rune(value[last[0]:last[1]]))
+		if !matchesRule("jp-bank-account", normalize.Line(string(runes[ds:de]))) {
+			return "", 0, 0, false
+		}
+		return "jp-bank-account", ds, de, true
+	case sp.typ == "NAME" && (orgWordRe.MatchString(value) || embeddedInWord(runes, ps, pe)):
+		return "", 0, 0, false
+	case sp.typ == "NAME" && pe-ps == 1:
+		if sp.prob >= highProb && unicode.Is(unicode.Han, runes[ps]) && honorificAt(runes, pe) {
+			return "person-name", ps, pe, true
+		}
+		return "", 0, 0, false
+	case sp.typ == "NAME" && isASCII(value):
+		if romajiName(value) || (sp.prob >= highProb && capitalizedWords(value)) {
+			return "person-name", ps, pe, true
+		}
+		return "", 0, 0, false
+	case sp.typ == "EMAIL" && !strings.Contains(value, "@") && romajiName(value):
+		return "person-name", ps, pe, true
+	}
+	id, ok := confirm(sp.typ, value)
+	return id, ps, pe, ok
+}
+
+// bankWordRe は口座のスパンが銀行の情報を含むことを示す語。
+var bankWordRe = regexp.MustCompile(`銀行|信金|信用金庫|信用組合|労働金庫|農協|ゆうちょ|支店|出張所|普通|当座|貯蓄|口座`)
+
+// embeddedInWord は runes[ps:pe] が片仮名語または英数字の識別子の途中にあるかを返す。
+// 漢字は「佐藤様」のように氏名の直後に漢字が続くのが普通なので対象にしない。
+func embeddedInWord(runes []rune, ps, pe int) bool {
+	same := func(a, b rune) bool {
+		switch {
+		case isKatakana(a):
+			return isKatakana(b)
+		case a < unicode.MaxASCII && (unicode.IsLetter(a) || unicode.IsDigit(a) || a == '_'):
+			return b < unicode.MaxASCII && (unicode.IsLetter(b) || unicode.IsDigit(b) || b == '_')
+		}
+		return false
+	}
+	return (ps > 0 && same(runes[ps], runes[ps-1])) || (pe < len(runes) && same(runes[pe-1], runes[pe]))
+}
+
+func isKatakana(r rune) bool { return unicode.Is(unicode.Katakana, r) || r == 'ー' }
+
+// orgWordRe は NAME のスパンが人名ではなく組織名であることを示す語（片仮名表記を含む）。
+var orgWordRe = regexp.MustCompile(`銀行|信用金庫|信用組合|株式会社|有限会社|合同会社|支店|ギンコウ|シンキン|シンヨウ|ロウキン|カブシキ|ユウゲン|ゴウドウ|ガイシヤ|ガイシャ|シテン|バンク`)
+
+// digitRunRe は数字列（全角を含む。区切りのハイフンは口座番号の書式側で確かめる）。
+var digitRunRe = regexp.MustCompile(`[0-9０-９][0-9０-９-]*[0-9０-９]`)
+
+// honorifics は 1 文字の姓の直後に続く敬称。
+var honorifics = []string{"さん", "様", "さま", "氏", "君", "くん", "ちゃん", "先生", "殿"}
+
+func honorificAt(runes []rune, pos int) bool {
+	rest := string(runes[pos:min(len(runes), pos+3)])
+	for _, h := range honorifics {
+		if strings.HasPrefix(rest, h) {
+			return true
+		}
+	}
+	return false
+}
+
+func isASCII(s string) bool {
+	for _, r := range s {
+		if r > unicode.MaxASCII {
+			return false
+		}
+	}
+	return true
+}
+
+// capitalizedWords は s が大文字で始まる 2 文字以上の英単語 2〜4 語だけからなるかを返す。
+func capitalizedWords(s string) bool {
+	f := strings.Fields(s)
+	if len(f) < 2 || len(f) > 4 {
+		return false
+	}
+	for _, w := range f {
+		if len(w) < 2 || !unicode.IsUpper(rune(w[0])) {
+			return false
+		}
+		for _, r := range w[1:] {
+			if !unicode.IsLower(r) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// romajiName は s が「姓 名」または「名 姓」の 2 語で、両方がローマ字の姓・名の辞書に
+// 一致するかを返す（先頭は大文字でも小文字でもよい）。
+func romajiName(s string) bool {
+	f := strings.Fields(s)
+	if len(f) != 2 {
+		return false
+	}
+	a, b := strings.ToLower(f[0]), strings.ToLower(f[1])
+	for _, w := range f {
+		for _, r := range w {
+			if !unicode.IsLetter(r) {
+				return false
+			}
+		}
+	}
+	return (dict.IsRomajiGivenName(a) && dict.IsRomajiSurname(b)) ||
+		(dict.IsRomajiSurname(a) && dict.IsRomajiGivenName(b))
+}
+
 // confirm はスパンの値 value（原文）とモデルの種別 typ から、報告するルール ID を
 // 返す。報告しないなら ok=false。
 func confirm(typ, value string) (ruleID string, ok bool) {
@@ -210,8 +352,9 @@ func toCandidates(runes []rune, spans []span) []external.Candidate {
 				pe--
 			}
 			if ps < pe {
-				value := string(runes[ps:pe])
-				if id, ok := confirm(sp.typ, value); ok {
+				if id, cs, ce, ok := confirmSpan(sp, runes, ps, pe); ok {
+					ps, pe := cs, ce
+					value := string(runes[ps:pe])
 					line := lineOf(ps)
 					out = append(out, external.Candidate{
 						RuleID:     id,
