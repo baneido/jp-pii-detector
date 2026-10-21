@@ -1,6 +1,8 @@
 package model
 
 import (
+	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -236,5 +238,19 @@ func TestRecognizeSecondWindowCoordinates(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Line != 101 || got[0].Column != 4 {
 		t.Errorf("got %+v", got)
+	}
+}
+
+func TestORTLibraryCandidates(t *testing.T) {
+	got := ortLibraryCandidates("m", "e", "linux")
+	want := []string{filepath.Join("m", "libonnxruntime.so"), filepath.Join("e", "lib", "libonnxruntime.so"), filepath.Join("e", "libonnxruntime.so")}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	if got := ortLibraryCandidates("m", "", "darwin"); !reflect.DeepEqual(got, []string{filepath.Join("m", "libonnxruntime.dylib")}) {
+		t.Fatalf("darwin without exeDir: %v", got)
+	}
+	if got := ortLibraryCandidates("m", "e", "windows")[1]; got != filepath.Join("e", "lib", "onnxruntime.dll") {
+		t.Fatalf("windows: %v", got)
 	}
 }

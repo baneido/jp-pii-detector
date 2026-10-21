@@ -225,3 +225,28 @@ func (r *Recognizer) argmax(logits []float32) (string, float64) {
 	}
 	return r.labels[best], 1 / sum
 }
+
+// ortLibraryName は ONNX Runtime の共有ライブラリのファイル名。
+func ortLibraryName(goos string) string {
+	switch goos {
+	case "darwin":
+		return "libonnxruntime.dylib"
+	case "windows":
+		return "onnxruntime.dll"
+	default:
+		return "libonnxruntime.so"
+	}
+}
+
+// ortLibraryCandidates は、ONNX Runtime の共有ライブラリを探す候補を優先順に返す。
+// モデルディレクトリ内、実行ファイルの隣の lib/、実行ファイルと同じディレクトリの順
+// （後の 2 つはモデル同梱ビルドの配置。docs/model-bundle.md）。exeDir が空なら
+// 後の 2 つは省く。
+func ortLibraryCandidates(dir, exeDir, goos string) []string {
+	name := ortLibraryName(goos)
+	c := []string{filepath.Join(dir, name)}
+	if exeDir != "" {
+		c = append(c, filepath.Join(exeDir, "lib", name), filepath.Join(exeDir, name))
+	}
+	return c
+}

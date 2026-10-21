@@ -112,6 +112,19 @@ go install github.com/baneido/jp-pii-detector/cmd/jp-pii-detect@latest
 docker run --rm -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.6.0
 ```
 
+### Sumi model bundle (experimental)
+
+Release assets `jp-pii-detect-sumi_<os>_<arch>.tar.gz` (linux/amd64, linux/arm64,
+darwin/arm64; windows/amd64 experimental) bundle the local
+[Sumi](https://huggingface.co/NagaYu/sumi-ja-pii) model (ONNX INT8, Apache-2.0)
+and ONNX Runtime (MIT), so model-based detection works right after extraction.
+Use `--no-model` to fall back to rules only. The archive is ~100MB and scanning
+is much slower than rules only. License texts and attribution (Sumi contributors;
+base model ModernBERT-Ja-130M, Copyright (c) 2025 SB Intuitions; training data
+NagaYu/sumi-ja-pii-corpus, CC BY-SA 4.0, not included) are in `NOTICE.md` and
+`licenses/` inside the archive. As the Sumi authors state, Sumi is not a
+compliance control and misses are certain. See [docs/model-bundle.md](docs/model-bundle.md).
+
 ## Usage
 
 ### CLI

@@ -1,0 +1,145 @@
+name: release-model
+# Sumi モデルと ONNX Runtime を同梱したビルド（jp-pii-detect-sumi_<os>_<arch>.tar.gz）を
+# 作り、リリースに添付する。従来の軽量バイナリ（CGO_ENABLED=0、release.yml）とは
+# 独立している。cgo でクロスコンパイルしないよう、OS/アーキテクチャごとのランナーで
+# ネイティブにビルドする。手順の本体は scripts/package-model-bundle.sh
+# （docs/model-bundle.md 参照）。
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '添付先の既存リリースのタグ（例: v0.4.0）。空ならアーティファクトとして保存するだけ'
+        required: false
+        type: string
+
+# 進行中のリリースを中断しないため cancel-in-progress は無効にする
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.tag }}
+  cancel-in-progress: false
+
+# 既定では権限を与えず、必要なジョブにのみ最小権限を付与する
+permissions: {}
+
+jobs:
+  build:
+    name: build (${{ matrix.goos }}/${{ matrix.goarch }})
+    # release.yml と同じく、ムービングメジャータグ（v0 など）の push は無視する。
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.ref_name, '.') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # glibc の要求を下げるため、Linux は古めの LTS でビルドする。
+          - goos: linux
+            goarch: amd64
+            runner: ubuntu-22.04
+            experimental: false
+          - goos: linux
+            goarch: arm64
+            runner: ubuntu-22.04-arm
+            experimental: false
+          - goos: darwin
+            goarch: arm64
+            runner: macos-14
+            experimental: false
+          # Windows はルールだけの配布物でもサポート外（CI でテストしていない）。
+          # 失敗してもほかのプラットフォームの公開を止めない。
+          - goos: windows
+            goarch: amd64
+            runner: windows-2022
+            experimental: true
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.experimental }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          # リリースの再現性確保とキャッシュポイズニング防止のためキャッシュを無効化
+          cache: false
+      - name: Build bundle
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -eu
+          if [ "$EVENT" = push ]; then
+            version="$REF_NAME"
+          elif [ -n "$INPUT_TAG" ]; then
+            version="$INPUT_TAG"
+          else
+            version="dev-${GITHUB_SHA:0:12}"
+          fi
+          # モデル（Hugging Face）と ONNX Runtime（GitHub Releases）はピン留めした
+          # リビジョン/版を取得し、SHA-256 を検証する（scripts/model-bundle.env）。
+          scripts/package-model-bundle.sh --version "$version" --out dist
+      - name: Smoke test (clean extract, dummy PII)
+        run: scripts/smoke-model-bundle.sh dist/jp-pii-detect-sumi_*.tar.gz
+      - name: Model tests (-tags ort)
+        env:
+          GOOS_: ${{ matrix.goos }}
+          GOARCH_: ${{ matrix.goarch }}
+        run: |
+          set -eu
+          stage="dist/jp-pii-detect-sumi_${GOOS_}_${GOARCH_}"
+          lib=$(find "$stage/lib" -type f | head -n 1)
+          JP_PII_MODEL_DIR="$PWD/$stage/model" JP_PII_ORT_LIBRARY="$PWD/$lib" \
+            CGO_ENABLED=1 go test -tags ort ./internal/model/ ./cmd/jp-pii-detect/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bundle-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/jp-pii-detect-sumi_*.tar.gz
+          # 中身は圧縮済み
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    name: publish
+    needs: build
+    if: ${{ github.event_name == 'push' || inputs.tag != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 既存リリースへのアセットのアップロードに必要
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: bundle-*
+          path: dist
+          merge-multiple: true
+      - name: Attach to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -eu
+          tag="$REF_NAME"
+          [ "$EVENT" = push ] || tag="$INPUT_TAG"
+          cd dist
+          # 軽量版の checksums.txt（Homebrew formula が参照）とは別のファイルにする。
+          sha256sum jp-pii-detect-sumi_*.tar.gz > checksums-model.txt
+          cat checksums-model.txt
+          # リリースの作成は release.yml が行う。作成を待ってから添付する（最大 30 分）。
+          for _ in $(seq 1 60); do
+            if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              gh release upload "$tag" jp-pii-detect-sumi_*.tar.gz checksums-model.txt \
+                --repo "$GITHUB_REPOSITORY" --clobber
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "::error::release $tag not found; run release.yml first" >&2
+          exit 1
