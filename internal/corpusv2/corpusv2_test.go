@@ -746,3 +746,125 @@ func TestUpgradePublishedV2JPYuchoAccountUpgradeIsNoOpWithSufficientNativeCovera
 		}
 	}
 }
+
+// roleLabelLegacyCase は #166 より前の person-name-high-recall 単独陽性
+// （担当ラベル形・敬称形）を模したケースを返す。氏名は自己走査で検出されない
+// よう実行時に組み立てる。
+func roleLabelLegacyCase(t *testing.T, id, prefix, suffix string) evalcase.Case {
+	t.Helper()
+	name := syntheticFullName()
+	line := prefix + name + suffix
+	start := utf8.RuneCountInString(prefix)
+	return evalcase.Case{
+		ID: id, SourceClass: "curated-v2", Line: line,
+		Want: []string{"person-name-high-recall"},
+		Spans: []evalcase.Span{{
+			RuleID: "person-name-high-recall", Line: 1,
+			Start: start, End: start + utf8.RuneCountInString(name),
+			WantConfidence: "medium",
+		}},
+	}
+}
+
+// TestUpgradePublishedV2ReassignsRoleLabelNameWant は reassignRoleLabelNameWant
+// （#166 の担当ラベル分離に伴う Want 帰属の読み替え）の述語の境界を固定する。
+func TestUpgradePublishedV2ReassignsRoleLabelNameWant(t *testing.T) {
+	low, err := newDetector(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	high, err := newDetector(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name        string
+		c           evalcase.Case
+		wantRewrite bool
+	}{
+		{"担当ラベル形は role-label へ書き換わる", roleLabelLegacyCase(t, "n1", "case_id=01 担当: ", ""), true},
+		{"宛名ラベル形も書き換わる", roleLabelLegacyCase(t, "n2", "宛名: ", ""), true},
+		{"敬称形は high-recall のまま", roleLabelLegacyCase(t, "n3", "case_id=03 ", "様"), false},
+		{"担当ラベル+敬称は敬称側でも拾えるため書き換えない", roleLabelLegacyCase(t, "n4", "担当: ", "様"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := cloneCases([]evalcase.Case{tt.c})[0]
+			got := reassignRoleLabelNameWant(&c, low, high)
+			if got != tt.wantRewrite {
+				t.Fatalf("rewrite = %t, want %t", got, tt.wantRewrite)
+			}
+			if !tt.wantRewrite {
+				if !reflect.DeepEqual(c, tt.c) {
+					t.Fatalf("対象外のケースが変更された: %+v", c)
+				}
+				return
+			}
+			if !reflect.DeepEqual(c.Want, []string{"person-name-role-label"}) {
+				t.Fatalf("Want = %v", c.Want)
+			}
+			if len(c.Spans) != 1 || c.Spans[0].RuleID != "person-name-role-label" ||
+				c.Spans[0].Start != tt.c.Spans[0].Start || c.Spans[0].End != tt.c.Spans[0].End {
+				t.Fatalf("Spans = %+v, original %+v", c.Spans, tt.c.Spans)
+			}
+			if reassignRoleLabelNameWant(&c, low, high) {
+				t.Fatal("書き換え後のケースに再適用できてしまう（冪等でない）")
+			}
+		})
+	}
+
+	multi := roleLabelLegacyCase(t, "n5", "担当: ", "")
+	multi.Want = append(multi.Want, "person-name")
+	before := cloneCases([]evalcase.Case{multi})[0]
+	if reassignRoleLabelNameWant(&multi, low, high) || !reflect.DeepEqual(multi, before) {
+		t.Fatal("複数 Want のケースは書き換えない")
+	}
+}
+
+// TestUpgradePublishedV2RefillsPersonNameCoverageAfterRoleLabelSplit は、
+// #166 より前の v2（high-recall 陽性がすべて担当ラベル形）を模したコーパスに
+// 対し、UpgradePublishedV2 が担当ラベル形を role-label へ移し、敬称形の
+// high-recall 陽性を補って、両ルールとも下限件数を満たすことを確認する。
+func TestUpgradePublishedV2RefillsPersonNameCoverageAfterRoleLabelSplit(t *testing.T) {
+	complete, _, err := Build([]evalcase.Case{{
+		ID: "legacy-negative-1", SourceClass: "legacy-curated", Line: "識別情報を含まない行",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var base []evalcase.Case
+	for _, c := range complete {
+		if hasWant(c, "person-name-high-recall") || hasWant(c, "person-name-role-label") {
+			continue
+		}
+		base = append(base, c)
+	}
+	for i := 0; i < MinPositiveCasesPerRule; i++ {
+		base = append(base, roleLabelLegacyCase(t,
+			fmt.Sprintf("v2-person-name-high-recall-%03d", i+1),
+			fmt.Sprintf("case_id=%02d 担当: ", i+1), ""))
+	}
+
+	got, err := UpgradePublishedV2(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := positiveCounts(got)
+	if counts["person-name-role-label"] != MinPositiveCasesPerRule ||
+		counts["person-name-high-recall"] != MinPositiveCasesPerRule {
+		t.Fatalf("counts role-label=%d high-recall=%d, want %d each",
+			counts["person-name-role-label"], counts["person-name-high-recall"], MinPositiveCasesPerRule)
+	}
+	for _, c := range got {
+		if hasWant(c, "person-name-high-recall") && strings.Contains(c.Line, "担当") {
+			t.Fatalf("担当ラベル形が high-recall に残っている: %s", c.ID)
+		}
+	}
+	again, err := UpgradePublishedV2(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(again, got) {
+		t.Fatal("UpgradePublishedV2 must be idempotent")
+	}
+}

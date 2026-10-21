@@ -29,6 +29,14 @@ func TestDatasetQuality(t *testing.T) {
 	}
 
 	// v2の契約: 高再現率を含む全ルールに10件以上の陽性を必須とする。
+	// ただし名簿ファイル判定（person-name-roster）は専用 opt-in で、公表3
+	// プロファイルのいずれも有効にしない（評価では非活性として扱う）ため、
+	// 陽性を置いても計測されない。未知ルール ID の検出（knownRules）には残し、
+	// 陽性件数の下限だけを対象外にする。
+	evaluatedOnlyByOptIn := map[string]bool{}
+	for _, id := range rule.NameRosterRuleIDs() {
+		evaluatedOnlyByOptIn[id] = true
+	}
 	const minPositiveCases = 10
 	stats := ComputeDatasetStats(cases)
 	perRule := map[string]int{}
@@ -41,6 +49,9 @@ func TestDatasetQuality(t *testing.T) {
 	}
 	sort.Strings(ids)
 	for _, id := range ids {
+		if evaluatedOnlyByOptIn[id] {
+			continue
+		}
 		if perRule[id] < minPositiveCases {
 			t.Errorf("ルール %q の陽性ケース数が %d 件（最低 %d 件）", id, perRule[id], minPositiveCases)
 		}

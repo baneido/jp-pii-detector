@@ -959,3 +959,23 @@ func writeStratifiedTable(b *strings.Builder, heading, keyLabel, desc string, sc
 	fmt.Fprintf(b, "| **全体（マイクロ平均）** | **%.2f** | **%.2f** | **%.2f** | %d | %d | %d |\n",
 		total.F1, total.Precision, total.Recall, total.TP, total.FP, total.FN)
 }
+
+// TestEvaluateCasesTreatsNameRosterAsInactive は、評価の検出器が有効にしない
+// 名簿ファイル判定（person-name-roster）の期待を FN として数えないことを確認する。
+func TestEvaluateCasesTreatsNameRosterAsInactive(t *testing.T) {
+	for _, opts := range []Options{{MinConfidence: "low"}, {MinConfidence: "medium", HighRecall: true}} {
+		results, err := EvaluateCasesWithOptions([]Case{{
+			File:    "roster.txt",
+			Content: "識別情報を含まない行\n別の行",
+			Spans:   []Span{{RuleID: "person-name-roster", Line: 1, Start: 0, End: 3}},
+		}}, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range results {
+			if r.RuleID == "person-name-roster" {
+				t.Fatalf("opts=%+v: person-name-roster が評価対象になっている: %+v", opts, r)
+			}
+		}
+	}
+}
