@@ -27,4 +27,6 @@ paths = [
   "^pii-fixtures\\.json$",
   # Presidio 連携アダプタのサンプル/デモ（架空の PII を含む）
   "^integrations/",
+  # モデル同梱ビルドのスモークテスト（架空の PII を含む）
+  "^scripts/smoke-model-bundle\\.sh$",
 ]

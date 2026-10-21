@@ -109,7 +109,9 @@ Scan flags:
                            追加する（試験的）。dir には model.int8.onnx・tokenizer.json・
                            sumi_labels.json・calibrator.json を置く。-tags ort かつ
                            cgo 有効でビルドしたバイナリでのみ使える。ONNX Runtime の
-                           共有ライブラリは JP_PII_ORT_LIBRARY か dir 内から探す
+                           共有ライブラリは JP_PII_ORT_LIBRARY か dir 内から探す。
+                           モデル同梱ビルドでは未指定でも実行ファイルの隣の model/ を使う
+  --no-model               モデル同梱ビルドでもモデルを使わず組み込みルールだけで走査する
   --exit-zero              検出があっても終了コード 0 を返す
   --baseline <path>        ベースラインファイルを読み込み、記録済み（fingerprint が
                            一致）の検出を結果と終了コードから除外する。--staged /
@@ -143,6 +145,9 @@ func main() {
 		os.Exit(runRules(os.Args[2:]))
 	case "version", "--version", "-version":
 		fmt.Println(resolveVersion())
+		if bundleInfo != "" {
+			fmt.Println(bundleInfo)
+		}
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 	default:
@@ -168,6 +173,7 @@ func runScan(args []string) int {
 	highRecall := fs.Bool("high-recall", false, "")
 	nameRoster := fs.Bool("name-roster", false, "")
 	modelDir := fs.String("model-dir", "", "")
+	noModel := fs.Bool("no-model", false, "")
 	exitZero := fs.Bool("exit-zero", false, "")
 	baselinePath := fs.String("baseline", "", "")
 	updateBaseline := fs.Bool("update-baseline", false, "")
@@ -264,9 +270,17 @@ func runScan(args []string) int {
 	}
 	// モデルを読み込めないときは走査せずに失敗させる（モデルなしの走査を黙って
 	// 成功扱いにしない。docs/design-ai-detection.md §6.8）。
-	if *modelDir != "" {
-		rec, err := model.Open(*modelDir)
+	dir, err := resolveModelDir(*modelDir, *noModel, bundledModelDir, osExecutable)
+	if err != nil {
+		return fail(fmt.Errorf("--model-dir: %w", err))
+	}
+	if dir != "" {
+		rec, err := model.Open(dir)
 		if err != nil {
+			if *modelDir == "" {
+				// 同梱の既定モデルを読めないとき。--no-model で回避できることを示す。
+				return fail(fmt.Errorf("同梱モデル（%s）: %w（モデルなしで走査するには --no-model を指定してください）", dir, err))
+			}
 			return fail(fmt.Errorf("--model-dir: %w", err))
 		}
 		defer rec.Close()

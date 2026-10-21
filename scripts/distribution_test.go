@@ -1085,3 +1085,104 @@ func TestReadmeDocumentsHomebrewInstall(t *testing.T) {
 		t.Fatalf("README should document the Homebrew install command")
 	}
 }
+
+// モデル同梱ビルドは、軽量版（release.yml）とは別のワークフローで、OS/アーキテクチャ
+// ごとのランナーでネイティブにビルドし、スモークテストを通してから既存リリースに添付する。
+func TestModelReleaseWorkflowBuildsNativeBundles(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), ".github", "workflows", "release-model.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"'v*'",
+		"workflow_dispatch:",
+		"contains(github.ref_name, '.')",
+		"runner: ubuntu-22.04\n",
+		"runner: ubuntu-22.04-arm",
+		"runner: macos-14",
+		"scripts/package-model-bundle.sh",
+		"scripts/smoke-model-bundle.sh",
+		"go test -tags ort",
+		"checksums-model.txt",
+		"gh release upload",
+		"permissions: {}",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("release-model workflow missing %q", want)
+		}
+	}
+	// リリースの作成は release.yml だけが行う（同時に作成して競合しないように）。
+	if strings.Contains(text, "gh release create") {
+		t.Fatal("release-model workflow must not create releases; release.yml owns creation")
+	}
+	// 軽量版の checksums.txt（Homebrew formula が参照）を上書きしない。
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		if regexp.MustCompile(`(^|[\s/])checksums\.txt`).MatchString(line) {
+			t.Fatalf("release-model workflow must not touch checksums.txt: %q", line)
+		}
+	}
+}
+
+// 同梱物のピン留めは、全ファイル・全プラットフォームについて SHA-256 を持つ。
+func TestModelBundlePinsHaveSHA256(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), "scripts", "model-bundle.env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	vals := map[string]string{}
+	for _, line := range strings.Split(string(data), "\n") {
+		if k, v, ok := strings.Cut(line, "="); ok && !strings.HasPrefix(line, "#") {
+			vals[k] = v
+		}
+	}
+	if !isCommitSHA(vals["SUMI_REVISION"]) {
+		t.Fatalf("SUMI_REVISION must be a 40-hex commit SHA, got %q", vals["SUMI_REVISION"])
+	}
+	sha := regexp.MustCompile(`^[0-9a-f]{64}$`)
+	for _, k := range []string{
+		"SUMI_SHA256_model_int8_onnx", "SUMI_SHA256_tokenizer_json",
+		"SUMI_SHA256_sumi_labels_json", "SUMI_SHA256_calibrator_json",
+		"ORT_SHA256_linux_x64", "ORT_SHA256_linux_aarch64",
+		"ORT_SHA256_osx_arm64", "ORT_SHA256_win_x64",
+	} {
+		if !sha.MatchString(vals[k]) {
+			t.Fatalf("%s must be a SHA-256 hex digest, got %q", k, vals[k])
+		}
+	}
+}
+
+// 同梱物の帰属表示に、ライセンス上必要な記載と Sumi の免責が残っていること。
+func TestModelBundleNoticeKeepsAttributionAndDisclaimer(t *testing.T) {
+	dir := filepath.Join(repoRoot(t), "third_party", "model-bundle")
+	notice, err := os.ReadFile(filepath.Join(dir, "NOTICE.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Apache License 2.0", "改変せずに", "Copyright (c) 2025 SB Intuitions",
+		"ThirdPartyNotices.txt", "NagaYu/sumi-ja-pii-corpus", "CC BY-SA 4.0",
+		"Sumi is not a\n  compliance control", "@@SUMI_REVISION@@", "@@ORT_VERSION@@",
+	} {
+		if !strings.Contains(string(notice), want) {
+			t.Fatalf("NOTICE.md missing %q", want)
+		}
+	}
+	apache, err := os.ReadFile(filepath.Join(dir, "Apache-2.0.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(apache), "TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION") {
+		t.Fatal("Apache-2.0.txt must contain the full license text")
+	}
+	mit, err := os.ReadFile(filepath.Join(dir, "modernbert-ja-130m.LICENSE"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(mit), "Copyright (c) 2025 SB Intuitions") {
+		t.Fatal("modernbert-ja-130m.LICENSE must keep the copyright notice")
+	}
+}

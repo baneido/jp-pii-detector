@@ -17,7 +17,8 @@ const ortLibraryEnv = "JP_PII_ORT_LIBRARY"
 
 // Open は dir（model.int8.onnx・tokenizer.json・sumi_labels.json・calibrator.json を
 // 置いたディレクトリ）のモデルを読み込む。ONNX Runtime の共有ライブラリは
-// JP_PII_ORT_LIBRARY、dir 内の libonnxruntime.*、システムの既定の検索パスの順に探す。
+// JP_PII_ORT_LIBRARY、dir 内、実行ファイルの隣の lib/ と実行ファイルと同じ
+// ディレクトリ（モデル同梱ビルドの配置）、システムの既定の検索パスの順に探す。
 func Open(dir string) (*Recognizer, error) {
 	// ONNX Runtime を読み込む前に、AMX を使わせないようにする（amx_linux_amd64.go）。
 	if err := disableAMX(); err != nil {
@@ -94,12 +95,17 @@ func ortLibraryPath(dir string) string {
 	if p := os.Getenv(ortLibraryEnv); p != "" {
 		return p
 	}
-	name := map[string]string{"darwin": "libonnxruntime.dylib", "windows": "onnxruntime.dll"}[runtime.GOOS]
-	if name == "" {
-		name = "libonnxruntime.so"
+	exeDir := ""
+	if exe, err := os.Executable(); err == nil {
+		if real, err := filepath.EvalSymlinks(exe); err == nil {
+			exe = real
+		}
+		exeDir = filepath.Dir(exe)
 	}
-	if p := filepath.Join(dir, name); fileExists(p) {
-		return p
+	for _, p := range ortLibraryCandidates(dir, exeDir, runtime.GOOS) {
+		if fileExists(p) {
+			return p
+		}
 	}
 	return ""
 }

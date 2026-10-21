@@ -1,5 +1,9 @@
 # Third-Party Notices
 
+The Sumi model bundle (`jp-pii-detect-sumi_<os>_<arch>.tar.gz`) additionally
+contains the Sumi model (Apache-2.0), ONNX Runtime (MIT) and their notices; see
+[`third_party/model-bundle/NOTICE.md`](third_party/model-bundle/NOTICE.md).
+
 ## japanese-personal-name-dataset
 
 This repository includes derived dictionary entries from
