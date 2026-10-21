@@ -130,7 +130,8 @@ jobs:
 
           # PR 本文は静的なテンプレート（コミット済み）を使う。シェルの引用と無縁で、
           # Markdown のコードスパンもそのまま表示される。
-          if gh pr view "$POSTAL_BRANCH" >/dev/null 2>&1; then
+          # gh pr view <branch> はマージ済み・クローズ済みの PR も返すため、open な PR だけを探す
+          if [ -n "$(gh pr list --head "$POSTAL_BRANCH" --base main --state open --json url -q '.[0].url')" ]; then
             echo "既存 PR を更新した（${POSTAL_BRANCH}）。"
           else
             gh pr create --base main --head "$POSTAL_BRANCH" \

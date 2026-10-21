@@ -184,7 +184,8 @@ jobs:
           git commit -m "jp-pii-detect ${version}"
           git push -f origin "$branch"
           export GH_TOKEN="$TAP_TOKEN"
-          if gh pr view "$branch" --repo baneido/homebrew-tap >/dev/null 2>&1; then
+          # gh pr view <branch> はマージ済み・クローズ済みの PR も返すため、open な PR だけを探す
+          if [ -n "$(gh pr list --repo baneido/homebrew-tap --head "$branch" --base main --state open --json url -q '.[0].url')" ]; then
             echo "PR for ${branch} already exists; branch updated"
           else
             gh pr create --repo baneido/homebrew-tap --base main --head "$branch" \
@@ -269,7 +270,8 @@ jobs:
           git checkout -b "$branch"
           git commit -am "docs: バージョン表記を ${TAG} に更新"
           git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$branch"
-          if gh pr view "$branch" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+          # gh pr view <branch> はマージ済み・クローズ済みの PR も返すため、open な PR だけを探す
+          if [ -n "$(gh pr list --repo "${GITHUB_REPOSITORY}" --head "$branch" --base main --state open --json url -q '.[0].url')" ]; then
             echo "PR for ${branch} already exists; branch updated"
           else
             gh pr create --repo "${GITHUB_REPOSITORY}" --base main --head "$branch" \

@@ -131,15 +131,17 @@ jobs:
             -e "s|__RUN_URL__|${run_url}|g" \
             .github/accuracy-pr-body.md > "$body_file"
 
-          if gh pr view "$ACCURACY_BRANCH" >/dev/null 2>&1; then
-            gh pr edit "$ACCURACY_BRANCH" --title "$title" --body-file "$body_file"
+          # gh pr view <branch> はマージ済み・クローズ済みの PR も返すため、open な PR だけを探す
+          open_pr=$(gh pr list --head "$ACCURACY_BRANCH" --base main --state open --json url -q '.[0].url')
+          if [ -n "$open_pr" ]; then
+            gh pr edit "$open_pr" --title "$title" --body-file "$body_file"
             echo "既存 PR を更新した（${ACCURACY_BRANCH}）。"
-            pr_url=$(gh pr view "$ACCURACY_BRANCH" --json url -q .url)
+            pr_url="$open_pr"
           else
             gh pr create --base main --head "$ACCURACY_BRANCH" \
               --title "$title" --body-file "$body_file"
             echo "PR を作成した（${ACCURACY_BRANCH}）。"
-            pr_url=$(gh pr view "$ACCURACY_BRANCH" --json url -q .url)
+            pr_url=$(gh pr list --head "$ACCURACY_BRANCH" --base main --state open --json url -q '.[0].url')
           fi
           {
             echo "### golden の差分を検出、PR を作成/更新しました"
