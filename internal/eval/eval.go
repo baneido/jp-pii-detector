@@ -173,7 +173,16 @@ func EvaluateCasesStratifiedWithOptions(cases []Case, opts Options) (Stratified,
 	for _, id := range rule.HighRecallRuleIDs() {
 		highRecallIDs[id] = true
 	}
-	activeRule := func(id string) bool { return opts.HighRecall || !highRecallIDs[id] }
+	// 名簿ファイル判定（name_roster）は高再現率とは独立した opt-in で、この評価の
+	// 検出器は有効にしない（上の config.Parse 参照）。期待だけを数えると必ず FN に
+	// なるため、高再現率ルールを無効にしたプロファイルと同じく非活性として扱う。
+	nameRosterIDs := map[string]bool{}
+	for _, id := range rule.NameRosterRuleIDs() {
+		nameRosterIDs[id] = true
+	}
+	activeRule := func(id string) bool {
+		return !nameRosterIDs[id] && (opts.HighRecall || !highRecallIDs[id])
+	}
 	for _, c := range cases {
 		// Want・Spans がともに空のケースは陰性（何も検出されないべき）として
 		// 母数に数える。全ルール共通の母数のため、ケースループの外で

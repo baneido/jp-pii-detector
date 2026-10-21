@@ -126,6 +126,7 @@ func UpgradePublishedV2(input []evalcase.Case) ([]evalcase.Case, error) {
 		reclassifyKnownTestPAN(&cases[i])
 		reassignLabeledNoPrefectureAddressWant(&cases[i])
 		reclassifyChecksumInvalidYucho(&cases[i])
+		reassignRoleLabelNameWant(&cases[i], low, high)
 	}
 	// この互換migrationで不足しうるルールだけを補い、他ルールの
 	// データ品質不備を暗黙に修復しない。jp-address-high-recallは、上の
@@ -139,9 +140,22 @@ func UpgradePublishedV2(input []evalcase.Case) ([]evalcase.Case, error) {
 	// 衝突しない。既にMinPositiveCasesPerRule
 	// 以上あるコーパスに対してはfillPositiveCoverageが何も追加しないため、
 	// このルールを常にidsへ含めても既存の合成陽性件数は変わらない。
+	//
+	// person-name-role-label / person-name-high-recall も同じ理由で加える:
+	// reassignRoleLabelNameWant が旧 person-name-high-recall の担当ラベル形陽性を
+	// person-name-role-label へ帰属し直すため、role-label 側は（native 陽性が
+	// 足りなければ）不足しうるし、high-recall 側は担当ラベル形を失った分だけ
+	// 不足しうる。合成陽性は #166 以降、high-recall は敬称付きの形、role-label は
+	// 担当ラベル形で生成する（positiveCandidates 参照）ため、この読み替えとは
+	// 衝突しない。
+	//
+	// person-name-roster はここへ加えない。名簿ファイル判定は専用 opt-in
+	// （[rules] name_roster）で、公表3プロファイルのいずれも有効にしないため、
+	// 陽性を補っても評価されない（internal/eval の activeRule 参照）。
 	upgradeRuleIDs := []string{
 		"credit-card", "email-address-confusable", "email-address-eai",
 		"jp-address-high-recall", "jp-yucho-account",
+		"person-name-high-recall", "person-name-role-label",
 	}
 	if _, err := fillPositiveCoverage(&cases, seed, upgradeRuleIDs, low, high); err != nil {
 		return nil, err
@@ -214,6 +228,80 @@ func reassignLabeledNoPrefectureAddressWant(c *evalcase.Case) bool {
 		if c.Spans[i].RuleID == "jp-address-high-recall" {
 			c.Spans[i].RuleID = "jp-address"
 		}
+	}
+	return true
+}
+
+// reassignRoleLabelNameWant は、旧 person-name-high-recall 単独陽性ケースの
+// うち、#166 で既定ルール person-name-role-label へ分離された担当者・宛名・
+// 連絡先ラベル形（「担当: <氏名>」等）を、person-name-role-label の陽性へ
+// 帰属し直す（true を返す）。対象外なら false を返し、c は変更しない。
+//
+// なぜコードで読み替えるのか（reassignLabeledNoPrefectureAddressWant と同じ原理）:
+// #166 より前は担当ラベルと敬称アンカーが同じ person-name-high-recall にあり、
+// private-eval-v2（GCS 管理の固定 generation）の該当陽性は Want がそのルールに
+// 固定されている。#166 で担当ラベルを既定ルールへ分離した結果、同じ値は
+// person-name-role-label として検出されるようになり、high-recall プロファイルでは
+// person-name-high-recall の FN と person-name-role-label の FP が対になって発生し、
+// low/medium プロファイルでは（high-recall の期待が非活性のため）陰性扱いの行に
+// role-label の FP が出る。検出の変化は意図どおりで、精度劣化ではなく帰属衝突である。
+//
+// 述語（すべて満たす場合だけ書き換える）:
+//  1. c.Want がちょうど 1 要素で "person-name-high-recall"（複数ルールの陽性は
+//     安全側で対象外）。
+//  2. c が Line 入力（Content/Diff は対象外。reassignLabeledNoPrefectureAddressWant
+//     と同じ理由）。
+//  3. c.Spans が 1 件以上あり、すべて RuleID == "person-name-high-recall"。
+//  4. 既定ルールの検出器（low）が、各 span とちょうど同じ位置に
+//     person-name-role-label を検出する。
+//  5. 高再現率の検出器（high）が、その行に person-name-high-recall を 1 件も
+//     検出しない（敬称アンカー側でも拾える値は帰属を動かさない）。
+//
+// 判定は internal/rule の正規表現・辞書ゲートを再実装せず、実際の検出器の
+// 出力を単一の情報源にする。乱数・時刻を使わないため決定的で、書き換え後の
+// ケースは述語 1 を満たさなくなるので冪等。
+func reassignRoleLabelNameWant(c *evalcase.Case, low, high *detect.Detector) bool {
+	const from, to = "person-name-high-recall", "person-name-role-label"
+	if len(c.Want) != 1 || c.Want[0] != from {
+		return false
+	}
+	if c.Line == "" || c.Content != "" || len(c.Diff) > 0 {
+		return false
+	}
+	if len(c.Spans) == 0 {
+		return false
+	}
+	for _, span := range c.Spans {
+		if span.RuleID != from {
+			return false
+		}
+	}
+	for _, f := range scanCase(high, *c) {
+		if f.RuleID == from {
+			return false
+		}
+	}
+	type pos struct{ line, start, end int }
+	roleLabel := map[pos]bool{}
+	for _, f := range scanCase(low, *c) {
+		if f.RuleID != to {
+			continue
+		}
+		start := f.Column - 1
+		roleLabel[pos{f.Line, start, start + utf8.RuneCountInString(f.Match)}] = true
+	}
+	for _, span := range c.Spans {
+		line := span.Line
+		if line == 0 {
+			line = 1
+		}
+		if !roleLabel[pos{line, span.Start, span.End}] {
+			return false
+		}
+	}
+	c.Want = []string{to}
+	for i := range c.Spans {
+		c.Spans[i].RuleID = to
 	}
 	return true
 }

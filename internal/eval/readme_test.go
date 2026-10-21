@@ -37,6 +37,7 @@ var readmeRow = map[string]string{
 	"jp-invoice-number":       "インボイス登録番号",
 	"jp-birthdate":            "生年月日",
 	"person-name":             "氏名",
+	"person-name-role-label":  "氏名（担当者・宛名ラベル）",
 }
 
 // readmeRowEN は英語版 README の Supported PII 表の行ラベル（Type 列）とルール ID の対応。
@@ -61,6 +62,7 @@ var readmeRowEN = map[string]string{
 	"jp-invoice-number":       "Qualified invoice issuer number",
 	"jp-birthdate":            "Date of birth",
 	"person-name":             "Person name",
+	"person-name-role-label":  "Person name (contact/addressee label)",
 }
 
 var (
