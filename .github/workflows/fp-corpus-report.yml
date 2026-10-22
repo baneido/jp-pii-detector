@@ -32,8 +32,9 @@ jobs:
     # workflow_dispatch で任意ブランチの workflow を OIDC 付きで動かせないようにする。
     if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
     runs-on: ubuntu-latest
-    # コーパスのクローン + スキャンは自リポジトリの CI より時間がかかるため長めに確保する。
-    timeout-minutes: 45
+    # コーパスのクローン + スキャン（既定と --high-recall の 2 回）は自リポジトリの CI より
+    # 時間がかかるため長めに確保する。
+    timeout-minutes: 90
     permissions:
       contents: read
       id-token: write # GCP Workload Identity Federation（OIDC）に必要（結果保存用。任意）
@@ -70,13 +71,33 @@ jobs:
         run: |
           set -eu
           reports_dir="$RUNNER_TEMP/reports"
-          mkdir -p "$reports_dir"
+          reports_hr_dir="$RUNNER_TEMP/reports-high-recall"
+          mkdir -p "$reports_dir" "$reports_hr_dir"
 
           # name|git-url|commit-sha  # タグ（参考コメント）
+          # 言語・種別の偏りを減らすため、Go / C / TypeScript に加えて Python・JS・Java・
+          # Rust・設定（YAML/JSON/TOML）中心のプロジェクトと、日本語の文書・日本語処理系を
+          # 入れている（#71 の拡張）。実機のログを集めたデータセット（loghub 等）は、利用者名や
+          # メールアドレスなど実在の個人情報を含みうるので入れない（ログ書式の偽陽性は
+          # internal/rule のダミー値のテストで固定する）。
           corpora='
           go|https://github.com/golang/go.git|28622c19591d95c9a83f706f2ed1b303d58da85f
           curl|https://github.com/curl/curl.git|3f00a2f6fa97f7721b65606954aac979dcb6caac
           typescript|https://github.com/microsoft/TypeScript.git|050880ce59e30b356b686bd3144efe24f875ebc8
+          django|https://github.com/django/django.git|549605de8c7834a0e62c42ad651d9285382c9d4a
+          requests|https://github.com/psf/requests.git|611c6162cbc4ac2020a2f91c7cfa4f3abf9bbb60
+          express|https://github.com/expressjs/express.git|0dee2c52c7c873498f8ed7d8ee4ddd0a04d3ada8
+          vue-core|https://github.com/vuejs/core.git|0ff253bfba3ee8d3d65448bd44ad890fd01b0ecd
+          guava|https://github.com/google/guava.git|ad73fbb9beff220aa26390630724855ef92fc50b
+          ripgrep|https://github.com/BurntSushi/ripgrep.git|3fce3b5bb0236da2df6d99672afb8a719642eca7
+          tokio|https://github.com/tokio-rs/tokio.git|17638a0df2254515eabc15ae3f6e9538c185a1ce
+          prometheus|https://github.com/prometheus/prometheus.git|22c287a36a6f8ee2a605c4bde68208101dddbd55
+          ansible|https://github.com/ansible/ansible.git|676b4deb47b46dbb4187a3de35da5223810b8cc9
+          ja-react-dev|https://github.com/reactjs/ja.react.dev.git|356741e6e8311f6fbcab19abee7d6ca2388fe979
+          railsguides-jp|https://github.com/yasslab/railsguides.jp.git|b67c8b2711b4d8bfb0cedcab25eb9b1c76f1e7c6
+          vue-docs-ja|https://github.com/vuejs-translations/docs-ja.git|edc1273e61d3f46668bd78b29d18ef04adcf5138
+          sudachi|https://github.com/WorksApplications/Sudachi.git|434f31d8af6ef99eee97c57317e5f097dfdfe561
+          kagome|https://github.com/ikawaha/kagome.git|9434980ca5116c091c55f63cd9c47d00abcde2f9
           '
 
           echo "$corpora" | while IFS='|' read -r name url sha; do
@@ -94,15 +115,18 @@ jobs:
             # --exit-zero: findings があっても以降の集計処理まで到達させる。
             # 既定でマスクされた match 値のみを含む（--unmask は付けない）。
             "$RUNNER_TEMP/jp-pii-detect" scan --format json --exit-zero "$dir" > "$findings_json"
-
             scripts/fp-corpus-report.sh "$name" "$dir" "$findings_json" > "$reports_dir/${name}.json"
+
+            # 高再現率プロファイル（--high-recall）も同じコーパスで測る（別集計）。
+            "$RUNNER_TEMP/jp-pii-detect" scan --format json --exit-zero --high-recall "$dir" > "$findings_json"
+            scripts/fp-corpus-report.sh "$name" "$dir" "$findings_json" > "$reports_hr_dir/${name}.json"
 
             # 生値・マスク値を含みうる中間物は残さない（集計結果のみ次段へ渡す）。
             rm -rf "$dir" "$findings_json"
             echo "::endgroup::"
           done
 
-          find "$reports_dir" -name '*.json' | sort
+          find "$reports_dir" "$reports_hr_dir" -name '*.json' | sort
 
       # 複数コーパスの集計を 1 つにまとめる。
       # detail.json: コーパス名付きの内訳（GCS 非公開バケットにのみ保存）。
@@ -113,53 +137,83 @@ jobs:
         run: |
           set -eu
           reports_dir="$RUNNER_TEMP/reports"
+          reports_hr_dir="$RUNNER_TEMP/reports-high-recall"
 
           jq -s '.' "$reports_dir"/*.json > "$RUNNER_TEMP/detail.json"
+          jq -s '.' "$reports_hr_dir"/*.json > "$RUNNER_TEMP/detail-high-recall.json"
 
-          jq -s '
-            (map(.physical_lines) | add) as $lines
-            | (map(.mloc) | add) as $mloc
-            | (map(.findings_total) | add) as $total
-            | {
-                generated_at: (now | todate),
-                corpora_count: length,
-                total_physical_lines: $lines,
-                total_mloc: $mloc,
-                total_findings: $total,
-                findings_per_mloc: (if $mloc > 0 then ($total / $mloc) else null end),
-                by_rule: (
-                  map(.by_rule[])
-                  | group_by(.rule_id)
-                  | map({
-                      rule_id: .[0].rule_id,
-                      count: (map(.count) | add),
-                      per_mloc: (if $mloc > 0 then ((map(.count) | add) / $mloc) else null end)
-                    })
-                  | sort_by(-.count)
-                )
-              }
-          ' "$reports_dir"/*.json > "$RUNNER_TEMP/summary.json"
+          # findings_total には著作者メタデータ（attribution）も含む（前回比較の互換のため
+          # 従来どおり）。偽陽性率は fp_total / fp_per_mloc（attribution を除く）で見る。
+          merge() {
+            jq -s '
+              (map(.physical_lines) | add) as $lines
+              | (map(.mloc) | add) as $mloc
+              | (map(.findings_total) | add) as $total
+              | (map(.attribution_total // 0) | add) as $attr
+              | ($total - $attr) as $fp
+              | {
+                  generated_at: (now | todate),
+                  corpora_count: length,
+                  total_physical_lines: $lines,
+                  total_mloc: $mloc,
+                  total_findings: $total,
+                  findings_per_mloc: (if $mloc > 0 then ($total / $mloc) else null end),
+                  total_attribution: $attr,
+                  total_fp: $fp,
+                  fp_per_mloc: (if $mloc > 0 then ($fp / $mloc) else null end),
+                  by_rule: (
+                    map(.by_rule[])
+                    | group_by(.rule_id)
+                    | map(
+                        (map(.count) | add) as $c
+                        | (map(.attribution // 0) | add) as $a
+                        | {
+                            rule_id: .[0].rule_id,
+                            count: $c,
+                            per_mloc: (if $mloc > 0 then ($c / $mloc) else null end),
+                            attribution: $a,
+                            fp: ($c - $a),
+                            fp_per_mloc: (if $mloc > 0 then (($c - $a) / $mloc) else null end)
+                          })
+                    | sort_by(-.count)
+                  )
+                }
+            ' "$1"/*.json
+          }
+          merge "$reports_dir" > "$RUNNER_TEMP/summary.json"
+          merge "$reports_hr_dir" > "$RUNNER_TEMP/summary-high-recall.json"
 
-          {
-            echo '# fp-corpus-report'
-            echo
-            jq -r '
+          to_md() {
+            jq -r --arg title "$2" '
+              "## " + $title,
+              "",
               "- generated_at: " + .generated_at,
               "- corpora_count: " + (.corpora_count | tostring),
               "- total_physical_lines: " + (.total_physical_lines | tostring),
               "- total_mloc: " + (.total_mloc | tostring),
               "- total_findings: " + (.total_findings | tostring),
-              "- findings_per_mloc: " + (.findings_per_mloc | tostring),
+              "- total_attribution（著作者メタデータ。偽陽性に数えない）: " + (.total_attribution | tostring),
+              "- total_fp: " + (.total_fp | tostring),
+              "- fp_per_mloc: " + (.fp_per_mloc | tostring),
               "",
-              "| rule_id | count | per_mloc |",
-              "|---|---|---|",
-              (.by_rule[] | "| " + .rule_id + " | " + (.count | tostring) + " | " + (.per_mloc | tostring) + " |")
-            ' "$RUNNER_TEMP/summary.json"
+              "| rule_id | count | attribution | fp | fp_per_mloc |",
+              "|---|---:|---:|---:|---:|",
+              (.by_rule[] | "| " + .rule_id + " | " + (.count | tostring) + " | " + (.attribution | tostring) + " | " + (.fp | tostring) + " | " + (.fp_per_mloc | tostring) + " |"),
+              ""
+            ' "$1"
+          }
+          {
+            echo '# fp-corpus-report'
+            echo
+            to_md "$RUNNER_TEMP/summary.json" '既定プロファイル'
+            to_md "$RUNNER_TEMP/summary-high-recall.json" '高再現率プロファイル（--high-recall）'
           } > "$RUNNER_TEMP/summary.md"
 
           cat "$RUNNER_TEMP/summary.md" >> "$GITHUB_STEP_SUMMARY"
           echo "--- summary (anonymized) ---"
           cat "$RUNNER_TEMP/summary.json"
+          echo "--- summary high-recall (anonymized) ---"
+          cat "$RUNNER_TEMP/summary-high-recall.json"
 
       # 3 変数はすべて設定するか、すべて未設定にする。部分設定を黙って bootstrap と
       # 解釈すると履歴欠損を見逃すため、設定不整合はエラーにする。
@@ -266,6 +320,8 @@ jobs:
           gcloud storage cp "$RUNNER_TEMP/detail.json" "$prefix/${run_id}-detail.json" --if-generation-match=0
           gcloud storage cp "$RUNNER_TEMP/summary.json" "$prefix/${run_id}-summary.json" --if-generation-match=0
           gcloud storage cp "$RUNNER_TEMP/summary.md" "$prefix/${run_id}-summary.md" --if-generation-match=0
+          gcloud storage cp "$RUNNER_TEMP/detail-high-recall.json" "$prefix/${run_id}-detail-high-recall.json" --if-generation-match=0
+          gcloud storage cp "$RUNNER_TEMP/summary-high-recall.json" "$prefix/${run_id}-summary-high-recall.json" --if-generation-match=0
 
           # latest は読み込んだ世代に対する compare-and-swap。concurrency に加え、
           # workflow 外の writer と競合した場合も古い結果で上書きしない。

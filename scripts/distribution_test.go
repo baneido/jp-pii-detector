@@ -22,7 +22,7 @@ const (
 
 	// docsVersion は README / docs が案内する現行リリース版。README のバージョン表記と
 	// 一致させる（更新時はこの定数だけを直せば済むよう、期待文字列はここから組み立てる）。
-	docsVersion = "v0.7.0"
+	docsVersion = "v0.8.1"
 )
 
 func repoRoot(t *testing.T) string {
@@ -989,7 +989,6 @@ func TestIntegrationsDocCoversCommonCIAndHookManagers(t *testing.T) {
 // homebrewTemplatePlaceholders はテンプレートとリリースワークフローの両方が
 // 参照するプレースホルダ。片方だけ変更すると formula が壊れるため一覧で固定する。
 var homebrewTemplatePlaceholders = []string{
-	"{{VERSION}}",
 	"{{TAG}}",
 	"{{SHA256_DARWIN_ARM64}}",
 	"{{SHA256_DARWIN_AMD64}}",
@@ -1000,7 +999,6 @@ var homebrewTemplatePlaceholders = []string{
 func renderHomebrewFormula(t *testing.T, tmpl, version, tag string) string {
 	t.Helper()
 	r := strings.NewReplacer(
-		"{{VERSION}}", version,
 		"{{TAG}}", tag,
 		"{{SHA256_DARWIN_ARM64}}", "1111111111111111111111111111111111111111111111111111111111111111",
 		"{{SHA256_DARWIN_AMD64}}", "2222222222222222222222222222222222222222222222222222222222222222",
@@ -1034,7 +1032,6 @@ func TestHomebrewTemplateRendersPrebuiltBinaryFormula(t *testing.T) {
 
 	wants := []string{
 		"class JpPiiDetect < Formula",
-		`version "9.9.9"`,
 		`bin.install "jp-pii-detect"`,
 		`shell_output("#{bin}/jp-pii-detect version")`,
 		"on_macos do",
@@ -1057,6 +1054,11 @@ func TestHomebrewTemplateRendersPrebuiltBinaryFormula(t *testing.T) {
 		if !strings.Contains(rendered, url) {
 			t.Fatalf("rendered formula missing asset URL %q:\n%s", url, rendered)
 		}
+	}
+
+	// version は URL から推定させる（明示すると brew audit が redundant version と指摘する）。
+	if strings.Contains(rendered, "\n  version ") {
+		t.Fatalf("formula should not declare a redundant version line:\n%s", rendered)
 	}
 
 	// ソースからビルドしない（Go 不要の方針）。

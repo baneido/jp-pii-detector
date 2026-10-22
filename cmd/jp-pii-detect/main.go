@@ -112,6 +112,10 @@ Scan flags:
                            共有ライブラリは JP_PII_ORT_LIBRARY か dir 内から探す。
                            モデル同梱ビルドでは未指定でも実行ファイルの隣の model/ を使う
   --no-model               モデル同梱ビルドでもモデルを使わず組み込みルールだけで走査する
+  --model-full             モデルにファイル全体を読ませる。既定では、日本語・@・長い
+                           数字の並び・ローマ字の姓名を含む行とその前後 1 行だけを
+                           モデルに読ませる（2 段階方式。4096 バイトを超える行は除く。
+                           結果はほぼ同じで大幅に速い）
   --exit-zero              検出があっても終了コード 0 を返す
   --baseline <path>        ベースラインファイルを読み込み、記録済み（fingerprint が
                            一致）の検出を結果と終了コードから除外する。--staged /
@@ -174,6 +178,7 @@ func runScan(args []string) int {
 	nameRoster := fs.Bool("name-roster", false, "")
 	modelDir := fs.String("model-dir", "", "")
 	noModel := fs.Bool("no-model", false, "")
+	modelFull := fs.Bool("model-full", false, "")
 	exitZero := fs.Bool("exit-zero", false, "")
 	baselinePath := fs.String("baseline", "", "")
 	updateBaseline := fs.Bool("update-baseline", false, "")
@@ -284,6 +289,7 @@ func runScan(args []string) int {
 			return fail(fmt.Errorf("--model-dir: %w", err))
 		}
 		defer rec.Close()
+		rec.SetFullScan(*modelFull)
 		det.SetModel(rec)
 	}
 

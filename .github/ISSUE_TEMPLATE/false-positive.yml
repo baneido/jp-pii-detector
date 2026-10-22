@@ -9,13 +9,23 @@ body:
         誤検出（本来 PII ではない値を検出してしまう）の報告ありがとうございます。
         誤検出・見逃しの報告は、この検出器の精度改善に最も役立ちます。
 
-        ⚠️ **実在する PII は絶対に貼らないでください。** 再現用テキストは必ずマスク／
-        ダミー化してください（例: `090-XXXX-XXXX`）。
+        ⚠️ **実在する PII は絶対に貼らないでください。** Issue は公開され、編集・削除しても
+        履歴や通知メールに残ります。再現用テキストは **ダミー値に置き換えるか、マスク** して
+        ください（例: `090-XXXX-XXXX`、`山田 太郎` → `架空 太郎`）。
+        誤検出の再現には「値そのもの」より **周辺の文脈（キー名・列名・ファイル種別・書式）**
+        が重要です。値は桁数と書式が同じダミーにして、文脈はできるだけそのまま残してください。
+  - type: checkboxes
+    id: dummy-only
+    attributes:
+      label: 実データを含まないことの確認
+      options:
+        - label: この Issue に貼るテキスト・ログ・スクリーンショットは、ダミー値またはマスク済みの値だけで、実在する個人の情報を含みません
+          required: true
   - type: input
     id: rule-id
     attributes:
       label: ルール ID
-      description: "`jp-pii-detect rules` で一覧を確認できます。分かる範囲で記入してください。"
+      description: "検出結果の `rule_id`（text 出力では各行の `[...]`）。`jp-pii-detect rules` で一覧を確認できます。"
       placeholder: "例: jp-phone-number"
     validations:
       required: false
@@ -24,14 +34,29 @@ body:
     attributes:
       label: jp-pii-detect のバージョン
       description: "`jp-pii-detect version` の出力"
-      placeholder: "例: v0.3.6"
+      placeholder: "例: v0.8.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: detection-mode
+    attributes:
+      label: 検出モード
+      description: 誤検出が出た実行で有効だったものをすべて選んでください。
+      multiple: true
+      options:
+        - 既定（ルールのみ）
+        - 高再現率（--high-recall / high_recall = true）
+        - 名簿ファイル判定（--name-roster / name_roster = true）
+        - モデル併用（--model-dir / モデル同梱ビルド）
+        - 外部レコグナイザ（[external_recognizer]）
+        - 分からない
     validations:
       required: true
   - type: textarea
     id: repro-text
     attributes:
-      label: 再現テキスト（必ずマスク／ダミー化）
-      description: "⚠️ 実データをそのまま貼らないでください。値は必ずダミー化してください。"
+      label: 再現テキスト（必ずダミー化／マスク）
+      description: "⚠️ 実データをそのまま貼らないでください。値は書式が同じダミーに置き換えてください。前後の行やキー名・列名など文脈は残してください。"
       placeholder: |
         誤って検出された行の例（ダミー化済み）:
         order_id: 1234567
@@ -39,10 +64,18 @@ body:
     validations:
       required: true
   - type: input
+    id: file-kind
+    attributes:
+      label: ファイルの種類
+      description: 拡張子や形式（文脈判定がファイル種別に依存するため）
+      placeholder: "例: .csv / .sql / .go のテストコード / .yaml"
+    validations:
+      required: false
+  - type: input
     id: command
     attributes:
       label: 実行したコマンド
-      placeholder: "例: jp-pii-detect scan ."
+      placeholder: "例: jp-pii-detect scan --explain ."
     validations:
       required: true
   - type: textarea
@@ -53,3 +86,15 @@ body:
       placeholder: "この値は連番の注文 ID であり、PII ではないため検出されないでほしい。"
     validations:
       required: true
+  - type: textarea
+    id: suppressions
+    attributes:
+      label: 抑制の利用状況（任意）
+      description: |
+        普段 ignore コメントや allowlist で黙らせている誤検出があれば、リポジトリのルートで
+        `go run github.com/baneido/jp-pii-detector/cmd/jp-pii-suppressions@latest` を実行し、
+        出力（ルール ID と件数だけでマッチ値は含みません）を貼ってください。ノイズの多いルールの
+        優先度付けに使います。詳しくは docs/feedback.md を参照してください。
+      render: markdown
+    validations:
+      required: false

@@ -100,14 +100,14 @@ brew install baneido/tap/jp-pii-detect
 利用側の環境に Go は不要です。
 
 ```sh
-mise use -g github:baneido/jp-pii-detector@v0.7.0
+mise use -g github:baneido/jp-pii-detector@v0.8.1
 ```
 
 プロジェクトローカルでバージョンを固定したい場合は `mise.toml` に以下を追加して `mise install` を実行します。
 
 ```toml
 [tools]
-"github:baneido/jp-pii-detector" = "v0.7.0"
+"github:baneido/jp-pii-detector" = "v0.8.1"
 ```
 
 ### Option 3. バイナリをインストール
@@ -116,7 +116,7 @@ GitHub Releases のビルド済みバイナリを取得してインストール�
 インストール先は既定で `$HOME/.local/bin` です。変更する場合は `JP_PII_DETECT_INSTALL_DIR=/path/to/bin` を指定してください。
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detector/v0.7.0/scripts/install.sh | JP_PII_DETECT_VERSION=v0.7.0 sh
+curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detector/v0.8.1/scripts/install.sh | JP_PII_DETECT_VERSION=v0.8.1 sh
 ```
 
 ### Option 4. Go install
@@ -132,7 +132,7 @@ curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detector/v0.7.0/scri
 GitLab CI などのジョブイメージとしてそのまま使えます（[docs/integrations.md](docs/integrations.md)）。
 
 ```sh
-docker run --rm -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.7.0
+docker run --rm -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.8.1
 ```
 
 ### Option 6. Sumi モデル同梱ビルド（試験的）
@@ -203,7 +203,7 @@ users.csv:4:6   [high]  jp-phone-number 電話番号（携帯・固定・IP・�
 ```yaml
 repos:
   - repo: https://github.com/baneido/jp-pii-detector
-    rev: v0.7.0
+    rev: v0.8.1
     hooks:
       - id: jp-pii-detect
 ```
@@ -242,10 +242,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: baneido/jp-pii-detector@v0.7.0
+      - uses: baneido/jp-pii-detector@v0.8.1
         with:
           # jp-pii-detect のバイナリ版を固定
-          version: v0.7.0
+          version: v0.8.1
           args: scan --diff origin/${{ github.base_ref }}...HEAD --format github
 ```
 
@@ -259,10 +259,10 @@ Action の参照とダウンロードするバイナリ版は独立していま�
 Medium 以上を表示しつつ High の検出だけで CI を失敗させるには、次のように指定します。
 
 ```yaml
-      - uses: baneido/jp-pii-detector@v0.7.0
+      - uses: baneido/jp-pii-detector@v0.8.1
         with:
           # jp-pii-detect のバイナリ版を固定
-          version: v0.7.0
+          version: v0.8.1
           args: scan --diff origin/${{ github.base_ref }}...HEAD --format github --min-confidence medium --fail-on high
 ```
 
@@ -389,6 +389,8 @@ $ jp-pii-detect scan --baseline .jp-pii-baseline.json --show-baseline .
   チェックディジットや正規化の仕組み、対象外とした項目とその理由
 - [検出精度（実測値）](docs/accuracy.md)：評価データセットに対するルール別の適合率、再現率、F1
 - [Sumi モデル同梱ビルド](docs/model-bundle.md)：同梱物、ビルド手順、ピン留めとライセンス表示
+- [誤検出・見逃しのフィードバック](docs/feedback.md)：Issue での報告の仕方（ダミー値のみ）、
+  ignore / allowlist の利用状況をルール別に集計する `jp-pii-suppressions`
 - [開発者向けガイド](docs/development.md)：ビルド、テスト、内部構成、検出ルールの追加方法
 - [他ツールとの比較](docs/comparison.md)：gitleaks / trufflehog / secretlint 等との違いと併用方針
 - [ロードマップ](docs/roadmap.md)：v1.0 に向けた対応予定と方針

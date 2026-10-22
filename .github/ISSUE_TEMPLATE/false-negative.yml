@@ -9,8 +9,18 @@ body:
         見逃し（検出されるべき PII が検出されない）の報告ありがとうございます。
         誤検出・見逃しの報告は、この検出器の精度改善に最も役立ちます。
 
-        ⚠️ **実在の PII は絶対に貼らないでください。** 再現用テキストは必ずマスク／
-        ダミー化してください（例: `090-XXXX-XXXX`）。
+        ⚠️ **実在の PII は絶対に貼らないでください。** Issue は公開され、編集・削除しても
+        履歴や通知メールに残ります。見逃された値は **書式（桁数・区切り・全角/半角・
+        表記ゆれ）が同じダミー値** に置き換えてください。チェックディジットを持つ番号
+        （マイナンバー・クレジットカード等）は、検査を通るダミー値が必要なら
+        「チェックディジットあり」とだけ書いてもらえれば、こちらで合成します。
+  - type: checkboxes
+    id: dummy-only
+    attributes:
+      label: 実データを含まないことの確認
+      options:
+        - label: この Issue に貼るテキスト・ログ・スクリーンショットは、ダミー値またはマスク済みの値だけで、実在する個人の情報を含みません
+          required: true
   - type: input
     id: pii-type
     attributes:
@@ -23,14 +33,29 @@ body:
     attributes:
       label: jp-pii-detect のバージョン
       description: "`jp-pii-detect version` の出力"
-      placeholder: "例: v0.3.6"
+      placeholder: "例: v0.8.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: detection-mode
+    attributes:
+      label: 検出モード
+      description: 見逃しが起きた実行で有効だったものをすべて選んでください。
+      multiple: true
+      options:
+        - 既定（ルールのみ）
+        - 高再現率（--high-recall / high_recall = true）
+        - 名簿ファイル判定（--name-roster / name_roster = true）
+        - モデル併用（--model-dir / モデル同梱ビルド）
+        - 外部レコグナイザ（[external_recognizer]）
+        - 分からない
     validations:
       required: true
   - type: textarea
     id: repro-text
     attributes:
       label: 検出されなかった例（必ずダミー化）
-      description: "⚠️ 実在の PII は絶対に貼らないでください。書式が分かるダミー値にしてください。"
+      description: "⚠️ 実在の PII は絶対に貼らないでください。書式が分かるダミー値にしてください。前後の行やキー名・列名など文脈は残してください。"
       placeholder: |
         検出されてほしかった行の例（ダミー化済み）:
         電話: 090-XXXX-XXXX
@@ -41,9 +66,9 @@ body:
     id: command
     attributes:
       label: 試したコマンドと設定
-      description: "`min_confidence` や `high_recall` の設定も記載してください。"
+      description: "`min_confidence` や `high_recall` の設定も記載してください。`--explain-dropped` を付けると、候補になったが除外された理由が分かることがあります（棄却候補の出力に値は含まれませんが、ファイルパスは含まれるので貼る前に確認してください）。"
       placeholder: |
-        jp-pii-detect scan --high-recall .
+        jp-pii-detect scan --high-recall --explain-dropped .
         min_confidence = "medium"
     validations:
       required: true
