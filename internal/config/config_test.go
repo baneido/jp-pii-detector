@@ -798,3 +798,27 @@ func TestOptInAxesCompose(t *testing.T) {
 		}
 	}
 }
+
+func TestScanRespectGitignore(t *testing.T) {
+	cfg, err := Parse("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.GitignoreRespected() {
+		t.Error("respect_gitignore should default to true")
+	}
+	cfg, err = Parse("[scan]\nrespect_gitignore = false\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.GitignoreRespected() {
+		t.Error("respect_gitignore = false should be honored")
+	}
+	if len(cfg.Warnings()) != 0 {
+		t.Errorf("unexpected warnings: %v", cfg.Warnings())
+	}
+	cfg.SetRespectGitignore(true)
+	if !cfg.GitignoreRespected() {
+		t.Error("SetRespectGitignore(true) should re-enable")
+	}
+}

@@ -105,6 +105,8 @@ Scan flags:
                            （FN 分析用。json 出力の dropped 配列に生の値は含めない）
   --high-recall            偽陽性リスクの高い再現率重視ルールを有効化
   --name-roster            氏名だけが並ぶ名簿ファイルの判定を有効化
+  --no-gitignore           フルスキャンで .gitignore 等に無視された未追跡ファイルも走査する
+                           （既定は無視されたファイルを走査しない。[scan] respect_gitignore）
   --model-dir <dir>        ローカル推論モデル（Sumi、ONNX）による検出を組み込みルールに
                            追加する（試験的）。dir には model.int8.onnx・tokenizer.json・
                            sumi_labels.json・calibrator.json を置く。-tags ort かつ
@@ -176,6 +178,7 @@ func runScan(args []string) int {
 	explainDropped := fs.Bool("explain-dropped", false, "")
 	highRecall := fs.Bool("high-recall", false, "")
 	nameRoster := fs.Bool("name-roster", false, "")
+	noGitignore := fs.Bool("no-gitignore", false, "")
 	modelDir := fs.String("model-dir", "", "")
 	noModel := fs.Bool("no-model", false, "")
 	modelFull := fs.Bool("model-full", false, "")
@@ -247,6 +250,9 @@ func runScan(args []string) int {
 	}
 	if *minConf != "" {
 		cfg.MinConfidence = *minConf
+	}
+	if *noGitignore {
+		cfg.SetRespectGitignore(false)
 	}
 	if *highRecall {
 		cfg.SetHighRecall(true)
@@ -697,9 +703,9 @@ func shouldPrintSummary(force, quiet bool, format string) bool {
 
 func printScanSummary(w io.Writer, mode string, stats source.ScanStats, findings, failOnly, baselined, warnings int) {
 	if mode == "full" {
-		fmt.Fprintf(w, "jp-pii-detect: summary: mode=%s scanned=%d skipped=%d (binary=%d too-large=%d) excluded-paths=%d excluded-default-dirs=%d findings=%d fail-only=%d baselined=%d warnings=%d\n",
+		fmt.Fprintf(w, "jp-pii-detect: summary: mode=%s scanned=%d skipped=%d (binary=%d too-large=%d) excluded-paths=%d excluded-default-dirs=%d excluded-gitignore=%d findings=%d fail-only=%d baselined=%d warnings=%d\n",
 			mode, stats.FilesScanned, stats.SkippedFiles(), stats.SkippedBinary, stats.SkippedTooLarge,
-			stats.ExcludedPaths, stats.ExcludedDefaultDirs, findings, failOnly, baselined, warnings)
+			stats.ExcludedPaths, stats.ExcludedDefaultDirs, stats.ExcludedGitignored, findings, failOnly, baselined, warnings)
 		return
 	}
 	fmt.Fprintf(w, "jp-pii-detect: summary: mode=%s findings=%d fail-only=%d baselined=%d warnings=%d\n",

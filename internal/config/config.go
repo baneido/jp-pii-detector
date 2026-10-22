@@ -99,6 +99,15 @@ type Config struct {
 		Stopwords []string `toml:"stopwords"`
 	} `toml:"allowlist"`
 
+	// Scan はフルスキャン（ファイルツリーの走査）の対象範囲に関する設定（[scan]）。
+	Scan struct {
+		// RespectGitignore は .gitignore 等で無視されている未追跡ファイルを
+		// フルスキャンの対象から外すかどうか。nil（未指定）は既定の true として扱う。
+		// git 管理下ではバージョン管理済み（tracked）のファイルは .gitignore に
+		// マッチしても走査する（git と同じ意味論）。git diff 系・--stdin には影響しない。
+		RespectGitignore *bool `toml:"respect_gitignore"`
+	} `toml:"scan"`
+
 	// ExternalRecognizer は外部コマンドを検出候補の生成器として呼び出す opt-in 連携設定
 	// （[external_recognizer]、internal/external）。既定は未設定（Command が空）＝完全に
 	// 無効で、フルスキャンと --stdin にのみ適用される（git diff 系は対象外）。
@@ -366,6 +375,17 @@ func compilePathGlob(pattern string) (*regexp.Regexp, error) {
 	}
 	b.WriteString("$")
 	return regexp.Compile(b.String())
+}
+
+// GitignoreRespected はフルスキャンで .gitignore を尊重するかどうかを返す
+// （[scan] respect_gitignore 未指定時は true）。
+func (c *Config) GitignoreRespected() bool {
+	return c.Scan.RespectGitignore == nil || *c.Scan.RespectGitignore
+}
+
+// SetRespectGitignore は [scan] respect_gitignore を上書きする（--no-gitignore 用）。
+func (c *Config) SetRespectGitignore(enabled bool) {
+	c.Scan.RespectGitignore = &enabled
 }
 
 // SetHighRecall は高再現率ルールの有効/無効を切り替える。
