@@ -18,11 +18,12 @@ permissions: {}
 
 env:
   # 日本郵便「住所の郵便番号（1 レコード 1 行、UTF-8）」全国一括 zip。
-  # 配布ページ: https://www.post.japanpost.jp/zipcode/dl/utf-zip.html
-  POSTAL_URL: https://www.post.japanpost.jp/zipcode/dl/utf/zip/utf_ken_all.zip
+  # 配布ページ: https://www.post.japanpost.jp/service/search/zipcode/download/utf-zip.html
+  # （2026 年に旧 /zipcode/dl/ 配下から移転し、旧 URL は 404 になった）
+  POSTAL_URL: https://www.post.japanpost.jp/service/search/zipcode/download/utf/zip/utf_ken_all.zip
   # 日本郵便「事業所の個別郵便番号」zip（Shift_JIS 配布）。
-  # 配布ページ: https://www.post.japanpost.jp/zipcode/dl/jigyosyo/index-zip.html
-  POSTAL_JIGYOSYO_URL: https://www.post.japanpost.jp/zipcode/dl/jigyosyo/zip/jigyosyo.zip
+  # 配布ページ: https://www.post.japanpost.jp/service/search/zipcode/download/office/index-zip.html
+  POSTAL_JIGYOSYO_URL: https://www.post.japanpost.jp/service/search/zipcode/download/office/zip/jigyosyo.zip
   # PR を載せる作業ブランチ（毎回 force-push して 1 本に集約する）。
   POSTAL_BRANCH: automated/postal-codes
 
