@@ -22,6 +22,7 @@ paths = [
   "^internal/normalize/normalize_test\\.go$",
   "^internal/report/report_test\\.go$",
   "^internal/rule/structured_test\\.go$",
+  "^internal/rule/digit_token_guard_test\\.go$",
   "^internal/source/(encoding|gitdiff)_test\\.go$",
   # 外部フィクスチャのローカルコピー（実在しうる PII を含む。.gitignore 済みで未コミット）
   "^pii-fixtures\\.json$",

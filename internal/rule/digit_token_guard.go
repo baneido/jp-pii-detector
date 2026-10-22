@@ -1,0 +1,179 @@
+package rule
+
+import "strings"
+
+// 数値ルール（マイナンバー・クレジットカード）の、OSS コーパスで実測した
+// 偽陽性の型を棄却する ValidateLine 群（docs/development.md「OSS コーパスでの
+// 偽陽性率計測」）。共有の境界ガード（dgNoAlnumHyphen 等）を厳しくすると全数値
+// ルールの再現率に波及するため、実測で偽陽性が集中したルールのパターンにだけ使う。
+
+// allValidateLine は、すべての ValidateLine が true を返すときだけ true を返す。
+func allValidateLine(fs ...func(string, int, int) bool) func(string, int, int) bool {
+	return func(line string, start, end int) bool {
+		for _, f := range fs {
+			if !f(line, start, end) {
+				return false
+			}
+		}
+		return true
+	}
+}
+
+func isASCIIDigit(b byte) bool { return b >= '0' && b <= '9' }
+
+// rejectNumericTokenPart は、数字列が独立した番号ではなく、より大きな数値・
+// 識別子トークンの一部である場合に棄却する。
+//   - 小数の一部: 直前が「数字 + .」（"29.7062300000000015" の小数部、
+//     "0.968994140625"）、または直後が「. + 数字」（"148966367200.372"）。
+//   - 識別子の一部: 直前・直後がアンダースコア（"blk_3550669278239526374"）。
+//     英数字・ハイフンの連結は境界ガードが既に除外しており、それと同じ扱い。
+func rejectNumericTokenPart(line string, start, end int) bool {
+	if start > 0 {
+		switch line[start-1] {
+		case '_':
+			return false
+		case '.':
+			if start > 1 && isASCIIDigit(line[start-2]) {
+				return false
+			}
+		}
+	}
+	if end < len(line) {
+		switch line[end] {
+		case '_':
+			return false
+		case '.':
+			if end+1 < len(line) && isASCIIDigit(line[end+1]) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// hexDumpNeighborTokens は、前後それぞれ何トークンまで 16 進ダンプの判定に見るか。
+const hexDumpNeighborTokens = 8
+
+// rejectHexDumpGroup は、空白区切りの 16 進ダンプ（"ffff 54cd 7484 9797 9999"、
+// "00000130  64 67 69 74 73 20 50 74  79 20 4c 74"、PNG テストデータの
+// 12 桁ずつの 16 進の並び等）の中で、たまたま英字 a-f を含まない
+// グループの並びを棄却する。マッチの前後 hexDumpNeighborTokens 個以内に、
+// マッチの先頭グループと同じ幅で英字 a-f を含む 16 進トークンが空白区切りで
+// 連続して並んでいれば 16 進ダンプとみなす（途中に 16 進でないトークンがあれば
+// そこで打ち切る）。
+func rejectHexDumpGroup(line string, start, end int) bool {
+	width := 0
+	for i := start; i < end && isASCIIDigit(line[i]); i++ {
+		width++
+	}
+	if width == 0 {
+		return true
+	}
+	return !hexNeighbor(strings.Fields(line[:start]), width, true) &&
+		!hexNeighbor(strings.Fields(line[end:]), width, false)
+}
+
+// hexNeighbor は、tokens（reverse なら末尾から）を最大 hexDumpNeighborTokens 個
+// 見て、幅 width で英字 a-f を含む 16 進トークンがあるかを返す。
+func hexNeighbor(tokens []string, width int, reverse bool) bool {
+	for k := 0; k < len(tokens) && k < hexDumpNeighborTokens; k++ {
+		t := tokens[k]
+		if reverse {
+			t = tokens[len(tokens)-1-k]
+		}
+		letter, ok := hexToken(t)
+		if !ok {
+			return false
+		}
+		if letter && len(t) == width {
+			return true
+		}
+	}
+	return false
+}
+
+// hexToken は、t が 16 進数字だけからなるか（ok）と、英字 a-f を含むか（letter）を返す。
+func hexToken(t string) (letter, ok bool) {
+	if t == "" {
+		return false, false
+	}
+	for i := 0; i < len(t); i++ {
+		c := t[i]
+		switch {
+		case isASCIIDigit(c):
+		case c >= 'a' && c <= 'f', c >= 'A' && c <= 'F':
+			letter = true
+		default:
+			return false, false
+		}
+	}
+	return letter, true
+}
+
+// rejectLogTimestamp66 は、マイナンバーの 6-6 空白区切り形のうち、ログの
+// タイムスタンプ（YYMMDD HHMMSS。Hadoop 等のログで行頭に並ぶ）と
+// 同形のものを、行にマイナンバーのラベル（context）が無い場合に限り棄却する。
+// 6-6 形はチェックディジットで約 1/11 しか絞れず、ログ 1 行ごとに偽陽性を生んでいた。
+func rejectLogTimestamp66(context []string) func(string, int, int) bool {
+	return func(line string, start, end int) bool {
+		m := line[start:end]
+		if len(m) != 13 || m[6] != ' ' || !yymmdd(m[:6]) || !hhmmss(m[7:]) {
+			return true
+		}
+		lower := strings.ToLower(line)
+		for _, c := range context {
+			if strings.Contains(lower, strings.ToLower(c)) {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+func twoDigits(s string) int { return int(s[0]-'0')*10 + int(s[1]-'0') }
+
+func yymmdd(s string) bool {
+	m, d := twoDigits(s[2:4]), twoDigits(s[4:6])
+	return m >= 1 && m <= 12 && d >= 1 && d <= 31
+}
+
+func hhmmss(s string) bool {
+	return twoDigits(s[0:2]) <= 23 && twoDigits(s[2:4]) <= 59 && twoDigits(s[4:6]) <= 59
+}
+
+// youCompoundStems は、「様」と続けて敬称ではない一般語（同様・仕様・模様・
+// 異様・多種多様）を作る直前の文字列。
+var youCompoundStems = []string{"同", "仕", "模", "異", "種多"}
+
+// rejectYouCompound は、敬称アンカーの「様」が一般語の一部（「新品同様」
+// 「従来同様」「構文仕様」「多種多様」）である場合に棄却する。日本語ドキュメントの
+// コーパスで、敬称の直前の漢字 2〜8 文字（「新品同」「構文仕」）を氏名として
+// 切り出す偽陽性を実測した。「本多様」のような姓 + 様や、1 文字名「一」+ 様は棄却しない。
+func rejectYouCompound(line string, start, end int) bool {
+	if !strings.HasPrefix(line[end:], "様") {
+		return true
+	}
+	for _, s := range youCompoundStems {
+		if strings.HasSuffix(line[start:end], s) {
+			return false
+		}
+	}
+	return true
+}
+
+// rejectURLUserinfo は、メールアドレス形の候補が URL のユーザー情報
+// （"http://gopher@test.com"、"ssh://git@github.com/user/repo"、
+// "http://user:pass@host"）である場合に棄却する。候補を含む空白・引用符区切りの
+// トークンで、候補より前に "://" があれば URL とみなす（mailto: は "://" を
+// 含まないので棄却しない）。
+func rejectURLUserinfo(line string, start, end int) bool {
+	i := start
+	for i > 0 {
+		c := line[i-1]
+		if c == ' ' || c == '\t' || c == '"' || c == '\'' || c == '`' || c == '(' || c == '<' || c == '[' || c == '=' || c == ',' {
+			break
+		}
+		i--
+	}
+	return !strings.Contains(line[i:start], "://")
+}
