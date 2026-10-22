@@ -416,6 +416,19 @@ func (c *Config) PathAllowed(relPath string) bool {
 	return true
 }
 
+// WithoutAllowlist は [allowlist]（paths / regexes / stopwords）だけを空にした
+// 複製を返す。ルール設定等はそのまま引き継ぐ。抑制の利用状況集計
+// （internal/suppression）が「allowlist が無ければ何が検出されたか」を求めるために使う。
+func (c *Config) WithoutAllowlist() *Config {
+	cp := *c
+	cp.Allowlist.Paths = nil
+	cp.Allowlist.Regexes = nil
+	cp.Allowlist.Stopwords = nil
+	cp.pathRes = nil
+	cp.allowRes = nil
+	return &cp
+}
+
 // AllowRegexes はコンパイル済みのマッチ除外正規表現を返す。
 func (c *Config) AllowRegexes() []*regexp.Regexp { return c.allowRes }
 

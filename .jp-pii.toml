@@ -22,6 +22,7 @@ paths = [
   "^internal/normalize/normalize_test\\.go$",
   "^internal/report/report_test\\.go$",
   "^internal/rule/structured_test\\.go$",
+  "^internal/rule/digit_token_guard_test\\.go$",
   "^internal/source/(encoding|gitdiff)_test\\.go$",
   # モデルの候補行選択のテスト（架空の電話番号・生年月日を含む）
   "^internal/model/prefilter_test\\.go$",

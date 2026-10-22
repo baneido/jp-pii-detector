@@ -867,6 +867,9 @@ func phoneRules() []Rule {
 	return rules
 }
 
+// myNumberContext は jp-my-number のコンテキスト語。
+var myNumberContext = []string{"マイナンバー", "個人番号", "mynumber", "my number", "my_number"}
+
 // Builtin は組み込みルール一覧を返す。
 func Builtin() []Rule {
 	rules := []Rule{
@@ -874,20 +877,25 @@ func Builtin() []Rule {
 			ID:              "jp-my-number",
 			Description:     "マイナンバー（個人番号）",
 			Prefilter:       PrefilterDigit,
-			Context:         []string{"マイナンバー", "個人番号", "mynumber", "my number", "my_number"},
+			Context:         myNumberContext,
 			NegativeContext: digitRuleUnitAdjacentNegativeContext,
 			Validate:        validMyNumber,
 			Patterns: []Pattern{
-				{Re: dgNoAlnumHyphen(`\d{12}`), Base: Medium},
+				{Re: dgNoAlnumHyphen(`\d{12}`), Base: Medium,
+					ValidateLine: allValidateLine(rejectNumericTokenPart, rejectHexDumpGroup)},
 				// 前後にハイフンが続く場合はクレジットカード等の
 				// 4-4-4-4 グループの一部とみなして除外する。
 				{Re: dgNoAlnumHyphen(`\d{4}-\d{4}-\d{4}`), Base: Medium},
 				// 空白区切り（4-4-4 / 6-6）。stripSeparators は元々半角スペースを
 				// 除去するため Validate 側の変更は不要。
+				// rejectNumericTokenPart・rejectHexDumpGroup・rejectLogTimestamp66 は
+				// OSS コーパスで実測した偽陽性（小数部・識別子の一部・16 進ダンプ・
+				// ログのタイムスタンプ）の棄却（digit_token_guard.go）。
 				{Re: dgNoAlnumHyphen(`\d{4} \d{4} \d{4}`), Base: Medium,
-					ValidateLine: rejectSeparatedDigitGroup(" ", 4)},
+					ValidateLine: allValidateLine(rejectSeparatedDigitGroup(" ", 4), rejectNumericTokenPart, rejectHexDumpGroup)},
 				{Re: dgNoAlnumHyphen(`\d{6} \d{6}`), Base: Medium,
-					ValidateLine: rejectSeparatedDigitGroup(" ", 6)},
+					ValidateLine: allValidateLine(rejectSeparatedDigitGroup(" ", 6), rejectNumericTokenPart, rejectHexDumpGroup,
+						rejectLogTimestamp66(myNumberContext))},
 				// ドット区切り（6-6）。「値 = 123456.000007」のような小数リテラルと
 				// 区別できないため、上の空白区切りと異なり RequireContext を必須に
 				// する（以下のスラッシュ・括弧区切りも同じ理由で必須にする）。Base は
@@ -1091,7 +1099,11 @@ func Builtin() []Rule {
 				// scp 形式の SSH URL をメールとして切り出さないために含める。
 				// `.` は除外集合に含めないため、文末ピリオド
 				// （…は user@example.com.）は従来どおり検出できる。
-				{Re: emailASCIIRe, Base: High},
+				//
+				// ValidateLine は URL のユーザー情報（"http://gopher@test.com"、
+				// "ssh://git@github.com/user/repo"）を棄却する（OSS コーパスでの実測。
+				// digit_token_guard.go の rejectURLUserinfo 参照）。
+				{Re: emailASCIIRe, Base: High, ValidateLine: rejectURLUserinfo},
 			},
 		},
 		{
@@ -1133,8 +1145,12 @@ func Builtin() []Rule {
 			// この割り切りにより、スラッシュ直後の「区切りなし」カード番号は
 			// 検出できないが、URL の記事 ID と区別できないため意図的に許容する。
 			Patterns: []Pattern{
-				{Re: dgNoSlashAlnumHyphen(`\d(?:[- ]?\d){12,18}`), Base: High},
-				{Re: dgNoAlnumHyphen(`\d(?:[- ]?\d){0,5}[- ]\d(?:[- ]?\d){6,17}`), Base: High},
+				// ValidateLine は OSS コーパスで実測した偽陽性（小数部・識別子の
+				// 一部・16 進ダンプ）の棄却（digit_token_guard.go）。
+				{Re: dgNoSlashAlnumHyphen(`\d(?:[- ]?\d){12,18}`), Base: High,
+					ValidateLine: allValidateLine(rejectNumericTokenPart, rejectHexDumpGroup)},
+				{Re: dgNoAlnumHyphen(`\d(?:[- ]?\d){0,5}[- ]\d(?:[- ]?\d){6,17}`), Base: High,
+					ValidateLine: allValidateLine(rejectNumericTokenPart, rejectHexDumpGroup)},
 			},
 		},
 		{
@@ -1617,7 +1633,9 @@ func Builtin() []Rule {
 				{Re: regexp.MustCompile(
 					`(?:^|[^` + kanji + hiragana + katakana + `])` +
 						`([` + kanji + `]{2,8})(?:様|さん|氏|殿)`,
-				), Base: Medium, Validate: honorificPersonNameValid},
+				), Base: Medium, Validate: honorificPersonNameValid,
+					// 「新品同様」「構文仕様」のような一般語の「様」を棄却する。
+					ValidateLine: rejectYouCompound},
 				// 敬称の直前に空白が入る形（「鈴木一郎 様」）と、姓名の間に空白が
 				// 入る形（「山田 太郎様」）。上の無空白パターンは値と敬称が地続きの
 				// ときしか一致しないため、フォーム・宛名書きで一般的なこの表記を
@@ -2256,6 +2274,11 @@ func notCalendarDateBanchiAndRealTown(v string) bool {
 var (
 	emailDummySubstringWords = []string{"hoge", "fuga", "dummy", "hogehoge", "sample"}
 	emailDummyTokenWords     = []string{"foo", "bar"}
+	// emailPlaceholderDomainLabels は、ドキュメント・テストで「任意のドメイン」の
+	// 意味で使われるドメイン（domain.com・test.com・somewhere.org 等）の第 1 ラベル。
+	// ラベル 2 つのドメイン（<label>.<TLD>）のときだけ棄却する。OSS コーパスで
+	// 実測した、例示用アドレスの偽陽性の上位（docs/development.md 参照）。
+	emailPlaceholderDomainLabels = []string{"domain", "yourdomain", "mydomain", "somewhere", "test"}
 )
 
 // containsEmailDummyWord は s（ローカル部またはドメイン第 1 ラベル）がダミー語を
@@ -2317,6 +2340,9 @@ func validEmail(m string) bool {
 		}
 	}
 	if containsEmailDummyWord(local) || containsEmailDummyWord(labels[0]) {
+		return false
+	}
+	if len(labels) == 2 && slices.Contains(emailPlaceholderDomainLabels, labels[0]) {
 		return false
 	}
 	tld := labels[len(labels)-1]

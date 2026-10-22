@@ -5,10 +5,11 @@
 #
 # Go 不要の方針に合わせ、ソースからビルドせず Release のビルド済みバイナリを
 # ダウンロードして展開する formula にしている。
+# version は URL（releases/download/<tag>/）から Homebrew が自動で読み取るため書かない
+# （書くと brew audit が「redundant version」と指摘する）。
 class JpPiiDetect < Formula
   desc "Static PII detector for Japan (My Number, phone, address, etc.)"
   homepage "https://github.com/baneido/jp-pii-detector"
-  version "{{VERSION}}"
 
   on_macos do
     on_arm do
