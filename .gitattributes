@@ -1,0 +1,13 @@
+# Windows（core.autocrlf=true が既定の GitHub Actions の Windows ランナー等）でも
+# 作業ツリーを LF で展開する。テスト・ワークフロー検査・スキャン結果（列位置）が
+# 改行コードに依存しないようにするため。CRLF の扱いを検査するテストは、
+# テスト内でバイト列を生成して使う。
+* text=auto eol=lf
+
+# バイナリ（改行変換しない）
+*.bitset binary
+*.onnx binary
+*.gz binary
+*.zip binary
+*.png binary
+*.jpg binary

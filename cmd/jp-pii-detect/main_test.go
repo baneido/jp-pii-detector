@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -217,6 +218,9 @@ func TestScanPartialErrorExitsTwoWithReport(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root では読み取り権限のチェックが効かないためスキップ")
 	}
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows では os.Chmod で読み取り権限を外せないためスキップ")
+	}
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "ok.txt"), []byte("口座番号: 1234567\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -259,6 +263,9 @@ func TestScanPartialErrorExitsTwoWithReport(t *testing.T) {
 func TestBaselineUpdateRejectsPartialScan(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root では読み取り権限のチェックが効かないためスキップ")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows では os.Chmod で読み取り権限を外せないためスキップ")
 	}
 	dir := t.TempDir()
 	denied := filepath.Join(dir, "denied.txt")

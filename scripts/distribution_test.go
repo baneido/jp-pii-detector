@@ -149,15 +149,15 @@ func TestInstallScriptInstallsFromReleaseArchive(t *testing.T) {
 		t.Fatalf("install.sh exit=%d\n%s", code, out)
 	}
 
+	// JP_PII_DETECT_OS（testOS）で対象 OS を固定しているので、テストを
+	// Windows で動かしても入る実行ファイル名は testOS のもの（.exe なし）。
 	bin := filepath.Join(installDir, "jp-pii-detect")
-	if runtime.GOOS == "windows" {
-		bin += ".exe"
-	}
 	info, err := os.Stat(bin)
 	if err != nil {
 		t.Fatalf("installed binary missing: %v\n%s", err, out)
 	}
-	if info.Mode()&0o111 == 0 {
+	// Windows は実行ビットを持たないため検査しない。
+	if runtime.GOOS != "windows" && info.Mode()&0o111 == 0 {
 		t.Fatalf("installed binary is not executable: %v", info.Mode())
 	}
 }

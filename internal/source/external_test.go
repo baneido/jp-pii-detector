@@ -64,8 +64,10 @@ func TestHelperProcess(t *testing.T) {
 
 func externalHelperConfigTOML(mode string) string {
 	// TOML の文字列配列として argv を渡す。os.Args[0] はテストバイナリの絶対パス。
+	// Windows のパス（C:\Users\...）のバックスラッシュを TOML の基本文字列の
+	// エスケープと解釈させないよう、リテラル文字列（'...'）で渡す。
 	return "[external_recognizer]\ncommand = [" +
-		`"` + os.Args[0] + `", "-test.run=^TestHelperProcess$", "--", "` + mode + `"` +
+		`'` + os.Args[0] + `', "-test.run=^TestHelperProcess$", "--", "` + mode + `"` +
 		"]\n"
 }
 
