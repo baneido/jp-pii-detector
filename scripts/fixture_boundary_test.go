@@ -37,7 +37,7 @@ func TestPrivateCorpusImportBoundary(t *testing.T) {
 		if !strings.Contains(string(b), "internal/privatecorpus\"") {
 			return nil
 		}
-		rel := filepath.ToSlash(strings.TrimPrefix(path, "../"))
+		rel := strings.TrimPrefix(filepath.ToSlash(path), "../")
 		for _, prefix := range allowed {
 			if strings.HasPrefix(rel, prefix) {
 				return nil

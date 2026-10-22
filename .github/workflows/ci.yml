@@ -93,6 +93,29 @@ jobs:
       - run: go build ./cmd/jp-pii-detect
       - run: ./jp-pii-detect scan --format github .
 
+  # Windows でも公開テストレーンを通す（モデル同梱ビルドの windows/amd64 が
+  # パスの扱い・実行ファイルの拡張子で落ちていたため）。-race は cgo（gcc）が
+  # 必要で Windows ランナーでは遅いので付けない（データ競合は上の test job で見る）。
+  test-windows:
+    name: test (windows)
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test ./...
+      - run: go build ./cmd/jp-pii-detect
+      - run: ./jp-pii-detect.exe scan --format github .
+
   public-eval:
     name: public-eval
     # PR 時の精度ゲート。非公開コーパスを使う private-eval は PR では走らないため、

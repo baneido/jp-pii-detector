@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"unicode/utf16"
@@ -202,6 +203,9 @@ func TestScanPathsUnreadableFileDoesNotAbortOthers(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root では読み取り権限のチェックが効かないためスキップ")
 	}
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows では os.Chmod で読み取り権限を外せないためスキップ")
+	}
 	content := []byte("口座番号: 1234567\n")
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "ok.txt"), content)
@@ -232,6 +236,9 @@ func TestScanPathsUnreadableFileDoesNotAbortOthers(t *testing.T) {
 func TestScanPathsUnreadableDirectoryDoesNotAbortOthers(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root では読み取り権限のチェックが効かないためスキップ")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows では os.Chmod で読み取り権限を外せないためスキップ")
 	}
 	tmp := t.TempDir()
 	content := []byte("口座番号: 1234567\n")

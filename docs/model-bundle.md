@@ -134,4 +134,5 @@ certify anything."、"Misses are certain."、評価値は合成データでの�
   `lib/libonnxruntime.dylib` の読み込みが拒否されることがある（`xattr -dr com.apple.quarantine`）。
   実行ファイルは Go のリンカによるアドホック署名だけで、公証（notarization）はしていない。
 - Windows 版の ONNX Runtime は Microsoft Visual C++ 再頒布可能パッケージを要ることがある。
-  Windows 版は CI でのスモークテストしか確かめていない。
+  Windows 版のモデル同梱ビルドは、リリース時のスモークテストとモデルテスト（`-tags ort`）でしか
+  確かめていない（ルール部分のテストは ci.yml の test (windows) で PR ごとに回している）。

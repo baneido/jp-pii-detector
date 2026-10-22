@@ -78,7 +78,10 @@ lines=$(scanner_physical_lines "$dir")
 # finding ごとに "rule_id<TAB>attribution(0|1)" を出力する。
 classify_attribution() {
 	jq -r '(.findings // [])[] | [.rule_id, .file, (.line | tostring)] | @tsv' "$1" |
-		LC_ALL=C awk -F '\t' -v base="$2" '
+		FP_CORPUS_BASE=$2 LC_ALL=C awk -F '\t' '
+		# base は -v ではなく環境変数で渡す（-v はバックスラッシュをエスケープとして
+		# 解釈するため、Windows のパス C:\Users\... が壊れて警告が出る）。
+		BEGIN { base = ENVIRON["FP_CORPUS_BASE"] }
 		function load(path,    l, n, p) {
 			delete buf
 			n = 0

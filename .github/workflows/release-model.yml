@@ -45,8 +45,8 @@ jobs:
             goarch: arm64
             runner: macos-14
             experimental: false
-          # Windows はルールだけの配布物でもサポート外（CI でテストしていない）。
-          # 失敗してもほかのプラットフォームの公開を止めない。
+          # Windows は ci.yml の test (windows) でルール部分のテストを回しているが、
+          # モデル同梱版は実績が少ないため試験的扱いとし、失敗してもほかの公開を止めない。
           - goos: windows
             goarch: amd64
             runner: windows-2022

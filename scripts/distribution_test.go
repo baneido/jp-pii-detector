@@ -149,15 +149,15 @@ func TestInstallScriptInstallsFromReleaseArchive(t *testing.T) {
 		t.Fatalf("install.sh exit=%d\n%s", code, out)
 	}
 
+	// JP_PII_DETECT_OS（testOS）で対象 OS を固定しているので、テストを
+	// Windows で動かしても入る実行ファイル名は testOS のもの（.exe なし）。
 	bin := filepath.Join(installDir, "jp-pii-detect")
-	if runtime.GOOS == "windows" {
-		bin += ".exe"
-	}
 	info, err := os.Stat(bin)
 	if err != nil {
 		t.Fatalf("installed binary missing: %v\n%s", err, out)
 	}
-	if info.Mode()&0o111 == 0 {
+	// Windows は実行ビットを持たないため検査しない。
+	if runtime.GOOS != "windows" && info.Mode()&0o111 == 0 {
 		t.Fatalf("installed binary is not executable: %v", info.Mode())
 	}
 }
@@ -618,7 +618,7 @@ func TestGitHubWorkflowActionsArePinnedToCommitSHA(t *testing.T) {
 	}
 }
 
-// 配布対象の macOS でも公開テストレーンが走ること（Windows はサポート外）。
+// 配布対象の macOS でも公開テストレーンが走ること（Windows は別ジョブ。下のテストを参照）。
 func TestCIWorkflowRunsTestJobOnUbuntuAndMacOS(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
 	if err != nil {
@@ -631,6 +631,24 @@ func TestCIWorkflowRunsTestJobOnUbuntuAndMacOS(t *testing.T) {
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("ci workflow should run tests on ubuntu and macos; missing %q", want)
+		}
+	}
+}
+
+// Windows でも go vet / go test が PR ごとに走ること（改行コードやパス区切りの退行を防ぐ）。
+func TestCIWorkflowRunsTestJobOnWindows(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"test-windows:",
+		"runs-on: windows-latest",
+		"go test ./...",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("ci workflow should run tests on windows; missing %q", want)
 		}
 	}
 }

@@ -60,7 +60,7 @@ func buildMockRecognizer(t *testing.T) string {
 	if err := os.WriteFile(src, []byte(mockRecognizerSource), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bin := filepath.Join(dir, "mock-recognizer")
+	bin := filepath.Join(dir, "mock-recognizer"+exeSuffix)
 	if out, err := exec.Command("go", "build", "-o", bin, src).CombinedOutput(); err != nil {
 		t.Fatalf("build mock recognizer: %v\n%s", err, out)
 	}
@@ -69,7 +69,9 @@ func buildMockRecognizer(t *testing.T) string {
 
 // externalRecognizerConfigTOML は [external_recognizer] 設定を作る。
 func externalRecognizerConfigTOML(binPath string) string {
-	return "[external_recognizer]\ncommand = [\"" + binPath + "\"]\ntimeout_seconds = 10\n"
+	// Windows のパス（C:\\...）のバックスラッシュを TOML の基本文字列のエスケープと
+	// 解釈させないよう、リテラル文字列（単引用符）で書く。
+	return "[external_recognizer]\ncommand = ['" + binPath + "']\ntimeout_seconds = 10\n"
 }
 
 // runStdin は run（main_test.go）の標準入力対応版。
