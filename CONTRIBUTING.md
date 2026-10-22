@@ -10,6 +10,9 @@
 - 誤検出・見逃しは、[Issue テンプレート](.github/ISSUE_TEMPLATE) から報告してください。
 - **実在する PII は絶対に貼らないでください。** 再現用のテキストは必ずマスク／ダミー化して
   ください（`090-XXXX-XXXX` など）。
+- 普段 ignore コメントや allowlist で黙らせている誤検出があれば、
+  `jp-pii-suppressions` の集計結果（ルール ID と件数のみ）を添えてもらえると、ノイズの多い
+  ルールの優先度付けに使えます。詳しくは [docs/feedback.md](docs/feedback.md) を参照してください。
 
 ## 開発環境
 
