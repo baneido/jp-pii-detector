@@ -163,8 +163,7 @@ jobs:
 
           git clone "https://x-access-token:${TAP_TOKEN}@github.com/baneido/homebrew-tap.git" tap
           mkdir -p tap/Formula
-          sed -e "s|{{VERSION}}|${version}|g" \
-              -e "s|{{TAG}}|${TAG}|g" \
+          sed -e "s|{{TAG}}|${TAG}|g" \
               -e "s|{{SHA256_DARWIN_ARM64}}|${darwin_arm64}|g" \
               -e "s|{{SHA256_DARWIN_AMD64}}|${darwin_amd64}|g" \
               -e "s|{{SHA256_LINUX_ARM64}}|${linux_arm64}|g" \
