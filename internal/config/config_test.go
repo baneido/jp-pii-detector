@@ -93,6 +93,42 @@ paths = ["^testdata/", "\\.lock$"]
 	}
 }
 
+// ディレクトリ名だけの glob / 正規表現は、フルスキャンの SkipDir と同じく配下の
+// ファイルパスにも効く（git diff 系・明示ファイル指定でも除外範囲を揃える）。
+func TestPathAllowedAppliesToAncestorDirectories(t *testing.T) {
+	cfg, err := Parse(`
+[allowlist]
+paths = ["**/node_modules", "^vendor$", "path/to/*.d"]
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{
+		"node_modules/pkg/index.js",
+		"web/node_modules/pkg/index.js",
+		"vendor/github.com/x/y.go",
+		"path/to/conf.d/a.txt",
+		"./web/node_modules/a.js",
+	} {
+		if cfg.PathAllowed(p) {
+			t.Errorf("PathAllowed(%q) = true, want false (ancestor dir is allowlisted)", p)
+		}
+	}
+	for _, p := range []string{
+		"web/node_modules_backup/a.js",
+		"internal/vendor/y.go",
+		"path/to/conf.d.bak/a.txt",
+		"src/main.go",
+		// 絶対パスは走査ルートより上のディレクトリ名に巻き込まれないよう祖先を見ない
+		"/home/node_modules/project/main.go",
+		"../node_modules/a.js",
+	} {
+		if !cfg.PathAllowed(p) {
+			t.Errorf("PathAllowed(%q) = false, want true", p)
+		}
+	}
+}
+
 func TestParseHighRecallRulesDisabledByDefault(t *testing.T) {
 	cfg, err := Parse("")
 	if err != nil {
