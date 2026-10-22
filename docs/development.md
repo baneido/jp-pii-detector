@@ -109,6 +109,36 @@ PR を自動作成します（postal-update.yml / tld-update.yml と同じ、for
 コーパス側の問題の可能性がある）を確認したうえで、作成された PR をレビューして
 マージしてください。
 
+#### PR 時の精度ゲート（公開合成コーパス）
+
+非公開コーパスを使う private-eval は平文を PR のコードへ渡さないため、main への push と
+保守者の明示実行でしか走りません。ルールの劣化や「ルールを改名・分割したのに評価ラベルが
+追従していない」不整合をマージ前に検出するため、ci.yml の **public-eval** ジョブが
+PR ごとに `go test ./internal/publiceval` を実行します（認証不要・数秒。fork PR でも同じ）。
+
+- コーパス: `internal/fixturegen.Generate()` と `internal/corpusv2.PublicSynthetic()` の
+  決定的な合成ケースだけ（ソースに PII を持たない）。全ルール（既定・高再現率・名簿ファイル
+  判定）の陽性候補と hard negative を含み、検出器の出力で選別・注釈しないため、ルールが
+  劣化すればそのまま FN/FP に現れます。
+- プロファイル: 公表3プロファイル（low / medium / high-recall）に、ゲート専用の
+  `all-opt-in`（`min_confidence=low`、高再現率・名簿ファイル判定を有効）を加えた4つ。
+- ゴールデン: `internal/publiceval/testdata/golden.json`（件数と指標だけで本文は含まない）。
+- 失敗条件（`DefaultTolerance`）: ルール × プロファイルごとの再現率が 0.5 ポイントを超えて
+  低下、行レベル FP・検出単位 FP が 1 件でも増加、micro F1 が 0.2 ポイントを超えて低下、
+  ゴールデンにあるルール／プロファイルが消えた（削除・改名）場合。
+- 評価ラベルの検査（`CoverageProblems`）: 合成ケースのラベルが未知のルール ID を指さないこと、
+  全ルールに 10 件以上の合成陽性があること、`all-opt-in` で全ルールが自分の合成陽性を
+  1 件以上検出すること。新ルールを追加したら `internal/corpusv2` の `positiveCandidates` に
+  合成器を追加してください。
+- 改善や許容内の変化は失敗にせず、ジョブサマリと警告で再生成を促します。
+
+意図した精度変化は、次のコマンドでゴールデンを再生成して差分をレビューに出してください
+（非公開コーパスの `docs/accuracy.json` とは別物で、どの環境でも実行できます）。
+
+```console
+$ go test ./internal/publiceval -update
+```
+
 #### プロファイル別評価（low / medium / high-recall）
 
 `TestAccuracy` は3プロファイルを同じコーパスから評価し、行スコア、exact / containment /
