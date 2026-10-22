@@ -389,6 +389,8 @@ $ jp-pii-detect scan --baseline .jp-pii-baseline.json --show-baseline .
   チェックディジットや正規化の仕組み、対象外とした項目とその理由
 - [検出精度（実測値）](docs/accuracy.md)：評価データセットに対するルール別の適合率、再現率、F1
 - [Sumi モデル同梱ビルド](docs/model-bundle.md)：同梱物、ビルド手順、ピン留めとライセンス表示
+- [誤検出・見逃しのフィードバック](docs/feedback.md)：Issue での報告の仕方（ダミー値のみ）、
+  ignore / allowlist の利用状況をルール別に集計する `jp-pii-suppressions`
 - [開発者向けガイド](docs/development.md)：ビルド、テスト、内部構成、検出ルールの追加方法
 - [他ツールとの比較](docs/comparison.md)：gitleaks / trufflehog / secretlint 等との違いと併用方針
 - [ロードマップ](docs/roadmap.md)：v1.0 に向けた対応予定と方針
