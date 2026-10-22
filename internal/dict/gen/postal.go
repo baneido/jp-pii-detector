@@ -7,11 +7,11 @@
 //
 //   - -ken-all-input: 「住所の郵便番号」CSV（1 レコード 1 行、UTF-8）、または
 //     それを含む zip。配布元:
-//     https://www.post.japanpost.jp/zipcode/dl/utf-zip.html
+//     https://www.post.japanpost.jp/service/search/zipcode/download/utf-zip.html
 //     （utf_ken_all.zip / KEN_ALL.CSV）。郵便番号は 3 列目（0 始まりで列 2）、
 //     市区町村名は 8 列目（0 始まりで列 7）。
 //   - -jigyosyo-input: 「事業所の個別郵便番号」CSV、または それを含む zip。配布元:
-//     https://www.post.japanpost.jp/zipcode/dl/jigyosyo/
+//     https://www.post.japanpost.jp/service/search/zipcode/download/office/
 //     （jigyosyo.zip / JIGYOSYO.CSV）。郵便番号は 8 列目（0 始まりで列 7）。
 //     配布データは Shift_JIS のため、CSV としてパースする前に UTF-8 へデコードする
 //     （クォート内の非 ASCII バイトを ASCII 前提でパースして誤って壊すのを避ける）。
@@ -241,7 +241,7 @@ func writeMunicipalities(path string, munis map[string]struct{}) error {
 	b.WriteString("# 日本郵便 KEN_ALL（住所の郵便番号 UTF-8 版）由来の市区町村名一覧。\n")
 	b.WriteString("# dict.MunicipalitySuffixMatch（jp-address-high-recall の Validate）が使う。\n")
 	b.WriteString("# 生成: go run ./internal/dict/gen -ken-all-input utf_ken_all.zip -output internal/dict/postal_codes.bitset -municipalities-output internal/dict/municipalities.txt\n")
-	b.WriteString("# 配布元: https://www.post.japanpost.jp/zipcode/dl/utf-zip.html\n")
+	b.WriteString("# 配布元: https://www.post.japanpost.jp/service/search/zipcode/download/utf-zip.html\n")
 	for _, m := range names {
 		b.WriteString(m)
 		b.WriteByte('\n')

@@ -56,6 +56,10 @@ type Result struct {
 type Options struct {
 	MinConfidence string
 	HighRecall    bool
+	// NameRoster は名簿ファイル判定（[rules] name_roster）を有効にする。公表3
+	// プロファイルはいずれも無効のまま（ゼロ値）で、PR 時の公開合成コーパス評価
+	// （internal/publiceval）の opt-in 全有効プロファイルだけが使う。
+	NameRoster bool
 }
 
 // Evaluate はデータセット全体を走査し、ルールごとの指標を返す。
@@ -140,8 +144,8 @@ func EvaluateCasesStratifiedWithOptions(cases []Case, opts Options) (Stratified,
 	if minConfidence == "" {
 		minConfidence = "low"
 	}
-	cfg, err := config.Parse(fmt.Sprintf("min_confidence = %q\n[rules]\nhigh_recall = %t\n",
-		minConfidence, opts.HighRecall))
+	cfg, err := config.Parse(fmt.Sprintf("min_confidence = %q\n[rules]\nhigh_recall = %t\nname_roster = %t\n",
+		minConfidence, opts.HighRecall, opts.NameRoster))
 	if err != nil {
 		return Stratified{}, err
 	}
@@ -173,15 +177,16 @@ func EvaluateCasesStratifiedWithOptions(cases []Case, opts Options) (Stratified,
 	for _, id := range rule.HighRecallRuleIDs() {
 		highRecallIDs[id] = true
 	}
-	// 名簿ファイル判定（name_roster）は高再現率とは独立した opt-in で、この評価の
-	// 検出器は有効にしない（上の config.Parse 参照）。期待だけを数えると必ず FN に
-	// なるため、高再現率ルールを無効にしたプロファイルと同じく非活性として扱う。
+	// 名簿ファイル判定（name_roster）は高再現率とは独立した opt-in で、
+	// opts.NameRoster が false の評価では検出器も有効にしない（上の config.Parse
+	// 参照）。期待だけを数えると必ず FN になるため、高再現率ルールを無効にした
+	// プロファイルと同じく非活性として扱う。
 	nameRosterIDs := map[string]bool{}
 	for _, id := range rule.NameRosterRuleIDs() {
 		nameRosterIDs[id] = true
 	}
 	activeRule := func(id string) bool {
-		return !nameRosterIDs[id] && (opts.HighRecall || !highRecallIDs[id])
+		return (opts.NameRoster || !nameRosterIDs[id]) && (opts.HighRecall || !highRecallIDs[id])
 	}
 	for _, c := range cases {
 		// Want・Spans がともに空のケースは陰性（何も検出されないべき）として
