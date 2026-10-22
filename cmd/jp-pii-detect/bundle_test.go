@@ -29,6 +29,8 @@ func TestResolveModelDir(t *testing.T) {
 	}
 	exeAt := func(p string) func() (string, error) { return func() (string, error) { return p, nil } }
 	exeErr := func() (string, error) { return "", errors.New("no exe") }
+	// 絶対パスの判定は OS ごとに違う（Windows では "/opt/sumi" はドライブ名がなく絶対パスではない）。
+	absBundled := filepath.Join(tmp, "opt", "sumi")
 
 	tests := []struct {
 		name    string
@@ -43,7 +45,7 @@ func TestResolveModelDir(t *testing.T) {
 		{name: "--model-dir を優先する", flagDir: "/m", bundled: "model", exe: exeErr, want: "/m"},
 		{name: "同梱ビルドは実行ファイル基準で解決する", bundled: "model", exe: exeAt(real), want: filepath.Join(realDir, "model")},
 		{name: "シンボリックリンク経由でも実体の隣を見る", bundled: "model", exe: exeAt(link), want: filepath.Join(realDir, "model")},
-		{name: "絶対パスの既定はそのまま", bundled: "/opt/sumi", exe: exeErr, want: "/opt/sumi"},
+		{name: "絶対パスの既定はそのまま", bundled: absBundled, exe: exeErr, want: absBundled},
 		{name: "--no-model は同梱の既定を無効にする", noModel: true, bundled: "model", exe: exeAt(real), want: ""},
 		{name: "--no-model と --model-dir の併用はエラー", noModel: true, flagDir: "/m", exe: exeErr, wantErr: true},
 		{name: "実行ファイルの場所が分からなければエラー", bundled: "model", exe: exeErr, wantErr: true},

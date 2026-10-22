@@ -20,7 +20,7 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	defer os.RemoveAll(tmp)
-	binPath = filepath.Join(tmp, "jp-pii-detect")
+	binPath = filepath.Join(tmp, "jp-pii-detect"+exeSuffix)
 	if out, err := exec.Command("go", "build", "-o", binPath, ".").CombinedOutput(); err != nil {
 		panic("build: " + err.Error() + "\n" + string(out))
 	}
