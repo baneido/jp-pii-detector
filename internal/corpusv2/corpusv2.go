@@ -172,6 +172,39 @@ func UpgradePublishedV2(input []evalcase.Case) ([]evalcase.Case, error) {
 	return cases, nil
 }
 
+// PublicSyntheticSeed は公開合成コーパス（PublicSynthetic）の固定シード。
+// 非公開コーパス由来の corpusSeed とは独立させ、公開側だけで再現できるようにする。
+const PublicSyntheticSeed = 20261023
+
+// AllRuleIDs は評価対象になりうる全ルール ID（既定・高再現率・名簿ファイル判定）を
+// 昇順で返す。
+func AllRuleIDs() []string { return allRuleIDs() }
+
+// PublicSynthetic は非公開コーパスを一切使わず、このパッケージの決定的な合成器
+// （positiveCandidates / hardNegativeCases）だけで作る公開評価ケースを返す。
+// 全ルールの陽性候補（Want のみ。span は検出器から逆算しない）と hard negative を
+// 含み、PR 時の精度ゲート（internal/publiceval）が使う。検出器の出力でケースを
+// 選別・注釈しないため、ルールが劣化すればそのまま FN/FP として現れる。
+// 同じ seed からは常に同じケース列を返す。
+func PublicSynthetic(seed int) []evalcase.Case {
+	var out []evalcase.Case
+	for _, id := range allRuleIDs() {
+		for i, c := range positiveCandidates(id, seed) {
+			c.ID = fmt.Sprintf("public-%s-%03d", id, i+1)
+			c.SourceClass = "public-synthetic"
+			c.Tags = appendUnique(c.Tags, "source:public-synthetic", "polarity:positive", "rule:"+id)
+			out = append(out, c)
+		}
+	}
+	for i, c := range hardNegativeCases(seed) {
+		c.ID = fmt.Sprintf("public-hard-negative-%03d", i+1)
+		c.SourceClass = "hard-negative"
+		c.Tags = appendUnique(c.Tags, "source:public-synthetic", "polarity:negative")
+		out = append(out, c)
+	}
+	return out
+}
+
 // reassignLabeledNoPrefectureAddressWant は、旧 jp-address-high-recall 単独陽性
 // ケースのうち、PR #148 で jp-address に追加された第 3 エントリ（都道府県なし・
 // ラベル必須住所）が新たに検出するようになった値を、jp-address の陽性へ
