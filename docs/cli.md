@@ -18,6 +18,7 @@ CI/CD への組み込みレシピは [docs/integrations.md](integrations.md) を
   - [`--min-confidence` と `--fail-on`](#--min-confidence-と---fail-on)
   - [baseline 系フラグの組み合わせ制約](#baseline-系フラグの組み合わせ制約)
   - [`--summary` と `--quiet`](#--summary-と---quiet)
+  - [`.gitignore` の扱い](#gitignore-の扱い)
   - [`--exit-zero` と読み取りエラー](#--exit-zero-と読み取りエラー)
 - [出力形式](#出力形式)
 - [終了コード](#終了コード)
@@ -104,6 +105,7 @@ $ jp-pii-detect scan -- -weird-filename.txt
 | `--explain-dropped` | 無効 | 検出候補がどの段階で棄却されたかを text/json 出力に追加する（FN 分析用。`json` 出力の `dropped` 配列に検出値そのものは含まれません） |
 | `--high-recall` | 無効 | 偽陽性リスクの高い再現率重視ルールを有効化する |
 | `--name-roster` | 無効 | 氏名だけが改行区切りで並ぶ名簿ファイルの判定（`person-name-roster`）を有効化する |
+| `--no-gitignore` | 無効 | フルスキャンで `.gitignore` 等に無視された未追跡ファイルも走査する（設定ファイルの `[scan] respect_gitignore = false` と同じ）。詳細は [`.gitignore` の扱い](#gitignore-の扱い) |
 | `--model-dir <dir>` | 未指定 | 試験的機能。ローカル推論モデル（Sumi、ONNX INT8）による検出を組み込みルールに追加する。`dir` には `model.int8.onnx`・`tokenizer.json`・`sumi_labels.json`・`calibrator.json` を置く。`CGO_ENABLED=1 go build -tags ort` でビルドしたバイナリでのみ使え、配布バイナリでは終了コード `2` になる。ONNX Runtime の共有ライブラリは環境変数 `JP_PII_ORT_LIBRARY`、`dir` 内、実行ファイルの隣の `lib/`、実行ファイルと同じディレクトリの順に探す。[モデル同梱ビルド](model-bundle.md)では、未指定でも実行ファイルの隣の `model/` を使う。Linux（x86-64）では、仮想マシンで INT8 推論の結果が壊れる ONNX Runtime の不具合（microsoft/onnxruntime#33247）を避けるため、既定で AMX を使わせない（`JP_PII_ORT_AMX=1` で解除）。設計は [design-ai-detection.md](design-ai-detection.md) |
 | `--model-full` | 無効 | `--model-dir`（またはモデル同梱ビルド）で、モデルにファイル全体を読ませる。既定では 2 段階方式で、日本語・`@`・長い数字の並び・ローマ字の姓名を含む行とその前後 1 行だけをモデルに読ませる（4096 バイトを超える行は minified や生成物とみなして読ませない）。組み込みルールは常にファイル全体を走査する。検出結果はほぼ同じで、コード中心のリポジトリでは数倍速い |
 | `--no-model` | 無効 | [モデル同梱ビルド](model-bundle.md)でも、モデルを使わず組み込みルールだけで走査する。`--model-dir` とは同時に指定できない |
@@ -161,6 +163,20 @@ $ jp-pii-detect scan -- -weird-filename.txt
 自動で要約が表示されます。CI のようにパイプ・リダイレクトされる環境では
 自動表示されないため、要約が必要なら明示的に `--summary` を付けてください。
 逆に、端末での自動表示が不要な場合は `--quiet` で抑止できます。
+
+### `.gitignore` の扱い
+
+フルスキャン（`scan [path...]` / `--full`）は既定で `.gitignore` を尊重し、無視された
+**未追跡**ファイル（ビルド成果物・ローカルの `.env` 等）を走査しません。走査ルートが git の
+作業ツリー内なら判定は git 自身に任せる（`git ls-files --others --ignored --exclude-standard`）ため、
+ネストした `.gitignore`・否定パターン・`.git/info/exclude`・`core.excludesFile` も git と同じ
+意味で効きます。バージョン管理済み（tracked）のファイルは `.gitignore` にマッチしても走査します。
+git 管理外のディレクトリでは、走査中に見つけた `.gitignore` ファイルだけを解釈します。
+
+走査ルートとして明示指定したファイル・ディレクトリは、無視対象でも走査します。
+無視されたファイルも含めて走査したい場合は `--no-gitignore`（または設定ファイルの
+`[scan] respect_gitignore = false`）を指定してください。除外件数は `--summary` の
+`excluded-gitignore=` に表示されます。`--staged` / `--diff` / `--stdin` には影響しません。
 
 ### `--exit-zero` と読み取りエラー
 

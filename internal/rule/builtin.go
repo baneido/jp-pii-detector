@@ -1634,8 +1634,9 @@ func Builtin() []Rule {
 					`(?:^|[^` + kanji + hiragana + katakana + `])` +
 						`([` + kanji + `]{2,8})(?:様|さん|氏|殿)`,
 				), Base: Medium, Validate: honorificPersonNameValid,
-					// 「新品同様」「構文仕様」のような一般語の「様」を棄却する。
-					ValidateLine: rejectYouCompound},
+					// 「新品同様」「構文仕様」のような一般語の「様」と、
+					// 「初見さん」「常連さん」「社員皆さん」のような一般語 + 敬称を棄却する。
+					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun)},
 				// 敬称の直前に空白が入る形（「鈴木一郎 様」）と、姓名の間に空白が
 				// 入る形（「山田 太郎様」）。上の無空白パターンは値と敬称が地続きの
 				// ときしか一致しないため、フォーム・宛名書きで一般的なこの表記を
@@ -1725,7 +1726,9 @@ func Builtin() []Rule {
 			},
 		},
 	}...)
-	return rules
+	// 数字列ルールに共通の周辺文脈ガード（小数・16 進トークン・URL の ID・
+	// Firebase アプリ ID）を合成する（numeric_context_guard.go）。
+	return withNumericContextGuard(rules)
 }
 
 // validMyNumber はマイナンバー（個人番号）の検査用数字に加え、ダミー値で
@@ -2281,6 +2284,33 @@ var (
 	emailPlaceholderDomainLabels = []string{"domain", "yourdomain", "mydomain", "somewhere", "test"}
 )
 
+// emailNonPersonalDomains は、個人ではなくプロトコルの拡張名・機械アカウントに
+// 使われるドメイン。ドメインそのものか、そのサブドメインのときに棄却する。
+//   - openssh.com / libssh.org: SSH の暗号・拡張名（"chacha20-poly1305@openssh.com"、
+//     "curve25519-sha256@libssh.org"）。RFC 4251 の命名規則で、設定ファイル・
+//     ライブラリに頻出する。
+//   - gserviceaccount.com: Google Cloud のサービスアカウント
+//     （"*.iam.gserviceaccount.com"、"*@developer.gserviceaccount.com"）。
+//     個人ではなくワークロードの ID（秘密情報の検出は対象外）。
+var emailNonPersonalDomains = []string{"openssh.com", "libssh.org", "gserviceaccount.com"}
+
+// emailNonPersonalLocals は、個人を指さない送信専用・システムのローカル部
+// （完全一致、大文字小文字は区別しない）。
+var emailNonPersonalLocals = []string{
+	"noreply", "no-reply", "no_reply", "donotreply", "do-not-reply", "do_not_reply", "mailer-daemon",
+}
+
+// nonPersonalEmail は、local@domain（domain は小文字）が個人を指さない
+// プロトコル名・機械アカウント・送信専用アドレスであるかを返す。
+func nonPersonalEmail(local, domain string) bool {
+	for _, d := range emailNonPersonalDomains {
+		if domain == d || strings.HasSuffix(domain, "."+d) {
+			return true
+		}
+	}
+	return slices.Contains(emailNonPersonalLocals, strings.ToLower(local))
+}
+
 // containsEmailDummyWord は s（ローカル部またはドメイン第 1 ラベル）がダミー語を
 // 含むかを返す。emailDummySubstringWords は部分一致、emailDummyTokenWords は
 // トークン一致（s を区切り文字 . _ % + - で分割し、各トークンの前後に付いた連番を
@@ -2343,6 +2373,9 @@ func validEmail(m string) bool {
 		return false
 	}
 	if len(labels) == 2 && slices.Contains(emailPlaceholderDomainLabels, labels[0]) {
+		return false
+	}
+	if nonPersonalEmail(local, domain) {
 		return false
 	}
 	tld := labels[len(labels)-1]

@@ -4761,3 +4761,88 @@ func TestPhoneRulePrefilterFoldDisabled(t *testing.T) {
 		t.Fatal("リテラルプレフィルタを持つ jp-phone-number エントリが見つからない")
 	}
 }
+
+// TestNumericContextGuard は、数字列ルール（電話番号・口座番号・マイナンバー・
+// クレジットカード）が、小数・16 進トークン・URL の ID・Firebase アプリ ID の
+// 一部を番号として報告しないこと、かつ同じ値の通常の記載は引き続き検出することを
+// 固定する（internal/rule/numeric_context_guard.go）。値はすべてダミー。
+func TestNumericContextGuard(t *testing.T) {
+	d := newDetector(t, "")
+	mobile := testfixtures.MustGet(t, "detect.phone_mobile_nosep_a")
+	mynum := testfixtures.MustGet(t, "detect.mynumber_valid")
+	const card = "4000001234567899"
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		// 検出を維持する（再現率）。
+		{"口座番号", "口座番号 1234567", []string{"jp-bank-account"}},
+		{"口座番号（英字ラベル連結）", "口座 No1234567", []string{"jp-bank-account"}},
+		{"携帯", "電話 " + mobile, []string{"jp-phone-number"}},
+		{"携帯（smartphone 連結）", "smartphone" + mobile, []string{"jp-phone-number"}},
+		{"携帯（URL のクエリ、キー名が電話）", "https://example.com/form?tel=" + mobile, []string{"jp-phone-number"}},
+		{"マイナンバー", "マイナンバー " + mynum, []string{"jp-my-number"}},
+		{"カード", "card " + card, []string{"credit-card"}},
+		{"エポックミリ秒は元々どのルールにも一致しない", `"created_at_ms": 1712345678901`, nil},
+		// 棄却する（偽陽性）。
+		{"口座: 小数部", "bank account ratio: 0.1234567", nil},
+		{"口座: mtime の小数部", "口座 mtime: 1712345678.9876543", nil},
+		{"口座: 16 進トークン", "bank account digest: 3fa1234567bd", nil},
+		{"口座: URL のパス", "bank account help: https://support.example.com/accounts/answer/1234567", nil},
+		{"口座: URL のクエリ", "bank account help: https://example.com/help?topic=1234567&lang=ja", nil},
+		{"電話: 16 進トークン", "phone hash: deadbeef" + mobile, nil},
+		{"電話: URL のパス", "tel ref: https://example.com/item/" + mobile, nil},
+		{"マイナンバー: Firebase アプリ ID", `"mobilesdk_app_id": "1:` + mynum + `:android:0a1b2c3d4e5f6789"`, nil},
+		{"マイナンバー: 小数部", "0." + mynum, nil},
+		{"カード: 小数部", "card 0." + card, nil},
+		{"カード: URL のクエリ", "card https://example.com/r?ref=" + card, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// TestEmailNonPersonal は、SSH の暗号・拡張名、GCP のサービスアカウント、
+// 送信専用アドレスをメールアドレスとして報告しないことを固定する。
+func TestEmailNonPersonal(t *testing.T) {
+	d := newDetector(t, "")
+	for _, line := range []string{
+		"Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com",
+		"KexAlgorithms curve25519-sha256@libssh.org",
+		"serviceAccount: deploy@my-proj.iam.gserviceaccount.com",
+		"123456789012-compute@developer.gserviceaccount.com",
+		"From: noreply@corp.co.jp",
+	} {
+		assertRules(t, d.ScanLine("f.txt", 1, line))
+	}
+	assertRules(t, d.ScanLine("f.txt", 1, "To: taro.yamada@corp.co.jp"), "email-address")
+}
+
+// TestHonorificCommonNounHighRecall は、高再現率モードの敬称アンカーで
+// 「初見さん」「常連さん」「社員皆さん」のような一般語 + 敬称と、
+// 「仕様」「同様」の「様」を氏名として報告しないことを固定する。
+func TestHonorificCommonNounHighRecall(t *testing.T) {
+	d := newDetector(t, "[rules]\nhigh_recall = true\n")
+	for _, line := range []string{
+		"初見さん歓迎", "常連さんに感謝", "社員皆さんへ", "大家さんへ", "旦那さんと", "親御さんへ",
+		"新規さん", "運営さんへ", "常連客様", "「お客さん」", "皆さんへ", "お疲れさんでした",
+		"構文仕様です", "新品同様",
+	} {
+		for _, f := range d.ScanLine("f.txt", 1, line) {
+			if f.RuleID == "person-name-high-recall" {
+				t.Errorf("%q: person-name-high-recall を検出した（%q）", line, f.Match)
+			}
+		}
+	}
+	for _, line := range []string{"山田太郎さんへ", "佐藤さん", "初見太郎さん"} {
+		found := false
+		for _, f := range d.ScanLine("f.txt", 1, line) {
+			found = found || f.RuleID == "person-name-high-recall"
+		}
+		if !found {
+			t.Errorf("%q: person-name-high-recall を検出しなかった", line)
+		}
+	}
+}

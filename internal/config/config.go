@@ -99,6 +99,15 @@ type Config struct {
 		Stopwords []string `toml:"stopwords"`
 	} `toml:"allowlist"`
 
+	// Scan はフルスキャン（ファイルツリーの走査）の対象範囲に関する設定（[scan]）。
+	Scan struct {
+		// RespectGitignore は .gitignore 等で無視されている未追跡ファイルを
+		// フルスキャンの対象から外すかどうか。nil（未指定）は既定の true として扱う。
+		// git 管理下ではバージョン管理済み（tracked）のファイルは .gitignore に
+		// マッチしても走査する（git と同じ意味論）。git diff 系・--stdin には影響しない。
+		RespectGitignore *bool `toml:"respect_gitignore"`
+	} `toml:"scan"`
+
 	// ExternalRecognizer は外部コマンドを検出候補の生成器として呼び出す opt-in 連携設定
 	// （[external_recognizer]、internal/external）。既定は未設定（Command が空）＝完全に
 	// 無効で、フルスキャンと --stdin にのみ適用される（git diff 系は対象外）。
@@ -368,6 +377,17 @@ func compilePathGlob(pattern string) (*regexp.Regexp, error) {
 	return regexp.Compile(b.String())
 }
 
+// GitignoreRespected はフルスキャンで .gitignore を尊重するかどうかを返す
+// （[scan] respect_gitignore 未指定時は true）。
+func (c *Config) GitignoreRespected() bool {
+	return c.Scan.RespectGitignore == nil || *c.Scan.RespectGitignore
+}
+
+// SetRespectGitignore は [scan] respect_gitignore を上書きする（--no-gitignore 用）。
+func (c *Config) SetRespectGitignore(enabled bool) {
+	c.Scan.RespectGitignore = &enabled
+}
+
 // SetHighRecall は高再現率ルールの有効/無効を切り替える。
 // 明示的に disabled されたルールは維持し、自動で付与した既定無効化だけを更新する。
 func (c *Config) SetHighRecall(enabled bool) {
@@ -407,13 +427,47 @@ func (c *Config) applyOptInRuleDefaults() {
 }
 
 // PathAllowed はパスが走査対象かどうかを返す（除外なら false）。
+//
+// パターンはパスそのものに加えて、祖先ディレクトリ（a/b/c.go なら a と a/b）にも
+// 評価する。フルスキャンはディレクトリ単位で配下を丸ごと除外する（SkipDir）ため、
+// "**/node_modules" のようなディレクトリ名だけの glob も配下に効く。一方 git diff 系・
+// 明示ファイル指定はファイルパスだけを評価していたため、同じ設定でもモードによって
+// 除外範囲が食い違っていた。祖先も評価することで、どのモードでも同じ範囲を除外する。
 func (c *Config) PathAllowed(relPath string) bool {
-	for _, re := range c.pathRes {
-		if re.MatchString(relPath) {
-			return false
+	if len(c.pathRes) == 0 {
+		return true
+	}
+	for _, p := range pathAndAncestors(relPath) {
+		for _, re := range c.pathRes {
+			if re.MatchString(p) {
+				return false
+			}
 		}
 	}
 	return true
+}
+
+// pathAndAncestors は "/" 区切りのパスについて、パス自身と祖先ディレクトリを返す
+// （"a/b/c.go" → "a/b/c.go", "a/b", "a"）。"." / ".." だけの要素は含めない。
+// 絶対パス（"/" 始まり・Windows のドライブ指定）と "../" 始まりのパスは、走査ルート
+// より上のディレクトリ名（利用者のホームディレクトリ名等）に意図せずマッチしないよう、
+// 祖先を評価しない（フルスキャンはルート相対パスでも別途評価する）。
+func pathAndAncestors(p string) []string {
+	out := []string{p}
+	if strings.HasPrefix(p, "/") || strings.HasPrefix(p, "../") || (len(p) >= 2 && p[1] == ':') {
+		return out
+	}
+	for {
+		i := strings.LastIndex(p, "/")
+		if i <= 0 {
+			return out
+		}
+		p = p[:i]
+		if p == "." || p == ".." || strings.HasSuffix(p, "/..") {
+			return out
+		}
+		out = append(out, p)
+	}
 }
 
 // WithoutAllowlist は [allowlist]（paths / regexes / stopwords）だけを空にした

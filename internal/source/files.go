@@ -59,6 +59,9 @@ type ScanStats struct {
 	SkippedTooLarge     int
 	ExcludedPaths       int
 	ExcludedDefaultDirs int
+	// ExcludedGitignored は .gitignore 等で無視されていたため列挙しなかった
+	// ファイル・ディレクトリの数（[scan] respect_gitignore / --no-gitignore）。
+	ExcludedGitignored int
 }
 
 // SkippedFiles は列挙後に内容判定で走査しなかったファイル数を返す。
@@ -86,6 +89,10 @@ func listFiles(cfg *config.Config, paths []string) ([]string, []error, ScanStats
 	var warnings []error
 	var stats ScanStats
 	for _, root := range paths {
+		var ignore *gitignoreFilter
+		if cfg.GitignoreRespected() {
+			ignore = newGitignoreFilter(root)
+		}
 		err := filepath.WalkDir(root, func(path string, ent fs.DirEntry, err error) error {
 			if err != nil {
 				if path == root {
@@ -106,6 +113,10 @@ func listFiles(cfg *config.Config, paths []string) ([]string, []error, ScanStats
 					stats.ExcludedPaths++
 					return filepath.SkipDir
 				}
+				if path != root && ignore != nil && ignore.ignoredPath(path, true) {
+					stats.ExcludedGitignored++
+					return filepath.SkipDir
+				}
 				return nil
 			}
 			if !ent.Type().IsRegular() {
@@ -113,6 +124,12 @@ func listFiles(cfg *config.Config, paths []string) ([]string, []error, ScanStats
 			}
 			if !pathAllowed(cfg, repoRoot, path) {
 				stats.ExcludedPaths++
+				return nil
+			}
+			// 走査ルートとして明示指定されたファイルは .gitignore にマッチしても走査する
+			// （ignoredPath が root 自身を常に対象とする）。
+			if ignore != nil && ignore.ignoredPath(path, false) {
+				stats.ExcludedGitignored++
 				return nil
 			}
 			info, err := ent.Info()

@@ -188,8 +188,11 @@ Place `.jp-pii.toml` at the repository root (auto-discovered upward to the repo 
 ```toml
 min_confidence = "medium"   # low | medium | high
 
+[scan]
+respect_gitignore = true       # full scans skip untracked files ignored by .gitignore (default; --no-gitignore to override)
+
 [allowlist]
-paths = ["^testdata/"]         # exclude paths (glob or regex)
+paths = ["^testdata/"]         # exclude paths (glob or regex); also matched against ancestor directories
 stopwords = ["090-XXXX-XXXX"]  # exclude exact dummy values
 ```
 

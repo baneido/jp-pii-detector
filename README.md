@@ -311,11 +311,18 @@ cooccurrence_boost = false
 # public-business を付与する。詳細は docs/detection-methods.md の「電話番号の下位種別分類」を参照
 exclude_kinds = ["service"]
 
+[scan]
+# フルスキャンで .gitignore 等に無視された未追跡ファイルを走査しない（既定: true）。
+# 追跡済みファイルは対象のまま。--no-gitignore で一時的に無効化できます
+respect_gitignore = true
+
 [allowlist]
 # スキャン対象から除外するパス（glob または正規表現）。glob の * は 1 階層、
 # ** は 0 階層以上にマッチします。フルスキャンでは走査時のパス表記に加えて
 # リポジトリルートからの相対パスにも適用されるため、サブディレクトリから
 # 実行しても ^testdata/ や path/to/*.txt のようなルート相対の指定が機能します。
+# パターンは祖先ディレクトリにも評価されるため、"**/generated" のような
+# ディレクトリ指定はフルスキャン・--staged・--diff のどれでも配下全体を除外します。
 paths = ["path/to/*.txt", "path/to/**/target", "^testdata/", "\\.lock$"]
 # マッチ文字列に対する除外（正規表現）。例: 自社ドメインのメール
 regexes = ["@baneido\\.com$"]
