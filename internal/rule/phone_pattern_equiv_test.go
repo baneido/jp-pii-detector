@@ -31,7 +31,21 @@ import (
 // legacyPhonePatterns は分割前（単一 Rule エントリ時代）の jp-phone-number の
 // パターン列を、定義順そのままに保持した参照実装。phoneRules 側を編集したときに
 // 検出挙動の差分が出ていないかを比較するためだけに存在する（本番経路では未使用）。
+//
+// Builtin は分割後のエントリに数字列共通の周辺文脈ガード（withNumericContextGuard）を
+// 合成するため、参照実装にも同じ合成をかけてから比較する（ガードそのものの
+// 挙動は digit_token_guard_test.go で固定する）。
 func legacyPhonePatterns() []Pattern {
+	guarded := withNumericContextGuard([]Rule{{
+		ID:       "jp-phone-number",
+		Context:  phoneRules()[0].Context,
+		Patterns: legacyPhonePatternsRaw(),
+	}})
+	return guarded[0].Patterns
+}
+
+// legacyPhonePatternsRaw は周辺文脈ガードを合成する前の参照パターン列。
+func legacyPhonePatternsRaw() []Pattern {
 	return []Pattern{
 		{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0-\d{4}-\d{4}`), Base: High, NegativeContextMode: NegativeContextAdjacentLabelOnly},
 		{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0[ .]\d{4}[ .]\d{4}`), Base: Medium,

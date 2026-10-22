@@ -132,3 +132,145 @@ func TestValidEmailPlaceholderDomain(t *testing.T) {
 		}
 	}
 }
+
+func TestRejectDecimalFraction(t *testing.T) {
+	cases := []struct {
+		line, m string
+		want    bool
+	}{
+		{"口座 1234567", "1234567", true},
+		{"口座 1234567。", "1234567", true},
+		{"末尾 1234567.", "1234567", true},
+		{"ratio: 0.1234567", "1234567", false},
+		{`"mtime": 1712345678.9876543`, "9876543", false},
+		{"value 1234567.25", "1234567", false},
+		// バージョン風の "v.1234567" は小数ではない。
+		{"build v.1234567", "1234567", true},
+	}
+	for _, c := range cases {
+		s, e := span(t, c.line, c.m)
+		if got := rejectDecimalFraction(c.line, s, e); got != c.want {
+			t.Errorf("rejectDecimalFraction(%q, %q) = %v, want %v", c.line, c.m, got, c.want)
+		}
+	}
+}
+
+func TestRejectHexTokenPart(t *testing.T) {
+	cases := []struct {
+		line, m string
+		want    bool
+	}{
+		{"digest: 3fa1234567bd", "1234567", false},
+		{"hash deadbeef09012345678", "09012345678", false},
+		{"HASH DEADBEEF09012345678", "09012345678", false},
+		// 16 進以外の英字を含む連結は棄却しない（境界ガードに任せる）。
+		{"smartphone09012345678", "09012345678", true},
+		{"口座 No1234567", "1234567", true},
+		// 短いトークンは型番等と区別できないので棄却しない。
+		{"口座 a1234567", "1234567", true},
+		// 英字と地続きでなければ対象外。
+		{"口座 1234567", "1234567", true},
+		{"cafe 09012345678", "09012345678", true},
+	}
+	for _, c := range cases {
+		s, e := span(t, c.line, c.m)
+		if got := rejectHexTokenPart(c.line, s, e); got != c.want {
+			t.Errorf("rejectHexTokenPart(%q, %q) = %v, want %v", c.line, c.m, got, c.want)
+		}
+	}
+}
+
+func TestRejectURLNumericID(t *testing.T) {
+	f := rejectURLNumericID([]string{"tel", "phone", "口座"})
+	cases := []struct {
+		line, m string
+		want    bool
+	}{
+		{"see https://support.example.com/accounts/answer/1234567 for details", "1234567", false},
+		{"https://example.com/help?topic=1234567&lang=ja", "1234567", false},
+		{"https://example.com/help?lang=ja&id=09012345678", "09012345678", false},
+		{"(https://example.com/item/09012345678)", "09012345678", false},
+		// クエリのキー名がコンテキスト語なら番号そのものとみなす。
+		{"https://example.com/form?tel=09012345678", "09012345678", true},
+		{"https://example.com/form?phone_number=09012345678", "09012345678", true},
+		// 区切り付きの番号は URL 中でも対象外。
+		{"https://example.com/u/090-1234-5678", "090-1234-5678", true},
+		// URL でないパス・代入は対象外。
+		{"口座 /1234567", "1234567", true},
+		{"口座=1234567", "1234567", true},
+		{"tel: 09012345678 https://example.com/", "09012345678", true},
+	}
+	for _, c := range cases {
+		s, e := span(t, c.line, c.m)
+		if got := f(c.line, s, e); got != c.want {
+			t.Errorf("rejectURLNumericID(%q, %q) = %v, want %v", c.line, c.m, got, c.want)
+		}
+	}
+}
+
+func TestRejectFirebaseAppID(t *testing.T) {
+	cases := []struct {
+		line, m string
+		want    bool
+	}{
+		{`"mobilesdk_app_id": "1:123456789012:android:0a1b2c3d4e5f6789"`, "123456789012", false},
+		{`GOOGLE_APP_ID = 1:123456789012:ios:0a1b2c3d4e5f6789`, "123456789012", false},
+		{`appId: "1:123456789012:web:0a1b2c3d4e5f6789"`, "123456789012", false},
+		{`番号 1:123456789012 です`, "123456789012", true},
+		{`番号 123456789012:android:`, "123456789012", true},
+	}
+	for _, c := range cases {
+		s, e := span(t, c.line, c.m)
+		if got := rejectFirebaseAppID(c.line, s, e); got != c.want {
+			t.Errorf("rejectFirebaseAppID(%q, %q) = %v, want %v", c.line, c.m, got, c.want)
+		}
+	}
+}
+
+func TestRejectHonorificCommonNoun(t *testing.T) {
+	cases := []struct {
+		line, m string
+		want    bool
+	}{
+		{"初見さん歓迎", "初見", false},
+		{"常連さんに感謝", "常連", false},
+		{"社員皆さんへ", "社員皆", false},
+		{"来場者皆様へ", "来場者皆", false},
+		{"常連客様", "常連客", false},
+		{"大家さんへ", "大家", false},
+		{"山田太郎さんへ", "山田太郎", true},
+		{"初見太郎さん", "初見太郎", true},
+		// 「氏」「殿」は対象外。
+		{"大家氏", "大家", true},
+	}
+	for _, c := range cases {
+		s, e := span(t, c.line, c.m)
+		if got := rejectHonorificCommonNoun(c.line, s, e); got != c.want {
+			t.Errorf("rejectHonorificCommonNoun(%q, %q) = %v, want %v", c.line, c.m, got, c.want)
+		}
+	}
+}
+
+func TestNonPersonalEmail(t *testing.T) {
+	cases := []struct {
+		m    string
+		want bool
+	}{
+		{"chacha20-poly1305@openssh.com", false},
+		{"sntrup761x25519-sha512@openssh.com", false},
+		{"curve25519-sha256@libssh.org", false},
+		{"deploy@my-proj.iam.gserviceaccount.com", false},
+		{"123456789012-compute@developer.gserviceaccount.com", false},
+		{"noreply@corp.co.jp", false},
+		{"No-Reply@corp.co.jp", false},
+		{"taro.yamada@corp.co.jp", true},
+		// 似たドメイン・ローカル部は棄却しない。
+		{"taro@notopenssh.com", true},
+		{"noreply.taro@corp.co.jp", true},
+	}
+	for _, c := range cases {
+		if got := validEmail(c.m); got != c.want {
+			t.Errorf("validEmail(%q) = %v, want %v", c.m, got, c.want)
+		}
+	}
+}

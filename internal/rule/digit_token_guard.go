@@ -177,3 +177,41 @@ func rejectURLUserinfo(line string, start, end int) bool {
 	}
 	return !strings.Contains(line[i:start], "://")
 }
+
+// honorificCommonNouns は、「さん」「様」を付けて人を指すが氏名ではない一般語
+// （客・常連・初見・大家 等）。敬称アンカーの直前の漢字列がこれと完全一致する
+// 場合に棄却する。初見・大家・奥 のように同表記の姓が辞書にある語も含むが、
+// 「さん」「様」付きではまず一般語として使われるため、姓としての再現率より
+// 偽陽性の抑制を優先する（「初見太郎さん」のように名が続く値は完全一致しないので
+// 引き続き検出する）。
+var honorificCommonNouns = map[string]bool{
+	"初見": true, "常連": true, "新規": true, "古参": true, "新参": true, "新人": true, "一見": true,
+	"旦那": true, "親御": true, "大家": true, "家主": true, "地主": true, "運営": true, "相方": true,
+	"奥方": true, "女将": true, "親方": true, "坊主": true, "和尚": true, "住職": true, "神主": true,
+	"皆": true, "皆皆": true, "各位": true, "常連客": true, "乗客": true, "顧客": true, "来店客": true,
+	"御客": true, "親父": true, "母親": true, "父親": true, "隣人": true, "近所": true, "御近所": true,
+}
+
+// honorificCommonNounSuffixes は、「社員皆さん」「来場者皆様」「常連客様」の
+// ように、一般語 + 敬称の前に別の語が付いた形の語尾。
+var honorificCommonNounSuffixes = []string{"皆", "客"}
+
+// rejectHonorificCommonNoun は、敬称（さん・様）の直前の漢字列が一般語
+// （honorificCommonNouns・honorificCommonNounSuffixes）である場合に棄却する。
+// 「氏」「殿」は一般語に付くことがほぼ無いので対象外にする。
+func rejectHonorificCommonNoun(line string, start, end int) bool {
+	rest := line[end:]
+	if !strings.HasPrefix(rest, "さん") && !strings.HasPrefix(rest, "様") {
+		return true
+	}
+	v := line[start:end]
+	if honorificCommonNouns[v] {
+		return false
+	}
+	for _, s := range honorificCommonNounSuffixes {
+		if strings.HasSuffix(v, s) {
+			return false
+		}
+	}
+	return true
+}
