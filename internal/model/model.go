@@ -55,6 +55,8 @@ type Recognizer struct {
 	labels      []string
 	temperature float64
 	close       func() error
+	// full が true ならテキスト全体を推論する（既定は 2 段階方式。prefilter.go）。
+	full bool
 }
 
 // 期待するモデルディレクトリの中身。
@@ -127,6 +129,14 @@ func (r *Recognizer) Recognize(text string) ([]external.Candidate, error) {
 	if strings.TrimSpace(text) == "" {
 		return nil, nil
 	}
+	if !r.full {
+		return r.recognizeSelected(text)
+	}
+	return r.recognizeAll(text)
+}
+
+// recognizeAll は text 全体を窓に分けて推論する。
+func (r *Recognizer) recognizeAll(text string) ([]external.Candidate, error) {
 	runes := []rune(text)
 	toks := r.tok.encode(text)
 	var spans []span
