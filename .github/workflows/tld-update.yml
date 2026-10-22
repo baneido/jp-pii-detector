@@ -138,8 +138,10 @@ jobs:
             fi
           } > "${body_file}.final"
 
-          if gh pr view "$TLD_BRANCH" >/dev/null 2>&1; then
-            gh pr edit "$TLD_BRANCH" --title "$title" --body-file "${body_file}.final"
+          # gh pr view <branch> はマージ済み・クローズ済みの PR も返すため、open な PR だけを探す
+          open_pr=$(gh pr list --head "$TLD_BRANCH" --base main --state open --json url -q '.[0].url')
+          if [ -n "$open_pr" ]; then
+            gh pr edit "$open_pr" --title "$title" --body-file "${body_file}.final"
             echo "既存 PR を更新した（${TLD_BRANCH}）。"
           else
             gh pr create --base main --head "$TLD_BRANCH" \

@@ -799,9 +799,9 @@ PR タイトルに `[要レビュー]` を付与し、本文に削除された T
 市区町村名一覧を再生成してから
 `go test ./internal/dict ./internal/dict/gen ./internal/detect ./internal/eval` で検証します。
 
-- 住所の郵便番号（UTF-8）: `https://www.post.japanpost.jp/zipcode/dl/utf-zip.html`
+- 住所の郵便番号（UTF-8）: `https://www.post.japanpost.jp/service/search/zipcode/download/utf-zip.html`
   （`utf_ken_all.zip` / `KEN_ALL.CSV`）
-- 事業所の個別郵便番号（Shift_JIS）: `https://www.post.japanpost.jp/zipcode/dl/jigyosyo/index-zip.html`
+- 事業所の個別郵便番号（Shift_JIS）: `https://www.post.japanpost.jp/service/search/zipcode/download/office/index-zip.html`
   （`jigyosyo.zip` / `JIGYOSYO.CSV`）
 
 ```console
