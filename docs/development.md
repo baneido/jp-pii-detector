@@ -403,12 +403,30 @@ $ go run ./cmd/pii-dataset-gen -output /path/outside/repo/synthetic-cases.json
 `jp-pii-detect scan --format json --exit-zero <corpus-dir>` の出力（マスク済み値のみ）を
 `rule_id` ごとの件数に集計し、`<corpus-dir>` 配下の物理行数（`find <dir> -type f | xargs wc -l`
 相当）で割った `findings/MLoC` を計算します。マスク済みの `match` 値すら出力に含めません
-（件数集計のみ）。
+（件数集計のみ）。各コーパスを既定プロファイルと `--high-recall` の 2 回走査し、別々に
+集計します（`summary.json` / `summary-high-recall.json`）。
+
+**著作者メタデータの扱い**: OSS の `LICENSE`・`AUTHORS`・`CONTRIBUTORS`・`NOTICE`・
+`CHANGELOG`・`.mailmap` などのファイルや、ソース先頭の著作権表記（`Copyright`・`(c)`・`©`）、
+`Author:`・`Signed-off-by:`・`Co-authored-by:`・`Maintainer:`、`氏名 <メール>` 形式の行に
+書かれた氏名・メールアドレスは、本人が公開を前提に記載した**実在の個人情報**です。
+jp-pii-detect はこれを検出するのが正しい動作とし、ルールでは除外しません（利用者のリポジトリでも
+同じ行は「公開してよいか」を人が判断する対象で、不要なら allowlist やインラインの抑制で
+明示的に外します）。一方で偽陽性でもないので、`fp-corpus-report.sh` は該当する検出を
+`attribution` として別に数え、偽陽性率は `fp_total` / `fp_per_mloc`（attribution を除いた
+件数）で見ます。判定はファイル名と該当行の内容だけで行い（`classify_attribution`）、
+出力には件数しか残しません。`findings_total` / `findings_per_mloc` は前回比較の互換のため
+attribution を含めたままにしています。
 
 **コーパス選定基準**: 大規模かつ長期間・広く第三者に精査されている著名 OSS（標準ライブラリ・
 ビルドツール等）に限定します。自治体オープンデータ処理系のように実 PII を扱う蓋然性が高い
 カテゴリは対象外です。日本語コメントを含む対象を追加する場合は、個人ブログ的なサンプル
-データを含まない、企業がメンテする本体コードに限定してください。
+データを含まない、企業がメンテする本体コードに限定してください。実機から集めたログの
+データセット（loghub 等）も、利用者名やメールアドレスを含みうるので対象外です。ログ書式
+（タイムスタンプ・ブロック ID 等）の偽陽性は、ダミー値の単体テスト
+（`internal/rule/digit_token_guard_test.go`）で固定します。
+第三者のコードやその検出結果（生値・マスク値）はリポジトリにコミットせず、ワークフローが
+実行時に固定コミットを取得し、件数だけを残します。
 
 **コーパスの追加・更新手順（初回 1 回、手動レビュー必須）**:
 
@@ -444,7 +462,10 @@ findings/MLoC が前回比 20% を超えて増加した場合に Actions の war
 3変数がすべて未設定なら履歴保存・比較を明示的にスキップし、部分設定は設定ミスとして失敗します。
 
 **運用フェーズ**: 固定した go・curl・TypeScript コーパスの取得と現行検出器での走査を確認し、
-毎週月曜 03:00 UTC の cron に昇格済みです。`workflow_dispatch` も残していますが、OIDC を伴う
+毎週月曜 03:00 UTC の cron に昇格済みです。その後、言語・種別の偏りを減らすため、Python
+（Django・Requests・Ansible）・JavaScript（Express・Vue）・Java（Guava）・Rust（ripgrep・Tokio）・
+Go の設定/YAML 中心のプロジェクト（Prometheus）と、日本語の文書（React・Rails ガイド・Vue の
+日本語版）・日本語処理系（Sudachi・kagome）を加えて 17 コーパス（約 12 万ファイル）にしました。`workflow_dispatch` も残していますが、OIDC を伴う
 任意ブランチ実行を避けるため既定ブランチでしか job は動きません。`pull_request` では起動せず、
 PR 由来のコードへ report writer 権限を渡しません。閾値が安定しゲート化を検討するまでは、
 上記の非ゲート warning で推移を確認してください。
