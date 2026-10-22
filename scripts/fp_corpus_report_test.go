@@ -357,3 +357,96 @@ func TestFPCorpusWorkflowWeeklyTrendIsHardened(t *testing.T) {
 		}
 	}
 }
+
+// 著作者メタデータ（LICENSE・AUTHORS 等のファイル、著作権表記・Signed-off-by 等の行）の
+// 検出は偽陽性ではなく attribution として別に数える。値はすべてダミー。
+func TestFPCorpusReportSeparatesAttribution(t *testing.T) {
+	corpusDir := t.TempDir()
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(corpusDir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("AUTHORS", "Taro Example <taro@example.com>\n")
+	write("main.go", "// Copyright 2020 Taro Example <taro@example.com>\nconst mail = \"hanako@example.com\"\n")
+	write("README.md", "Signed-off-by: Jiro Example\nsee 1234-5678-9012-3456\n")
+
+	file := func(name string) string { return filepath.Join(corpusDir, name) }
+	findings := []map[string]any{
+		{"rule_id": "email-address", "file": file("AUTHORS"), "line": 1, "column": 15, "match": "ta**@example.com", "confidence": "high"},
+		{"rule_id": "email-address", "file": file("main.go"), "line": 1, "column": 30, "match": "ta**@example.com", "confidence": "high"},
+		{"rule_id": "email-address", "file": file("main.go"), "line": 2, "column": 15, "match": "ha****@example.com", "confidence": "high"},
+		{"rule_id": "person-name-romaji", "file": file("README.md"), "line": 1, "column": 16, "match": "Ji** Ex*****", "confidence": "medium"},
+		{"rule_id": "credit-card", "file": file("README.md"), "line": 2, "column": 5, "match": "1234********3456", "confidence": "high"},
+	}
+	findingsPath := writeFindingsJSON(t, t.TempDir(), findings)
+
+	out, code := runScript(t, fpScript, nil, "sample", corpusDir, findingsPath)
+	if code != 0 {
+		t.Fatalf("exit=%d\n%s", code, out)
+	}
+	var got struct {
+		FindingsTotal    int `json:"findings_total"`
+		AttributionTotal int `json:"attribution_total"`
+		FPTotal          int `json:"fp_total"`
+		ByRule           []struct {
+			RuleID      string `json:"rule_id"`
+			Count       int    `json:"count"`
+			Attribution int    `json:"attribution"`
+			FP          int    `json:"fp"`
+		} `json:"by_rule"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, out)
+	}
+	if got.FindingsTotal != 5 || got.AttributionTotal != 3 || got.FPTotal != 2 {
+		t.Fatalf("totals = %d/%d/%d, want 5/3/2\n%s", got.FindingsTotal, got.AttributionTotal, got.FPTotal, out)
+	}
+	want := map[string][2]int{"email-address": {2, 1}, "person-name-romaji": {1, 0}, "credit-card": {0, 1}}
+	for _, r := range got.ByRule {
+		w, ok := want[r.RuleID]
+		if !ok || r.Attribution != w[0] || r.FP != w[1] || r.Count != w[0]+w[1] {
+			t.Errorf("by_rule %s = count %d attribution %d fp %d, want %v", r.RuleID, r.Count, r.Attribution, r.FP, w)
+		}
+	}
+	// 出力には件数だけを残す（マスク値・パスも含めない）。
+	for _, leak := range []string{"example.com", "@", "AUTHORS", "main.go"} {
+		if strings.Contains(out, leak) {
+			t.Errorf("report must not contain %q:\n%s", leak, out)
+		}
+	}
+}
+
+func TestFPCorpusWorkflowCoversDiverseCorporaAndHighRecall(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), ".github", "workflows", "fp-corpus-report.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"django|", "express|", "guava|", "tokio|", "ansible|", "ja-react-dev|", "sudachi|",
+		"--high-recall",
+		"summary-high-recall.json",
+		"fp_per_mloc",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("workflow is missing %q", want)
+		}
+	}
+	// 実機のログ集（実在の利用者名・メールアドレスを含みうる）はコーパスにしない。
+	if strings.Contains(text, "logpai/loghub") {
+		t.Error("workflow must not scan real-world log datasets")
+	}
+	// コーパスは必ずコミット SHA で固定する。
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.Count(line, "|") != 2 || !strings.Contains(line, "https://github.com/") {
+			continue
+		}
+		parts := strings.Split(line, "|")
+		if len(parts[2]) != 40 {
+			t.Errorf("corpus %q must be pinned to a 40-char commit SHA", parts[0])
+		}
+	}
+}

@@ -68,28 +68,84 @@ scanner_physical_lines() {
 
 lines=$(scanner_physical_lines "$dir")
 
+# OSS の著作者メタデータ（LICENSE・AUTHORS・著作権表記・Signed-off-by 等）に含まれる
+# 氏名・メールアドレスは、本人が公開を前提に記載した実在の個人情報である。検出器と
+# しては検出するのが正しい（ルールは変えない）が、偽陽性ではないので「attribution」と
+# して別に数え、偽陽性率（fp_total / fp_per_mloc）からは除く
+# （docs/development.md「著作者メタデータの扱い」参照）。
+#
+# 判定はパス（ファイル名）と該当行の内容だけで行い、結果には件数しか残さない。
+# finding ごとに "rule_id<TAB>attribution(0|1)" を出力する。
+classify_attribution() {
+	jq -r '(.findings // [])[] | [.rule_id, .file, (.line | tostring)] | @tsv' "$1" |
+		LC_ALL=C awk -F '\t' -v base="$2" '
+		function load(path,    l, n, p) {
+			delete buf
+			n = 0
+			p = path
+			if ((getline l < p) < 0) {
+				p = base "/" path
+				if ((getline l < p) < 0) {
+					cached = path
+					return
+				}
+			}
+			buf[++n] = l
+			while ((getline l < p) > 0) buf[++n] = l
+			close(p)
+			cached = path
+		}
+		{
+			rule = $1; path = $2; ln = $3 + 0
+			name = path
+			sub(/.*\//, "", name)
+			name = tolower(name)
+			attr = 0
+			if (name ~ /^(licen[cs]e|copying|authors|contributors|credits|maintainers|codeowners|owners|notice|thanks|patents|\.mailmap|changelog|changes|history|news|release[-_]?notes)/) {
+				attr = 1
+			} else {
+				if (path != cached) load(path)
+				text = tolower(buf[ln])
+				if (text ~ /copyright|\(c\)|\xc2\xa9|author|signed-off-by|co-authored-by|maintainer|reported-by|reviewed-by|acked-by|tested-by|suggested-by|contributed by|thanks to|written by|<[^<>@ \t]+@[^<> \t]+>/) attr = 1
+			}
+			print rule "\t" attr
+		}'
+}
+
+classified=$(classify_attribution "$findings_json" "$dir")
+
 jq -n \
 	--arg corpus "$corpus" \
 	--argjson lines "$lines" \
-	--slurpfile report "$findings_json" \
+	--arg classified "$classified" \
 	'
 	($lines / 1000000.0) as $mloc
-	| ($report[0].findings // []) as $findings
+	| ($classified | split("\n") | map(select(length > 0) | split("\t") | {rule_id: .[0], attribution: (.[1] == "1")})) as $findings
 	| ($findings | length) as $total
+	| ($findings | map(select(.attribution)) | length) as $attr
+	| ($total - $attr) as $fp
 	| {
 		corpus: $corpus,
 		physical_lines: $lines,
 		mloc: $mloc,
 		findings_total: $total,
 		findings_per_mloc: (if $mloc > 0 then ($total / $mloc) else null end),
+		attribution_total: $attr,
+		fp_total: $fp,
+		fp_per_mloc: (if $mloc > 0 then ($fp / $mloc) else null end),
 		by_rule: (
 			$findings
 			| group_by(.rule_id)
-			| map({
-				rule_id: .[0].rule_id,
-				count: length,
-				per_mloc: (if $mloc > 0 then (length / $mloc) else null end)
-			})
+			| map(
+				(map(select(.attribution)) | length) as $a
+				| {
+					rule_id: .[0].rule_id,
+					count: length,
+					per_mloc: (if $mloc > 0 then (length / $mloc) else null end),
+					attribution: $a,
+					fp: (length - $a),
+					fp_per_mloc: (if $mloc > 0 then ((length - $a) / $mloc) else null end)
+				})
 			| sort_by(-.count)
 		)
 	}
