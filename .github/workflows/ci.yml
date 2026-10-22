@@ -93,6 +93,30 @@ jobs:
       - run: go build ./cmd/jp-pii-detect
       - run: ./jp-pii-detect scan --format github .
 
+  public-eval:
+    name: public-eval
+    # PR 時の精度ゲート。非公開コーパスを使う private-eval は PR では走らないため、
+    # ソースに PII を持たない決定的な合成コーパス（internal/fixturegen と
+    # internal/corpusv2.PublicSynthetic）をルール × プロファイルで評価し、
+    # コミット済みゴールデン（internal/publiceval/testdata/golden.json）に対する
+    # 再現率の低下・誤検出の増加と、ルール改名に評価ラベルが追従していない不整合で
+    # 失敗させる。fork PR でも認証なしで同じ範囲を実行できる（数秒で終わる）。
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+      - name: 公開合成コーパスで精度ゲート
+        run: go test ./internal/publiceval -count=1 -v
+        env:
+          # ルール × プロファイルの表と回帰一覧をジョブサマリへ出す（本文は含まない）。
+          PUBLIC_EVAL_SUMMARY: ${{ github.step_summary }}
+
   private-eval:
     name: private-eval
     # 非公開平文をPRコードへ自動配布しない。mainへのpush、または保守者の明示実行だけで評価する。

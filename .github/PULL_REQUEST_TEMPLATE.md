@@ -27,6 +27,8 @@
 - [ ] `go test -race ./...` が通る
 - [ ] ルール・辞書・正規化を変更した場合: `-update` で accuracy（`docs/accuracy.md` /
       `docs/accuracy.json` / README バッジ）を再生成した
+- [ ] ルール・辞書・正規化を変更した場合: `go test ./internal/publiceval -update` で
+      公開合成コーパスのゴールデンを再生成した（新ルールは `internal/corpusv2` に合成器も追加）
 - [ ] （検出結果が変わらない変更のため、accuracy 再生成は不要）
 
 ## チェックリスト
