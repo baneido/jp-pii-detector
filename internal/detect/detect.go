@@ -81,6 +81,9 @@ type Finding struct {
 	Column      int             `json:"column"` // 1 始まり（ルーン単位）
 	Match       string          `json:"-"`      // 元テキスト（生値。マスクは出力層で行う。直接 marshal では出さない）
 	Confidence  rule.Confidence `json:"-"`
+	// Kind は検出の種別。jp-pii-detect 自身の PII 検出では空（= pii）。
+	// 組み込み側（pkg/jppii 経由）が secret 等の別種の検出を合流させるときに設定する。
+	Kind string `json:"-"`
 	// ConfidenceScore は検証・文脈距離・構造証拠を加算した内部スコア（0-100）。
 	// JSON/SARIF 等の公開契約は既存の 3 値 Confidence を維持し、score は出力しない。
 	ConfidenceScore int `json:"-"`
