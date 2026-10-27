@@ -406,3 +406,11 @@ func isBinary(data []byte) bool {
 	n := min(len(data), 8192)
 	return bytes.IndexByte(data[:n], 0) >= 0
 }
+
+// ListFiles はフルスキャン（ScanPaths）が走査対象にするファイルの一覧を返す
+// （除外パス・既定除外ディレクトリ・.gitignore の扱いは ScanPaths と同じ）。
+// 組み込み側が別種の検出器を同じファイル集合へ適用するために使う。
+func ListFiles(cfg *config.Config, paths []string) ([]string, error) {
+	files, _, _, err := listFiles(cfg, paths)
+	return files, err
+}
