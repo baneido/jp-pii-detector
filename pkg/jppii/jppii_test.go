@@ -8,7 +8,7 @@ import (
 )
 
 // ダミー値のみを使う。
-const dummy = "連絡先 電話番号: 090-1234-5678\nメール: taro@example.com\n"
+const dummy = "連絡先 電話番号: 090-1234-5678\nメール: taro@example.com\n" // jp-pii-detector:ignore 架空のテスト値
 
 func TestScanTextFindsDummyPhone(t *testing.T) {
 	s, err := NewScanner(Options{ConfigTOML: ptr("")})
