@@ -4850,6 +4850,40 @@ func TestRepresentativeLabelRoleLabel(t *testing.T) {
 	}
 }
 
+// TestProfessionalTitleRoleLabel は、士業・裁判官の肩書の直後に空白区切りで続く
+// 氏名（判決書の当事者欄「訴訟代理人弁護士　<姓> <名>」、「裁判長裁判官　<姓><名>」、
+// 登記の「司法書士 <姓><名>」）を既定ルールが検出することを固定する。公開判決文で
+// コロンのない肩書表記の氏名を全モードで取りこぼす見逃しを実測した（弁護士・裁判官の
+// 氏名も生存する個人を識別でき個人情報に当たる）。値はダミー（山田 太郎 等）のみ。
+func TestProfessionalTitleRoleLabel(t *testing.T) {
+	d := newDetector(t, "")
+	for _, line := range []string{
+		"同訴訟代理人弁護士　山田　太郎",
+		"訴訟代理人弁理士　山田花子",
+		"裁判長裁判官　山田一郎",
+		"申請代理人 司法書士 山田太郎",
+		"税理士 山田 太郎",
+	} {
+		assertRules(t, d.ScanLine("f.txt", 1, line), "person-name-role-label")
+	}
+	// 肩書に漢字が直結する語・一般語・姓のみは人名として報告しない。
+	for _, line := range []string{
+		"弁護士法人サンプル",
+		"弁護士会 会長",
+		"弁護士 費用の負担",
+		"裁判官 全員一致の意見",
+		"顧問弁護士 未定",
+		"税理士 事務所",
+		"弁護士 山田",
+	} {
+		for _, f := range d.ScanLine("f.txt", 1, line) {
+			if f.RuleID == "person-name-role-label" {
+				t.Errorf("%q: person-name-role-label を検出した（%q）", line, f.Match)
+			}
+		}
+	}
+}
+
 // TestHonorificCommonNounHighRecall は、高再現率モードの敬称アンカーで
 // 「初見さん」「常連さん」「社員皆さん」のような一般語 + 敬称と、
 // 「仕様」「同様」の「様」を氏名として報告しないことを固定する。
