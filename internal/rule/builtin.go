@@ -451,6 +451,14 @@ var (
 			personNameSep +
 			personNameValueShortFallback,
 	)
+	// personNameRepLabelRe は代表者ラベル（字間スペース付きの「代 表 者」を含む）と、
+	// 任意の役職名（代表取締役・代表理事 等）を挟んだ氏名の値を拾う
+	// （person-name-role-label）。役職名は値に含めず、続く漢字列だけを捕捉する。
+	personNameRepLabelRe = regexp.MustCompile(
+		`代[ 　]?表[ 　]?者` + personNameSep +
+			`(?:(?:代表取締役社長|代表取締役会長|代表取締役|代表執行役社長|代表執行役|代表理事長|代表理事|代表社員|取締役社長|理事長|社長|会長|院長|学長|組合長)[ 　]*)?` +
+			`([` + kanji + `]{2,8}(?:[ ][` + kanji + `]{1,8})?)`,
+	)
 )
 
 // personNamePlaceholders は氏名の値として現れるダミー語（人名ではない）。
@@ -1593,7 +1601,7 @@ func Builtin() []Rule {
 			ID:                "person-name-role-label",
 			Description:       "氏名（担当者・宛名ラベル付き）",
 			Prefilter:         PrefilterCJK,
-			PrefilterLiterals: []string{"担当", "宛名", "連絡先"},
+			PrefilterLiterals: []string{"担当", "宛名", "連絡先", "代表", "代 表"},
 			Validate:          notPlaceholderName,
 			Patterns: []Pattern{
 				// 担当者・宛名・連絡先ラベル。敬称のような強い人物シグナルが無いため、
@@ -1614,6 +1622,13 @@ func Builtin() []Rule {
 					`(?:担当|担当者|宛名|連絡先)` + personNameSep +
 						`([` + kanji + `]{2,8}(?:[ ][` + kanji + `]{1,8})?)`,
 				), Base: Low, Validate: validPersonNameSurnameOnly},
+				// 代表者ラベル（行政処分・登記・特定商取引法表示で法人代表者を示す）。
+				// 法人の役員の氏名も生存する個人を識別できる情報であり個人情報に当たる。
+				// 「代表者：代表取締役 姓 名」のように役職名を挟む表記と、PDF 抽出で
+				// 生じる「代 表 者」の字間スペースを許容する。値の検証は担当者ラベルと
+				// 同じ姓名辞書ゲート（姓+名は Medium、単独の姓は Low）。
+				{Re: personNameRepLabelRe, Base: Medium, Validate: validPersonNameFullSplit},
+				{Re: personNameRepLabelRe, Base: Low, Validate: validPersonNameSurnameOnly},
 			},
 		},
 		{

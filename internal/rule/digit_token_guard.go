@@ -145,13 +145,25 @@ func hhmmss(s string) bool {
 // 異様・多種多様）を作る直前の文字列。
 var youCompoundStems = []string{"同", "仕", "模", "異", "種多"}
 
+// youCompoundTails は、「様」の直後に続いて敬称ではない一般語（様式・様相・様態）を
+// 作る文字。行政文書の「申請書様式」「共通様式」「別添様式２」で、直前の漢字列
+// （申請書・共通・別添）を敬称付き氏名として切り出す偽陽性を公開文書で実測した
+// （様式は書式を指す一般名詞で、個人情報保護法上の個人情報に当たらない）。
+var youCompoundTails = []string{"式", "相", "態"}
+
 // rejectYouCompound は、敬称アンカーの「様」が一般語の一部（「新品同様」
-// 「従来同様」「構文仕様」「多種多様」）である場合に棄却する。日本語ドキュメントの
+// 「従来同様」「構文仕様」「多種多様」「申請書様式」）である場合に棄却する。日本語ドキュメントの
 // コーパスで、敬称の直前の漢字 2〜8 文字（「新品同」「構文仕」）を氏名として
 // 切り出す偽陽性を実測した。「本多様」のような姓 + 様や、1 文字名「一」+ 様は棄却しない。
 func rejectYouCompound(line string, start, end int) bool {
 	if !strings.HasPrefix(line[end:], "様") {
 		return true
+	}
+	after := line[end+len("様"):]
+	for _, t := range youCompoundTails {
+		if strings.HasPrefix(after, t) {
+			return false
+		}
 	}
 	for _, s := range youCompoundStems {
 		if strings.HasSuffix(line[start:end], s) {
