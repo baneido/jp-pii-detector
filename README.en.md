@@ -75,7 +75,7 @@ rules disabled).
 | Qualified invoice issuer number | **1.00** | `T` + 13 digits + corporate-number checksum |
 | Date of birth | **1.00** | Labeled; supports Western and Japanese-era dates |
 | Person name | **1.00** | Label (e.g. `氏名:`) + surname/given-name dictionary match |
-| Person name (contact/addressee label) | **1.00** | Contact/addressee label (`担当:` / `宛名:` / `連絡先:`) + surname/given-name dictionary match (`person-name-role-label`) |
+| Person name (contact/addressee label) | **1.00** | Contact/addressee/representative label (`担当:` / `宛名:` / `連絡先:` / `代表者:`) + surname/given-name dictionary match (`person-name-role-label`) |
 
 Run `jp-pii-detect rules` to list all rules. See [docs/detection-methods.md](docs/detection-methods.md)
 (Japanese) for details on accuracy and methodology.

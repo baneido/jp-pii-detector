@@ -4820,6 +4820,36 @@ func TestEmailNonPersonal(t *testing.T) {
 	assertRules(t, d.ScanLine("f.txt", 1, "To: taro.yamada@corp.co.jp"), "email-address")
 }
 
+// TestRepresentativeLabelRoleLabel は、法人代表者の「代表者:」ラベル（役職名を挟む
+// 表記・PDF 抽出の字間スペースを含む）で氏名を既定ルールが検出することを固定する。
+// 行政処分の公表文書で「代表者：代表取締役 <姓> <名>」を既定モードで取りこぼす
+// 見逃しを実測した（法人役員の氏名も生存する個人を識別でき個人情報に当たる）。
+// 値はダミー（山田 太郎）のみを使う。
+func TestRepresentativeLabelRoleLabel(t *testing.T) {
+	d := newDetector(t, "")
+	for _, line := range []string{
+		"代表者: 山田 太郎",
+		"代表者：代表取締役 山田 太郎",
+		"（３）代 表 者：代表取締役 山田 太郎",
+		"代表者：代表理事　山田太郎",
+	} {
+		assertRules(t, d.ScanLine("f.txt", 1, line), "person-name-role-label")
+	}
+	// 役職名だけ・組織名・未定の値は人名ではないので報告しない。
+	for _, line := range []string{
+		"代表者: 代表取締役",
+		"代表者：株式会社サンプル",
+		"代表者: 未定",
+		"代表者番号: 12",
+	} {
+		for _, f := range d.ScanLine("f.txt", 1, line) {
+			if f.RuleID == "person-name-role-label" {
+				t.Errorf("%q: person-name-role-label を検出した（%q）", line, f.Match)
+			}
+		}
+	}
+}
+
 // TestHonorificCommonNounHighRecall は、高再現率モードの敬称アンカーで
 // 「初見さん」「常連さん」「社員皆さん」のような一般語 + 敬称と、
 // 「仕様」「同様」の「様」を氏名として報告しないことを固定する。
@@ -4829,6 +4859,8 @@ func TestHonorificCommonNounHighRecall(t *testing.T) {
 		"初見さん歓迎", "常連さんに感謝", "社員皆さんへ", "大家さんへ", "旦那さんと", "親御さんへ",
 		"新規さん", "運営さんへ", "常連客様", "「お客さん」", "皆さんへ", "お疲れさんでした",
 		"構文仕様です", "新品同様",
+		// 行政文書の「〇〇様式」（書式名）。様式は一般名詞で人を指さない。
+		"申請書様式を使用する", "共通様式により報告", "別添様式２のとおり", "届書様式",
 	} {
 		for _, f := range d.ScanLine("f.txt", 1, line) {
 			if f.RuleID == "person-name-high-recall" {
