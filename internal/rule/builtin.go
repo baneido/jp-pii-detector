@@ -459,6 +459,17 @@ var (
 			`(?:(?:代表取締役社長|代表取締役会長|代表取締役|代表執行役社長|代表執行役|代表理事長|代表理事|代表社員|取締役社長|理事長|社長|会長|院長|学長|組合長)[ 　]*)?` +
 			`([` + kanji + `]{2,8}(?:[ ][` + kanji + `]{1,8})?)`,
 	)
+	// personNameProfessionTitleRe は士業・裁判官の肩書の直後に空白区切りで続く氏名を
+	// 拾う（person-name-role-label）。判決書の当事者欄「訴訟代理人弁護士　<姓><名>」
+	// 「裁判長裁判官　<姓> <名>」や、登記・申請書の「司法書士　<姓><名>」で、コロンの
+	// ないラベルを既定ルールが取りこぼす見逃しを公開判決文で実測した。肩書は値に
+	// 含めず、空白（全角は正規化で半角になる）の直後の漢字列だけを捕捉する。
+	// 「弁護士法人」「弁護士会」のように肩書に漢字が直結する語は空白を要求する
+	// ことで対象外にし、値は姓名辞書の完全分割（姓+名）でのみ報告する。
+	personNameProfessionTitleRe = regexp.MustCompile(
+		`(?:弁護士|弁理士|司法書士|行政書士|税理士|公認会計士|社会保険労務士|裁判官)[ ]+` +
+			`([` + kanji + `]{2,8}(?:[ ][` + kanji + `]{1,8})?)`,
+	)
 )
 
 // personNamePlaceholders は氏名の値として現れるダミー語（人名ではない）。
@@ -1601,7 +1612,7 @@ func Builtin() []Rule {
 			ID:                "person-name-role-label",
 			Description:       "氏名（担当者・宛名ラベル付き）",
 			Prefilter:         PrefilterCJK,
-			PrefilterLiterals: []string{"担当", "宛名", "連絡先", "代表", "代 表"},
+			PrefilterLiterals: []string{"担当", "宛名", "連絡先", "代表", "代 表", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官"},
 			Validate:          notPlaceholderName,
 			Patterns: []Pattern{
 				// 担当者・宛名・連絡先ラベル。敬称のような強い人物シグナルが無いため、
@@ -1629,6 +1640,11 @@ func Builtin() []Rule {
 				// 同じ姓名辞書ゲート（姓+名は Medium、単独の姓は Low）。
 				{Re: personNameRepLabelRe, Base: Medium, Validate: validPersonNameFullSplit},
 				{Re: personNameRepLabelRe, Base: Low, Validate: validPersonNameSurnameOnly},
+				// 士業・裁判官の肩書 + 空白 + 氏名（判決書の当事者欄・登記の申請代理人欄）。
+				// 弁護士・裁判官等の氏名も生存する個人を識別でき個人情報に当たる。
+				// コロンのない表記のため、単独の姓（Low）は報告せず姓+名の完全分割のみ
+				// Medium で報告する（「弁護士 費用」等の一般語は辞書ゲートで落ちる）。
+				{Re: personNameProfessionTitleRe, Base: Medium, Validate: validPersonNameFullSplit},
 			},
 		},
 		{
