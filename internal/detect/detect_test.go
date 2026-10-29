@@ -5059,3 +5059,43 @@ func TestHonorificCommonNounHighRecall(t *testing.T) {
 		}
 	}
 }
+
+// TestCJKRadicalsAndOperatorLabelRoleLabel は、官公庁の処分公表・記者発表 PDF で
+// 全ルールモードが取りこぼした次の表記を既定ルールが検出することを固定する。
+//   - pdftotext の抽出で康熙部首・部首補助（⼤ ⽬ ⻄ ⼭ ⽥ 等）が混入した住所・氏名
+//   - 均等割付の役職名「代 表 取 締 役」に続く氏名
+//   - 処分対象欄「事業者：<姓> <名>」（字間スペース付き「事  業  者：」を含む）と
+//     「「<姓><名>」（以下「事業者」という。）」の定義表記（個人事業者の氏名は個人情報）
+//   - 問合せ先欄「<役職> <姓> <名> （内線…）」（電話ラベルの代わりに内線番号が続く）
+//
+// 値はダミー（架空市・山田 太郎・0 番台の内線）のみ。
+func TestCJKRadicalsAndOperatorLabelRoleLabel(t *testing.T) {
+	d := newDetector(t, "")
+	for _, tc := range []struct{ line, rule string }{
+		{"所在地：⼤阪府架空市本町１丁⽬２番３号", "jp-address"},
+		{"住所：東京都架空区⻄町１丁⽬２番３号", "jp-address"},
+		{"代表者：⼭⽥ 太郎", "person-name-role-label"},
+		{"株式会社サンプル 代 表 取 締 役   山田   太郎", "person-name-role-label"},
+		{"事業者：山田 太郎（65 歳）", "person-name-role-label"},
+		{"事  業  者：山田 花子（65 歳）", "person-name-role-label"},
+		{"「山田太郎」（以下「事業者」という。）に対し", "person-name-role-label"},
+		{"総務部 人事課長            山田    太郎         （内線0000）", "person-name-role-label"},
+		{"品質確保室長 山田 （内線０００）", "person-name-role-label"},
+	} {
+		assertRules(t, d.ScanLine("f.txt", 1, tc.line), tc.rule)
+	}
+	// 値が法人名・未定・一般語の場合や、役職名の後が氏名でない場合は報告しない。
+	for _, line := range []string{
+		"事業者：株式会社サンプル",
+		"「株式会社サンプル」（以下「事業者」という。）",
+		"事業者：未定",
+		"「事業者」（以下「事業者」という。）",
+		"人事課長 会議 （内線0000）",
+		"代 表 取 締 役 選任の件",
+		"⻑期計画の策定",
+	} {
+		if fs := d.ScanLine("f.txt", 1, line); len(fs) != 0 {
+			t.Errorf("%q: 検出した（%v）", line, ruleIDs(fs))
+		}
+	}
+}

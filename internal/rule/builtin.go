@@ -491,8 +491,11 @@ var (
 	// 「<法人名>   取締役   <姓>   <名>」（pdftotext -layout の複数空白）を全ルールモードが
 	// 取りこぼす見逃しを実測したため、姓と名の間の空白は 1〜3 個を許容する
 	// （personNameSpacedValue）。
+	// 中国地方整備局の監督処分の公表 PDF で、均等割付の役職名が字間スペース付きで抽出された
+	// 「<法人名> 代 表 取 締 役   <姓>   <名>」も全ルールモードが取りこぼしたため、
+	// 「代 表 取 締 役」（字間の半角スペース 1 個。プリフィルタ「代 表」に一致する形）も許容する。
 	personNameExecTitleRe = regexp.MustCompile(
-		`(?:代表取締役社長|代表取締役会長|代表取締役副社長|代表取締役|代表執行役社長|代表執行役|代表理事長|代表理事|代表社員|取締役社長|取締役会長|取締役|監査役)` +
+		`(?:代表取締役社長|代表取締役会長|代表取締役副社長|代表取締役|代 表 取 締 役|代表執行役社長|代表執行役|代表理事長|代表理事|代表社員|取締役社長|取締役会長|取締役|監査役)` +
 			`(?:[ ]+|である|[(（][ ]*)` +
 			personNameSpacedValue,
 	)
@@ -525,10 +528,31 @@ var (
 			`([` + kanji + `]{2,8}(?:[ ][` + kanji + `]{1,8})?)` +
 			`[ ]?[(（](?:個人|個人事業主|個人事業者)[)）]`,
 	)
+	// 国の地方整備局の記者発表資料では電話ラベルの代わりに「（内線2251）」が続き、
+	// pdftotext -layout で姓と名の間が最大 4 個の空白になる「人事課長   <姓>    <名>   （内線…）」
+	// を全ルールモードが取りこぼす見逃しを実測した。役職語と内線番号の括弧で両側が
+	// アンカーされるため、姓名間の空白は 1〜4 個まで許容する。
 	personNameContactTitleRe = regexp.MustCompile(
 		`(?:課長|係長|部長|室長|所長|局長|館長|センター長|課長補佐|担当係長|担当課長|担当部長)[ ]+` +
-			`([` + kanji + `]{1,4}(?:[ ][` + kanji + `]{1,4})?)` +
-			`[ ]+(?:(?i:tel)|電話)`,
+			`([` + kanji + `]{1,4}(?:[ ]{1,4}[` + kanji + `]{1,4})?)` +
+			`[ ]+(?:(?i:tel)|電話|[(（]内線)`,
+	)
+	// personNameBusinessOperatorLabelRe は特定商取引法に基づく行政処分の公表資料の処分対象
+	// 欄「事業者：<姓> <名>（65 歳）」（均等割付の字間スペース付き「事  業  者：」を含む）の
+	// 氏名を拾う（person-name-role-label）。個人事業者が処分対象の場合、事業者欄の値は
+	// 本人の氏名であり個人情報に当たる。県の処分公表 PDF で全ルールモードが取りこぼす
+	// 見逃しを実測した。法人名・屋号は姓名辞書の完全分割を通らないため報告しない。
+	personNameBusinessOperatorLabelRe = regexp.MustCompile(
+		`事[ ]{0,2}業[ ]{0,2}者` + personNameSep +
+			`([` + kanji + `]{2,8}(?:[ ]{1,3}[` + kanji + `]{1,8})?)`,
+	)
+	// personNameDefinedAsOperatorRe は処分公表の本文冒頭「「<姓><名>」（以下「事業者」という。）
+	// に対し」のように、鉤括弧で示した処分対象者を「事業者」等と定義する表記の氏名を拾う
+	// （person-name-role-label）。県の処分公表で全ルールモードが取りこぼす見逃しを実測した。
+	// 定義語は処分対象を指す語に限定し、値は姓名辞書の完全分割（姓+名）でのみ報告する
+	// （「株式会社〇〇」（以下「事業者」という。）等の法人名は辞書ゲートで落ちる）。
+	personNameDefinedAsOperatorRe = regexp.MustCompile(
+		`「([` + kanji + `]{2,8}(?:[ ][` + kanji + `]{1,8})?)」[ ]?[(（]以下[ ]?「(?:事業者|当該事業者|被処分者|処分対象者|同人)」`,
 	)
 )
 
@@ -1678,7 +1702,7 @@ func Builtin() []Rule {
 			ID:                "person-name-role-label",
 			Description:       "氏名（担当者・宛名ラベル付き）",
 			Prefilter:         PrefilterCJK,
-			PrefilterLiterals: []string{"担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人"},
+			PrefilterLiterals: []string{"担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「"},
 			Validate:          notPlaceholderName,
 			Patterns: []Pattern{
 				// 担当者・宛名・連絡先ラベル。敬称のような強い人物シグナルが無いため、
@@ -1724,6 +1748,9 @@ func Builtin() []Rule {
 				// 個人事業主の「<屋号>こと<姓><名>」と、「<姓><名>（個人）」の括弧書き。
 				{Re: personNameYagoKotoRe, Base: Medium, Validate: validPersonNameFullSplit},
 				{Re: personNameKojinSuffixRe, Base: Medium, Validate: validPersonNameFullSplit},
+				// 処分対象欄「事業者：<姓> <名>」と「「<姓><名>」（以下「事業者」という。）」。
+				{Re: personNameBusinessOperatorLabelRe, Base: Medium, Validate: validPersonNameFullSplit},
+				{Re: personNameDefinedAsOperatorRe, Base: Medium, Validate: validPersonNameFullSplit},
 			},
 		},
 		{
