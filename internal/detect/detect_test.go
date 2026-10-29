@@ -4954,6 +4954,46 @@ func TestExecTitleAndPartyLabelRoleLabel(t *testing.T) {
 	}
 }
 
+// TestDirectorTitleAndLayoutSpacesRoleLabel は、監督処分の公表文書の相手方欄
+// 「<法人名>   取締役   <姓>   <名>」のように、代表権のない役員（取締役・監査役）の役職名に
+// 続く氏名と、PDF のレイアウト抽出で姓と名の間が複数空白になった氏名を既定ルールが
+// 検出することを固定する。市の公表 PDF で全ルールモードが取りこぼす見逃しを実測した
+// （法人役員の氏名は登記事項でもあり、生存する個人を識別でき個人情報に当たる）。
+// 値はダミー（山田 太郎 等）のみ。
+func TestDirectorTitleAndLayoutSpacesRoleLabel(t *testing.T) {
+	d := newDetector(t, "")
+	for _, line := range []string{
+		"    有限会社サンプル観光   取締役   山田   太郎   ※同社代理人弁護士同席",
+		"株式会社テスト 取締役 山田 花子",
+		"社外取締役　山田太郎",
+		"監査役 山田 花子",
+		"取締役社長（山田太郎）",
+		"有限会社テスト観光   代表取締役   山田   太郎",
+		"訴訟代理人弁護士   山田   太郎",
+		"審査申立人   山田  花子",
+	} {
+		assertRules(t, d.ScanLine("f.txt", 1, line), "person-name-role-label")
+	}
+	// 役職名の後が人名でない（一般語・会議体・姓のみ）場合や、空白が 4 個以上離れた
+	// 別カラムの語は報告しない。
+	for _, line := range []string{
+		"取締役 選任の件",
+		"取締役会 決議事項",
+		"取締役 会長 退任",
+		"取締役である者",
+		"監査役 監査報告",
+		"取締役   山田",
+		"取締役 山田    太郎",
+		"取締役（社外）",
+	} {
+		for _, f := range d.ScanLine("f.txt", 1, line) {
+			if f.RuleID == "person-name-role-label" {
+				t.Errorf("%q: person-name-role-label を検出した（%q）", line, f.Match)
+			}
+		}
+	}
+}
+
 // TestYagoKotoAndKojinSuffixRoleLabel は、特定商取引法に基づく行政処分の公表文書に頻出する
 // 個人事業主の「<屋号>こと<姓><名>」と、処分対象が自然人であることを示す「<姓><名>（個人）」
 // 「（個人事業主）」の氏名を既定ルールが検出することを固定する。県の処分公表資料で全ルール
