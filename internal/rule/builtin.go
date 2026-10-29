@@ -496,6 +496,26 @@ var (
 		`(?:(?:審査申立人|異議申立人|申立人|審査請求人|請求人|原告|被告|控訴人|上告人)[ ]+(?:[(（]総代[)）][ ]*)?|[(（]総代[)）][ ]*)` +
 			`([` + kanji + `]{2,8}(?:[ ][` + kanji + `]{1,8})?)`,
 	)
+	// personNameYagoKotoRe は個人事業主の「<屋号>こと<姓><名>」表記（特定商取引法に基づく
+	// 行政処分の公表文書・執行事例一覧で事業者名として頻出）の氏名を拾う
+	// （person-name-role-label）。屋号に続く「こと」の後は事業主本人の氏名であり、個人事業主の
+	// 氏名は生存する個人を識別でき個人情報に当たる。県の処分公表で全ルールモードが取りこぼす
+	// 見逃しを実測した。「すること」「大切なこと」のような一般文の「こと」と区別するため、
+	// 直前に屋号末尾となる漢字・カタカナ・英数字・長音・閉じ括弧を要求し、値は姓名辞書の
+	// 完全分割（姓+名）でのみ報告する。
+	personNameYagoKotoRe = regexp.MustCompile(
+		`[` + kanji + katakana + `A-Za-z0-9ー’')）]こと[ ]?` +
+			`([` + kanji + `]{2,8}(?:[ ][` + kanji + `]{1,8})?)`,
+	)
+	// personNameKojinSuffixRe は「<姓><名>（個人）」「<姓><名>（個人事業主）」のように、行政処分の
+	// 公表文書で処分対象が自然人であることを括弧書きで明示した氏名を拾う
+	// （person-name-role-label）。括弧書きが人であることを示すため強い根拠になるが、
+	// 値は姓名辞書の完全分割（姓+名）でのみ報告する。直前は漢字以外（行頭・読点等）に限る。
+	personNameKojinSuffixRe = regexp.MustCompile(
+		`(?:^|[^` + kanji + `])` +
+			`([` + kanji + `]{2,8}(?:[ ][` + kanji + `]{1,8})?)` +
+			`[ ]?[(（](?:個人|個人事業主|個人事業者)[)）]`,
+	)
 	personNameContactTitleRe = regexp.MustCompile(
 		`(?:課長|係長|部長|室長|所長|局長|館長|センター長|課長補佐|担当係長|担当課長|担当部長)[ ]+` +
 			`([` + kanji + `]{1,4}(?:[ ][` + kanji + `]{1,4})?)` +
@@ -1649,7 +1669,7 @@ func Builtin() []Rule {
 			ID:                "person-name-role-label",
 			Description:       "氏名（担当者・宛名ラベル付き）",
 			Prefilter:         PrefilterCJK,
-			PrefilterLiterals: []string{"担当", "宛名", "連絡先", "代表", "代 表", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代"},
+			PrefilterLiterals: []string{"担当", "宛名", "連絡先", "代表", "代 表", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人"},
 			Validate:          notPlaceholderName,
 			Patterns: []Pattern{
 				// 担当者・宛名・連絡先ラベル。敬称のような強い人物シグナルが無いため、
@@ -1692,6 +1712,9 @@ func Builtin() []Rule {
 				// 当事者ラベル（審査申立人・原告 等）+ 空白 + 氏名と「（総代）氏名」。
 				// 「原告 主張」「被告 会社」等の一般語は姓名辞書ゲートで落ちる。
 				{Re: personNamePartyLabelRe, Base: Medium, Validate: validPersonNameFullSplit},
+				// 個人事業主の「<屋号>こと<姓><名>」と、「<姓><名>（個人）」の括弧書き。
+				{Re: personNameYagoKotoRe, Base: Medium, Validate: validPersonNameFullSplit},
+				{Re: personNameKojinSuffixRe, Base: Medium, Validate: validPersonNameFullSplit},
 			},
 		},
 		{
@@ -1714,7 +1737,7 @@ func Builtin() []Rule {
 				), Base: Medium, Validate: honorificPersonNameValid,
 					// 「新品同様」「構文仕様」のような一般語の「様」と、
 					// 「初見さん」「常連さん」「社員皆さん」のような一般語 + 敬称を棄却する。
-					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun)},
+					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound)},
 				// 敬称の直前に空白が入る形（「鈴木一郎 様」）と、姓名の間に空白が
 				// 入る形（「山田 太郎様」）。上の無空白パターンは値と敬称が地続きの
 				// ときしか一致しないため、フォーム・宛名書きで一般的なこの表記を

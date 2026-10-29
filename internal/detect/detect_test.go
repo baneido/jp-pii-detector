@@ -4954,6 +4954,41 @@ func TestExecTitleAndPartyLabelRoleLabel(t *testing.T) {
 	}
 }
 
+// TestYagoKotoAndKojinSuffixRoleLabel は、特定商取引法に基づく行政処分の公表文書に頻出する
+// 個人事業主の「<屋号>こと<姓><名>」と、処分対象が自然人であることを示す「<姓><名>（個人）」
+// 「（個人事業主）」の氏名を既定ルールが検出することを固定する。県の処分公表資料で全ルール
+// モードが取りこぼす見逃しを実測した（個人事業主の氏名は生存する個人を識別でき個人情報に
+// 当たる）。値はダミー（山田 太郎 等）のみ。
+func TestYagoKotoAndKojinSuffixRoleLabel(t *testing.T) {
+	d := newDetector(t, "")
+	for _, line := range []string{
+		"事業者名：サンプル設備こと山田太郎",
+		"事業者であるテストアシスタンスこと山田太郎（個人事業主）に対し、業務停止命令の処分を行いました。",
+		"架空リユースセンターこと山田　花子",
+		"Sample工房こと山田太郎に対し指示を行った。",
+		"また、県は、山田太郎（個人）に対し、業務禁止命令の処分を行いました。",
+		"山田 花子（個人事業主）",
+	} {
+		assertRules(t, d.ScanLine("f.txt", 1, line), "person-name-role-label")
+	}
+	// 一般文の「こと」・括弧書きの前が人名でない場合は報告しない。
+	for _, line := range []string{
+		"契約を締結することを停止するよう命じました。",
+		"大切なことは確認です",
+		"同様のこと自体が問題",
+		"事業者（個人）に対する指示",
+		"架空市民（個人）の意見",
+		"サンプル設備こと未定",
+		"テスト工房こと山田",
+	} {
+		for _, f := range d.ScanLine("f.txt", 1, line) {
+			if f.RuleID == "person-name-role-label" {
+				t.Errorf("%q: person-name-role-label を検出した（%q）", line, f.Match)
+			}
+		}
+	}
+}
+
 // TestHonorificCommonNounHighRecall は、高再現率モードの敬称アンカーで
 // 「初見さん」「常連さん」「社員皆さん」のような一般語 + 敬称と、
 // 「仕様」「同様」の「様」を氏名として報告しないことを固定する。
@@ -4965,6 +5000,8 @@ func TestHonorificCommonNounHighRecall(t *testing.T) {
 		"構文仕様です", "新品同様",
 		// 行政文書の「〇〇様式」（書式名）。様式は一般名詞で人を指さない。
 		"申請書様式を使用する", "共通様式により報告", "別添様式２のとおり", "届書様式",
+		// 個人情報漏えいの公表文書の項目名「生徒氏名」「職員氏名」。氏名は項目名で直前の語は人を指さない。
+		"生徒氏名、学年、報告内容", "職員氏名の一覧",
 	} {
 		for _, f := range d.ScanLine("f.txt", 1, line) {
 			if f.RuleID == "person-name-high-recall" {
@@ -4972,7 +5009,7 @@ func TestHonorificCommonNounHighRecall(t *testing.T) {
 			}
 		}
 	}
-	for _, line := range []string{"山田太郎さんへ", "佐藤さん", "初見太郎さん"} {
+	for _, line := range []string{"山田太郎さんへ", "佐藤さん", "初見太郎さん", "山田氏名義の口座", "山田氏は"} {
 		found := false
 		for _, f := range d.ScanLine("f.txt", 1, line) {
 			found = found || f.RuleID == "person-name-high-recall"
