@@ -191,6 +191,8 @@ func notationSpecs() []notationCase {
 	// 問合せ先の「役職 + 姓」の直後に電話番号が続く形（Tel・電話の前置きなし）
 	pos("contact-tel", role, "共生社会推進課長 "+n(2).sur+" ０００－０００－００００")
 	neg("contact-tel", "共生社会推進課長 会議 ０００－０００－００００")
+	pos("contact-tel", role, "課長補佐兼係長 "+n(3).sur+" 電話 000-000-0000")
+	pos("contact-tel", role, "雇用推進課        課長 "+n(4).sur+" 電話 000-000-0000")
 
 	// 空白区切りの姓名 + 空白区切りの読み括弧（委員名簿・講演者紹介・あいさつ文）
 	pos("name-reading", role, full(0, "　")+"（"+n(0).surYomi+"　"+n(0).givenYomi+"）")

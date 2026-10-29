@@ -770,7 +770,7 @@
         {
           "rule_id": "person-name-role-label",
           "row": {
-            "tp": 92,
+            "tp": 94,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -809,12 +809,12 @@
         }
       ],
       "micro": {
-        "tp": 811,
+        "tp": 813,
         "fp": 1,
         "fn": 0,
-        "precision": 0.9987684729064039,
+        "precision": 0.9987714987714987,
         "recall": 1,
-        "f1": 0.9993838570548367
+        "f1": 0.9993853718500306
       },
       "micro_span_exact": {
         "tp": 149,
@@ -1639,7 +1639,7 @@
         {
           "rule_id": "person-name-role-label",
           "row": {
-            "tp": 92,
+            "tp": 94,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -1678,12 +1678,12 @@
         }
       ],
       "micro": {
-        "tp": 811,
+        "tp": 813,
         "fp": 1,
         "fn": 0,
-        "precision": 0.9987684729064039,
+        "precision": 0.9987714987714987,
         "recall": 1,
-        "f1": 0.9993838570548367
+        "f1": 0.9993853718500306
       },
       "micro_span_exact": {
         "tp": 149,
@@ -2668,7 +2668,7 @@
         {
           "rule_id": "person-name-role-label",
           "row": {
-            "tp": 92,
+            "tp": 94,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -2787,12 +2787,12 @@
         }
       ],
       "micro": {
-        "tp": 991,
+        "tp": 993,
         "fp": 1,
         "fn": 4,
-        "precision": 0.998991935483871,
-        "recall": 0.9959798994974874,
-        "f1": 0.9974836436839457
+        "precision": 0.9989939637826962,
+        "recall": 0.995987963891675,
+        "f1": 0.9974886991461577
       },
       "micro_span_exact": {
         "tp": 149,
@@ -3777,7 +3777,7 @@
         {
           "rule_id": "person-name-role-label",
           "row": {
-            "tp": 92,
+            "tp": 94,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -3936,12 +3936,12 @@
         }
       ],
       "micro": {
-        "tp": 1021,
+        "tp": 1023,
         "fp": 1,
         "fn": 4,
-        "precision": 0.9990215264187867,
-        "recall": 0.9960975609756098,
-        "f1": 0.9975574010747436
+        "precision": 0.9990234375,
+        "recall": 0.9961051606621227,
+        "f1": 0.9975621647976598
       },
       "micro_span_exact": {
         "tp": 149,
@@ -3999,8 +3999,8 @@
     }
   ],
   "dataset": {
-    "total_cases": 1157,
-    "positive_cases": 1025,
+    "total_cases": 1159,
+    "positive_cases": 1027,
     "negative_cases": 132,
     "span_annotated_cases": 147,
     "per_rule": [
@@ -4098,7 +4098,7 @@
       },
       {
         "rule_id": "person-name-role-label",
-        "positive_cases": 92
+        "positive_cases": 94
       },
       {
         "rule_id": "person-name-romaji",
@@ -4124,7 +4124,7 @@
       },
       {
         "name": "line",
-        "cases": 1075
+        "cases": 1077
       }
     ],
     "per_format": [
@@ -4146,7 +4146,7 @@
       },
       {
         "name": "unspecified",
-        "cases": 1083
+        "cases": 1085
       }
     ],
     "per_source_class": [
@@ -4160,11 +4160,11 @@
       },
       {
         "name": "public-synthetic",
-        "cases": 878
+        "cases": 880
       }
     ]
   },
   "dataset_quality": {
-    "spanless_positive_count": 878
+    "spanless_positive_count": 880
   }
 }

@@ -561,7 +561,16 @@ var (
 		`(?:課長|係長|部長|室長|所長|局長|館長|センター長|課長補佐|担当係長|担当課長|担当部長|管理官|調整官|専門官|企画官|調査官|対策官|分析官|監理官|推進官)[ ]+` +
 			`([` + kanji + `]{1,4}(?:[ ]{1,4}[` + kanji + `]{1,4})?)` +
 			`(?:[ ]*[(（][ぁ-ゖー ]{1,12}[)）])?` +
-			`[ ]*(?:(?i:tel)|電話|[(（]内線|[0-9]{2,5}-[0-9]{1,4}-[0-9]{3,4})`,
+			`[ ]*(?:(?i:tel)|電話|[(（]内線)`,
+	)
+	// personNameContactTitlePhoneRe は「〜課長 <姓> <電話番号>」のように、Tel・電話の
+	// 前置きなしで姓の直後に電話番号が続く問合せ先を拾う（市の報道発表で実測）。
+	// personNameContactTitleRe の右アンカーに電話番号を足すと、「課長 <姓> 電話 <番号>」で
+	// 値が「<姓> 電話」まで伸びて辞書検証で落ちる（RE2 は検証失敗後に短い一致へ戻らない）
+	// ため、値を姓 1 語に限った別パターンにしている。
+	personNameContactTitlePhoneRe = regexp.MustCompile(
+		`(?:課長|係長|部長|室長|所長|局長|館長|センター長|課長補佐|担当係長|担当課長|担当部長|管理官|調整官|専門官|企画官|調査官|対策官|分析官|監理官|推進官)[ ]+` +
+			`([` + kanji + `]{1,4})[ ]+[0-9]{2,5}-[0-9]{1,4}-[0-9]{3,4}`,
 	)
 	// personNameWithReadingRe は「<姓> <名>（<せい> <めい>）」のように、空白区切りの漢字の
 	// 姓名の直後に、同じく空白区切りのひらがなの読みが括弧で続く表記を拾う
@@ -850,6 +859,7 @@ func validPersonNameSurnameOrFull(v string) bool {
 var spacedGivenStopwords = map[string]bool{
 	"担当": true, "宛": true, "様": true, "殿": true, "氏": true, "外": true, "他": true,
 	"以下": true, "ほか": true, "代理": true, "事務": true, "所長": true, "課長": true,
+	"電話": true, "内線": true, "直通": true, "代表": true, "携帯": true,
 }
 
 // validSpacedSurnameGiven は空白で 2 語に分かれた「<姓> <名>」を検証する。先頭語が
@@ -1862,6 +1872,7 @@ func Builtin() []Rule {
 				// あることがほぼ確実なため、姓のみの一致も Medium で報告する（地名と同形の姓
 				// でもこの位置では人名として読む）。
 				{Re: personNameContactTitleRe, Base: Medium, Validate: validPersonNameSurnameOrFull},
+				{Re: personNameContactTitlePhoneRe, Base: Medium, Validate: validPersonNameSurnameOrFull},
 				// 読み括弧付きの「<姓> <名>（<せい> <めい>）」、コロンなしの「担当 <姓>（<よみ>）」、
 				// 職名 + 空白区切りの姓名で終わる行。いずれも人名の構造（読み・職名 + 行末）を
 				// 要求したうえで姓名辞書の姓で検証する。
