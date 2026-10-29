@@ -45,7 +45,8 @@ var notationCategories = []string{
 	"form-word",          // 項目名・様式名の誤検出型（陰性のみ）
 	"name-reading",       // 空白区切りの姓名 + 空白区切りの読み括弧、担当 + 姓（よみ）
 	"title-line-end",     // 職名 + 空白区切りの姓名で終わる行
-	"honorific-compound", // 敬称と同じ字を含む一般語（多様・編さん・両殿下・夫婦別氏・〜氏遺跡）
+	"honorific-compound", // 敬称と同じ字を含む一般語（多様・編さん・両殿下・夫婦別氏・〜氏遺跡・自治体名 + 様・社殿・さんぽ・故人）
+	"tanto-dept-slash",   // 担当欄の「部署／姓」
 }
 
 type notationCase struct {
@@ -211,6 +212,16 @@ func notationSpecs() []notationCase {
 	neg("title-line-end", "課長 会議 室長")
 	neg("title-line-end", "課長補佐 "+n(1).sur+" 担当")
 	neg("title-line-end", "所長 "+full(2, " ")+" が出席した")
+	pos("title-line-end", role, "理事長　"+full(3, "　"))
+	pos("title-line-end", role, "架空県知事　"+full(4, "　"))
+	pos("title-line-end", role, "                    契約責任者 "+full(5, " "))
+	neg("title-line-end", "会長 挨拶 全文")
+	neg("title-line-end", "理事長 "+full(0, " ")+" が出席した")
+
+	// 担当欄の「部署／姓」（調査公表資料の調査主体・委託先欄）
+	pos("tanto-dept-slash", role, "【調査主体】架空機構（担当：調査部／"+n(1).sur+")")
+	pos("tanto-dept-slash", role, "株式会社サンプル（担当：社会情報部／"+n(2).sur+"、"+n(3).sur+")")
+	neg("tanto-dept-slash", "（担当：調査部／窓口)")
 
 	// 記入方法の説明が氏名ラベルに続く形（辞書不一致の値を拾う Low の強ラベル）
 	neg("form-word", "氏名（ふりがな）")
@@ -218,6 +229,7 @@ func notationSpecs() []notationCase {
 	neg("form-word", "氏名（法人にあっては名称及び代表者の氏名）")
 	neg("form-word", "氏名（複数名の場合は代表者）")
 	neg("form-word", "氏名：カタカナで記入")
+	neg("form-word", "氏名（社名）")
 
 	// 敬称と同じ字を含む一般語（高再現率の敬称アンカーが拾っていた）
 	pos("honorific-compound", "person-name-high-recall", "本多"+"様より御連絡がありました")
@@ -233,6 +245,18 @@ func notationSpecs() []notationCase {
 	neg("honorific-compound", "選択的夫婦別氏制度")
 	neg("honorific-compound", "架空朝倉氏遺跡の保存")
 	neg("honorific-compound", "西山氏庭園の公開")
+	neg("honorific-compound", "北九州市様にご導入いただきました")
+	neg("honorific-compound", "兵庫県様との協定")
+	neg("honorific-compound", "横須賀市さんとの連携")
+	neg("honorific-compound", "荒川さんぽ")
+	neg("honorific-compound", "架空東照宮社殿特別公開")
+	neg("honorific-compound", "川越城本丸御殿")
+	neg("honorific-compound", "静岡県御殿場市")
+	neg("honorific-compound", "同町殿ヶ谷の調査")
+	neg("honorific-compound", "浄水場沈殿池清掃")
+	neg("honorific-compound", "故・"+full(4, "")+"氏")
+	pos("honorific-compound", "person-name-high-recall", "交通事故 "+full(5, "")+"様")
+	pos("honorific-compound", "person-name-high-recall", n(0).sur+"殿")
 	return out
 }
 

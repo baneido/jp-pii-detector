@@ -1,6 +1,12 @@
 package rule
 
-import "strings"
+import (
+	"strings"
+	"unicode"
+	"unicode/utf8"
+
+	"github.com/baneido/jp-pii-detector/internal/dict"
+)
 
 // 数値ルール（マイナンバー・クレジットカード）の、OSS コーパスで実測した
 // 偽陽性の型を棄却する ValidateLine 群（docs/development.md「OSS コーパスでの
@@ -189,7 +195,9 @@ func rejectShimeiCompound(line string, start, end int) bool {
 // ある場合に棄却する。県・市の公開ページで「生物多様性」「総合企画部多様性社会推進課」
 // （多様）、「県史編さん」「野外炊さん」（編さん・炊さん）、「皇族各殿下」「女王殿下」（名を含まない殿下）、
 // 「選択的夫婦別氏制度」（別氏）、「朝倉氏遺跡」「西山氏庭園」（史跡名）を
-// 敬称付き氏名として切り出す偽陽性を実測した。
+// 敬称付き氏名として切り出す偽陽性を実測した。2026-10-30 には自治体名 + 様/さん、
+// 殿を含む建物・地名（社殿・本殿・御殿・紫宸殿・沈殿・殿ケ谷・御殿場）、さんぽ、
+// 故人（故・〜氏）も実測したため棄却する。
 func rejectHonorificWordCompound(line string, start, end int) bool {
 	val := line[start:end]
 	rest := line[end:]
@@ -211,6 +219,39 @@ func rejectHonorificWordCompound(line string, start, end int) bool {
 		if strings.HasPrefix(rest, w) {
 			return false
 		}
+	}
+	// 「荒川さんぽ」「新宿桜さんぽ」（散歩の催し名）。
+	if strings.HasPrefix(rest, "さんぽ") {
+		return false
+	}
+	// 「北九州市様」「兵庫県様」「横須賀市さん」（導入事例・取引先としての自治体）。
+	// 自治体名は個人を識別しないため、市区町村名・都道府県名との完全一致だけを棄却する。
+	if (strings.HasPrefix(rest, "様") || strings.HasPrefix(rest, "さん")) && dict.IsMunicipalityOrPrefecture(val) {
+		return false
+	}
+	if strings.HasPrefix(rest, "殿") {
+		// 「瑞穂町殿ケ谷」「同町殿ヶ谷」（地名の 殿ケ谷）と「御殿場」。
+		if strings.HasPrefix(rest, "殿ケ") || strings.HasPrefix(rest, "殿ヶ") || strings.HasPrefix(rest, "殿場") {
+			return false
+		}
+		// 「東照宮社殿」「神社本殿」「本丸御殿」「紫宸殿」「沈殿池」のように、殿が建物・
+		// 一般語の一部である場合。「山本殿」「御手洗殿」のように候補全体が姓名辞書に
+		// 一致する値は宛名の敬称として残す。
+		for _, w := range []string{"社", "本", "御", "宸", "寓", "沈", "拝", "寝", "宝", "仏"} {
+			if strings.HasSuffix(val, w) && !dict.IsPersonName(val) && !dict.SplitsAsFullName(val) {
+				return false
+			}
+		}
+	}
+	// 「故・<姓><名>氏」「故 <姓><名>様」は亡くなった人を指す。個人情報保護法の個人情報は
+	// 生存する個人に関する情報なので、故人の表記は氏名として報告しない。
+	// 「交通事故 <姓>様」の「事故」は故人の意味ではないため、故の直前が漢字なら残す。
+	before := strings.TrimRight(line[:start], " 　・")
+	if b, ok := strings.CutSuffix(before, "故"); ok && !endsWithKanji(b) {
+		return false
+	}
+	if v, ok := strings.CutPrefix(val, "故"); ok && v != "" && !strings.HasPrefix(v, "郷") && !strings.HasPrefix(v, "障") {
+		return false
 	}
 	return true
 }
@@ -268,4 +309,10 @@ func rejectHonorificCommonNoun(line string, start, end int) bool {
 		}
 	}
 	return true
+}
+
+// endsWithKanji は s の最後のルーンが漢字（CJK 統合漢字・々）かを返す。
+func endsWithKanji(s string) bool {
+	r, _ := utf8.DecodeLastRuneInString(s)
+	return r == '々' || unicode.Is(unicode.Han, r)
 }
