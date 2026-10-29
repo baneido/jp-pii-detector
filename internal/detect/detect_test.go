@@ -4884,6 +4884,35 @@ func TestProfessionalTitleRoleLabel(t *testing.T) {
 	}
 }
 
+// TestPressContactTitleRoleLabel は、報道発表資料の問合せ先欄「<部署>課長　<姓>　Tel
+// <番号>」の担当者名を既定ルールが検出することを固定する。自治体の記者発表 PDF で
+// 全モードが取りこぼす見逃しを実測した（組織・役職・電話番号と結合して特定の職員を
+// 識別でき、姓のみでも個人情報に当たる）。値と番号はダミー（山田・000 系）のみ。
+func TestPressContactTitleRoleLabel(t *testing.T) {
+	d := newDetector(t, "")
+	for _, line := range []string{
+		" 人事課長   山田   Tel 000-000-0000",
+		"                            消費経済課長           佐藤      Tel 000-000-0000",
+		"学校連携・こども担当課長　　山田　　TEL 000-000-0000",
+		"総務課長 山田 太郎 電話 000-000-0000",
+	} {
+		assertRules(t, d.ScanLine("f.txt", 1, line), "person-name-role-label")
+	}
+	// 役職と電話ラベルの間が人名でない（一般語・空欄・部署名）場合は報告しない。
+	for _, line := range []string{
+		"課長 代理 Tel 000-000-0000",
+		"総務課長 不在 電話 000-000-0000",
+		"人事課長 Tel 000-000-0000",
+		"所長 室内 電話あり",
+	} {
+		for _, f := range d.ScanLine("f.txt", 1, line) {
+			if f.RuleID == "person-name-role-label" {
+				t.Errorf("%q: person-name-role-label を検出した（%q）", line, f.Match)
+			}
+		}
+	}
+}
+
 // TestHonorificCommonNounHighRecall は、高再現率モードの敬称アンカーで
 // 「初見さん」「常連さん」「社員皆さん」のような一般語 + 敬称と、
 // 「仕様」「同様」の「様」を氏名として報告しないことを固定する。
