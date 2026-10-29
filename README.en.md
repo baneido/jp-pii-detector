@@ -35,8 +35,13 @@ jp-pii-detect scan .
 ```
 
 Exit codes are `0` (clean), `1` (findings), and `2` (scan or configuration error).
-Use `--explain` to inspect why a value matched; remove real data, allowlist intentional
-fixtures, or create a baseline for existing findings.
+Handle each finding according to what it is:
+
+- Real data: remove it or replace it with a fictitious value.
+- An intentional dummy value: add `jp-pii-detector:ignore` to that line, or add it to the allowlist.
+- Findings that existed before adoption: record them in a baseline to set them aside.
+
+Run with `--explain` to see why a value matched.
 
 ## Key features
 
