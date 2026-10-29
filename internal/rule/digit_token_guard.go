@@ -173,6 +173,18 @@ func rejectYouCompound(line string, start, end int) bool {
 	return true
 }
 
+// rejectShimeiCompound は、敬称アンカーの「氏」が一般語「氏名」の一部である場合に棄却する。
+// 個人情報漏えいの公表文書の「生徒氏名、学年」「職員氏名」で、直前の一般語（生徒・職員）を
+// 敬称付き氏名として切り出す偽陽性を公開文書で実測した（「氏名」は項目名で、直前の語は
+// 人を特定しない）。「<姓>氏名義の口座」のように「氏」+「名義」と読む形は棄却しない。
+func rejectShimeiCompound(line string, start, end int) bool {
+	rest := line[end:]
+	if !strings.HasPrefix(rest, "氏名") {
+		return true
+	}
+	return strings.HasPrefix(rest, "氏名義")
+}
+
 // rejectURLUserinfo は、メールアドレス形の候補が URL のユーザー情報
 // （"http://gopher@test.com"、"ssh://git@github.com/user/repo"、
 // "http://user:pass@host"）である場合に棄却する。候補を含む空白・引用符区切りの
