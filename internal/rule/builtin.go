@@ -639,8 +639,8 @@ var (
 		regexp.MustCompile(tantoListPrefix + `(?:` + tantoListItem + tantoListSep + `){2}(` + tantoListName + `)` + tantoListReading + `(?:` + tantoListSep + tantoListItem + `)?` + tantoListEnd),
 		regexp.MustCompile(tantoListPrefix + `(?:` + tantoListItem + tantoListSep + `){3}(` + tantoListName + `)` + tantoListReading + tantoListEnd),
 	}
-	// personNameOrgHeadColonRe は報道発表の冒頭の法人紹介「（茨城県つくば市、理事長：<姓><名>、
-	// 以下「NIMS」）」「（理事長：<姓><名>    本部：…）」のように、法人の長の職名 + コロンの
+	// personNameOrgHeadColonRe は報道発表の冒頭の法人紹介「（〇〇県〇〇市、理事長：<姓><名>、
+	// 以下「機構」）」「（理事長：<姓><名>    本部：…）」のように、法人の長の職名 + コロンの
 	// 後に続く氏名を拾う（person-name-role-label）。独立行政法人・企業の報道発表で全ルール
 	// モードが取りこぼす見逃しを実測した（2026-10-30 04:00）。値の後に読点・閉じ括弧・
 	// 2 個以上の空白・行末のいずれかを要求し、姓名辞書の完全分割（姓+名）でのみ報告する。
