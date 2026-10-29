@@ -377,3 +377,23 @@ func TestMatchPersonNameFullNameSplit(t *testing.T) {
 		})
 	}
 }
+
+// TestNameVariantFolding は、NFKC でも新字体へ統合されない人名の異体字（﨑・髙・𠮷）を
+// 照合キーでだけ畳み、辞書（新字体で収録）と一致させることを固定する。
+// ダミーの姓名（山﨑 花子・髙橋 太郎）のみ。
+func TestNameVariantFolding(t *testing.T) {
+	for _, s := range []string{"山﨑", "髙橋", "𠮷田"} {
+		if !IsSurname(s) {
+			t.Errorf("IsSurname(%q) = false", s)
+		}
+	}
+	if got := MatchPersonName("山﨑花子"); got != FullNameSplit {
+		t.Errorf("MatchPersonName(山﨑花子) = %v", got)
+	}
+	if got := MatchPersonName("髙橋 太郎"); got != FullNameSplit {
+		t.Errorf("MatchPersonName(髙橋 太郎) = %v", got)
+	}
+	if foldNameVariants("山田") != "山田" {
+		t.Error("異体字を含まない入力を変えた")
+	}
+}

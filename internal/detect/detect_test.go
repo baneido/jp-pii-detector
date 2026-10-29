@@ -5137,3 +5137,45 @@ func TestRepNameLabelAndBanOrderRoleLabel(t *testing.T) {
 		}
 	}
 }
+
+// TestContactReadingAndVariantKanjiNames は、国の地方整備局の記者発表と県の特定商取引法の
+// 処分公表で全ルールモードが取りこぼした次の表記を既定ルールが検出することを固定する。
+//   - 問合せ先欄で氏名の直後にひらがなの読み括弧が入る「課長補佐 <姓>（<よみ>） （内線…）」
+//     （読みは氏名であることを補強する。報告スパンは氏名のみで読みは含めない）
+//   - 「〜推進官 <姓> （内線…）」（国の機関の職名）
+//   - 異体字（﨑・髙）で書かれた個人事業者の氏名「<屋号>こと<姓><名>（個人事業者）」
+//     （辞書は新字体で収録しているため、照合キーだけ畳む）
+//
+// 氏名は生存する個人を識別でき、個人情報保護法上の個人情報に当たる。
+// 値はダミー（山田・山﨑 花子・髙橋 太郎・0 番台の内線）のみ。
+func TestContactReadingAndVariantKanjiNames(t *testing.T) {
+	d := newDetector(t, "")
+	for _, tc := range []struct{ line, rule, match string }{
+		{"建設産業第一課 課長補佐   山田（やまだ） （内線００００）", "person-name-role-label", "山田"},
+		{"専門調査官 山田 太郎（やまだ たろう） （内線0000）", "person-name-role-label", "山田 太郎"},
+		{"不動産業適正化推進官 山田 （内線００００）", "person-name-role-label", "山田"},
+		{"名 称 サンプル塗装こと山﨑花子（個人事業者）", "", "山﨑花子"},
+		{"代表者名：髙橋　太郎", "person-name-role-label", "髙橋　太郎"},
+	} {
+		fs := d.ScanLine("f.txt", 1, tc.line)
+		found := false
+		for _, f := range fs {
+			if (tc.rule == "" || f.RuleID == tc.rule) && f.Match == tc.match {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%q: %q を検出しなかった（%v）", tc.line, tc.match, ruleIDs(fs))
+		}
+	}
+	// 読み括弧の後に内線・電話がない場合や、役職名の後が氏名でない場合は報告しない。
+	for _, line := range []string{
+		"課長補佐   会議（かいぎ） （内線0000）",
+		"不動産業適正化推進官 会議 （内線0000）",
+		"課長補佐 山田（やまだ）が出席した",
+	} {
+		if fs := d.ScanLine("f.txt", 1, line); len(fs) != 0 {
+			t.Errorf("%q: 検出した（%v）", line, ruleIDs(fs))
+		}
+	}
+}
