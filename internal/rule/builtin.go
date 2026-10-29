@@ -595,8 +595,23 @@ var (
 	// 辞書の姓であることを要求する（validSpacedSurnameGiven）。
 	personNameTitleLineEndRe = regexp.MustCompile(
 		`(?:課長|課長補佐|係長|部長|室長|所長|副所長|局長|館長|副館長|センター長|長官|次長|` +
-			`管理官|調整官|専門官|企画官|調査官|対策官|分析官|監理官|推進官)[ ]+` +
+			`管理官|調整官|専門官|企画官|調査官|対策官|分析官|監理官|推進官|` +
+			// 団体・企業・自治体の長と、入札公告の発信者欄（2026-10-30 に実測した見逃し）。
+			`理事長|会長|社長|学長|院長|校長|議長|総裁|頭取|知事|市長|町長|村長|区長|教育長|` +
+			`契約責任者|契約担当役)[ ]+` +
 			`([` + kanji + `]{1,4}[ ]{1,3}[` + kanji + `]{1,4})[ ]*$`,
+	)
+	// personNameTantoDeptSlashRe は「（担当：調査部／<姓>）」「（担当：社会情報部／<姓>、<姓>）」の
+	// ように、担当欄で部署名と姓をスラッシュで区切る表記を拾う（独立行政法人の調査公表資料で
+	// 実測した見逃し）。部署語尾 + スラッシュの直後という位置は担当者の姓とほぼ確実なため、
+	// 姓のみの一致も Medium で報告する。2 人目（読点の後）は personNameTantoDeptSlash2Re で拾う。
+	personNameTantoDeptSlashRe = regexp.MustCompile(
+		`担当[：:][ ]*[` + kanji + `]{0,10}(?:部|課|係|室|班|局|センター|グループ)[／/][ ]*` +
+			`([` + kanji + `]{1,4})(?:[ ]*[、,][ ]*[` + kanji + `]{1,4}){0,3}[ ]*[)）]`,
+	)
+	personNameTantoDeptSlash2Re = regexp.MustCompile(
+		`担当[：:][ ]*[` + kanji + `]{0,10}(?:部|課|係|室|班|局|センター|グループ)[／/][ ]*` +
+			`[` + kanji + `]{1,4}[ ]*[、,][ ]*([` + kanji + `]{1,4})(?:[ ]*[、,][ ]*[` + kanji + `]{1,4}){0,2}[ ]*[)）]`,
 	)
 	// personNameBusinessOperatorLabelRe は特定商取引法に基づく行政処分の公表資料の処分対象
 	// 欄「事業者：<姓> <名>（65 歳）」（均等割付の字間スペース付き「事  業  者：」を含む）の
@@ -653,7 +668,7 @@ var personNamePlaceholders = []string{
 // 自治体・国の案内ページでこれを氏名として報告する偽陽性を実測した。
 var personNameFormWordPrefixes = []string{
 	"ふりがな", "フリガナ", "カタカナ", "ひらがな", "漢字", "団体名", "所属", "法人", "及び", "又は",
-	"複数", "代表者", "ことば", "読み", "よみ", "記入", "楷書",
+	"複数", "代表者", "ことば", "読み", "よみ", "記入", "楷書", "社名",
 }
 var personNameFormWordParts = []string{
 	"場合", "記入", "にあっては", "担当", "証明", "整備局", "・氏名", "・職",
@@ -1835,7 +1850,7 @@ func Builtin() []Rule {
 			ID:                "person-name-role-label",
 			Description:       "氏名（担当者・宛名ラベル付き）",
 			Prefilter:         PrefilterCJK,
-			PrefilterLiterals: []string{"担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官"},
+			PrefilterLiterals: []string{"担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事"},
 			Validate:          notPlaceholderName,
 			Patterns: []Pattern{
 				// 担当者・宛名・連絡先ラベル。敬称のような強い人物シグナルが無いため、
@@ -1879,6 +1894,8 @@ func Builtin() []Rule {
 				{Re: personNameWithReadingRe, Base: Medium, Validate: validSpacedSurnameGiven},
 				{Re: personNameTantoReadingRe, Base: Medium, Validate: validPersonNameSurnameOrFull},
 				{Re: personNameTitleLineEndRe, Base: Medium, Validate: validSpacedSurnameGiven},
+				{Re: personNameTantoDeptSlashRe, Base: Medium, Validate: validPersonNameSurnameOrFull},
+				{Re: personNameTantoDeptSlash2Re, Base: Medium, Validate: validPersonNameSurnameOrFull},
 				// 代表権のある役職名 + 空白/「である」/括弧 + 氏名（行政処分の公表文書の本文）。
 				// 「代表者：」ラベルを伴わないため、姓+名の完全分割のみ Medium で報告する。
 				{Re: personNameExecTitleRe, Base: Medium, Validate: validPersonNameFullSplit},

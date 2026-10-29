@@ -84,3 +84,20 @@ func TestMunicipalitiesDictSanity(t *testing.T) {
 		}
 	}
 }
+
+// TestIsMunicipalityOrPrefecture は完全一致だけを見ることを固定する（姓や
+// 部分文字列は一致しない）。
+func TestIsMunicipalityOrPrefecture(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		want bool
+	}{
+		{"北九州市", true}, {"葛飾区", true}, {"浪江町", true}, {"兵庫県", true}, {"北海道", true},
+		{"神奈川県横須賀市", true}, {"多摩市", true},
+		{"中村", false}, {"北九州", false}, {"山田太郎", false}, {"架空市", false}, {"兵庫", false},
+	} {
+		if got := IsMunicipalityOrPrefecture(c.in); got != c.want {
+			t.Errorf("IsMunicipalityOrPrefecture(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}

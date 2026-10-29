@@ -68,6 +68,38 @@ func NormalizeMunicipalityKa(s string) string {
 	return municipalityVariants.Replace(norm.NFKC.String(s))
 }
 
+// prefectures は都道府県名（47）。IsMunicipalityOrPrefecture が使う。
+var prefectures = map[string]bool{}
+
+func init() {
+	for _, p := range strings.Fields("北海道 青森県 岩手県 宮城県 秋田県 山形県 福島県 茨城県 栃木県 群馬県 埼玉県 千葉県 東京都 神奈川県 " +
+		"新潟県 富山県 石川県 福井県 山梨県 長野県 岐阜県 静岡県 愛知県 三重県 滋賀県 京都府 大阪府 兵庫県 奈良県 和歌山県 " +
+		"鳥取県 島根県 岡山県 広島県 山口県 徳島県 香川県 愛媛県 高知県 福岡県 佐賀県 長崎県 熊本県 大分県 宮崎県 鹿児島県 沖縄県") {
+		prefectures[p] = true
+	}
+}
+
+// IsMunicipalityOrPrefecture は s が実在する市区町村名・都道府県名、または
+// 「都道府県名 + 市区町村名」と完全一致するかを返す（部分一致は見ない）。
+// 敬称アンカーの「北九州市様」「兵庫県さん」のように自治体を敬称付きで呼ぶ表記を
+// 氏名候補から外すために使う。
+func IsMunicipalityOrPrefecture(s string) bool {
+	n := NormalizeMunicipalityKa(s)
+	if prefectures[n] {
+		return true
+	}
+	municipalities := municipalitySet()
+	if municipalities[n] {
+		return true
+	}
+	for p := range prefectures {
+		if rest, ok := strings.CutPrefix(n, p); ok && municipalities[rest] {
+			return true
+		}
+	}
+	return false
+}
+
 // MunicipalitySuffixMatch は s（住所候補の全体文字列）の中に、実在する
 // 市区町村名で終わる部分文字列が含まれるかを返す。s 内のすべての市区町村
 // マーカー文字（市・区・町・村）の出現位置ごとに、その位置で終わる部分
