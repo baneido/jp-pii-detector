@@ -21,8 +21,8 @@ import (
 )
 
 // DatasetID はゴールデンに記録する公開合成コーパスの識別子。生成器の構成を
-// 変えたら上げる。
-const DatasetID = "public-synthetic-v1"
+// 変えたら上げる。v2 で公開文書由来の表記ケース（NotationCases）を追加した。
+const DatasetID = "public-synthetic-v2"
 
 // MinPositivesPerRule は全ルールに要求する合成陽性ケース数の下限。
 const MinPositivesPerRule = corpusv2.MinPositiveCasesPerRule
@@ -40,6 +40,7 @@ var GateProfiles = append(append([]eval.ProfileSpec(nil), eval.PublishedProfiles
 func Cases() []evalcase.Case {
 	cases := fixturegen.Generate()
 	cases = append(cases, corpusv2.PublicSynthetic(corpusv2.PublicSyntheticSeed)...)
+	cases = append(cases, NotationCases()...)
 	return cases
 }
 
