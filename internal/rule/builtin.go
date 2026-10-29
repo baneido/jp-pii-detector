@@ -454,8 +454,10 @@ var (
 	// personNameRepLabelRe は代表者ラベル（字間スペース付きの「代 表 者」を含む）と、
 	// 任意の役職名（代表取締役・代表理事 等）を挟んだ氏名の値を拾う
 	// （person-name-role-label）。役職名は値に含めず、続く漢字列だけを捕捉する。
+	// 愛媛県の処分公表で「代表者名：<姓>　<名>」（ラベル末尾に「名」が付く表記）を全ルールモードが
+	// 取りこぼしたため、「代表者名」「代表者氏名」「代表者の氏名」もラベルとして許容する。
 	personNameRepLabelRe = regexp.MustCompile(
-		`代[ 　]?表[ 　]?者` + personNameSep +
+		`代[ 　]?表[ 　]?者(?:の?氏名|名)?` + personNameSep +
 			`(?:(?:代表取締役社長|代表取締役会長|代表取締役|代表執行役社長|代表執行役|代表理事長|代表理事|代表社員|取締役社長|理事長|社長|会長|院長|学長|組合長)[ 　]*)?` +
 			`([` + kanji + `]{2,8}(?:[ ][` + kanji + `]{1,8})?)`,
 	)
@@ -496,8 +498,16 @@ var (
 	// 「代 表 取 締 役」（字間の半角スペース 1 個。プリフィルタ「代 表」に一致する形）も許容する。
 	personNameExecTitleRe = regexp.MustCompile(
 		`(?:代表取締役社長|代表取締役会長|代表取締役副社長|代表取締役|代 表 取 締 役|代表執行役社長|代表執行役|代表理事長|代表理事|代表社員|取締役社長|取締役会長|取締役|監査役)` +
-			`(?:[ ]+|である|[(（][ ]*)` +
+			`(?:[ ]+|であった|である|[(（][ ]*)` +
 			personNameSpacedValue,
+	)
+	// personNameExecTitleAndRe は「代表取締役であった<姓><名>及び<従業員>」のように、役職名 +
+	// 「である／であった」の後の氏名に漢字「及び」が直結して personNameExecTitleRe の貪欲な値に
+	// 取り込まれる表記を拾う（高知県の監督処分簿で実測）。値は最短一致で「及び」の手前までとし、
+	// 姓名辞書の完全分割（姓+名）でのみ報告する。
+	personNameExecTitleAndRe = regexp.MustCompile(
+		`(?:代表取締役社長|代表取締役会長|代表取締役副社長|代表取締役|代表執行役社長|代表執行役|代表理事長|代表理事|代表社員|取締役社長|取締役会長|取締役|監査役)` +
+			`(?:であった|である)([` + kanji + `]{2,8}?)及び`,
 	)
 	// personNamePartyLabelRe は審査申立・訴訟の当事者ラベル（審査申立人・請求人・原告・
 	// 被告 等）の直後に空白区切りで続く氏名と、「（総代）<姓> <名>」を拾う
@@ -532,10 +542,14 @@ var (
 	// pdftotext -layout で姓と名の間が最大 4 個の空白になる「人事課長   <姓>    <名>   （内線…）」
 	// を全ルールモードが取りこぼす見逃しを実測した。役職語と内線番号の括弧で両側が
 	// アンカーされるため、姓名間の空白は 1〜4 個まで許容する。
+	// 同局の記者発表で「上下水道調整官 <姓> <名>（内線…）」「契約管理官 <姓> <名> （内線…）」の
+	// ように「〜官」の職名を全ルールモードが取りこぼしたため、国の機関の職名（管理官・調整官・
+	// 専門官 等）も役職語に含める（右側の電話・内線アンカーは同じく必須）。氏名と「（内線」の
+	// 間に空白が無い表記もあるため、右側の空白は 0 個以上とする。
 	personNameContactTitleRe = regexp.MustCompile(
-		`(?:課長|係長|部長|室長|所長|局長|館長|センター長|課長補佐|担当係長|担当課長|担当部長)[ ]+` +
+		`(?:課長|係長|部長|室長|所長|局長|館長|センター長|課長補佐|担当係長|担当課長|担当部長|管理官|調整官|専門官|企画官|調査官|対策官|分析官|監理官)[ ]+` +
 			`([` + kanji + `]{1,4}(?:[ ]{1,4}[` + kanji + `]{1,4})?)` +
-			`[ ]+(?:(?i:tel)|電話|[(（]内線)`,
+			`[ ]*(?:(?i:tel)|電話|[(（]内線)`,
 	)
 	// personNameBusinessOperatorLabelRe は特定商取引法に基づく行政処分の公表資料の処分対象
 	// 欄「事業者：<姓> <名>（65 歳）」（均等割付の字間スペース付き「事  業  者：」を含む）の
@@ -553,6 +567,25 @@ var (
 	// （「株式会社〇〇」（以下「事業者」という。）等の法人名は辞書ゲートで落ちる）。
 	personNameDefinedAsOperatorRe = regexp.MustCompile(
 		`「([` + kanji + `]{2,8}(?:[ ][` + kanji + `]{1,8})?)」[ ]?[(（]以下[ ]?「(?:事業者|当該事業者|被処分者|処分対象者|同人)」`,
+	)
+	// personNameRepNameSpacedRe は建設業者監督処分簿（国の様式で都道府県が公表）の表組み
+	// 「代表者氏名     <姓> <名>」のように、コロンのない「代表者氏名」「代表者の氏名」「代表者名」
+	// ラベルの後に空白で続く氏名を拾う（person-name-role-label）。高知県の監督処分簿 PDF で
+	// 全ルールモードが取りこぼす見逃しを実測した。汎用の「氏名」ラベルはコロン必須のまま
+	// （#48）とし、法人代表者を示す複合ラベルに限って空白区切りを許容する。値は姓名辞書の
+	// 完全分割（姓+名）でのみ報告する。
+	personNameRepNameSpacedRe = regexp.MustCompile(
+		`代表者(?:の?氏名|名)[ ]+` + personNameSpacedValue,
+	)
+	// personNameBanOrderRe は特定商取引法に基づく行政処分の公表文書の「<姓><名>に対する業務禁止命令」
+	// の氏名を拾う（person-name-role-label）。業務禁止命令（特商法第 8 条の 2 等）は法人の役員等の
+	// 個人を名宛人とする処分であり、この位置の値は自然人の氏名になる。愛媛県の処分公表で
+	// 全ルールモードが取りこぼす見逃しを実測した。法人名（業務停止命令の名宛人）は
+	// 姓名辞書の完全分割を通らないため報告しない。直前は漢字以外（行頭・読点・括弧等）に限る。
+	personNameBanOrderRe = regexp.MustCompile(
+		`(?:^|[^` + kanji + `])` +
+			`([` + kanji + `]{2,8}(?:[ ][` + kanji + `]{1,8})?)` +
+			`[ ]?に対する業務禁止命令`,
 	)
 )
 
@@ -1702,7 +1735,7 @@ func Builtin() []Rule {
 			ID:                "person-name-role-label",
 			Description:       "氏名（担当者・宛名ラベル付き）",
 			Prefilter:         PrefilterCJK,
-			PrefilterLiterals: []string{"担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「"},
+			PrefilterLiterals: []string{"担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止"},
 			Validate:          notPlaceholderName,
 			Patterns: []Pattern{
 				// 担当者・宛名・連絡先ラベル。敬称のような強い人物シグナルが無いため、
@@ -1742,6 +1775,7 @@ func Builtin() []Rule {
 				// 代表権のある役職名 + 空白/「である」/括弧 + 氏名（行政処分の公表文書の本文）。
 				// 「代表者：」ラベルを伴わないため、姓+名の完全分割のみ Medium で報告する。
 				{Re: personNameExecTitleRe, Base: Medium, Validate: validPersonNameFullSplit},
+				{Re: personNameExecTitleAndRe, Base: Medium, Validate: validPersonNameFullSplit},
 				// 当事者ラベル（審査申立人・原告 等）+ 空白 + 氏名と「（総代）氏名」。
 				// 「原告 主張」「被告 会社」等の一般語は姓名辞書ゲートで落ちる。
 				{Re: personNamePartyLabelRe, Base: Medium, Validate: validPersonNameFullSplit},
@@ -1751,6 +1785,9 @@ func Builtin() []Rule {
 				// 処分対象欄「事業者：<姓> <名>」と「「<姓><名>」（以下「事業者」という。）」。
 				{Re: personNameBusinessOperatorLabelRe, Base: Medium, Validate: validPersonNameFullSplit},
 				{Re: personNameDefinedAsOperatorRe, Base: Medium, Validate: validPersonNameFullSplit},
+				// 監督処分簿の「代表者氏名  <姓> <名>」（コロンなし）と「<姓><名>に対する業務禁止命令」。
+				{Re: personNameRepNameSpacedRe, Base: Medium, Validate: validPersonNameFullSplit},
+				{Re: personNameBanOrderRe, Base: Medium, Validate: validPersonNameFullSplit},
 			},
 		},
 		{
