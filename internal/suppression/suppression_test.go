@@ -74,6 +74,9 @@ func TestRunAttributesSuppressions(t *testing.T) {
 	}
 
 	// 出力にマッチ値（ダミーでも）が含まれないこと。stopwords は要素番号で出す。
+	// --files の出力には t.TempDir() のパスが入る。そのランダムな数字列が
+	// "0002" などを含むと誤って失敗するため、照合前にパスを取り除く。
+	tmpPath := filepath.ToSlash(dir)
 	for _, write := range []func(*bytes.Buffer) error{
 		func(b *bytes.Buffer) error { return WriteMarkdown(b, rep) },
 		func(b *bytes.Buffer) error { return WriteJSON(b, rep) },
@@ -82,8 +85,9 @@ func TestRunAttributesSuppressions(t *testing.T) {
 		if err := write(&b); err != nil {
 			t.Fatal(err)
 		}
+		out := strings.ReplaceAll(b.String(), tmpPath, "<tmp>")
 		for _, v := range []string{"0001", "0002", "0003", "0004"} {
-			if strings.Contains(b.String(), v) {
+			if strings.Contains(out, v) {
 				t.Errorf("出力にマッチ値の一部 %q が含まれる", v)
 			}
 		}
