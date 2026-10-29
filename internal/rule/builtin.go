@@ -470,6 +470,17 @@ var (
 		`(?:弁護士|弁理士|司法書士|行政書士|税理士|公認会計士|社会保険労務士|裁判官)[ ]+` +
 			`([` + kanji + `]{2,8}(?:[ ][` + kanji + `]{1,8})?)`,
 	)
+	// personNameContactTitleRe は報道発表資料・お知らせの問合せ先欄に頻出する
+	// 「<部署>課長　<姓>　Tel 045-xxx-xxxx」形式（役職 + 空白 + 担当者の姓 + 空白 +
+	// 電話ラベル）の氏名を拾う（person-name-role-label）。自治体の記者発表 PDF で
+	// 全ルールモードが取りこぼす見逃しを実測した。組織名・役職・電話番号と結合して
+	// 特定の職員を識別できるため、姓のみでも個人情報に当たる。役職語と電話ラベルの
+	// 両側アンカーを要求し、値は姓名辞書ゲート（姓のみ／姓+名）で検証する。
+	personNameContactTitleRe = regexp.MustCompile(
+		`(?:課長|係長|部長|室長|所長|局長|館長|センター長|課長補佐|担当係長|担当課長|担当部長)[ ]+` +
+			`([` + kanji + `]{1,4}(?:[ ][` + kanji + `]{1,4})?)` +
+			`[ ]+(?:(?i:tel)|電話)`,
+	)
 )
 
 // personNamePlaceholders は氏名の値として現れるダミー語（人名ではない）。
@@ -655,6 +666,12 @@ func validPersonNameFullSplit(v string) bool {
 
 // validPersonNameSurnameOnly は単独の姓一致（dict.SurnameOnly）の場合のみ許可
 // する。担当ラベル（person-name-role-label）の Low パターン用。
+// validPersonNameSurnameOrFull は姓のみ、または姓+名の完全分割が成立する値を許可する。
+func validPersonNameSurnameOrFull(v string) bool {
+	m := dict.MatchPersonName(strings.TrimSpace(v))
+	return m == dict.SurnameOnly || m == dict.FullNameSplit
+}
+
 func validPersonNameSurnameOnly(v string) bool {
 	return dict.MatchPersonName(strings.TrimSpace(v)) == dict.SurnameOnly
 }
@@ -1612,7 +1629,7 @@ func Builtin() []Rule {
 			ID:                "person-name-role-label",
 			Description:       "氏名（担当者・宛名ラベル付き）",
 			Prefilter:         PrefilterCJK,
-			PrefilterLiterals: []string{"担当", "宛名", "連絡先", "代表", "代 表", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官"},
+			PrefilterLiterals: []string{"担当", "宛名", "連絡先", "代表", "代 表", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 "},
 			Validate:          notPlaceholderName,
 			Patterns: []Pattern{
 				// 担当者・宛名・連絡先ラベル。敬称のような強い人物シグナルが無いため、
@@ -1645,6 +1662,10 @@ func Builtin() []Rule {
 				// コロンのない表記のため、単独の姓（Low）は報告せず姓+名の完全分割のみ
 				// Medium で報告する（「弁護士 費用」等の一般語は辞書ゲートで落ちる）。
 				{Re: personNameProfessionTitleRe, Base: Medium, Validate: validPersonNameFullSplit},
+				// 問合せ先欄の「役職 + 姓 + Tel」。役職と電話ラベルで挟まれた位置は担当者名で
+				// あることがほぼ確実なため、姓のみの一致も Medium で報告する（地名と同形の姓
+				// でもこの位置では人名として読む）。
+				{Re: personNameContactTitleRe, Base: Medium, Validate: validPersonNameSurnameOrFull},
 			},
 		},
 		{
