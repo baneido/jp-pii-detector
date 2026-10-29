@@ -717,8 +717,8 @@ var personNameBracketFormHints = map[string]bool{
 }
 
 // rejectBracketedFormHint は、氏名ラベルの値が括弧で囲まれた記入方法の指示語
-// （personNameBracketFormHints）である場合に棄却する。括弧の外に書かれた
-// 「氏名：かな」のような値は人名の可能性があるため棄却しない。
+// （personNameBracketFormHints）である場合に棄却する。括弧で囲まれていない
+// 値は、ひらがなの人名の可能性があるため棄却しない。
 func rejectBracketedFormHint(line string, start, end int) bool {
 	if !personNameBracketFormHints[strings.TrimSpace(line[start:end])] {
 		return true
