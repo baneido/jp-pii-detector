@@ -5179,3 +5179,114 @@ func TestContactReadingAndVariantKanjiNames(t *testing.T) {
 		}
 	}
 }
+
+// TestNameReadingAndTitleLineEnd は、県・市・国の記者発表で全ルールモードが取りこぼした
+// 次の表記を既定ルールが検出することを固定する。
+//   - 空白区切りの姓名の直後に、空白区切りのひらがなの読み括弧が続く「<姓> <名>（<せい> <めい>）」
+//     （委員名簿・講演者紹介・あいさつ文。報告スパンは氏名のみで読みは含めない）
+//   - コロンのない担当欄の「担当 <姓>(<よみ>)」
+//   - 職名の直後に空白区切りの姓名が来て行が終わる「課長補佐 <姓> <名>」「〜長官 <姓> <名>」
+//   - 「〜課長 <姓>」の直後に電話番号が続く問合せ先（Tel・電話の前置きなし）
+//
+// 氏名は生存する個人を識別でき、個人情報保護法上の個人情報に当たる（公務員の職名と氏名も同じ）。
+// 値はダミー（山田 太郎・鈴木・0 だけの番号）のみ。
+func TestNameReadingAndTitleLineEnd(t *testing.T) {
+	d := newDetector(t, "")
+	for _, tc := range []struct{ line, match string }{
+		{"山田　太郎（やまだ　たろう）", "山田　太郎"},
+		{"管理第一課長 山田 太郎（やまだ たろう） （内線0000）", "山田 太郎"},
+		{"担当　鈴木(すずき)、山田(やまだ)", "鈴木"},
+		{"河川技術部門担当 課長補佐 山田 太郎", "山田 太郎"},
+		{"架空庁長官    山田 太郎", "山田 太郎"},
+		{"共生社会推進課長 山田 ０００－０００－００００", "山田"},
+	} {
+		fs := d.ScanLine("f.txt", 1, tc.line)
+		found := false
+		for _, f := range fs {
+			if f.RuleID == "person-name-role-label" && f.Match == tc.match {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%q: %q を検出しなかった（%v）", tc.line, tc.match, ruleIDs(fs))
+		}
+	}
+	// 読みが地名・一般語、職名の後が一般語、姓名の後に文が続く行は報告しない。
+	for _, line := range []string{
+		"東京　都庁（とうきょう　とちょう）",
+		"会議 資料（かいぎ しりょう）",
+		"担当　窓口(まどぐち)",
+		"課長 会議 室長",
+		"課長補佐 山田 担当",
+		"所長 山田 太郎 が出席した",
+		"共生社会推進課長 会議 ０００－０００－００００",
+	} {
+		for _, f := range d.ScanLine("f.txt", 1, line) {
+			if strings.HasPrefix(f.RuleID, "person-name") {
+				t.Errorf("%q: 氏名として検出した（%s %q）", line, f.RuleID, f.Match)
+			}
+		}
+	}
+}
+
+// TestPersonNameLowFormWords は、申込・届出の案内文で氏名ラベルの括弧内や値が記入方法の
+// 説明である行を、辞書に一致しない値を Low で拾う強ラベルが氏名として報告しないことを
+// 固定する（自治体・国の案内ページで実測した偽陽性）。辞書に一致しない実在しうる氏名
+// （架空の珍しい姓名）は引き続き Low で報告する。値はダミーのみ。
+func TestPersonNameLowFormWords(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	for _, line := range []string{
+		"氏名（ふりがな）",
+		"氏名：団体名・職・氏名",
+		"氏名（法人にあっては名称及び代表者の氏名）",
+		"氏名（複数名の場合は代表者）",
+		"氏名：カタカナで記入",
+	} {
+		for _, f := range d.ScanLine("f.txt", 1, line) {
+			if strings.HasPrefix(f.RuleID, "person-name") {
+				t.Errorf("%q: 氏名として検出した（%s %q）", line, f.RuleID, f.Match)
+			}
+		}
+	}
+	assertRules(t, d.ScanLine("f.txt", 1, "氏名：山田 太郎"), "person-name")
+}
+
+// TestHonorificWordCompounds は、敬称アンカー（様・さん・氏・殿）と同じ字を含む一般語
+// （多様性・編さん・炊さん・両殿下・夫婦別氏・〜氏遺跡・〜氏庭園）を高再現率の
+// person-name-high-recall が氏名として報告しないことを固定する（県・市の公開ページで
+// 実測した偽陽性）。「本多様」「喜多さん」のような姓 + 敬称と、名を含む「<宮家>妃<名>殿下」は引き続き報告する。値はダミーのみ。
+func TestHonorificWordCompounds(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"
+
+[rules]
+high_recall = true
+`)
+	for _, line := range []string{
+		"生物多様性の保全",
+		"総合企画部多様性社会推進課",
+		"県史編さんだより",
+		"野外炊さん体験",
+		"女王殿下の御来県",
+		"皇族各殿下の御健勝",
+		"選択的夫婦別氏制度",
+		"架空朝倉氏遺跡の保存",
+		"西山氏庭園の公開",
+	} {
+		for _, f := range d.ScanLine("f.txt", 1, line) {
+			if f.RuleID == "person-name-high-recall" {
+				t.Errorf("%q: 氏名として検出した（%q）", line, f.Match)
+			}
+		}
+	}
+	for _, line := range []string{"本多様より御連絡がありました", "喜多さんに確認した", "架空宮妃花子殿下の御来県"} {
+		found := false
+		for _, f := range d.ScanLine("f.txt", 1, line) {
+			if f.RuleID == "person-name-high-recall" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%q: 姓 + 敬称を検出しなかった", line)
+		}
+	}
+}

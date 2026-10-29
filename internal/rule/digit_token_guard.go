@@ -185,6 +185,36 @@ func rejectShimeiCompound(line string, start, end int) bool {
 	return strings.HasPrefix(rest, "氏名義")
 }
 
+// rejectHonorificWordCompound は、敬称アンカーの「様」「さん」「氏」「殿」が一般語の一部で
+// ある場合に棄却する。県・市の公開ページで「生物多様性」「総合企画部多様性社会推進課」
+// （多様）、「県史編さん」「野外炊さん」（編さん・炊さん）、「皇族各殿下」「女王殿下」（名を含まない殿下）、
+// 「選択的夫婦別氏制度」（別氏）、「朝倉氏遺跡」「西山氏庭園」（史跡名）を
+// 敬称付き氏名として切り出す偽陽性を実測した。
+func rejectHonorificWordCompound(line string, start, end int) bool {
+	val := line[start:end]
+	rest := line[end:]
+	switch {
+	case strings.HasSuffix(val, "多") && (strings.HasPrefix(rest, "様性") || strings.HasPrefix(rest, "様化") || strings.HasPrefix(rest, "様な")):
+		// 「本多様」「喜多様」のような姓 + 様は残し、多様性・多様化・多様な だけを棄却する。
+		return false
+	case (strings.HasSuffix(val, "編") || strings.HasSuffix(val, "炊")) && strings.HasPrefix(rest, "さん"):
+		return false
+	case strings.HasPrefix(rest, "殿下") && (strings.HasSuffix(val, "両") || strings.HasSuffix(val, "各") ||
+		val == "女王" || val == "親王" || val == "内親王"):
+		// 「両殿下」「各殿下」「女王殿下」のように名を含まない敬称だけを棄却する。
+		// 「<名>女王殿下」「<宮家>妃<名>殿下」は特定の個人を指すため残す。
+		return false
+	case strings.HasSuffix(val, "夫婦別") && strings.HasPrefix(rest, "氏"):
+		return false
+	}
+	for _, w := range []string{"氏遺跡", "氏庭園", "氏館跡", "氏城跡"} {
+		if strings.HasPrefix(rest, w) {
+			return false
+		}
+	}
+	return true
+}
+
 // rejectURLUserinfo は、メールアドレス形の候補が URL のユーザー情報
 // （"http://gopher@test.com"、"ssh://git@github.com/user/repo"、
 // "http://user:pass@host"）である場合に棄却する。候補を含む空白・引用符区切りの

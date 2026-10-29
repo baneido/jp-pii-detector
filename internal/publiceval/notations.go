@@ -43,6 +43,9 @@ var notationCategories = []string{
 	"cjk-radical",        // 康熙部首・部首補助の混入
 	"variant-kanji",      // 異体字（﨑・髙・𠮷）
 	"form-word",          // 項目名・様式名の誤検出型（陰性のみ）
+	"name-reading",       // 空白区切りの姓名 + 空白区切りの読み括弧、担当 + 姓（よみ）
+	"title-line-end",     // 職名 + 空白区切りの姓名で終わる行
+	"honorific-compound", // 敬称と同じ字を含む一般語（多様・編さん・両殿下・夫婦別氏・〜氏遺跡）
 }
 
 type notationCase struct {
@@ -184,6 +187,50 @@ func notationSpecs() []notationCase {
 	neg("form-word", "共通様式により報告")
 	neg("form-word", "別添様式２のとおり")
 	neg("form-word", "印鑑届書様式")
+
+	// 問合せ先の「役職 + 姓」の直後に電話番号が続く形（Tel・電話の前置きなし）
+	pos("contact-tel", role, "共生社会推進課長 "+n(2).sur+" ０００－０００－００００")
+	neg("contact-tel", "共生社会推進課長 会議 ０００－０００－００００")
+
+	// 空白区切りの姓名 + 空白区切りの読み括弧（委員名簿・講演者紹介・あいさつ文）
+	pos("name-reading", role, full(0, "　")+"（"+n(0).surYomi+"　"+n(0).givenYomi+"）")
+	pos("name-reading", role, "委員長 "+full(1, " ")+"（"+n(1).surYomi+" "+n(1).givenYomi+"） 架空大学教授")
+	pos("name-reading", role, "管理第一課長 "+full(2, " ")+"（"+n(2).surYomi+" "+n(2).givenYomi+"） （内線0000）")
+	pos("name-reading", role, "担当　"+n(3).sur+"("+n(3).surYomi+")、"+n(4).sur+"("+n(4).surYomi+")")
+	neg("name-reading", "東京　都庁（とうきょう　とちょう）")
+	neg("name-reading", "会議 資料（かいぎ しりょう）")
+	neg("name-reading", "担当　窓口(まどぐち)")
+	neg("name-reading", full(5, "")+"（"+n(5).surYomi+n(5).givenYomi+"）の表記例") // 読みが 1 語なら対象外
+
+	// 職名 + 空白区切りの姓名で終わる行（担当者一覧・発信者欄）
+	pos("title-line-end", role, "河川技術部門担当 課長補佐 "+full(4, " "))
+	pos("title-line-end", role, "架空庁長官    "+full(5, " "))
+	pos("title-line-end", role, "副館長　"+full(0, "　"))
+	neg("title-line-end", "課長 会議 室長")
+	neg("title-line-end", "課長補佐 "+n(1).sur+" 担当")
+	neg("title-line-end", "所長 "+full(2, " ")+" が出席した")
+
+	// 記入方法の説明が氏名ラベルに続く形（辞書不一致の値を拾う Low の強ラベル）
+	neg("form-word", "氏名（ふりがな）")
+	neg("form-word", "氏名：団体名・職・氏名")
+	neg("form-word", "氏名（法人にあっては名称及び代表者の氏名）")
+	neg("form-word", "氏名（複数名の場合は代表者）")
+	neg("form-word", "氏名：カタカナで記入")
+
+	// 敬称と同じ字を含む一般語（高再現率の敬称アンカーが拾っていた）
+	pos("honorific-compound", "person-name-high-recall", "本多"+"様より御連絡がありました")
+	pos("honorific-compound", "person-name-high-recall", "喜多"+"さんに確認した")
+	pos("honorific-compound", "person-name-high-recall", full(0, "")+"殿")
+	neg("honorific-compound", "生物多様性の保全")
+	neg("honorific-compound", "総合企画部多様性社会推進課")
+	neg("honorific-compound", "県史編さんだより")
+	neg("honorific-compound", "野外炊さん体験")
+	neg("honorific-compound", "女王殿下の御来県")
+	neg("honorific-compound", "皇族各殿下の御健勝")
+	pos("honorific-compound", "person-name-high-recall", "架空宮妃"+n(1).given+"殿下の御来県")
+	neg("honorific-compound", "選択的夫婦別氏制度")
+	neg("honorific-compound", "架空朝倉氏遺跡の保存")
+	neg("honorific-compound", "西山氏庭園の公開")
 	return out
 }
 
