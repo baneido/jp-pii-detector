@@ -288,6 +288,9 @@ var honorificCommonNouns = map[string]bool{
 	// 企業 IR の「株主様向けイベント」「個人投資家様向け説明会」と、自治体の「里親さんを知る日」
 	// （2026-10-30 04:00 に実測した偽陽性。いずれも立場を表す一般語で特定の個人を指さない）。
 	"株主": true, "個人投資家": true, "投資家": true, "里親": true,
+	// 自治体の広報紙名「広報さんむ」等（「広報」+ ひらがなの紙名の先頭が「さん」）と、
+	// 「子供さん」「サンタさん」（2026-10-30 06:00 に実測した高再現率モードの偽陽性）。
+	"広報": true, "子供": true, "サンタ": true,
 }
 
 // honorificCommonNounSuffixes は、「社員皆さん」「来場者皆様」「常連客様」の
@@ -308,6 +311,29 @@ func rejectHonorificCommonNoun(line string, start, end int) bool {
 	}
 	for _, s := range honorificCommonNounSuffixes {
 		if strings.HasSuffix(v, s) {
+			return false
+		}
+	}
+	return true
+}
+
+// historicalUjiSurnames / historicalUjiGiven は、名の末字が「氏」の歴史上の人物
+// （足利尊氏・足利直義の一族 等）の姓と、「氏」の直前の 1 字。敬称アンカーは
+// 「足利尊氏」の「氏」を敬称と読んで「足利尊」を氏名として報告していた
+// （2026-10-30 06:00 に自治体の歴史講座の案内で実測した偽陽性）。歴史上の人物は
+// 生存する個人ではないため報告しない。現代の「<姓><1 字名>氏」を巻き添えにしないよう、
+// 武家の姓と通字に限定する。
+var historicalUjiSurnames = []string{"足利", "北条", "今川", "新田", "上杉"}
+var historicalUjiGiven = "尊高直義頼泰貞満基"
+
+// rejectHistoricalUjiName は「<武家の姓><通字>氏」を棄却する（historicalUjiSurnames 参照）。
+func rejectHistoricalUjiName(line string, start, end int) bool {
+	if !strings.HasPrefix(line[end:], "氏") {
+		return true
+	}
+	v := line[start:end]
+	for _, s := range historicalUjiSurnames {
+		if g, ok := strings.CutPrefix(v, s); ok && utf8.RuneCountInString(g) == 1 && strings.Contains(historicalUjiGiven, g) {
 			return false
 		}
 	}
