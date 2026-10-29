@@ -5099,3 +5099,41 @@ func TestCJKRadicalsAndOperatorLabelRoleLabel(t *testing.T) {
 		}
 	}
 }
+
+// TestRepNameLabelAndBanOrderRoleLabel は、都道府県・国の処分公表と記者発表の資料で
+// 全ルールモードが取りこぼした次の表記を既定ルールが検出することを固定する。
+//   - 建設業者監督処分簿の表組み「代表者氏名     <姓> <名>」（コロンなし）と
+//     「代表者名：<姓>　<名>」（法人代表者の氏名は生存する個人を識別でき個人情報）
+//   - 「代表取締役であった<姓><名>」
+//   - 特定商取引法の「<姓><名>に対する業務禁止命令」（業務禁止命令の名宛人は個人）
+//   - 問合せ先欄「<〜官> <姓> <名>（内線…）」（国の機関の職名）
+//
+// 値はダミー（株式会社サンプル・山田 太郎・0 番台の内線）のみ。
+func TestRepNameLabelAndBanOrderRoleLabel(t *testing.T) {
+	d := newDetector(t, "")
+	for _, tc := range []struct{ line, rule string }{
+		{"代表者氏名                  山田 太郎", "person-name-role-label"},
+		{"代表者の氏名   山田   花子", "person-name-role-label"},
+		{"代表者名：山田　太郎（やまだ　たろう）", "person-name-role-label"},
+		{"同社の代表取締役であった山田太郎及び従業員", "person-name-role-label"},
+		{"山田太郎に対する業務禁止命令", "person-name-role-label"},
+		{"上下水道調整官 山田 太郎（内線0000）", "person-name-role-label"},
+		{"総務部契約管理官      山田 太郎  （内線 ０００）", "person-name-role-label"},
+	} {
+		assertRules(t, d.ScanLine("f.txt", 1, tc.line), tc.rule)
+	}
+	// 汎用「氏名」のコロンなし（#48）、法人名・一般語の値、業務停止命令（法人宛）は報告しない。
+	for _, line := range []string{
+		"氏名 山田 太郎",
+		"代表者氏名 変更届",
+		"代表者名 記載例",
+		"株式会社サンプルに対する業務禁止命令",
+		"株式会社サンプルに対する業務停止命令",
+		"上下水道調整官 会議 （内線0000）",
+		"代表取締役      選任      決議",
+	} {
+		if fs := d.ScanLine("f.txt", 1, line); len(fs) != 0 {
+			t.Errorf("%q: 検出した（%v）", line, ruleIDs(fs))
+		}
+	}
+}
