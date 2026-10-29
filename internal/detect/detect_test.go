@@ -4913,6 +4913,47 @@ func TestPressContactTitleRoleLabel(t *testing.T) {
 	}
 }
 
+// TestExecTitleAndPartyLabelRoleLabel は、行政処分の公表文書の本文に現れる
+// 「代表取締役である<姓><名>は」「代表取締役（<姓><名>）」と、裁決書・判決書の当事者欄
+// 「審査申立人 <姓> <名>」「（総代）<姓> <名>」「原告 <姓> <名>」の氏名を既定ルールが
+// 検出することを固定する。公開の行政処分・裁決資料で全ルールモードが取りこぼす見逃しを
+// 実測した（法人役員・審査申立人の氏名も生存する個人を識別でき個人情報に当たる）。
+// 値はダミー（山田 太郎 等）のみ。
+func TestExecTitleAndPartyLabelRoleLabel(t *testing.T) {
+	d := newDetector(t, "")
+	for _, line := range []string{
+		"また、同社の代表取締役である山田太郎は、法第16条違反により刑が確定した。",
+		"（3）代表取締役（山田太郎）に対する業務禁止命令3か月",
+		"代表取締役社長　山田　太郎",
+		"代表理事 山田花子",
+		"審査申立人　（総代）山田　太郎",
+		"                                （総代）山田 太郎",
+		"申立人ら     審査申立人 （総代）山田 太郎",
+		"原告 山田 太郎",
+		"審査請求人　山田花子",
+	} {
+		assertRules(t, d.ScanLine("f.txt", 1, line), "person-name-role-label")
+	}
+	// 役職名・当事者ラベルの後が人名でない（一般語・法人名・住所・姓のみ）場合は報告しない。
+	for _, line := range []string{
+		"代表取締役 就任のお知らせ",
+		"代表取締役である者は",
+		"代表取締役（代表権を有する者）",
+		"代表理事 選任の件",
+		"原告 主張の要旨",
+		"被告 株式会社サンプル",
+		"審査申立人      架空市本町１番地",
+		"申立人 山田",
+		"（総代）未定",
+	} {
+		for _, f := range d.ScanLine("f.txt", 1, line) {
+			if f.RuleID == "person-name-role-label" {
+				t.Errorf("%q: person-name-role-label を検出した（%q）", line, f.Match)
+			}
+		}
+	}
+}
+
 // TestHonorificCommonNounHighRecall は、高再現率モードの敬称アンカーで
 // 「初見さん」「常連さん」「社員皆さん」のような一般語 + 敬称と、
 // 「仕様」「同様」の「様」を氏名として報告しないことを固定する。
