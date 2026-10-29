@@ -285,6 +285,9 @@ var honorificCommonNouns = map[string]bool{
 	"奥方": true, "女将": true, "親方": true, "坊主": true, "和尚": true, "住職": true, "神主": true,
 	"皆": true, "皆皆": true, "各位": true, "常連客": true, "乗客": true, "顧客": true, "来店客": true,
 	"御客": true, "親父": true, "母親": true, "父親": true, "隣人": true, "近所": true, "御近所": true,
+	// 企業 IR の「株主様向けイベント」「個人投資家様向け説明会」と、自治体の「里親さんを知る日」
+	// （2026-10-30 04:00 に実測した偽陽性。いずれも立場を表す一般語で特定の個人を指さない）。
+	"株主": true, "個人投資家": true, "投資家": true, "里親": true,
 }
 
 // honorificCommonNounSuffixes は、「社員皆さん」「来場者皆様」「常連客様」の

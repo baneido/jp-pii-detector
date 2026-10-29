@@ -47,6 +47,8 @@ var notationCategories = []string{
 	"title-line-end",     // 職名 + 空白区切りの姓名で終わる行
 	"honorific-compound", // 敬称と同じ字を含む一般語（多様・編さん・両殿下・夫婦別氏・〜氏遺跡・自治体名 + 様・社殿・さんぽ・故人）
 	"tanto-dept-slash",   // 担当欄の「部署／姓」
+	"tanto-list",         // 担当欄に並べた複数の姓（担当：<姓>・<姓>）
+	"org-head-colon",     // 法人紹介の「理事長：<姓><名>」
 }
 
 type notationCase struct {
@@ -217,11 +219,26 @@ func notationSpecs() []notationCase {
 	pos("title-line-end", role, "                    契約責任者 "+full(5, " "))
 	neg("title-line-end", "会長 挨拶 全文")
 	neg("title-line-end", "理事長 "+full(0, " ")+" が出席した")
+	pos("title-line-end", role, "架空機構 施設長             "+full(1, "    ")+"氏")
+	pos("title-line-end", role, "架空法人       代表社員     "+full(2, "    ")+" 氏")
+	pos("title-line-end", role, "架空大学    教授    "+full(3, "    ")+" 氏")
+	neg("title-line-end", "教授 "+full(4, " ")+" が講演した")
 
 	// 担当欄の「部署／姓」（調査公表資料の調査主体・委託先欄）
 	pos("tanto-dept-slash", role, "【調査主体】架空機構（担当：調査部／"+n(1).sur+")")
 	pos("tanto-dept-slash", role, "株式会社サンプル（担当：社会情報部／"+n(2).sur+"、"+n(3).sur+")")
 	neg("tanto-dept-slash", "（担当：調査部／窓口)")
+
+	// 担当欄に複数の姓を中黒・読点で並べた表記（2 人目以降）
+	pos("tanto-list", role, "報 道 発 表 資 料      担当："+n(0).sur+"・"+n(1).sur+"・"+n(2).sur)
+	pos("tanto-list", role, "架空機構 広報課（担当者："+n(3).sur+"、"+n(4).sur+"）")
+	pos("tanto-list", role, "道路交通課 担当："+n(5).sur+"・"+n(0).sur+" TEL：000-000-0000")
+	neg("tanto-list", "担当：総務・企画")
+
+	// 報道発表の冒頭の法人紹介（法人の長 + コロン + 氏名）
+	pos("org-head-colon", role, "架空研究機構（架空県架空市、理事長："+full(1, "")+"、以下「機構」）は")
+	pos("org-head-colon", role, "架空機構（理事長："+full(2, "")+"    本部：架空県）")
+	neg("org-head-colon", "（理事長：未定、以下「機構」）")
 
 	// 記入方法の説明が氏名ラベルに続く形（辞書不一致の値を拾う Low の強ラベル）
 	neg("form-word", "氏名（ふりがな）")
@@ -230,6 +247,9 @@ func notationSpecs() []notationCase {
 	neg("form-word", "氏名（複数名の場合は代表者）")
 	neg("form-word", "氏名：カタカナで記入")
 	neg("form-word", "氏名（社名）")
+	neg("form-word", "お名前（かな）")
+	neg("form-word", "氏名（敬称略）")
+	neg("form-word", "氏名(名称及び代表者職氏名)")
 
 	// 敬称と同じ字を含む一般語（高再現率の敬称アンカーが拾っていた）
 	pos("honorific-compound", "person-name-high-recall", "本多"+"様より御連絡がありました")
@@ -257,6 +277,10 @@ func notationSpecs() []notationCase {
 	neg("honorific-compound", "故・"+full(4, "")+"氏")
 	pos("honorific-compound", "person-name-high-recall", "交通事故 "+full(5, "")+"様")
 	pos("honorific-compound", "person-name-high-recall", n(0).sur+"殿")
+	neg("honorific-compound", "株主様向けイベントのご案内")
+	neg("honorific-compound", "個人投資家様向けオンライン会社説明会")
+	neg("honorific-compound", "里親さんを知る日")
+	neg("honorific-compound", "株式会社架空建設様から寄附をいただきました")
 	return out
 }
 
