@@ -53,6 +53,10 @@ var notationCategories = []string{
 	"shi-affiliation",      // 人物紹介の「<姓><名>氏（<所属>）」
 	"koseki-todoke",        // 広報紙の戸籍の届出欄（出生届・死亡届・婚姻届）
 	"title-honorific-wide", // 宛名欄の均等割付「<村>長 <姓>      <名>   様」
+	"committee-list",       // 会議録の出席者欄「<姓><名>会長、<姓><名>委員、」
+	"lecturer-space",       // 空白区切りの「講師 <姓> <名>さん」
+	"tanto-space",          // 様式の「担当者 (<職>) <姓> <名>」
+	"grade-prefix",         // 学年の直後の氏名「6年生<姓><名>さん」
 }
 
 type notationCase struct {
@@ -270,6 +274,27 @@ func notationSpecs() []notationCase {
 	pos("title-honorific-wide", role, "架空町長 "+full(1, "           ")+"   殿")
 	neg("title-honorific-wide", "架空村長 会議      資料")
 
+	// 会議録の出席者欄（<姓><名>会長、<姓><名>委員、）
+	pos("committee-list", role, "出席委員 "+full(0, "")+"会長、"+full(1, "")+"委員、")
+	pos("committee-list", role, "＜委員＞ "+full(2, "")+"副会長、"+full(3, "")+"委員")
+	neg("committee-list", "人権擁護委員、民生委員、主任児童委員、社会教育委員、")
+	neg("committee-list", full(4, "")+"委員会の開催について")
+
+	// 空白区切りの講師欄（敬称必須）
+	pos("lecturer-space", role, "（１）講師 "+full(4, " ")+"さん")
+	pos("lecturer-space", role, "講師   "+full(5, "　")+"氏")
+	neg("lecturer-space", "講師 派遣事業のご案内")
+
+	// 様式の担当者欄（コロンなし・空白区切り）
+	pos("tanto-space", role, "担当者 教頭 "+full(0, " ")+"           電話番号")
+	pos("tanto-space", role, "担当者 "+full(1, " "))
+	neg("tanto-space", "担当者 総務 企画")
+
+	// 学年の直後の氏名（学年を範囲に含めない）
+	pos("grade-prefix", "person-name-high-recall", "架空小学校6年生"+full(2, "")+"さんが訪れました")
+	pos("grade-prefix", "person-name-high-recall", "2年"+full(3, "")+"さんの作品")
+	neg("grade-prefix", "5年間様子を見た中で")
+
 	// 記入方法の説明が氏名ラベルに続く形（辞書不一致の値を拾う Low の強ラベル）
 	neg("form-word", "氏名（ふりがな）")
 	neg("form-word", "氏名：団体名・職・氏名")
@@ -316,6 +341,12 @@ func notationSpecs() []notationCase {
 	neg("honorific-compound", "広報さんむ 10月号")
 	neg("honorific-compound", "子供さんの健康相談")
 	neg("honorific-compound", "サンタさんがやってくる")
+	neg("honorific-compound", "出荷農家さん募集中")
+	neg("honorific-compound", "妊婦さんや産婦さんの健康")
+	neg("honorific-compound", "架空神社宮司さんによる解説")
+	neg("honorific-compound", "架空市災害協力会様に感謝状を贈呈しました")
+	neg("honorific-compound", "旧"+n(0).sur+"印刷さんのところを整備しました")
+	neg("honorific-compound", "5年間様子を見た中で")
 	return out
 }
 
