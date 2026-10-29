@@ -684,6 +684,65 @@ var (
 			`([` + kanji + `]{2,8}(?:[ ][` + kanji + `]{1,8})?)` +
 			`[ ]?に対する業務禁止命令`,
 	)
+	// lecturer* は personNameLecturerLabelRe / personNameLecturerLabel2Re の部品（講師等の
+	// ラベル、敬称、値の後の区切り）。
+	lecturerLabel     = `(?:講師|講演者|審査員|コーディネーター|ファシリテーター|オブザーバー|パネリスト)[ ]?[：:／/][ ]*`
+	lecturerHonorific = `[ ]*(?:氏|先生|さん|様)?`
+	lecturerEnd       = `(?:[ ]*[(（〔［【]|[ ]*[・、,]|[ ]*$|[ ]{2,})`
+	lecturerValue     = `([` + kanji + `]{2,8}?(?:[ ]{1,3}[` + kanji + `]{1,8}?)?)`
+	// personNameLecturerLabelRe は催し・講座の案内の「講師：<姓><名>先生」「講師／<姓><名>氏〔<所属>〕」
+	// 「講師：<姓> <名>氏（<会社名>）」のように、講師・審査員等のラベルの直後に続く氏名を拾う
+	// （person-name-role-label）。自治体の広報・イベント案内で、敬称の付かない形や「先生」付きの
+	// 形を全ルールモードが取りこぼし、敬称付きも高再現率モードでしか拾えない見逃しを実測した
+	// （2026-10-30 06:00、10 件超）。値は最短一致にして敬称（氏 は漢字）を取り込まず、直後に
+	// 括弧・中黒・読点・行末・2 個以上の空白のいずれかを要求する。団体名・所属名
+	// （〇〇クラブ・教育委員会主事 等）は姓名辞書の完全分割（姓+名）を通らないため報告しない。
+	// 2 人目（「講師：<姓><名>先生・<姓><名>先生」）は personNameLecturerLabel2Re で拾う。
+	personNameLecturerLabelRe = regexp.MustCompile(
+		lecturerLabel + lecturerValue + lecturerHonorific + lecturerEnd,
+	)
+	personNameLecturerLabel2Re = regexp.MustCompile(
+		lecturerLabel + `[` + kanji + `]{2,8}?(?:[ ]{1,3}[` + kanji + `]{1,8}?)?` + lecturerHonorific + `[ ]*[・、,][ ]*` +
+			lecturerValue + lecturerHonorific + lecturerEnd,
+	)
+	// personNameShiAffiliationRe は「<姓> <名> 氏 （<所属>）」「<姓><名>氏〔<肩書>〕」のように、
+	// 敬称「氏」の直後に所属・肩書の括弧が続く講演者・委員紹介の氏名を拾う
+	// （person-name-role-label）。自治体のシンポジウム・会議の案内で、既定のルールモードが
+	// 取りこぼす（敬称アンカーの高再現率モードでしか拾えない）見逃しを実測した
+	// （2026-10-30 06:00）。「氏 + 所属の括弧」は人物紹介の定型で、氏族名（<姓>氏）や
+	// 一般語とは区別できる。直前は行頭・漢字と空白以外の文字・2 個以上の空白に限り
+	// （字間スペース付きの「<姓> <名> 氏」の途中から拾わないため）、値は姓名辞書の
+	// 完全分割（姓+名）でのみ報告する。
+	personNameShiAffiliationRe = regexp.MustCompile(
+		`(?:^|[^` + kanji + ` ][ ]*|[ ]{2,})` +
+			`([` + kanji + `]{1,4}[ ]{0,3}[` + kanji + `]{1,4}?)[ ]*氏[ ]*[(（〔［]`,
+	)
+	// personNameKosekiTodokeRe は広報紙の「戸籍の窓口」欄「死亡届（<姓> <名>さん）」
+	// 「出生届（<姓> <名>くん）」「婚姻届（<姓> <名>さん・<姓> <名>さん）」の氏名を拾う
+	// （person-name-role-label）。届出の種類 + 括弧 + 空白区切りの姓名 + 敬称は届出人・
+	// 届出の本人を指す定型で、既定のルールモードが取りこぼす見逃しを町の広報 PDF で実測した
+	// （2026-10-30 06:00、同一資料で 15 件超）。出生届の子の名はカタカナ・ひらがなも
+	// 混じるため名側は辞書を要求せず、先頭語が姓名辞書の姓であることを要求する
+	// （validSpacedSurnameGiven）。死亡届の本人は故人だが、届出の公表欄では届出人
+	// （遺族）と同じ姓・住所区と結び付くため、生存する遺族を識別しうる情報として扱う。
+	// 婚姻届の 2 人目は personNameKosekiTodoke2Re で拾う。
+	kosekiTodokeValue        = `([` + kanji + `]{1,4}[ ]{1,3}[` + kanji + katakana + hiragana + `]{1,4}?)[ ]*(?:さん|くん|ちゃん|様)`
+	personNameKosekiTodokeRe = regexp.MustCompile(
+		`(?:出生|死亡|婚姻)届[(（][ ]*` + kosekiTodokeValue,
+	)
+	personNameKosekiTodoke2Re = regexp.MustCompile(
+		`婚姻届[(（][ ]*[` + kanji + `]{1,4}[ ]{1,3}[` + kanji + katakana + hiragana + `]{1,4}?[ ]*(?:さん|くん|ちゃん|様)[ ]*[・、][ ]*` +
+			kosekiTodokeValue,
+	)
+	// personNameTitleHonorificWideRe は宛名・発信者欄の「<市町村>長    <姓>      <名>   様」のように、
+	// pdftotext -layout の均等割付で姓と名の間が 5〜12 個の空白になり、行末が敬称「様」「殿」で
+	// 終わる表記を拾う（person-name-role-label）。personNameTitleLineEndRe は空白 4 個までのため、
+	// 村・町の入札公告・通知文の宛名を全ルールモードが取りこぼす見逃しを実測した
+	// （2026-10-30 06:00）。行末の敬称を必須にすることで、表の列が離れて並ぶ行とは区別する。
+	personNameTitleHonorificWideRe = regexp.MustCompile(
+		`(?:市長|町長|村長|区長|知事|教育長|議長|理事長|会長|社長|学長|院長|所長|局長)[ ]+` +
+			`([` + kanji + `]{1,4}[ ]{5,12}[` + kanji + `]{1,4})[ ]*(?:様|殿)[ ]*$`,
+	)
 )
 
 // personNamePlaceholders は氏名の値として現れるダミー語（人名ではない）。
@@ -706,6 +765,9 @@ var personNameFormWordPrefixes = []string{
 	"複数", "代表者", "ことば", "読み", "よみ", "記入", "楷書", "社名",
 	// 「氏名（敬称略）」（名簿の見出し）と「氏名(名称及び代表者職氏名)」（届出様式の記入説明）。
 	"敬称略", "名称",
+	// 空欄の記入様式「氏名：　　　電話番号：」で、値の位置に次の項目ラベルが来る形
+	// （2026-10-30 06:00 に実測した Low の偽陽性）。
+	"電話", "住所", "生年月日", "連絡先", "年齢", "性別",
 }
 
 // personNameBracketFormHints は「お名前（かな）」「氏名（カナ）」のように、氏名ラベル直後の
@@ -714,6 +776,10 @@ var personNameFormWordPrefixes = []string{
 var personNameBracketFormHints = map[string]bool{
 	"かな": true, "カナ": true, "よみ": true, "ヨミ": true, "ふりがな": true, "フリガナ": true,
 	"読み": true, "敬称略": true,
+	// 「氏名（法人の場合は名称及び代表者氏名）」が行の途中で改行され「氏名（法人」で
+	// 行が終わる記入説明。「法人」が姓名辞書に一致して Medium で報告される偽陽性を
+	// 実測した（2026-10-30 06:00）。
+	"法人": true,
 }
 
 // rejectBracketedFormHint は、氏名ラベルの値が括弧で囲まれた記入方法の指示語
@@ -726,7 +792,10 @@ func rejectBracketedFormHint(line string, start, end int) bool {
 	before := strings.TrimRight(line[:start], " ")
 	after := strings.TrimLeft(line[end:], " ")
 	open := strings.HasSuffix(before, "(") || strings.HasSuffix(before, "（")
-	closed := strings.HasPrefix(after, ")") || strings.HasPrefix(after, "）")
+	// 「（法人名、代表者名）」「（法人の場合は…）」のように「法人」で始まる括弧書きは、
+	// 閉じ括弧の位置によらず記入説明とみなす（PDF の改行で次行と連結された形を含む）。
+	closed := strings.HasPrefix(after, ")") || strings.HasPrefix(after, "）") || after == "" ||
+		strings.TrimSpace(line[start:end]) == "法人"
 	return !(open && closed)
 }
 
@@ -1917,7 +1986,7 @@ func Builtin() []Rule {
 			ID:                "person-name-role-label",
 			Description:       "氏名（担当者・宛名ラベル付き）",
 			Prefilter:         PrefilterCJK,
-			PrefilterLiterals: []string{"担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "教授", "講師", "長：", "長:", "頭取："},
+			PrefilterLiterals: []string{"担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "教授", "講師", "長：", "長:", "頭取：", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届"},
 			Validate:          notPlaceholderName,
 			Patterns: []Pattern{
 				// 担当者・宛名・連絡先ラベル。敬称のような強い人物シグナルが無いため、
@@ -1984,6 +2053,14 @@ func Builtin() []Rule {
 				// 監督処分簿の「代表者氏名  <姓> <名>」（コロンなし）と「<姓><名>に対する業務禁止命令」。
 				{Re: personNameRepNameSpacedRe, Base: Medium, Validate: validPersonNameFullSplit},
 				{Re: personNameBanOrderRe, Base: Medium, Validate: validPersonNameFullSplit},
+				// 講師・審査員等のラベル + 氏名、「<姓><名>氏（<所属>）」、戸籍の届出欄、
+				// 宛名欄の均等割付の姓名 + 様（いずれも 2026-10-30 06:00 に実測した見逃し）。
+				{Re: personNameLecturerLabelRe, Base: Medium, Validate: validPersonNameFullSplit},
+				{Re: personNameLecturerLabel2Re, Base: Medium, Validate: validPersonNameFullSplit},
+				{Re: personNameShiAffiliationRe, Base: Medium, Validate: validPersonNameFullSplit},
+				{Re: personNameKosekiTodokeRe, Base: Medium, Validate: validSpacedSurnameGiven},
+				{Re: personNameKosekiTodoke2Re, Base: Medium, Validate: validSpacedSurnameGiven},
+				{Re: personNameTitleHonorificWideRe, Base: Medium, Validate: validSpacedSurnameGiven},
 			},
 		},
 		{
@@ -2006,7 +2083,7 @@ func Builtin() []Rule {
 				), Base: Medium, Validate: honorificPersonNameValid,
 					// 「新品同様」「構文仕様」のような一般語の「様」と、
 					// 「初見さん」「常連さん」「社員皆さん」のような一般語 + 敬称を棄却する。
-					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound)},
+					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound, rejectHistoricalUjiName)},
 				// 敬称の直前に空白が入る形（「鈴木一郎 様」）と、姓名の間に空白が
 				// 入る形（「山田 太郎様」）。上の無空白パターンは値と敬称が地続きの
 				// ときしか一致しないため、フォーム・宛名書きで一般的なこの表記を
@@ -2036,7 +2113,9 @@ func Builtin() []Rule {
 				{Re: regexp.MustCompile(
 					`(?:^|[^` + kanji + hiragana + katakana + `])` +
 						`([` + hiragana + katakana + `]{2,8})(?:様|さん|氏|殿)`,
-				), Base: Medium, Validate: dict.IsPersonNameExtended},
+				), Base: Medium, Validate: dict.IsPersonNameExtended,
+					// 「サンタさん」のような一般語 + 敬称を棄却する（honorificCommonNouns）。
+					ValidateLine: rejectHonorificCommonNoun},
 			},
 		},
 		{

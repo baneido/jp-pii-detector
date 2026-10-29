@@ -32,23 +32,27 @@ var notationNames = []notationName{
 
 // notationCategories は表記の分類（ケースの tag notation:<分類> と ID に使う）。
 var notationCategories = []string{
-	"officer-title",      // 役員の肩書き（代表取締役・取締役・監査役・代表者氏名 等）
-	"professional-party", // 士業・裁判官・当事者・事業者のラベル、業務禁止命令の名宛人
-	"yago-kojin",         // 屋号こと氏名、氏名（個人／個人事業主）
-	"contact-tel",        // 問合せ先の「役職 + 姓 + Tel」
-	"contact-extension",  // 問合せ先の内線
-	"contact-reading",    // 問合せ先の読み括弧
-	"gov-title",          // 〜官（調整官・専門官・推進官 等）の問合せ先
-	"name-spacing",       // 姓と名の間の複数空白（PDF レイアウト抽出）
-	"cjk-radical",        // 康熙部首・部首補助の混入
-	"variant-kanji",      // 異体字（﨑・髙・𠮷）
-	"form-word",          // 項目名・様式名の誤検出型（陰性のみ）
-	"name-reading",       // 空白区切りの姓名 + 空白区切りの読み括弧、担当 + 姓（よみ）
-	"title-line-end",     // 職名 + 空白区切りの姓名で終わる行
-	"honorific-compound", // 敬称と同じ字を含む一般語（多様・編さん・両殿下・夫婦別氏・〜氏遺跡・自治体名 + 様・社殿・さんぽ・故人）
-	"tanto-dept-slash",   // 担当欄の「部署／姓」
-	"tanto-list",         // 担当欄に並べた複数の姓（担当：<姓>・<姓>）
-	"org-head-colon",     // 法人紹介の「理事長：<姓><名>」
+	"officer-title",        // 役員の肩書き（代表取締役・取締役・監査役・代表者氏名 等）
+	"professional-party",   // 士業・裁判官・当事者・事業者のラベル、業務禁止命令の名宛人
+	"yago-kojin",           // 屋号こと氏名、氏名（個人／個人事業主）
+	"contact-tel",          // 問合せ先の「役職 + 姓 + Tel」
+	"contact-extension",    // 問合せ先の内線
+	"contact-reading",      // 問合せ先の読み括弧
+	"gov-title",            // 〜官（調整官・専門官・推進官 等）の問合せ先
+	"name-spacing",         // 姓と名の間の複数空白（PDF レイアウト抽出）
+	"cjk-radical",          // 康熙部首・部首補助の混入
+	"variant-kanji",        // 異体字（﨑・髙・𠮷）
+	"form-word",            // 項目名・様式名の誤検出型（陰性のみ）
+	"name-reading",         // 空白区切りの姓名 + 空白区切りの読み括弧、担当 + 姓（よみ）
+	"title-line-end",       // 職名 + 空白区切りの姓名で終わる行
+	"honorific-compound",   // 敬称と同じ字を含む一般語（多様・編さん・両殿下・夫婦別氏・〜氏遺跡・自治体名 + 様・社殿・さんぽ・故人）
+	"tanto-dept-slash",     // 担当欄の「部署／姓」
+	"tanto-list",           // 担当欄に並べた複数の姓（担当：<姓>・<姓>）
+	"org-head-colon",       // 法人紹介の「理事長：<姓><名>」
+	"lecturer-label",       // 講師・審査員等のラベル + 氏名
+	"shi-affiliation",      // 人物紹介の「<姓><名>氏（<所属>）」
+	"koseki-todoke",        // 広報紙の戸籍の届出欄（出生届・死亡届・婚姻届）
+	"title-honorific-wide", // 宛名欄の均等割付「<村>長 <姓>      <名>   様」
 }
 
 type notationCase struct {
@@ -240,10 +244,38 @@ func notationSpecs() []notationCase {
 	pos("org-head-colon", role, "架空機構（理事長："+full(2, "")+"    本部：架空県）")
 	neg("org-head-colon", "（理事長：未定、以下「機構」）")
 
+	// 講座・催しの案内の講師・審査員ラベル + 氏名（敬称なし・先生・氏・さん、2 人目を含む）
+	pos("lecturer-label", role, "講師："+full(0, "")+"先生・"+full(1, "")+"先生")
+	pos("lecturer-label", role, "◆講師："+full(2, ""))
+	pos("lecturer-label", role, "講師："+full(3, "　")+"氏（株式会社架空）")
+	pos("lecturer-label", role, "講師／"+full(4, "")+"氏〔架空大学教授〕")
+	pos("lecturer-label", role, "審査員："+full(5, "")+"さん")
+	neg("lecturer-label", "講師：教育委員会主事（学芸員）")
+	neg("lecturer-label", "講師：架空警察署 生活安全課")
+	neg("lecturer-label", "講師：架空クラブ")
+
+	// 人物紹介の「<姓><名>氏（<所属>）」
+	pos("shi-affiliation", role, "会長に"+full(0, "")+"氏（架空協会）が就任しました")
+	pos("shi-affiliation", role, full(1, " ")+" 氏 〔架空大学〕")
+	neg("shi-affiliation", "足利尊氏（室町幕府の初代将軍）")
+
+	// 広報紙の戸籍の届出欄（出生・死亡・婚姻）
+	pos("koseki-todoke", role, "死亡届（"+n(2).sur+"　ハナさん）")
+	pos("koseki-todoke", role, "出生届（"+n(3).sur+"　ゆいちゃん）")
+	pos("koseki-todoke", role, "婚姻届（"+full(4, "　")+"さん・"+full(5, "　")+"さん）")
+	neg("koseki-todoke", "出生届（記入例）")
+
+	// 宛名欄の均等割付（<村>長 <姓>      <名>   様）
+	pos("title-honorific-wide", role, "架空村長 "+full(0, "      ")+"   様")
+	pos("title-honorific-wide", role, "架空町長 "+full(1, "           ")+"   殿")
+	neg("title-honorific-wide", "架空村長 会議      資料")
+
 	// 記入方法の説明が氏名ラベルに続く形（辞書不一致の値を拾う Low の強ラベル）
 	neg("form-word", "氏名（ふりがな）")
 	neg("form-word", "氏名：団体名・職・氏名")
 	neg("form-word", "氏名（法人にあっては名称及び代表者の氏名）")
+	neg("form-word", "氏名：      電話番号：")
+	neg("form-word", "入札者の住所（所在地）、氏名（法人")
 	neg("form-word", "氏名（複数名の場合は代表者）")
 	neg("form-word", "氏名：カタカナで記入")
 	neg("form-word", "氏名（社名）")
@@ -281,6 +313,9 @@ func notationSpecs() []notationCase {
 	neg("honorific-compound", "個人投資家様向けオンライン会社説明会")
 	neg("honorific-compound", "里親さんを知る日")
 	neg("honorific-compound", "株式会社架空建設様から寄附をいただきました")
+	neg("honorific-compound", "広報さんむ 10月号")
+	neg("honorific-compound", "子供さんの健康相談")
+	neg("honorific-compound", "サンタさんがやってくる")
 	return out
 }
 
