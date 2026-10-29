@@ -5,6 +5,8 @@
 // 不要になる。
 package normalize
 
+import "golang.org/x/text/unicode/norm"
+
 // hyphens は「-」に正規化するハイフン類似文字（数字隣接を問わず無条件に変換する）。
 // 全角ハイフンマイナス (U+FF0D) は ASCII オフセット変換で処理される。
 // 不可視文字は \u エスケープで明示し、ソース・diff 上で見分けられるようにする。
@@ -78,6 +80,50 @@ var halfwidthKatakanaFold = [halfwidthKatakanaEnd - halfwidthKatakanaStart + 1]r
 	'゙', '゚', // U+FF9E-FF9F 濁点・半濁点（結合文字。未合成）
 }
 
+// 部首ブロック（CJK 部首補助 U+2E80-2EFF・康熙部首 U+2F00-2FDF）の範囲。
+// Word 等で作成された官公庁 PDF をテキスト抽出すると、「⽉」「⼊」「⾏」「⽬」
+// 「⼤」「⻑」のように通常の漢字（CJK 統合漢字）ではなく見た目が同じ部首文字が
+// 出力されることがある（フォントの ToUnicode 対応表が部首ブロックを指すため）。
+// そのままでは「⼤阪市…丁⽬」の住所や「鈴⽊」の姓が辞書・正規表現に一致せず
+// 全ルールで見逃すため、対応する統合漢字へ 1:1 で写像する。
+const (
+	radicalStart = 0x2E80
+	radicalEnd   = 0x2FDF
+)
+
+// radicalFold は部首文字 → 統合漢字の写像表（インデックス = コードポイント -
+// radicalStart。0 は写像なし）。康熙部首 214 字と部首補助の U+2E9F/U+2EF3 は
+// NFKC の互換分解（いずれも 1 文字）に従う。部首補助のうち NFKC 分解を持たない
+// 日本語の常用字形（⻑ 長・⻄ 西・⻘ 青 等）は PDF 抽出で実際に現れるため明示的に
+// 追加する。偏旁専用の字形（⺅ 亻・⻖ 阝 等）は単独で語を構成しないため対象外。
+var radicalFold = buildRadicalFold()
+
+// radicalSupplementExtra は NFKC 分解を持たない部首補助のうち、日本語で通常の
+// 漢字と同じ字形として使われるもの。
+var radicalSupplementExtra = map[rune]rune{
+	'⺠': '民', '⻁': '虎', '⻄': '西', '⻑': '長', '⻘': '青', '⻝': '食', '⻤': '鬼',
+	'⻨': '麦', '⻩': '黄', '⻫': '斉', '⻭': '歯', '⻯': '竜', '⻲': '亀',
+}
+
+func buildRadicalFold() [radicalEnd - radicalStart + 1]rune {
+	var t [radicalEnd - radicalStart + 1]rune
+	for r := rune(radicalStart); r <= radicalEnd; r++ {
+		rs := []rune(norm.NFKC.String(string(r)))
+		if len(rs) == 1 && rs[0] != r {
+			t[r-radicalStart] = rs[0]
+		}
+	}
+	for r, to := range radicalSupplementExtra {
+		t[r-radicalStart] = to
+	}
+	return t
+}
+
+// isRadical は r が統合漢字へ写像する部首文字かを返す。
+func isRadical(r rune) bool {
+	return r >= radicalStart && r <= radicalEnd && radicalFold[r-radicalStart] != 0
+}
+
 func mapRune(r rune) rune {
 	switch {
 	case r >= '！' && r <= '～': // 全角 ASCII → 半角
@@ -90,6 +136,8 @@ func mapRune(r rune) rune {
 		return halfwidthKatakanaFold[r-halfwidthKatakanaStart]
 	case isSpaceLike(r), isInvisible(r):
 		return ' '
+	case isRadical(r): // 部首文字 → 統合漢字（PDF 抽出由来）
+		return radicalFold[r-radicalStart]
 	}
 	return r
 }
@@ -139,7 +187,7 @@ func isConvTarget(r rune) bool {
 		return false
 	}
 	return (r >= '！' && r <= '～') || r == '　' || hyphens[r] || isSpaceLike(r) || isInvisible(r) ||
-		(r >= halfwidthKatakanaStart && r <= halfwidthKatakanaEnd)
+		(r >= halfwidthKatakanaStart && r <= halfwidthKatakanaEnd) || isRadical(r)
 }
 
 // needsConversion は s に変換対象が 1 つでも含まれるかを 1 パスで判定する
@@ -177,6 +225,8 @@ func needsConversion(s string) bool {
 //     人名区切りとしての用法は保持する）
 //   - 半角カナ（U+FF61-FF9F）→ 対応する全角カナ・句読点（濁点・半濁点は
 //     結合文字 U+3099/U+309A のまま。1 ルーン = 1 ルーンを保つため合成しない）
+//   - 部首文字（康熙部首・部首補助の一部。PDF 抽出由来の「⽉」「⼤」「⻑」等）→
+//     対応する統合漢字
 func Line(s string) string {
 	// 変換対象を厳密に判定する。対象がなければ（純 ASCII でも、変換対象を
 	// 含まない通常の日本語文でも）割り当てなしで元文字列をそのまま返す。
