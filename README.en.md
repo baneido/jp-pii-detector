@@ -75,7 +75,7 @@ rules disabled).
 | Qualified invoice issuer number | **1.00** | `T` + 13 digits + corporate-number checksum |
 | Date of birth | **1.00** | Labeled; supports Western and Japanese-era dates |
 | Person name | **1.00** | Label (e.g. `氏名:`) + surname/given-name dictionary match |
-| Person name (contact/addressee label) | **1.00** | Contact/addressee label (`担当:` / `宛名:` / `連絡先:`) + surname/given-name dictionary match (`person-name-role-label`) |
+| Person name (contact/addressee label) | **1.00** | Contact/addressee/representative label (`担当:` / `宛名:` / `連絡先:` / `代表者:`) + surname/given-name dictionary match (`person-name-role-label`) |
 
 Run `jp-pii-detect rules` to list all rules. See [docs/detection-methods.md](docs/detection-methods.md)
 (Japanese) for details on accuracy and methodology.
@@ -92,13 +92,13 @@ brew install baneido/tap/jp-pii-detect
 ### mise (macOS / Linux)
 
 ```sh
-mise use -g github:baneido/jp-pii-detector@v0.8.2
+mise use -g github:baneido/jp-pii-detector@v0.9.0
 ```
 
 ### Binary (install.sh)
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detector/v0.8.2/scripts/install.sh | JP_PII_DETECT_VERSION=v0.8.2 sh
+curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detector/v0.9.0/scripts/install.sh | JP_PII_DETECT_VERSION=v0.9.0 sh
 ```
 
 ### Go install
@@ -110,7 +110,7 @@ go install github.com/baneido/jp-pii-detector/cmd/jp-pii-detect@latest
 ### Docker
 
 ```sh
-docker run --rm -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.8.2
+docker run --rm -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.9.0
 ```
 
 ### Sumi model bundle (experimental)
@@ -144,7 +144,7 @@ jp-pii-detect rules                            # list detection rules
 ```yaml
 repos:
   - repo: https://github.com/baneido/jp-pii-detector
-    rev: v0.8.2
+    rev: v0.9.0
     hooks:
       - id: jp-pii-detect
 ```
@@ -171,10 +171,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: baneido/jp-pii-detector@v0.8.2
+      - uses: baneido/jp-pii-detector@v0.9.0
         with:
           # Pin the jp-pii-detect binary version too
-          version: v0.8.2
+          version: v0.9.0
           args: scan --diff origin/${{ github.base_ref }}...HEAD --format github
 ```
 

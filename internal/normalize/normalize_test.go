@@ -217,3 +217,38 @@ func BenchmarkLineJapanese(b *testing.B) {
 		Line(line)
 	}
 }
+
+// TestLineFoldsCJKRadicals は、Word で作成された官公庁 PDF を pdftotext で抽出した
+// テキストに混入する康熙部首（U+2F00-2FD5）と CJK 部首補助（U+2E80-2EFF）の一部を
+// 統合漢字へ折り畳むことを確認する。「⼤阪」「１丁⽬」のように部首文字が混ざると
+// 住所・氏名ルールが一致しなくなる見逃しを実測した。1 ルーン = 1 ルーンの不変条件を保ち、
+// 部品としてのみ使われる部首（⺅ 等）と通常の漢字は変換しない。値は非 PII の短い語のみ。
+func TestLineFoldsCJKRadicals(t *testing.T) {
+	tests := []struct {
+		name, in, want string
+	}{
+		{"康熙部首 大・目", "⼤阪１丁⽬", "大阪1丁目"},
+		{"康熙部首 木・月・山・田", "⽊⽉⼭⽥", "木月山田"},
+		{"部首補助 長・西・青", "⻑⻄⻘", "長西青"},
+		{"部品専用の部首は保持", "⺅⻖", "⺅⻖"},
+		{"統合漢字はそのまま", "大阪市長", "大阪市長"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Line(tt.in)
+			if got != tt.want {
+				t.Errorf("Line(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+			if gotLen, wantLen := len([]rune(got)), len([]rune(tt.in)); gotLen != wantLen {
+				t.Errorf("Line(%q) rune count changed: got %d runes, want %d (1:1 不変条件違反)", tt.in, gotLen, wantLen)
+			}
+		})
+	}
+	// 康熙部首 214 字はすべて 1 ルーンの統合漢字へ変換される。
+	for r := rune(0x2F00); r <= 0x2FD5; r++ {
+		got := []rune(Line(string(r)))
+		if len(got) != 1 || got[0] == r || isRadical(got[0]) {
+			t.Errorf("Line(%U) = %q: 統合漢字へ変換されていない", r, string(got))
+		}
+	}
+}

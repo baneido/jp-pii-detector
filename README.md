@@ -59,7 +59,7 @@ jp-pii-detect scan .
 | インボイス登録番号 | `TXXXXXXXXXXXXX` | ◎ | **1.00** | T + 13 桁 + 法人番号の検査用数字 |
 | 生年月日 | `生年月日: 1990年1月23日` | △ | **1.00** | ラベル付き。西暦・和暦・区切りなし8桁に対応（詳細は docs/detection-methods.md） |
 | 氏名 | `氏名: 山田 太郎` | △ | **1.00** | ラベル付き（`氏名:` 等）+ 姓名辞書照合。辞書一致は `medium`（既定で報告）、不一致は `low`（既定非表示、詳細は docs/detection-methods.md） |
-| 氏名（担当者・宛名ラベル） | `担当: 山田 太郎` | △ | **1.00** | ラベル付き（`担当:`/`担当者:`/`宛名:`/`連絡先:`）+ 姓名辞書照合。姓+名の分割一致は `medium`、姓のみ一致は `low`（`person-name-role-label`） |
+| 氏名（担当者・宛名ラベル） | `担当: 山田 太郎` | △ | **1.00** | ラベル付き（`担当:`/`担当者:`/`宛名:`/`連絡先:`/`代表者:`）+ 姓名辞書照合。姓+名の分割一致は `medium`、姓のみ一致は `low`（`person-name-role-label`） |
 
 > **既定で報告される範囲**: 信頼度 `medium` 以上のみを報告します（`min_confidence` で変更可）。
 > 氏名は姓名辞書に一致すれば `medium`（既定でも報告）、一致しない収録外の実在人名は
@@ -100,14 +100,14 @@ brew install baneido/tap/jp-pii-detect
 利用側の環境に Go は不要です。
 
 ```sh
-mise use -g github:baneido/jp-pii-detector@v0.8.2
+mise use -g github:baneido/jp-pii-detector@v0.9.0
 ```
 
 プロジェクトローカルでバージョンを固定したい場合は `mise.toml` に以下を追加して `mise install` を実行します。
 
 ```toml
 [tools]
-"github:baneido/jp-pii-detector" = "v0.8.2"
+"github:baneido/jp-pii-detector" = "v0.9.0"
 ```
 
 ### Option 3. バイナリをインストール
@@ -116,7 +116,7 @@ GitHub Releases のビルド済みバイナリを取得してインストール�
 インストール先は既定で `$HOME/.local/bin` です。変更する場合は `JP_PII_DETECT_INSTALL_DIR=/path/to/bin` を指定してください。
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detector/v0.8.2/scripts/install.sh | JP_PII_DETECT_VERSION=v0.8.2 sh
+curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detector/v0.9.0/scripts/install.sh | JP_PII_DETECT_VERSION=v0.9.0 sh
 ```
 
 ### Option 4. Go install
@@ -132,7 +132,7 @@ curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detector/v0.8.2/scri
 GitLab CI などのジョブイメージとしてそのまま使えます（[docs/integrations.md](docs/integrations.md)）。
 
 ```sh
-docker run --rm -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.8.2
+docker run --rm -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.9.0
 ```
 
 ### Option 6. Sumi モデル同梱ビルド（試験的）
@@ -203,7 +203,7 @@ users.csv:4:6   [high]  jp-phone-number 電話番号（携帯・固定・IP・�
 ```yaml
 repos:
   - repo: https://github.com/baneido/jp-pii-detector
-    rev: v0.8.2
+    rev: v0.9.0
     hooks:
       - id: jp-pii-detect
 ```
@@ -242,10 +242,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: baneido/jp-pii-detector@v0.8.2
+      - uses: baneido/jp-pii-detector@v0.9.0
         with:
           # jp-pii-detect のバイナリ版を固定
-          version: v0.8.2
+          version: v0.9.0
           args: scan --diff origin/${{ github.base_ref }}...HEAD --format github
 ```
 
@@ -259,10 +259,10 @@ Action の参照とダウンロードするバイナリ版は独立していま�
 Medium 以上を表示しつつ High の検出だけで CI を失敗させるには、次のように指定します。
 
 ```yaml
-      - uses: baneido/jp-pii-detector@v0.8.2
+      - uses: baneido/jp-pii-detector@v0.9.0
         with:
           # jp-pii-detect のバイナリ版を固定
-          version: v0.8.2
+          version: v0.9.0
           args: scan --diff origin/${{ github.base_ref }}...HEAD --format github --min-confidence medium --fail-on high
 ```
 

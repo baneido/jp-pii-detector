@@ -109,7 +109,10 @@ func formatReason(r detect.DetectReason) string {
 }
 
 type jsonFinding struct {
-	RuleID      string `json:"rule_id"`
+	RuleID string `json:"rule_id"`
+	// Kind は検出の種別（例: "secret"）。組み込み側が detect.Finding.Kind を
+	// 設定したときのみ出力する（jp-pii-detect 単体の PII 検出では常に空で出力しない）。
+	Kind        string `json:"kind,omitempty"`
 	Description string `json:"description"`
 	File        string `json:"file"`
 	Line        int    `json:"line"`
@@ -164,6 +167,7 @@ func JSON(w io.Writer, findings []detect.Finding, unmask, explain bool, dropped 
 	for _, f := range findings {
 		jf := jsonFinding{
 			RuleID:      f.RuleID,
+			Kind:        f.Kind,
 			Description: f.Description,
 			File:        f.File,
 			Line:        f.Line,
@@ -274,6 +278,8 @@ func SARIF(w io.Writer, findings []detect.Finding, rules []rule.Rule, unmask boo
 		// 低エントロピー値を候補列挙で照合されうるため含めず、ルール ID・ファイル
 		// パス・同一ルールのファイル内出現順（occurrence）から算出する。
 		PartialFingerprints map[string]string `json:"partialFingerprints,omitempty"`
+		// Properties は detect.Finding.Kind が設定されたときのみ {"kind": ...} を持つ。
+		Properties map[string]string `json:"properties,omitempty"`
 	}
 
 	// 同一 ID の Rule が複数エントリ持つ場合がある（例: jp-address は数字番地用と
@@ -305,6 +311,9 @@ func SARIF(w io.Writer, findings []detect.Finding, rules []rule.Rule, unmask boo
 			RuleID:  f.RuleID,
 			Level:   level,
 			Message: sarifMsg{Text: fmt.Sprintf("%s: %s", f.Description, display(f, unmask))},
+		}
+		if f.Kind != "" {
+			res.Properties = map[string]string{"kind": f.Kind}
 		}
 		var loc sarifLocation
 		loc.PhysicalLocation.ArtifactLocation.URI = f.File

@@ -4820,6 +4820,215 @@ func TestEmailNonPersonal(t *testing.T) {
 	assertRules(t, d.ScanLine("f.txt", 1, "To: taro.yamada@corp.co.jp"), "email-address")
 }
 
+// TestRepresentativeLabelRoleLabel は、法人代表者の「代表者:」ラベル（役職名を挟む
+// 表記・PDF 抽出の字間スペースを含む）で氏名を既定ルールが検出することを固定する。
+// 行政処分の公表文書で「代表者：代表取締役 <姓> <名>」を既定モードで取りこぼす
+// 見逃しを実測した（法人役員の氏名も生存する個人を識別でき個人情報に当たる）。
+// 値はダミー（山田 太郎）のみを使う。
+func TestRepresentativeLabelRoleLabel(t *testing.T) {
+	d := newDetector(t, "")
+	for _, line := range []string{
+		"代表者: 山田 太郎",
+		"代表者：代表取締役 山田 太郎",
+		"（３）代 表 者：代表取締役 山田 太郎",
+		"代表者：代表理事　山田太郎",
+	} {
+		assertRules(t, d.ScanLine("f.txt", 1, line), "person-name-role-label")
+	}
+	// 役職名だけ・組織名・未定の値は人名ではないので報告しない。
+	for _, line := range []string{
+		"代表者: 代表取締役",
+		"代表者：株式会社サンプル",
+		"代表者: 未定",
+		"代表者番号: 12",
+	} {
+		for _, f := range d.ScanLine("f.txt", 1, line) {
+			if f.RuleID == "person-name-role-label" {
+				t.Errorf("%q: person-name-role-label を検出した（%q）", line, f.Match)
+			}
+		}
+	}
+}
+
+// TestProfessionalTitleRoleLabel は、士業・裁判官の肩書の直後に空白区切りで続く
+// 氏名（判決書の当事者欄「訴訟代理人弁護士　<姓> <名>」、「裁判長裁判官　<姓><名>」、
+// 登記の「司法書士 <姓><名>」）を既定ルールが検出することを固定する。公開判決文で
+// コロンのない肩書表記の氏名を全モードで取りこぼす見逃しを実測した（弁護士・裁判官の
+// 氏名も生存する個人を識別でき個人情報に当たる）。値はダミー（山田 太郎 等）のみ。
+func TestProfessionalTitleRoleLabel(t *testing.T) {
+	d := newDetector(t, "")
+	for _, line := range []string{
+		"同訴訟代理人弁護士　山田　太郎",
+		"訴訟代理人弁理士　山田花子",
+		"裁判長裁判官　山田一郎",
+		"申請代理人 司法書士 山田太郎",
+		"税理士 山田 太郎",
+	} {
+		assertRules(t, d.ScanLine("f.txt", 1, line), "person-name-role-label")
+	}
+	// 肩書に漢字が直結する語・一般語・姓のみは人名として報告しない。
+	for _, line := range []string{
+		"弁護士法人サンプル",
+		"弁護士会 会長",
+		"弁護士 費用の負担",
+		"裁判官 全員一致の意見",
+		"顧問弁護士 未定",
+		"税理士 事務所",
+		"弁護士 山田",
+	} {
+		for _, f := range d.ScanLine("f.txt", 1, line) {
+			if f.RuleID == "person-name-role-label" {
+				t.Errorf("%q: person-name-role-label を検出した（%q）", line, f.Match)
+			}
+		}
+	}
+}
+
+// TestPressContactTitleRoleLabel は、報道発表資料の問合せ先欄「<部署>課長　<姓>　Tel
+// <番号>」の担当者名を既定ルールが検出することを固定する。自治体の記者発表 PDF で
+// 全モードが取りこぼす見逃しを実測した（組織・役職・電話番号と結合して特定の職員を
+// 識別でき、姓のみでも個人情報に当たる）。値と番号はダミー（山田・000 系）のみ。
+func TestPressContactTitleRoleLabel(t *testing.T) {
+	d := newDetector(t, "")
+	for _, line := range []string{
+		" 人事課長   山田   Tel 000-000-0000",
+		"                            消費経済課長           佐藤      Tel 000-000-0000",
+		"学校連携・こども担当課長　　山田　　TEL 000-000-0000",
+		"総務課長 山田 太郎 電話 000-000-0000",
+	} {
+		assertRules(t, d.ScanLine("f.txt", 1, line), "person-name-role-label")
+	}
+	// 役職と電話ラベルの間が人名でない（一般語・空欄・部署名）場合は報告しない。
+	for _, line := range []string{
+		"課長 代理 Tel 000-000-0000",
+		"総務課長 不在 電話 000-000-0000",
+		"人事課長 Tel 000-000-0000",
+		"所長 室内 電話あり",
+	} {
+		for _, f := range d.ScanLine("f.txt", 1, line) {
+			if f.RuleID == "person-name-role-label" {
+				t.Errorf("%q: person-name-role-label を検出した（%q）", line, f.Match)
+			}
+		}
+	}
+}
+
+// TestExecTitleAndPartyLabelRoleLabel は、行政処分の公表文書の本文に現れる
+// 「代表取締役である<姓><名>は」「代表取締役（<姓><名>）」と、裁決書・判決書の当事者欄
+// 「審査申立人 <姓> <名>」「（総代）<姓> <名>」「原告 <姓> <名>」の氏名を既定ルールが
+// 検出することを固定する。公開の行政処分・裁決資料で全ルールモードが取りこぼす見逃しを
+// 実測した（法人役員・審査申立人の氏名も生存する個人を識別でき個人情報に当たる）。
+// 値はダミー（山田 太郎 等）のみ。
+func TestExecTitleAndPartyLabelRoleLabel(t *testing.T) {
+	d := newDetector(t, "")
+	for _, line := range []string{
+		"また、同社の代表取締役である山田太郎は、法第16条違反により刑が確定した。",
+		"（3）代表取締役（山田太郎）に対する業務禁止命令3か月",
+		"代表取締役社長　山田　太郎",
+		"代表理事 山田花子",
+		"審査申立人　（総代）山田　太郎",
+		"                                （総代）山田 太郎",
+		"申立人ら     審査申立人 （総代）山田 太郎",
+		"原告 山田 太郎",
+		"審査請求人　山田花子",
+	} {
+		assertRules(t, d.ScanLine("f.txt", 1, line), "person-name-role-label")
+	}
+	// 役職名・当事者ラベルの後が人名でない（一般語・法人名・住所・姓のみ）場合は報告しない。
+	for _, line := range []string{
+		"代表取締役 就任のお知らせ",
+		"代表取締役である者は",
+		"代表取締役（代表権を有する者）",
+		"代表理事 選任の件",
+		"原告 主張の要旨",
+		"被告 株式会社サンプル",
+		"審査申立人      架空市本町１番地",
+		"申立人 山田",
+		"（総代）未定",
+	} {
+		for _, f := range d.ScanLine("f.txt", 1, line) {
+			if f.RuleID == "person-name-role-label" {
+				t.Errorf("%q: person-name-role-label を検出した（%q）", line, f.Match)
+			}
+		}
+	}
+}
+
+// TestDirectorTitleAndLayoutSpacesRoleLabel は、監督処分の公表文書の相手方欄
+// 「<法人名>   取締役   <姓>   <名>」のように、代表権のない役員（取締役・監査役）の役職名に
+// 続く氏名と、PDF のレイアウト抽出で姓と名の間が複数空白になった氏名を既定ルールが
+// 検出することを固定する。市の公表 PDF で全ルールモードが取りこぼす見逃しを実測した
+// （法人役員の氏名は登記事項でもあり、生存する個人を識別でき個人情報に当たる）。
+// 値はダミー（山田 太郎 等）のみ。
+func TestDirectorTitleAndLayoutSpacesRoleLabel(t *testing.T) {
+	d := newDetector(t, "")
+	for _, line := range []string{
+		"    有限会社サンプル観光   取締役   山田   太郎   ※同社代理人弁護士同席",
+		"株式会社テスト 取締役 山田 花子",
+		"社外取締役　山田太郎",
+		"監査役 山田 花子",
+		"取締役社長（山田太郎）",
+		"有限会社テスト観光   代表取締役   山田   太郎",
+		"訴訟代理人弁護士   山田   太郎",
+		"審査申立人   山田  花子",
+	} {
+		assertRules(t, d.ScanLine("f.txt", 1, line), "person-name-role-label")
+	}
+	// 役職名の後が人名でない（一般語・会議体・姓のみ）場合や、空白が 4 個以上離れた
+	// 別カラムの語は報告しない。
+	for _, line := range []string{
+		"取締役 選任の件",
+		"取締役会 決議事項",
+		"取締役 会長 退任",
+		"取締役である者",
+		"監査役 監査報告",
+		"取締役   山田",
+		"取締役 山田    太郎",
+		"取締役（社外）",
+	} {
+		for _, f := range d.ScanLine("f.txt", 1, line) {
+			if f.RuleID == "person-name-role-label" {
+				t.Errorf("%q: person-name-role-label を検出した（%q）", line, f.Match)
+			}
+		}
+	}
+}
+
+// TestYagoKotoAndKojinSuffixRoleLabel は、特定商取引法に基づく行政処分の公表文書に頻出する
+// 個人事業主の「<屋号>こと<姓><名>」と、処分対象が自然人であることを示す「<姓><名>（個人）」
+// 「（個人事業主）」の氏名を既定ルールが検出することを固定する。県の処分公表資料で全ルール
+// モードが取りこぼす見逃しを実測した（個人事業主の氏名は生存する個人を識別でき個人情報に
+// 当たる）。値はダミー（山田 太郎 等）のみ。
+func TestYagoKotoAndKojinSuffixRoleLabel(t *testing.T) {
+	d := newDetector(t, "")
+	for _, line := range []string{
+		"事業者名：サンプル設備こと山田太郎",
+		"事業者であるテストアシスタンスこと山田太郎（個人事業主）に対し、業務停止命令の処分を行いました。",
+		"架空リユースセンターこと山田　花子",
+		"Sample工房こと山田太郎に対し指示を行った。",
+		"また、県は、山田太郎（個人）に対し、業務禁止命令の処分を行いました。",
+		"山田 花子（個人事業主）",
+	} {
+		assertRules(t, d.ScanLine("f.txt", 1, line), "person-name-role-label")
+	}
+	// 一般文の「こと」・括弧書きの前が人名でない場合は報告しない。
+	for _, line := range []string{
+		"契約を締結することを停止するよう命じました。",
+		"大切なことは確認です",
+		"同様のこと自体が問題",
+		"事業者（個人）に対する指示",
+		"架空市民（個人）の意見",
+		"サンプル設備こと未定",
+		"テスト工房こと山田",
+	} {
+		for _, f := range d.ScanLine("f.txt", 1, line) {
+			if f.RuleID == "person-name-role-label" {
+				t.Errorf("%q: person-name-role-label を検出した（%q）", line, f.Match)
+			}
+		}
+	}
+}
+
 // TestHonorificCommonNounHighRecall は、高再現率モードの敬称アンカーで
 // 「初見さん」「常連さん」「社員皆さん」のような一般語 + 敬称と、
 // 「仕様」「同様」の「様」を氏名として報告しないことを固定する。
@@ -4829,6 +5038,10 @@ func TestHonorificCommonNounHighRecall(t *testing.T) {
 		"初見さん歓迎", "常連さんに感謝", "社員皆さんへ", "大家さんへ", "旦那さんと", "親御さんへ",
 		"新規さん", "運営さんへ", "常連客様", "「お客さん」", "皆さんへ", "お疲れさんでした",
 		"構文仕様です", "新品同様",
+		// 行政文書の「〇〇様式」（書式名）。様式は一般名詞で人を指さない。
+		"申請書様式を使用する", "共通様式により報告", "別添様式２のとおり", "届書様式",
+		// 個人情報漏えいの公表文書の項目名「生徒氏名」「職員氏名」。氏名は項目名で直前の語は人を指さない。
+		"生徒氏名、学年、報告内容", "職員氏名の一覧",
 	} {
 		for _, f := range d.ScanLine("f.txt", 1, line) {
 			if f.RuleID == "person-name-high-recall" {
@@ -4836,13 +5049,274 @@ func TestHonorificCommonNounHighRecall(t *testing.T) {
 			}
 		}
 	}
-	for _, line := range []string{"山田太郎さんへ", "佐藤さん", "初見太郎さん"} {
+	for _, line := range []string{"山田太郎さんへ", "佐藤さん", "初見太郎さん", "山田氏名義の口座", "山田氏は"} {
 		found := false
 		for _, f := range d.ScanLine("f.txt", 1, line) {
 			found = found || f.RuleID == "person-name-high-recall"
 		}
 		if !found {
 			t.Errorf("%q: person-name-high-recall を検出しなかった", line)
+		}
+	}
+}
+
+// TestCJKRadicalsAndOperatorLabelRoleLabel は、官公庁の処分公表・記者発表 PDF で
+// 全ルールモードが取りこぼした次の表記を既定ルールが検出することを固定する。
+//   - pdftotext の抽出で康熙部首・部首補助（⼤ ⽬ ⻄ ⼭ ⽥ 等）が混入した住所・氏名
+//   - 均等割付の役職名「代 表 取 締 役」に続く氏名
+//   - 処分対象欄「事業者：<姓> <名>」（字間スペース付き「事  業  者：」を含む）と
+//     「「<姓><名>」（以下「事業者」という。）」の定義表記（個人事業者の氏名は個人情報）
+//   - 問合せ先欄「<役職> <姓> <名> （内線…）」（電話ラベルの代わりに内線番号が続く）
+//
+// 値はダミー（架空市・山田 太郎・0 番台の内線）のみ。
+func TestCJKRadicalsAndOperatorLabelRoleLabel(t *testing.T) {
+	d := newDetector(t, "")
+	for _, tc := range []struct{ line, rule string }{
+		{"所在地：⼤阪府架空市本町１丁⽬２番３号", "jp-address"},
+		{"住所：東京都架空区⻄町１丁⽬２番３号", "jp-address"},
+		{"代表者：⼭⽥ 太郎", "person-name-role-label"},
+		{"株式会社サンプル 代 表 取 締 役   山田   太郎", "person-name-role-label"},
+		{"事業者：山田 太郎（65 歳）", "person-name-role-label"},
+		{"事  業  者：山田 花子（65 歳）", "person-name-role-label"},
+		{"「山田太郎」（以下「事業者」という。）に対し", "person-name-role-label"},
+		{"総務部 人事課長            山田    太郎         （内線0000）", "person-name-role-label"},
+		{"品質確保室長 山田 （内線０００）", "person-name-role-label"},
+	} {
+		assertRules(t, d.ScanLine("f.txt", 1, tc.line), tc.rule)
+	}
+	// 値が法人名・未定・一般語の場合や、役職名の後が氏名でない場合は報告しない。
+	for _, line := range []string{
+		"事業者：株式会社サンプル",
+		"「株式会社サンプル」（以下「事業者」という。）",
+		"事業者：未定",
+		"「事業者」（以下「事業者」という。）",
+		"人事課長 会議 （内線0000）",
+		"代 表 取 締 役 選任の件",
+		"⻑期計画の策定",
+	} {
+		if fs := d.ScanLine("f.txt", 1, line); len(fs) != 0 {
+			t.Errorf("%q: 検出した（%v）", line, ruleIDs(fs))
+		}
+	}
+}
+
+// TestRepNameLabelAndBanOrderRoleLabel は、都道府県・国の処分公表と記者発表の資料で
+// 全ルールモードが取りこぼした次の表記を既定ルールが検出することを固定する。
+//   - 建設業者監督処分簿の表組み「代表者氏名     <姓> <名>」（コロンなし）と
+//     「代表者名：<姓>　<名>」（法人代表者の氏名は生存する個人を識別でき個人情報）
+//   - 「代表取締役であった<姓><名>」
+//   - 特定商取引法の「<姓><名>に対する業務禁止命令」（業務禁止命令の名宛人は個人）
+//   - 問合せ先欄「<〜官> <姓> <名>（内線…）」（国の機関の職名）
+//
+// 値はダミー（株式会社サンプル・山田 太郎・0 番台の内線）のみ。
+func TestRepNameLabelAndBanOrderRoleLabel(t *testing.T) {
+	d := newDetector(t, "")
+	for _, tc := range []struct{ line, rule string }{
+		{"代表者氏名                  山田 太郎", "person-name-role-label"},
+		{"代表者の氏名   山田   花子", "person-name-role-label"},
+		{"代表者名：山田　太郎（やまだ　たろう）", "person-name-role-label"},
+		{"同社の代表取締役であった山田太郎及び従業員", "person-name-role-label"},
+		{"山田太郎に対する業務禁止命令", "person-name-role-label"},
+		{"上下水道調整官 山田 太郎（内線0000）", "person-name-role-label"},
+		{"総務部契約管理官      山田 太郎  （内線 ０００）", "person-name-role-label"},
+	} {
+		assertRules(t, d.ScanLine("f.txt", 1, tc.line), tc.rule)
+	}
+	// 汎用「氏名」のコロンなし（#48）、法人名・一般語の値、業務停止命令（法人宛）は報告しない。
+	for _, line := range []string{
+		"氏名 山田 太郎",
+		"代表者氏名 変更届",
+		"代表者名 記載例",
+		"株式会社サンプルに対する業務禁止命令",
+		"株式会社サンプルに対する業務停止命令",
+		"上下水道調整官 会議 （内線0000）",
+		"代表取締役      選任      決議",
+	} {
+		if fs := d.ScanLine("f.txt", 1, line); len(fs) != 0 {
+			t.Errorf("%q: 検出した（%v）", line, ruleIDs(fs))
+		}
+	}
+}
+
+// TestContactReadingAndVariantKanjiNames は、国の地方整備局の記者発表と県の特定商取引法の
+// 処分公表で全ルールモードが取りこぼした次の表記を既定ルールが検出することを固定する。
+//   - 問合せ先欄で氏名の直後にひらがなの読み括弧が入る「課長補佐 <姓>（<よみ>） （内線…）」
+//     （読みは氏名であることを補強する。報告スパンは氏名のみで読みは含めない）
+//   - 「〜推進官 <姓> （内線…）」（国の機関の職名）
+//   - 異体字（﨑・髙）で書かれた個人事業者の氏名「<屋号>こと<姓><名>（個人事業者）」
+//     （辞書は新字体で収録しているため、照合キーだけ畳む）
+//
+// 氏名は生存する個人を識別でき、個人情報保護法上の個人情報に当たる。
+// 値はダミー（山田・山﨑 花子・髙橋 太郎・0 番台の内線）のみ。
+func TestContactReadingAndVariantKanjiNames(t *testing.T) {
+	d := newDetector(t, "")
+	for _, tc := range []struct{ line, rule, match string }{
+		{"建設産業第一課 課長補佐   山田（やまだ） （内線００００）", "person-name-role-label", "山田"},
+		{"専門調査官 山田 太郎（やまだ たろう） （内線0000）", "person-name-role-label", "山田 太郎"},
+		{"不動産業適正化推進官 山田 （内線００００）", "person-name-role-label", "山田"},
+		{"名 称 サンプル塗装こと山﨑花子（個人事業者）", "", "山﨑花子"},
+		{"代表者名：髙橋　太郎", "person-name-role-label", "髙橋　太郎"},
+	} {
+		fs := d.ScanLine("f.txt", 1, tc.line)
+		found := false
+		for _, f := range fs {
+			if (tc.rule == "" || f.RuleID == tc.rule) && f.Match == tc.match {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%q: %q を検出しなかった（%v）", tc.line, tc.match, ruleIDs(fs))
+		}
+	}
+	// 読み括弧の後に内線・電話がない場合や、役職名の後が氏名でない場合は報告しない。
+	for _, line := range []string{
+		"課長補佐   会議（かいぎ） （内線0000）",
+		"不動産業適正化推進官 会議 （内線0000）",
+		"課長補佐 山田（やまだ）が出席した",
+	} {
+		if fs := d.ScanLine("f.txt", 1, line); len(fs) != 0 {
+			t.Errorf("%q: 検出した（%v）", line, ruleIDs(fs))
+		}
+	}
+}
+
+// TestNameReadingAndTitleLineEnd は、県・市・国の記者発表で全ルールモードが取りこぼした
+// 次の表記を既定ルールが検出することを固定する。
+//   - 空白区切りの姓名の直後に、空白区切りのひらがなの読み括弧が続く「<姓> <名>（<せい> <めい>）」
+//     （委員名簿・講演者紹介・あいさつ文。報告スパンは氏名のみで読みは含めない）
+//   - コロンのない担当欄の「担当 <姓>(<よみ>)」
+//   - 職名の直後に空白区切りの姓名が来て行が終わる「課長補佐 <姓> <名>」「〜長官 <姓> <名>」
+//   - 「〜課長 <姓>」の直後に電話番号が続く問合せ先（Tel・電話の前置きなし）
+//
+// 氏名は生存する個人を識別でき、個人情報保護法上の個人情報に当たる（公務員の職名と氏名も同じ）。
+// 値はダミー（山田 太郎・鈴木・0 だけの番号）のみ。
+func TestNameReadingAndTitleLineEnd(t *testing.T) {
+	d := newDetector(t, "")
+	for _, tc := range []struct{ line, match string }{
+		{"山田　太郎（やまだ　たろう）", "山田　太郎"},
+		{"管理第一課長 山田 太郎（やまだ たろう） （内線0000）", "山田 太郎"},
+		{"担当　鈴木(すずき)、山田(やまだ)", "鈴木"},
+		{"河川技術部門担当 課長補佐 山田 太郎", "山田 太郎"},
+		{"架空庁長官    山田 太郎", "山田 太郎"},
+		{"共生社会推進課長 山田 ０００－０００－００００", "山田"},
+		// 「電話」の前置きがある既存の形が、電話番号を右アンカーにした後も検出され続けること
+		{"課長補佐兼係長 山田 電話 000-000-0000", "山田"},
+		{"雇用推進課        課長 山田 電話 000-000-0000", "山田"},
+		{"課長補佐兼係長 山田 電話", "山田"},
+		// 団体の長・自治体の長・入札公告の発信者欄（2026-10-30 実測の見逃し）
+		{"理事長　山田　太郎", "山田　太郎"},
+		{"架空県知事　鈴木　一郎", "鈴木　一郎"},
+		{"                    契約責任者 山田 太郎", "山田 太郎"},
+		// 担当欄の「部署／姓」（2026-10-30 実測の見逃し）
+		{"【調査主体】架空機構（担当：調査部／山田)", "山田"},
+		{"株式会社サンプル（担当：社会情報部／鈴木、山田)", "鈴木"},
+		{"株式会社サンプル（担当：社会情報部／鈴木、山田)", "山田"},
+	} {
+		fs := d.ScanLine("f.txt", 1, tc.line)
+		found := false
+		for _, f := range fs {
+			if f.RuleID == "person-name-role-label" && f.Match == tc.match {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%q: %q を検出しなかった（%v）", tc.line, tc.match, ruleIDs(fs))
+		}
+	}
+	// 読みが地名・一般語、職名の後が一般語、姓名の後に文が続く行は報告しない。
+	for _, line := range []string{
+		"東京　都庁（とうきょう　とちょう）",
+		"会議 資料（かいぎ しりょう）",
+		"担当　窓口(まどぐち)",
+		"課長 会議 室長",
+		"課長補佐 山田 担当",
+		"所長 山田 太郎 が出席した",
+		"共生社会推進課長 会議 ０００－０００－００００",
+		"会長 挨拶 全文",
+		"理事長 山田 太郎 が出席した",
+		"（担当：調査部／窓口)",
+	} {
+		for _, f := range d.ScanLine("f.txt", 1, line) {
+			if strings.HasPrefix(f.RuleID, "person-name") {
+				t.Errorf("%q: 氏名として検出した（%s %q）", line, f.RuleID, f.Match)
+			}
+		}
+	}
+}
+
+// TestPersonNameLowFormWords は、申込・届出の案内文で氏名ラベルの括弧内や値が記入方法の
+// 説明である行を、辞書に一致しない値を Low で拾う強ラベルが氏名として報告しないことを
+// 固定する（自治体・国の案内ページで実測した偽陽性）。辞書に一致しない実在しうる氏名
+// （架空の珍しい姓名）は引き続き Low で報告する。値はダミーのみ。
+func TestPersonNameLowFormWords(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	for _, line := range []string{
+		"氏名（ふりがな）",
+		"氏名：団体名・職・氏名",
+		"氏名（法人にあっては名称及び代表者の氏名）",
+		"氏名（複数名の場合は代表者）",
+		"氏名：カタカナで記入",
+		"氏名（社名）", // 申込様式の「氏名（社名）」欄の見出し（2026-10-30 実測）
+	} {
+		for _, f := range d.ScanLine("f.txt", 1, line) {
+			if strings.HasPrefix(f.RuleID, "person-name") {
+				t.Errorf("%q: 氏名として検出した（%s %q）", line, f.RuleID, f.Match)
+			}
+		}
+	}
+	assertRules(t, d.ScanLine("f.txt", 1, "氏名：山田 太郎"), "person-name")
+}
+
+// TestHonorificWordCompounds は、敬称アンカー（様・さん・氏・殿）と同じ字を含む一般語
+// （多様性・編さん・炊さん・両殿下・夫婦別氏・〜氏遺跡・〜氏庭園・自治体名 + 様・社殿/本殿/御殿・
+// 沈殿・殿ケ谷・さんぽ・故人の「故・〜氏」）を高再現率の
+// person-name-high-recall が氏名として報告しないことを固定する（県・市の公開ページで
+// 実測した偽陽性）。「本多様」「喜多さん」のような姓 + 敬称と、名を含む「<宮家>妃<名>殿下」は引き続き報告する。値はダミーのみ。
+func TestHonorificWordCompounds(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"
+
+[rules]
+high_recall = true
+`)
+	for _, line := range []string{
+		"生物多様性の保全",
+		"総合企画部多様性社会推進課",
+		"県史編さんだより",
+		"野外炊さん体験",
+		"女王殿下の御来県",
+		"皇族各殿下の御健勝",
+		"選択的夫婦別氏制度",
+		"架空朝倉氏遺跡の保存",
+		"西山氏庭園の公開",
+		// 2026-10-30 実測: 自治体名 + 敬称、殿を含む建物・地名、さんぽ、故人
+		"北九州市様にご導入いただきました",
+		"兵庫県様との協定",
+		"横須賀市さんとの連携",
+		"荒川さんぽ",
+		"架空東照宮社殿特別公開",
+		"架空神社本殿",
+		"川越城本丸御殿",
+		"静岡県御殿場市",
+		"同町殿ヶ谷の調査",
+		"浄水場沈殿池清掃",
+		"故・山田太郎氏",
+	} {
+		for _, f := range d.ScanLine("f.txt", 1, line) {
+			if f.RuleID == "person-name-high-recall" {
+				t.Errorf("%q: 氏名として検出した（%q）", line, f.Match)
+			}
+		}
+	}
+	for _, line := range []string{"本多様より御連絡がありました", "喜多さんに確認した", "架空宮妃花子殿下の御来県",
+		"山本殿", "交通事故 山田太郎様", "中村様"} {
+		found := false
+		for _, f := range d.ScanLine("f.txt", 1, line) {
+			if f.RuleID == "person-name-high-recall" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%q: 姓 + 敬称を検出しなかった", line)
 		}
 	}
 }
