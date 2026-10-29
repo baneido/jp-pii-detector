@@ -561,7 +561,33 @@ var (
 		`(?:課長|係長|部長|室長|所長|局長|館長|センター長|課長補佐|担当係長|担当課長|担当部長|管理官|調整官|専門官|企画官|調査官|対策官|分析官|監理官|推進官)[ ]+` +
 			`([` + kanji + `]{1,4}(?:[ ]{1,4}[` + kanji + `]{1,4})?)` +
 			`(?:[ ]*[(（][ぁ-ゖー ]{1,12}[)）])?` +
-			`[ ]*(?:(?i:tel)|電話|[(（]内線)`,
+			`[ ]*(?:(?i:tel)|電話|[(（]内線|[0-9]{2,5}-[0-9]{1,4}-[0-9]{3,4})`,
+	)
+	// personNameWithReadingRe は「<姓> <名>（<せい> <めい>）」のように、空白区切りの漢字の
+	// 姓名の直後に、同じく空白区切りのひらがなの読みが括弧で続く表記を拾う
+	// （person-name-role-label）。委員名簿・講演者紹介・問合せ先・知事のあいさつ文で、
+	// ラベルも敬称もないため全ルールモードが取りこぼす見逃しを公開文書（県・市・国の
+	// 記者発表）で実測した。姓名と読みの両方が 2 語に分かれる形に限り、先頭語が姓名辞書の
+	// 姓であることを要求する（validSpacedSurnameGiven）。
+	personNameWithReadingRe = regexp.MustCompile(
+		`(?:^|[^` + kanji + hiragana + katakana + `])` +
+			`([` + kanji + `]{1,4}[ ]{1,3}[` + kanji + `]{1,4})[ ]*[(（][ぁ-ゖー]{1,8}[ ]{1,3}[ぁ-ゖー]{1,8}[)）]`,
+	)
+	// personNameTantoReadingRe は「担当 <姓>(<よみ>)」のように、コロンのない担当欄で姓の
+	// 直後にひらがなの読みが括弧で続く表記を拾う（市の報道発表の問合せ先で実測）。
+	// 読み括弧が人名の根拠になるため、コロン必須の担当ラベル（#48）の例外として扱う。
+	personNameTantoReadingRe = regexp.MustCompile(
+		`担当[ ]+([` + kanji + `]{1,4})[(（][ぁ-ゖー]{1,8}[)）]`,
+	)
+	// personNameTitleLineEndRe は「課長補佐 <姓> <名>」「国税庁長官 <姓> <名>」のように、
+	// 行政機関の職名の直後に空白区切りの姓名が来て行が終わる表記を拾う
+	// （person-name-role-label）。国の記者発表の担当者一覧・通知文の発信者欄で全ルール
+	// モードが取りこぼす見逃しを実測した。行末で終わる姓名の 2 語に限り、先頭語が姓名
+	// 辞書の姓であることを要求する（validSpacedSurnameGiven）。
+	personNameTitleLineEndRe = regexp.MustCompile(
+		`(?:課長|課長補佐|係長|部長|室長|所長|副所長|局長|館長|副館長|センター長|長官|次長|` +
+			`管理官|調整官|専門官|企画官|調査官|対策官|分析官|監理官|推進官)[ ]+` +
+			`([` + kanji + `]{1,4}[ ]{1,3}[` + kanji + `]{1,4})[ ]*$`,
 	)
 	// personNameBusinessOperatorLabelRe は特定商取引法に基づく行政処分の公表資料の処分対象
 	// 欄「事業者：<姓> <名>（65 歳）」（均等割付の字間スペース付き「事  業  者：」を含む）の
@@ -612,6 +638,36 @@ var personNamePlaceholders = []string{
 // notPlaceholderName は氏名候補 v がプレースホルダ（未定・テスト等）を含まない
 // ことを返す。氏名ルールの Validate に使い、ラベルはあるが値がダミーの行
 // （氏名: 未定 / 氏名: 未定です など）を棄却する。
+// personNameFormWordPrefixes / personNameFormWordParts は、申込・届出の案内文の
+// 「氏名（ふりがな）」「氏名（団体名）」「氏名（法人にあっては…）」のように、氏名ラベルの
+// 括弧内が記入方法の説明である値。辞書に一致しない値を Low で拾う強ラベルの片割れが、
+// 自治体・国の案内ページでこれを氏名として報告する偽陽性を実測した。
+var personNameFormWordPrefixes = []string{
+	"ふりがな", "フリガナ", "カタカナ", "ひらがな", "漢字", "団体名", "所属", "法人", "及び", "又は",
+	"複数", "代表者", "ことば", "読み", "よみ", "記入", "楷書",
+}
+var personNameFormWordParts = []string{
+	"場合", "記入", "にあっては", "担当", "証明", "整備局", "・氏名", "・職",
+}
+
+// notFormWordValue は氏名候補 v が記入方法の説明（personNameFormWordPrefixes /
+// personNameFormWordParts）でないことを返す。辞書に一致しない値を Low で拾う
+// パターン専用（辞書一致の Medium には影響しない）。
+func notFormWordValue(v string) bool {
+	v = strings.TrimSpace(v)
+	for _, s := range personNameFormWordPrefixes {
+		if strings.HasPrefix(v, s) {
+			return false
+		}
+	}
+	for _, s := range personNameFormWordParts {
+		if strings.Contains(v, s) {
+			return false
+		}
+	}
+	return true
+}
+
 func notPlaceholderName(v string) bool {
 	v = strings.TrimSpace(v)
 	for _, s := range personNamePlaceholders {
@@ -788,6 +844,28 @@ func validPersonNameFullSplit(v string) bool {
 func validPersonNameSurnameOrFull(v string) bool {
 	m := dict.MatchPersonName(strings.TrimSpace(v))
 	return m == dict.SurnameOnly || m == dict.FullNameSplit
+}
+
+// spacedGivenStopwords は「<職名> <姓> <語>」の 2 語目に来うる、名ではない語。
+var spacedGivenStopwords = map[string]bool{
+	"担当": true, "宛": true, "様": true, "殿": true, "氏": true, "外": true, "他": true,
+	"以下": true, "ほか": true, "代理": true, "事務": true, "所長": true, "課長": true,
+}
+
+// validSpacedSurnameGiven は空白で 2 語に分かれた「<姓> <名>」を検証する。先頭語が
+// 姓名辞書の姓（単独の姓、または姓+名の分割が成立する語）で、2 語目が 1〜3 文字の
+// 名らしい語（職名・一般語の stopword でない）なら許可する。名の辞書は収録数が
+// 限られる（亮太郎・洋和 等が未収録）ため、名側は辞書を要求しない。代わりに
+// 呼び出し側の正規表現で、読み括弧や職名 + 行末といった人名の構造を要求する。
+func validSpacedSurnameGiven(v string) bool {
+	f := strings.Fields(strings.TrimSpace(v))
+	if len(f) != 2 {
+		return false
+	}
+	if n := len([]rune(f[1])); n < 1 || n > 3 || spacedGivenStopwords[f[1]] {
+		return false
+	}
+	return dict.IsSurname(f[0])
 }
 
 func validPersonNameSurnameOnly(v string) bool {
@@ -1671,7 +1749,7 @@ func Builtin() []Rule {
 				// 人名は Low のまま拾う。resolveOverlaps が同一スパンで信頼度の
 				// 高い Medium を残す。
 				{Re: personNameStrongLabelRe, Base: Medium, Validate: dict.IsPersonName},
-				{Re: personNameStrongLabelRe, Base: Low},
+				{Re: personNameStrongLabelRe, Base: Low, Validate: notFormWordValue},
 				// 弱いラベル: 姓側（姓・名字・苗字・last_name）。validSurnameField が
 				// 姓名辞書で検証済み（単独要素は 2 文字以上の姓、または姓+名に
 				// 分割できる氏名のみ許可）のため、Base は Medium。
@@ -1747,7 +1825,7 @@ func Builtin() []Rule {
 			ID:                "person-name-role-label",
 			Description:       "氏名（担当者・宛名ラベル付き）",
 			Prefilter:         PrefilterCJK,
-			PrefilterLiterals: []string{"担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止"},
+			PrefilterLiterals: []string{"担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官"},
 			Validate:          notPlaceholderName,
 			Patterns: []Pattern{
 				// 担当者・宛名・連絡先ラベル。敬称のような強い人物シグナルが無いため、
@@ -1784,6 +1862,12 @@ func Builtin() []Rule {
 				// あることがほぼ確実なため、姓のみの一致も Medium で報告する（地名と同形の姓
 				// でもこの位置では人名として読む）。
 				{Re: personNameContactTitleRe, Base: Medium, Validate: validPersonNameSurnameOrFull},
+				// 読み括弧付きの「<姓> <名>（<せい> <めい>）」、コロンなしの「担当 <姓>（<よみ>）」、
+				// 職名 + 空白区切りの姓名で終わる行。いずれも人名の構造（読み・職名 + 行末）を
+				// 要求したうえで姓名辞書の姓で検証する。
+				{Re: personNameWithReadingRe, Base: Medium, Validate: validSpacedSurnameGiven},
+				{Re: personNameTantoReadingRe, Base: Medium, Validate: validPersonNameSurnameOrFull},
+				{Re: personNameTitleLineEndRe, Base: Medium, Validate: validSpacedSurnameGiven},
 				// 代表権のある役職名 + 空白/「である」/括弧 + 氏名（行政処分の公表文書の本文）。
 				// 「代表者：」ラベルを伴わないため、姓+名の完全分割のみ Medium で報告する。
 				{Re: personNameExecTitleRe, Base: Medium, Validate: validPersonNameFullSplit},
@@ -1822,7 +1906,7 @@ func Builtin() []Rule {
 				), Base: Medium, Validate: honorificPersonNameValid,
 					// 「新品同様」「構文仕様」のような一般語の「様」と、
 					// 「初見さん」「常連さん」「社員皆さん」のような一般語 + 敬称を棄却する。
-					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound)},
+					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound)},
 				// 敬称の直前に空白が入る形（「鈴木一郎 様」）と、姓名の間に空白が
 				// 入る形（「山田 太郎様」）。上の無空白パターンは値と敬称が地続きの
 				// ときしか一致しないため、フォーム・宛名書きで一般的なこの表記を
