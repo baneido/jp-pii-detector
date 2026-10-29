@@ -60,6 +60,29 @@ func sortedKeys(m map[string]bool) []string {
 	return out
 }
 
+// nameVariants は人名で頻出する異体字（いわゆる外字）を、辞書の収録字形へ 1 ルーン → 1 ルーンで
+// 畳む置換表。「山﨑」「髙橋」「𠮷田」のように、NFKC でも統合漢字へ統合されない異体字
+// （U+FA11 﨑 は互換ブロックにあるが統合漢字扱い、U+9AD9 髙・U+20BB7 𠮷 は別字）で書かれた
+// 氏名は、辞書（新字体で収録）に一致せず全ルールモードが取りこぼす。長崎県の特定商取引法の
+// 処分公表（「<屋号>こと<姓（﨑）><名>（個人事業者）」）で実測した。照合キーにだけ適用し、
+// 検出位置（normalize.Line）には影響させない。呼び出し側が分割結果のルーン数を使うため、
+// ルーン数を変えない置換に限る。
+var nameVariants = strings.NewReplacer(
+	"﨑", "崎",
+	"髙", "高",
+	"𠮷", "吉",
+	"\uFA10", "塚", // U+FA10 塚（NFKC 互換分解を持つが、照合キーは NFKC を通らないため明示）
+)
+
+// foldNameVariants は s に nameVariants の異体字が含まれる場合だけ置換する
+// （大半の入力は異体字を含まないため割り当てなしで返す）。
+func foldNameVariants(s string) string {
+	if !strings.ContainsAny(s, "﨑髙𠮷\uFA10") {
+		return s
+	}
+	return nameVariants.Replace(s)
+}
+
 // nameComponentMaxRunes は分割検証で許す姓・名 1 要素あたりの最大ルーン数。
 // これを超える長い文字列は人名要素として扱わない（一般名詞・組織名の誤検証防止）。
 const nameComponentMaxRunes = 4
@@ -136,7 +159,7 @@ func SplitFullNameCandidate(s string) (surname, given string, ok bool) {
 }
 
 func splitFullName(s string, includeExtended, applyDenylist bool) (surname, given string, ok bool) {
-	s = ComposeKana(strings.TrimSpace(s))
+	s = foldNameVariants(ComposeKana(strings.TrimSpace(s)))
 	if s == "" || (applyDenylist && nonPersonHomographSet()[s]) {
 		return "", "", false
 	}
@@ -174,15 +197,16 @@ func SplitsAsFullName(s string) bool {
 }
 
 // IsSurname は s が収録済みの姓かを返す。
-func IsSurname(s string) bool { return surnameSet()[s] }
+func IsSurname(s string) bool { return surnameSet()[foldNameVariants(s)] }
 
 // IsGivenName は s が収録済みの名かを返す。
-func IsGivenName(s string) bool { return givenNameSet()[s] }
+func IsGivenName(s string) bool { return givenNameSet()[foldNameVariants(s)] }
 
 // IsGivenNameExtended は既定辞書に加え、高再現率用 org 版カタカナ名も照合する。
 func IsGivenNameExtended(s string) bool { return isGivenName(s, true) }
 
 func isGivenName(s string, includeExtended bool) bool {
+	s = foldNameVariants(s)
 	return givenNameSet()[s] || (includeExtended && extendedGivenNameSet()[s])
 }
 
@@ -195,7 +219,7 @@ func isGivenName(s string, includeExtended bool) bool {
 // 信頼度を作り分けること（二値の IsPersonName だけでは根拠を区別できず、
 // Base を一律に上げると FP が増える）。
 func MatchPersonName(s string) NameMatch {
-	s = ComposeKana(strings.TrimSpace(s))
+	s = foldNameVariants(ComposeKana(strings.TrimSpace(s)))
 	if s == "" {
 		return NoMatch
 	}
@@ -233,7 +257,7 @@ func IsPersonName(s string) bool {
 // IsPersonNameExtended は高再現率用 org 版カタカナ名まで含めて人名を検証する。
 // 既定ルールの confidence を暗黙に変えないよう、high-recall 経路だけで使う。
 func IsPersonNameExtended(s string) bool {
-	s = ComposeKana(strings.TrimSpace(s))
+	s = foldNameVariants(ComposeKana(strings.TrimSpace(s)))
 	if s == "" {
 		return false
 	}
