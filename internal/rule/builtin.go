@@ -809,6 +809,32 @@ var (
 	personNameLecturerSpaceRe = regexp.MustCompile(
 		`(?:講師|講演者|審査員|パネリスト)[ ]+` + lecturerValue + `[ ]*(?:氏|先生|さん|様)`,
 	)
+	// personNameLecturerSpaceParenRe は「・講師 <姓> <名>（<所属><職名>）」のように、講師等のラベルと
+	// 空白区切りの姓名の後に、敬称でなく所属・職名の括弧が続く講座案内の形を拾う
+	// （person-name-role-label）。personNameLecturerSpaceRe は敬称を必須にしているため、
+	// 県の博物館の講座一覧 PDF で敬称のない職員講師 6 人を全モードが取りこぼしていた
+	// （2026-10-30 16:00 実測）。一般語と区別するため、値は姓と名の間に空白がある 2 語に限り、
+	// 姓は辞書、名は職名でない 1〜3 文字であること（validFullSplitOrSpacedSurnameGiven）を要求する。
+	personNameLecturerSpaceParenRe = regexp.MustCompile(
+		`(?:講師|講演者|審査員|パネリスト)[ ]+([` + kanji + `]{1,4}[ ]{1,3}[` + kanji + `]{1,4})[ ]*[(（]`,
+	)
+	// personNameDirectorCreditRe は出演作品の一覧の「「<作品名>」監督　<姓><名>」「「<作品名>」 監督：<姓><名>」
+	// のように、作品名の閉じかぎ括弧の後の「監督」に続く氏名を拾う（person-name-role-label）。
+	// 芸能事務所の所属タレントの経歴ページで全モードが取りこぼす見逃しを実測した
+	// （2026-10-30 16:00、1 文書で 7 人）。閉じかぎ括弧を必須にして「監督官庁」「監督 指導」
+	// のような一般語と区別し、値の後は括弧・中黒・読点・注記の ※・行末・2 個以上の空白に限り、
+	// 姓名辞書の完全分割（姓+名）を要求する。
+	personNameDirectorCreditRe = regexp.MustCompile(
+		`[」』][ ]*(?:総監督|監督)[ ]*[：:]?[ ]*([` + kanji + `]{2,8}?(?:[ ][` + kanji + `]{1,8}?)?)(?:[ ]*[(（・、,※]|[ ]*$|[ ]{2,})`,
+	)
+	// personNameSenseiLineRe は講座・教室の講師一覧で「<姓> <名> 先生」だけが 1 行に並ぶ形を拾う
+	// （person-name-role-label）。ラベルがないため全モードが取りこぼす見逃しを、博物館の
+	// 講座案内で実測した（2026-10-30 16:00、5 人）。行頭から始まる空白区切りの 2 語で、
+	// 直後に「先生」と、中黒・読点・行末・2 個以上の空白が続くことを要求し、姓は辞書、名は
+	// 職名でないこと（validSpacedSurnameGiven）を確かめる。名はひらがなを含む形（<姓> <ひらがな>子）も許す。
+	personNameSenseiLineRe = regexp.MustCompile(
+		`^[ ]*([` + kanji + `]{1,4}[ ]{1,3}[` + kanji + hiragana + `]{1,4})[ ]*先生[ ]*(?:[・、]|$|[ ]{2,})`,
+	)
 	// personNameTantoSpaceRe は学校・自治体の様式の「担当者 <姓> <名>」「担当者 教頭 <姓> <名>」の
 	// ように、担当者ラベルと姓名の間が空白だけで、値の後に 2 個以上の空白か行末が来る形を拾う
 	// （person-name-role-label）。pdftotext -layout で表の欄がコロンなしに並ぶ形を全モードが
@@ -902,6 +928,8 @@ var personNameBracketFormHints = map[string]bool{
 	// 申請書様式の「氏名（自署）」（本人が自筆で書く欄の指示）。「自署」を氏名として low で報告する
 	// 偽陽性を大学の申請様式で実測した（2026-10-30 14:00）。
 	"自署": true,
+	// 申込フォームの「お名前（フルネーム、フリガナ）」（2026-10-30 16:00 に実測した low の偽陽性）。
+	"フルネーム": true,
 }
 
 // rejectBracketedFormHint は、氏名ラベルの値が括弧で囲まれた記入方法の指示語
@@ -916,7 +944,9 @@ func rejectBracketedFormHint(line string, start, end int) bool {
 	open := strings.HasSuffix(before, "(") || strings.HasSuffix(before, "（")
 	// 「（法人名、代表者名）」「（法人の場合は…）」のように「法人」で始まる括弧書きは、
 	// 閉じ括弧の位置によらず記入説明とみなす（PDF の改行で次行と連結された形を含む）。
+	// 「（フルネーム、フリガナ）」のように読点で次の指示語が続く形も括弧書きの指示とみなす。
 	closed := strings.HasPrefix(after, ")") || strings.HasPrefix(after, "）") || after == "" ||
+		strings.HasPrefix(after, "、") || strings.HasPrefix(after, ",") ||
 		strings.TrimSpace(line[start:end]) == "法人"
 	return !(open && closed)
 }
@@ -2113,7 +2143,7 @@ func Builtin() []Rule {
 			ID:                "person-name-role-label",
 			Description:       "氏名（担当者・宛名ラベル付き）",
 			Prefilter:         PrefilterCJK,
-			PrefilterLiterals: []string{"会長", "委員", "議長", "担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届"},
+			PrefilterLiterals: []string{"会長", "委員", "議長", "担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届", "監督", "先生"},
 			Validate:          notPlaceholderName,
 			Patterns: []Pattern{
 				// 担当者・宛名・連絡先ラベル。敬称のような強い人物シグナルが無いため、
@@ -2203,6 +2233,11 @@ func Builtin() []Rule {
 				// 担当欄・代表者欄で姓と名の間が広く空いた表記（2026-10-30 10:00 に実測した見逃し）。
 				{Re: personNameTantoWideRe, Base: Medium, Validate: validSpacedSurnameGiven},
 				{Re: personNameExecTitleWideRe, Base: Medium, Validate: validSpacedSurnameGiven},
+				// 敬称のない「講師 <姓> <名>（<所属>）」、作品一覧の「「<作品名>」監督 <姓名>」、
+				// 講師一覧の「<姓> <名> 先生」の行（いずれも 2026-10-30 16:00 に実測した見逃し）。
+				{Re: personNameLecturerSpaceParenRe, Base: Medium, Validate: validFullSplitOrSpacedSurnameGiven},
+				{Re: personNameDirectorCreditRe, Base: Medium, Validate: validPersonNameFullSplit},
+				{Re: personNameSenseiLineRe, Base: Medium, Validate: validSpacedSurnameGiven},
 			},
 		},
 		{

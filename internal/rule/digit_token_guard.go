@@ -304,6 +304,10 @@ var honorificCommonNouns = map[string]bool{
 	"事業主": true, "販売店": true, "義姉": true, "義兄": true, "義妹": true, "義弟": true, "義母": true, "義父": true,
 	// 不動産買取の案内の「売主様」「買主様」（2026-10-30 14:00 に実測した高再現率モードの偽陽性）。
 	"売主": true, "買主": true,
+	// 「企業様・団体様」「放送局様」「神父様」「声優さん」「代理人様の場合は」「将軍様の」
+	// （2026-10-30 16:00 に企業・団体・図書館のサイトで実測した高再現率モードの偽陽性。
+	// いずれも立場・職業・組織を指す一般語で、特定の個人の氏名ではない）。
+	"企業": true, "団体": true, "放送局": true, "神父": true, "声優": true, "代理人": true, "将軍": true,
 }
 
 // honorificCommonNounSuffixes は、「社員皆さん」「来場者皆様」「常連客様」の
@@ -314,13 +318,18 @@ var honorificCommonNouns = map[string]bool{
 // 語尾も含める。団体・店は個人を識別しない（代表者名を含まない）。
 // 「対象株主様」「<社名> <地名>工場様」（2026-10-30 14:00 に企業の IR・事業所案内で実測した偽陽性）の
 // 「株主」「工場」「販売店」「事業主」と、業界団体の「<業界>連合会様」も語尾に含める。
-var honorificCommonNounSuffixes = []string{"皆", "客", "農家", "花嫁", "宮司", "妊婦", "産婦", "協力会", "自治会", "町内会", "生徒会", "児童会", "保護者会", "組合", "印刷", "株主", "工場", "販売店", "事業主", "連合会"}
+var honorificCommonNounSuffixes = []string{"皆", "客", "農家", "花嫁", "宮司", "妊婦", "産婦", "協力会", "自治会", "町内会", "生徒会", "児童会", "保護者会", "組合", "印刷", "株主", "工場", "販売店", "事業主", "連合会", "企業", "団体", "放送局"}
 
 // rejectHonorificCommonNoun は、敬称（さん・様）の直前の漢字列が一般語
 // （honorificCommonNouns・honorificCommonNounSuffixes）である場合に棄却する。
 // 「氏」「殿」は一般語に付くことがほぼ無いので対象外にする。
 func rejectHonorificCommonNoun(line string, start, end int) bool {
 	rest := line[end:]
+	// 「白描源氏絵」「源氏物語」の「源氏」は氏族・作品名で、「<姓>氏」の敬称ではない
+	// （2026-10-30 16:00 に美術館の講演会案内で実測した高再現率モードの偽陽性）。
+	if strings.HasPrefix(rest, "氏") && strings.HasSuffix(line[start:end], "源") {
+		return false
+	}
 	if !strings.HasPrefix(rest, "さん") && !strings.HasPrefix(rest, "様") {
 		return true
 	}

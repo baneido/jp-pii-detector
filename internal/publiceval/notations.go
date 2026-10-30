@@ -65,6 +65,9 @@ var notationCategories = []string{
 	"reading-after-no",     // 助詞「の」に続く「<姓> <名>（<せい> <めい>）」
 	"tanshin-header",       // 決算短信の表紙「(役職名) <役職> (氏名) <姓> <名>」と「代表取締役社長 ＣＯＯ <姓> <名>」
 	"permit-number",        // 許可・登録番号「第<12 桁>号」（陰性）と、囲まれていない個人番号（陽性）
+	"lecturer-space-paren", // 敬称のない講座案内「・講師 <姓> <名>（<所属><職名>）」
+	"director-credit",      // 出演作品一覧「「<作品名>」監督：<姓><名>」
+	"sensei-line",          // 講師一覧の行「<姓> <名> 先生」
 }
 
 type notationCase struct {
@@ -355,7 +358,31 @@ func notationSpecs() []notationCase {
 	// 自リポジトリ走査（CI の dogfooding）で検出されないよう、ダミー番号は分割して書く。
 	pos("permit-number", "jp-my-number", "個人番号 "+"1234567890"+"18")
 
+	// 敬称のない講座案内の講師欄（所属・職名の括弧が続く）
+	pos("lecturer-space-paren", role, "・講師 "+full(0, " ")+"（架空センター副主幹）")
+	pos("lecturer-space-paren", role, "・講師 "+full(1, " ")+"（架空調査事務所文化財主任）             ・申込 不要")
+	pos("lecturer-space-paren", role, "講演者 "+full(2, "　")+"（架空大学教授）")
+	neg("lecturer-space-paren", "講師 派遣事業（予定）")
+	neg("lecturer-space-paren", "講師 架空 協会（予定）")
+
+	// 出演作品一覧の監督クレジット（作品名の閉じかぎ括弧の後）
+	pos("director-credit", role, "’22年　「架空の物語」 監督："+full(3, ""))
+	pos("director-credit", role, "「架空の夜」監督　"+full(4, " "))
+	pos("director-credit", role, "’24年　「架空」監督　"+full(5, "")+"　※声の出演のみ")
+	pos("director-credit", role, "’25年  「架空忍者」監督:"+full(0, ""))
+	neg("director-credit", "「架空法」監督官庁への届出")
+	neg("director-credit", "「架空展」監督 指導のもと")
+	neg("director-credit", "監督：未定")
+
+	// 講師一覧の 1 行「<姓> <名> 先生」
+	pos("sensei-line", role, full(1, " ")+" 先生")
+	pos("sensei-line", role, full(2, " ")+" 先生・")
+	neg("sensei-line", "校長 先生")
+	neg("sensei-line", "担任の 先生")
+	neg("sensei-line", "担当 未定 先生")
+
 	// 記入方法の説明が氏名ラベルに続く形（辞書不一致の値を拾う Low の強ラベル）
+	neg("form-word", "お名前（フルネーム、フリガナ）、生年月日を入力")
 	neg("form-word", "氏名（自署）")
 	neg("form-word", "氏名（ふりがな）")
 	neg("form-word", "氏名：団体名・職・氏名")
@@ -415,6 +442,13 @@ func notationSpecs() []notationCase {
 	neg("honorific-compound", "販売店様向けサービス")
 	neg("honorific-compound", "売主様にお手間もご負担も掛けません")
 	neg("honorific-compound", "ページをご覧ください（架空製紙連合会様HPより）")
+	neg("honorific-compound", "企業様・団体様の販促イベント")
+	neg("honorific-compound", "放送局様などの公開録画イベント")
+	neg("honorific-compound", "神父様、ありがとうございました")
+	neg("honorific-compound", "声優さんによる読み聞かせ")
+	neg("honorific-compound", "代理人様の場合は代理人確認書類")
+	neg("honorific-compound", "将軍様の包囲網")
+	neg("honorific-compound", "〔講演会〕白描源氏絵の美")
 	return out
 }
 
