@@ -72,6 +72,7 @@ var notationCategories = []string{
 	"lecturer-guest-san",   // 均等割付・スラッシュ区切りの「講 師／<姓> <名>さん（<肩書>）」と「ゲスト <姓> <名>さん(<職業>)」
 	"birth-range",          // 入園・受験資格の「<日付>～<日付>生まれ」・記入例（陰性）と、単独の「<日付>生まれ」（陽性）
 	"talk-event",           // 催し案内の「<姓><名>さん×<姓><名>さん」「登壇：」「聞き手：」「進行役：」（陽性）と、院号・施設名 + 敬称（陰性）
+	"officer-shi",          // IR 資料の「取締役 <姓><名>氏」「常勤監査役 <姓><名>氏」（陽性）と、立場・神の尊称 + 敬称、連続した西暦年（陰性）
 }
 
 type notationCase struct {
@@ -528,6 +529,21 @@ func notationSpecs() []notationCase {
 	neg("talk-event", "架空記念館さんのご協力により")
 	neg("talk-event", "黒石藩藩主は伏魔殿・おけら長屋に送り込む")
 	neg("form-word", "・担当者名（部署・役職等）")
+
+	// 自動車メーカー・持株会社の IR 資料の役員の注記（2026-10-31 02:00 実測の Medium の見逃し）と、
+	// 宗教団体・道の駅・住宅会社のサイトの立場・神の尊称 + 敬称、環境報告書の年度の見出し
+	// （同じ回に実測した高再現率・Low・Medium の偽陽性）
+	pos("officer-shi", role, "取締役 "+full(11, "")+"氏は社外取締役です。")
+	pos("officer-shi", role, "10. 常勤監査役 "+full(12, "")+"氏の重要な兼職先である架空株式会社")
+	pos("officer-shi", role, "・社外取締役"+full(13, "")+"氏は、取締役会において")
+	neg("officer-shi", "架空教の教主様のお言葉")
+	neg("officer-shi", "お1家族様につき1枚限り")
+	neg("officer-shi", "施工店様向けの説明会")
+	neg("officer-shi", "月日御両神様のご守護")
+	neg("officer-shi", "御神殿の前で参拝する")
+	neg("officer-shi", "排出量 最終処分量 2019   2020 2021 2022    2023 年度")
+	neg("form-word", "フリガナ（全角）")
+	neg("form-word", "氏名（会員番号その他管理ID）")
 	return out
 }
 
