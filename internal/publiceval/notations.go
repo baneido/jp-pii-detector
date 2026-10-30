@@ -68,6 +68,7 @@ var notationCategories = []string{
 	"lecturer-space-paren", // 敬称のない講座案内「・講師 <姓> <名>（<所属><職名>）」
 	"director-credit",      // 出演作品一覧「「<作品名>」監督：<姓><名>」
 	"sensei-line",          // 講師一覧の行「<姓> <名> 先生」
+	"shrine-deity",         // 社殿名「<祖霊・宝物・参集>殿」・神仏の尊称「<天神・聖天>様」・「杜氏」（陰性）と、同じ形の氏名（陽性）
 }
 
 type notationCase struct {
@@ -383,6 +384,8 @@ func notationSpecs() []notationCase {
 
 	// 記入方法の説明が氏名ラベルに続く形（辞書不一致の値を拾う Low の強ラベル）
 	neg("form-word", "お名前（フルネーム、フリガナ）、生年月日を入力")
+	neg("form-word", "ご住所・お名前(ﾌﾘｶﾞﾅ)を明記の上")
+	neg("form-word", "■ 氏名（ペンネーム可）")
 	neg("form-word", "氏名（自署）")
 	neg("form-word", "氏名（ふりがな）")
 	neg("form-word", "氏名：団体名・職・氏名")
@@ -449,6 +452,22 @@ func notationSpecs() []notationCase {
 	neg("honorific-compound", "代理人様の場合は代理人確認書類")
 	neg("honorific-compound", "将軍様の包囲網")
 	neg("honorific-compound", "〔講演会〕白描源氏絵の美")
+
+	// 神社・寺院のサイトの社殿名・神仏の尊称・「杜氏」（2026-10-30 18:00 実測の高再現率の偽陽性）
+	neg("shrine-deity", "祖霊殿内には納骨壇を設けています")
+	neg("shrine-deity", "架空神社 祖霊殿（納骨堂）")
+	neg("shrine-deity", "参集殿にお集まりください")
+	neg("shrine-deity", "宝物殿")
+	neg("shrine-deity", "架空院霊明殿に安置")
+	neg("shrine-deity", "架空杜氏の受け継がれた技術")
+	neg("shrine-deity", "聖天様や不動明王様が祀られる")
+	neg("shrine-deity", "菅公様（天神様）の合祀記念祭")
+	neg("shrine-deity", "架空天皇様が都をお造りになりました")
+	neg("shrine-deity", "檀家さんはもちろんのこと")
+	neg("shrine-deity", "氏神様にお参りします")
+	pos("shrine-deity", "person-name-high-recall", full(1, "")+"殿へ")
+	pos("shrine-deity", "person-name-high-recall", full(2, "")+"さんが来場")
+	pos("shrine-deity", "person-name-high-recall", full(3, "")+"様のご来店")
 	pos("honorific-compound", "person-name-high-recall", n(0).sur+"源氏の新しい作品集")
 	return out
 }
