@@ -644,6 +644,20 @@ var (
 		`(?:^|[^` + kanji + hiragana + katakana + `])` +
 			`([` + kanji + `]{2,6})選手(?:[ 　、。・！!（(がはのをにともへ]|$)`,
 	)
+	// personNameMemberColonRe / personNameMemberColon2Re は、大学・研究所の年報の学外活動一覧
+	// 「・ <学会名> 編集委員会編集委員：<姓><名>」「<学会名> 代議員： <姓><名>、<姓><名>」のように、
+	// 委員・理事などの職名 + コロンの後に続く氏名を拾う（person-name-role-label）。2026-10-31 06:00 に
+	// 天文台の年報 1 文書で 20 行以上、全ルールモードが取りこぼす見逃しを実測した。職名の前は
+	// 「委員会委員」のように漢字が続いてもよい。値の後に読点・閉じ括弧・2 個以上の空白・行末の
+	// いずれかを要求し、姓名辞書の完全分割（空白区切りなら先頭語が姓）でのみ報告する。2 人目は
+	// 「：<姓><名>、<姓><名>」の並びの 2 番目だけを personNameMemberColon2Re で拾う。
+	memberColonTitle         = `(?:委員|代議員|評議員|理事|監事|幹事)[ ]*[：:][ ]*`
+	memberColonName          = `([` + kanji + `]{2,8}(?:[ ][` + kanji + `]{1,8})?)`
+	memberColonEnd           = `(?:[ ]*[、,，)）]|[ ]{2,}|[ ]*$)`
+	personNameMemberColonRe  = regexp.MustCompile(memberColonTitle + memberColonName + memberColonEnd)
+	personNameMemberColon2Re = regexp.MustCompile(
+		memberColonTitle + `[` + kanji + `]{2,8}(?:[ ][` + kanji + `]{1,8})?[ ]*[、,，][ ]*` + memberColonName + memberColonEnd,
+	)
 	// personNameTantoReadingRe は「担当 <姓>(<よみ>)」のように、コロンのない担当欄で姓の
 	// 直後にひらがなの読みが括弧で続く表記を拾う（市の報道発表の問合せ先で実測）。
 	// 読み括弧が人名の根拠になるため、コロン必須の担当ラベル（#48）の例外として扱う。
@@ -998,6 +1012,9 @@ var personNameFormWordPrefixes = []string{
 	// 資格試験の証明書申請の「氏名（受験時のもの）」（2026-10-31 04:00 に政府機関のサイトで実測した
 	// Low の偽陽性。どの時点の氏名を書くかの指示で、氏名ではない）。
 	"受験時", "婚姻前", "変更前", "変更後",
+	// サーキットの走行申込の「氏名（ドライバー名）」（2026-10-31 06:00 に実測した Low の偽陽性。
+	// どの人の氏名を書くかの指示で、氏名ではない）。
+	"ドライバー名", "運転者名", "参加者名", "選手名",
 }
 
 // personNameFormWordSchoolSuffixes は「学校・氏名：<市町村>立<校名>小学校　<学年>　<姓>　<名>　さん」
@@ -2270,7 +2287,7 @@ func Builtin() []Rule {
 			ID:                "person-name-role-label",
 			Description:       "氏名（担当者・宛名ラベル付き）",
 			Prefilter:         PrefilterCJK,
-			PrefilterLiterals: []string{"会長", "委員", "議長", "担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届", "監督", "先生", "講 師", "ゲスト", "登壇", "聞き手", "進行役", "さん×", "さん ×", "選手"},
+			PrefilterLiterals: []string{"会長", "委員", "議長", "担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届", "監督", "先生", "講 師", "ゲスト", "登壇", "聞き手", "進行役", "さん×", "さん ×", "選手", "議員", "理事", "監事", "幹事"},
 			Validate:          notPlaceholderName,
 			Patterns: []Pattern{
 				// 担当者・宛名・連絡先ラベル。敬称のような強い人物シグナルが無いため、
@@ -2318,6 +2335,8 @@ func Builtin() []Rule {
 				{Re: personNameRomajiParenRe, Base: Medium, Validate: validPersonNameFullSplit},
 				{Re: personNameRomajiParenSpacedRe, Base: Medium, Validate: validSpacedSurnameGiven},
 				{Re: personNameSenshuRe, Base: Medium, Validate: validPersonNameFullSplit},
+				{Re: personNameMemberColonRe, Base: Medium, Validate: validFullSplitOrSpacedSurnameGiven},
+				{Re: personNameMemberColon2Re, Base: Medium, Validate: validFullSplitOrSpacedSurnameGiven},
 				{Re: personNameTitleLineEndRe, Base: Medium, Validate: validSpacedSurnameGiven},
 				{Re: personNameTantoDeptSlashRe, Base: Medium, Validate: validPersonNameSurnameOrFull},
 				{Re: personNameTantoDeptSlash2Re, Base: Medium, Validate: validPersonNameSurnameOrFull},

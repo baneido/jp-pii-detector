@@ -254,7 +254,9 @@ func rejectHonorificWordCompound(line string, start, end int) bool {
 	if strings.HasSuffix(val, "院") && (strings.HasPrefix(rest, "様") || strings.HasPrefix(rest, "殿")) {
 		return false
 	}
-	if strings.HasPrefix(rest, "殿頭") || strings.HasPrefix(rest, "殿内") {
+	// 「競艇殿堂入り」「<分野>殿堂選考委員会」の「殿堂」も敬称ではない（2026-10-31 06:00 に競艇場の
+	// サイトで実測した高再現率モードの偽陽性）。
+	if strings.HasPrefix(rest, "殿頭") || strings.HasPrefix(rest, "殿内") || strings.HasPrefix(rest, "殿堂") {
 		return false
 	}
 	if strings.HasSuffix(val, "姓") && strings.HasPrefix(rest, "氏") {
@@ -347,6 +349,10 @@ var honorificCommonNouns = map[string]bool{
 	// 「同業他社さんとのお付き合い」「大国様と八幡様」「親王様はその句を」（2026-10-31 04:00 に
 	// 和菓子店・祭りのサイトで実測した高再現率モードの偽陽性。取引先を指す一般語と、神・皇族の尊称）。
 	"同業他社": true, "他社": true, "同業者": true, "大国": true, "親王": true, "内親王": true,
+	// 「教育機関様専用ご注文用紙」「取扱店様一覧」「各社様」「生徒さんがデザインした」「風邪様症状」
+	// （2026-10-31 06:00 に天文台・企業・キャンプ場のサイトで実測した高再現率モードの偽陽性。取引先・
+	// 立場を指す一般語と、「〜のような」の意味の「様」で、特定の個人の氏名ではない）。
+	"教育機関": true, "取扱店": true, "各社": true, "生徒": true, "風邪": true,
 }
 
 // honorificCommonNounSuffixes は、「社員皆さん」「来場者皆様」「常連客様」の
@@ -370,7 +376,12 @@ var honorificCommonNounSuffixes = []string{"皆", "客", "農家", "花嫁", "�
 	// しないよう、「館」1 字ではなく施設の種類を表す語尾だけを入れる。
 	"記念館", "博物館", "美術館", "資料館", "文学館", "図書館", "文書館", "公民館", "会館",
 	// 宗教団体のサイトの「月日御両神様」（2026-10-31 02:00 に実測した偽陽性。神の尊称で個人ではない）。
-	"両神"}
+	"両神",
+	// 「<中学校名>生徒さん制作のポスター」「<地域>教育機関様」（2026-10-31 06:00 に実測した偽陽性）。
+	"生徒", "教育機関", "取扱店"}
+
+// countNameRe は「二名」「３名」「数名」のような人数の表記に一致する。
+var countNameRe = regexp.MustCompile(`^[一二三四五六七八九十百千数何0-9０-９]+名$`)
 
 // rejectHonorificCommonNoun は、敬称（さん・様）の直前の漢字列が一般語
 // （honorificCommonNouns・honorificCommonNounSuffixes）である場合に棄却する。
@@ -401,6 +412,11 @@ func rejectHonorificCommonNoun(line string, start, end int) bool {
 		return true
 	}
 	v := line[start:end]
+	// 「二名様からのご利用」「一名様でのご利用」（2026-10-31 06:00 にキャンプ場のサイトで実測した
+	// 偽陽性）。人数 + 「名様」は利用人数で、氏名ではない。
+	if countNameRe.MatchString(v) {
+		return false
+	}
 	if honorificCommonNouns[v] {
 		return false
 	}
