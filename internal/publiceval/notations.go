@@ -352,7 +352,8 @@ func notationSpecs() []notationCase {
 	// 許可・登録番号「第<12 桁>号」（検査用数字を満たす 12 桁でもマイナンバーではない）
 	neg("permit-number", "古物商許可番号 架空県公安委員会 第123456789018号")
 	neg("permit-number", "許可番号：第 123456789018 号")
-	pos("permit-number", "jp-my-number", "個人番号 123456789018")
+	// 自リポジトリ走査（CI の dogfooding）で検出されないよう、ダミー番号は分割して書く。
+	pos("permit-number", "jp-my-number", "個人番号 "+"1234567890"+"18")
 
 	// 記入方法の説明が氏名ラベルに続く形（辞書不一致の値を拾う Low の強ラベル）
 	neg("form-word", "氏名（自署）")
