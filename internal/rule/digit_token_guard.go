@@ -246,6 +246,23 @@ func rejectHonorificWordCompound(line string, start, end int) bool {
 			}
 		}
 	}
+	// 文書館の目録の「<院号>院様御法事」「<戒名>院殿<道号>居士」（2026-10-31 00:00 に文書館の
+	// 近世文書目録で実測した高再現率モードの偽陽性）。「院」で終わる値は将軍・大名家の夫人の院号や
+	// 戒名の院殿号で、生存する個人の氏名ではない。「主殿頭」（官職名）・「<姓>殿内文庫」（沖縄の
+	// 家の呼び名）の「殿」と、「新撰姓氏録」の「姓氏」も敬称ではない。値が「様」で始まるのは
+	// 「<院号>様<院号>様」の 2 つ目の敬称を跨いだ範囲の誤り。
+	if strings.HasSuffix(val, "院") && (strings.HasPrefix(rest, "様") || strings.HasPrefix(rest, "殿")) {
+		return false
+	}
+	if strings.HasPrefix(rest, "殿頭") || strings.HasPrefix(rest, "殿内") {
+		return false
+	}
+	if strings.HasSuffix(val, "姓") && strings.HasPrefix(rest, "氏") {
+		return false
+	}
+	if strings.HasPrefix(val, "様") {
+		return false
+	}
 	// 「故・<姓><名>氏」「故 <姓><名>様」は亡くなった人を指す。個人情報保護法の個人情報は
 	// 生存する個人に関する情報なので、故人の表記は氏名として報告しない。
 	// 「交通事故 <姓>様」の「事故」は故人の意味ではないため、故の直前が漢字なら残す。
@@ -341,7 +358,11 @@ var honorificCommonNounSuffixes = []string{"皆", "客", "農家", "花嫁", "�
 	// 「別途作家様」「<地名>職人さん」「<地名>刑務所さんとの連携」「<神社名>下社様」「<色・花>組さん」
 	// （2026-10-30 22:00 にレコード会社・専門学校・建設会社・幼稚園のサイトで実測した偽陽性。
 	// 職業・施設・神社の名称と、幼稚園のクラス名で、個人を識別しない）。
-	"作家", "職人", "飲食店", "刑務所", "観音", "神社", "下社", "上社", "大社", "組"}
+	"作家", "職人", "飲食店", "刑務所", "観音", "神社", "下社", "上社", "大社", "組",
+	// 「<人名>記念館さんのご協力により」「<市>博物館様」（2026-10-31 00:00 に音楽ホール・文書館の
+	// サイトで実測した偽陽性。施設の名称で、個人を識別しない）。「古館さん」のような姓を巻き添えに
+	// しないよう、「館」1 字ではなく施設の種類を表す語尾だけを入れる。
+	"記念館", "博物館", "美術館", "資料館", "文学館", "図書館", "文書館", "公民館", "会館"}
 
 // rejectHonorificCommonNoun は、敬称（さん・様）の直前の漢字列が一般語
 // （honorificCommonNouns・honorificCommonNounSuffixes）である場合に棄却する。
@@ -421,7 +442,9 @@ var shrineHallWords = map[string]bool{"右脇": true, "左脇": true, "中央": 
 	"祖霊": true, "参集": true, "宝物": true, "神楽": true, "儀式": true, "極楽": true, "日想": true,
 	"神能": true, "立志": true, "拝": true, "本": true, "幣": true, "舞": true, "社": true, "客": true,
 	"御": true, "宮": true, "寝": true, "仏": true, "祈祷": true, "祈願": true, "授与": true, "能楽": true,
-	"斎": true, "祭儀": true, "霊明": true, "舎利": true}
+	"斎": true, "祭儀": true, "霊明": true, "舎利": true,
+	// 時代小説の紹介文の「伏魔殿」（2026-10-31 00:00 に出版社のサイトで実測した高再現率モードの偽陽性）。
+	"伏魔": true}
 
 // publicFounderSuffixes は学校・施設名の設置者を表す「市立」「県立」などの語尾。
 var publicFounderSuffixes = []string{"市立", "町立", "村立", "区立", "県立", "都立", "府立", "道立", "国立", "私立", "公立"}
