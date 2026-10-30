@@ -516,6 +516,24 @@ var (
 			`(?:[ ]+|であった|である|[(（][ ]*)` +
 			personNameSpacedValue,
 	)
+	// personNameOfficerShiRe 〜 personNameOfficerShi4Re は、株主総会招集通知・
+	// 統合報告書の注記「取締役 <姓><名>氏、<姓><名>氏および<姓><名>氏は社外取締役です」のように、
+	// 役員の役職名の後に「<姓><名>氏」が読点・「および」で続く氏名を拾う（person-name-role-label）。
+	// 2026-10-31 02:00 に自動車メーカー・持株会社の IR 資料で、高再現率モードでしか拾えない見逃しを
+	// 実測した。値は「氏」の手前までの最短一致とし、姓名辞書の完全分割（姓+名）でのみ報告する
+	// （姓のみの「山田氏」は拾わない）。2〜4 人目は、役職名から続く並びの中でだけ拾う。
+	personNameOfficerShiRe = regexp.MustCompile(
+		officerShiTitle + `([` + kanji + `]{2,8}?)氏`,
+	)
+	personNameOfficerShi2Re = regexp.MustCompile(
+		officerShiTitle + `[` + kanji + `]{2,8}?氏` + officerShiSep + `([` + kanji + `]{2,8}?)氏`,
+	)
+	personNameOfficerShi3Re = regexp.MustCompile(
+		officerShiTitle + `[` + kanji + `]{2,8}?氏` + officerShiSep + `[` + kanji + `]{2,8}?氏` + officerShiSep + `([` + kanji + `]{2,8}?)氏`,
+	)
+	personNameOfficerShi4Re = regexp.MustCompile(
+		officerShiTitle + `(?:[` + kanji + `]{2,8}?氏` + officerShiSep + `){3}([` + kanji + `]{2,8}?)氏`,
+	)
 	// personNameExecTitleAndRe は「代表取締役であった<姓><名>及び<従業員>」のように、役職名 +
 	// 「である／であった」の後の氏名に漢字「及び」が直結して personNameExecTitleRe の貪欲な値に
 	// 取り込まれる表記を拾う（高知県の監督処分簿で実測）。値は最短一致で「及び」の手前までとし、
@@ -742,6 +760,9 @@ var (
 			`([` + kanji + `]{2,8}(?:[ ][` + kanji + `]{1,8})?)` +
 			`[ ]?に対する業務禁止命令`,
 	)
+	// officerShi* は personNameOfficerShiRe 等の部品（役員の役職名と、氏名の並びの区切り）。
+	officerShiTitle = `(?:社外取締役|常勤監査役|社外監査役|取締役|監査役)[ ]*`
+	officerShiSep   = `(?:、|および|及び)`
 	// lecturer* は personNameLecturerLabelRe / personNameLecturerLabel2Re の部品（講師等の
 	// ラベル、敬称、値の後の区切り）。
 	//
@@ -970,6 +991,8 @@ var personNameBracketFormHints = map[string]bool{
 	"必須": true, "ニックネーム可": true, "旧氏": true,
 	// 「担当者名（部署・役職等）」（2026-10-31 00:00 にソフトウェア会社の問い合わせ案内で実測した low の偽陽性）。
 	"部署・役職等": true, "部署・役職": true, "役職等": true, "部署等": true,
+	// 「フリガナ（全角）」（2026-10-31 02:00 に動物病院の問い合わせフォームで実測した low の偽陽性）。
+	"全角": true, "半角": true, "全角カナ": true, "全角カタカナ": true,
 }
 
 // rejectBracketedFormHint は、氏名ラベルの値が括弧で囲まれた記入方法の指示語
@@ -993,6 +1016,9 @@ func rejectBracketedFormHint(line string, start, end int) bool {
 
 var personNameFormWordParts = []string{
 	"場合", "記入", "にあっては", "担当", "証明", "整備局", "・氏名", "・職",
+	// 「氏名（会員番号その他管理ID）」（2026-10-31 02:00 にスポーツクラブの個人情報の共同利用の案内で
+	// 実測した low の偽陽性）と、「（全角）」「（半角）」の入力形式の指示。
+	"番号", "全角", "半角",
 }
 
 // notFormWordValue は氏名候補 v が記入方法の説明（personNameFormWordPrefixes /
@@ -1460,6 +1486,25 @@ func phoneRules() []Rule {
 	return rules
 }
 
+// rejectYearSequence は「2019 2020 2021 2022」のように、グラフの軸ラベル・表の見出しの連続した
+// 西暦年（1900〜2099 年が 1 年ずつ増える 3 つ組）を 4-4-4 の空白区切りの番号と読んだ一致を棄却する
+// （2026-10-31 02:00 に薬局チェーンの環境報告書 PDF で実測した jp-my-number の偽陽性）。
+func rejectYearSequence(line string, start, end int) bool {
+	f := strings.Fields(line[start:end])
+	if len(f) != 3 {
+		return true
+	}
+	prev := -1
+	for _, w := range f {
+		n, err := strconv.Atoi(w)
+		if err != nil || n < 1900 || n > 2099 || (prev >= 0 && n != prev+1) {
+			return true
+		}
+		prev = n
+	}
+	return false
+}
+
 // myNumberContext は jp-my-number のコンテキスト語。
 var myNumberContext = []string{"マイナンバー", "個人番号", "mynumber", "my number", "my_number"}
 
@@ -1487,7 +1532,7 @@ func Builtin() []Rule {
 				// OSS コーパスで実測した偽陽性（小数部・識別子の一部・16 進ダンプ・
 				// ログのタイムスタンプ）の棄却（digit_token_guard.go）。
 				{Re: dgNoAlnumHyphen(`\d{4} \d{4} \d{4}`), Base: Medium,
-					ValidateLine: allValidateLine(rejectSeparatedDigitGroup(" ", 4), rejectNumericTokenPart, rejectHexDumpGroup)},
+					ValidateLine: allValidateLine(rejectSeparatedDigitGroup(" ", 4), rejectNumericTokenPart, rejectHexDumpGroup, rejectYearSequence)},
 				{Re: dgNoAlnumHyphen(`\d{6} \d{6}`), Base: Medium,
 					ValidateLine: allValidateLine(rejectSeparatedDigitGroup(" ", 6), rejectNumericTokenPart, rejectHexDumpGroup,
 						rejectLogTimestamp66(myNumberContext))},
@@ -2286,6 +2331,11 @@ func Builtin() []Rule {
 				// 催し案内の「<姓><名>さん×<姓><名>さん」（2026-10-31 00:00 に実測した見逃し）。
 				{Re: personNameTalkPairRe, Base: Medium, Validate: validPersonNameFullSplit},
 				{Re: personNameTalkPair2Re, Base: Medium, Validate: validPersonNameFullSplit},
+				// IR 資料の「取締役 <姓><名>氏、<姓><名>氏および<姓><名>氏」（2026-10-31 02:00 に実測した見逃し）。
+				{Re: personNameOfficerShiRe, Base: Medium, Validate: validPersonNameFullSplit},
+				{Re: personNameOfficerShi2Re, Base: Medium, Validate: validPersonNameFullSplit},
+				{Re: personNameOfficerShi3Re, Base: Medium, Validate: validPersonNameFullSplit},
+				{Re: personNameOfficerShi4Re, Base: Medium, Validate: validPersonNameFullSplit},
 			},
 		},
 		{
