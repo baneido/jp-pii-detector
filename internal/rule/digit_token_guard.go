@@ -217,14 +217,21 @@ func rejectHonorificWordCompound(line string, start, end int) bool {
 		return false
 	case strings.HasSuffix(val, "夫婦別") && strings.HasPrefix(rest, "氏"):
 		return false
+	case strings.HasSuffix(val, "彼") && strings.HasPrefix(rest, "氏"):
+		// 「溺愛彼氏」の「彼氏」（2026-10-31 08:00 にウェブコミックのサイトで実測した偽陽性）。
+		return false
+	case strings.HasSuffix(val, "態") && strings.HasPrefix(rest, "様"):
+		// 不動産広告の「取引態様」の「態様」（2026-10-31 08:00 に賃貸住宅のサイトで実測した偽陽性）。
+		return false
 	}
 	for _, w := range []string{"氏遺跡", "氏庭園", "氏館跡", "氏城跡"} {
 		if strings.HasPrefix(rest, w) {
 			return false
 		}
 	}
-	// 「荒川さんぽ」「新宿桜さんぽ」（散歩の催し名）。
-	if strings.HasPrefix(rest, "さんぽ") {
+	// 「荒川さんぽ」「新宿桜さんぽ」（散歩の催し名）と、「<地名>乃木さん通り商店街」（通りの名前。
+	// 2026-10-31 08:00 に商店街のサイトで実測した高再現率モードの偽陽性）。
+	if strings.HasPrefix(rest, "さんぽ") || strings.HasPrefix(rest, "さん通り") {
 		return false
 	}
 	// 「北九州市様」「兵庫県様」「横須賀市さん」（導入事例・取引先としての自治体）。
@@ -240,8 +247,21 @@ func rejectHonorificWordCompound(line string, start, end int) bool {
 		// 「東照宮社殿」「神社本殿」「本丸御殿」「紫宸殿」「沈殿池」のように、殿が建物・
 		// 一般語の一部である場合。「山本殿」「御手洗殿」のように候補全体が姓名辞書に
 		// 一致する値は宛名の敬称として残す。
-		for _, w := range []string{"社", "本", "御", "宸", "寓", "沈", "拝", "寝", "宝", "仏"} {
+		// 「地下神殿コース」「平城宮第一次大極殿」「宮殿」「霊殿」（2026-10-31 08:00 に治水施設・
+		// 遺跡のサイトで実測した高再現率モードの偽陽性）も同じ扱いにする。
+		for _, w := range []string{"社", "本", "御", "宸", "寓", "沈", "拝", "寝", "宝", "仏", "神", "極", "宮", "霊"} {
 			if strings.HasSuffix(val, w) && !dict.IsPersonName(val) && !dict.SplitsAsFullName(val) {
+				return false
+			}
+		}
+		// 「瑞鳳殿では」「善応殿副葬品」のように、殿が霊屋・建物の名前の一部である場合
+		// （2026-10-31 08:00 に霊屋・寺院のサイトで実測した高再現率モードの偽陽性。1 回の収集で
+		// 高再現率の人名候補の半数以上を占めた）。宛名の「<姓><名>殿」「<姓>殿」は姓名辞書に
+		// 一致するので、漢字だけの値が辞書の姓・名・姓名のどれにも当たらない場合だけ棄却する。
+		// 「<名>女王殿下」のような殿下は上の switch で扱うため対象外にする。
+		if !strings.HasPrefix(rest, "殿下") {
+			v := strings.ReplaceAll(strings.ReplaceAll(val, " ", ""), "　", "")
+			if allKanji(v) && !dict.IsPersonName(v) && !dict.SplitsAsFullName(v) && !startsWithSurnameName(v) {
 				return false
 			}
 		}
@@ -353,6 +373,12 @@ var honorificCommonNouns = map[string]bool{
 	// （2026-10-31 06:00 に天文台・企業・キャンプ場のサイトで実測した高再現率モードの偽陽性。取引先・
 	// 立場を指す一般語と、「〜のような」の意味の「様」で、特定の個人の氏名ではない）。
 	"教育機関": true, "取扱店": true, "各社": true, "生徒": true, "風邪": true,
+	// 「竜神様に」「魔王様の」「王子様専用」「女王様の忠犬」「住人さんたち」「人間さん」「御愁傷様です」
+	// 「地方自治体様」「一休さん」（2026-10-31 08:00 に博物館・ウェブコミック・賃貸住宅・企業の
+	// サイトで実測した高再現率モードの偽陽性。神・物語の登場人物の呼び名と、立場を指す一般語・
+	// 挨拶の言葉で、特定の個人の氏名ではない）。
+	"竜神": true, "龍神": true, "魔王": true, "王子": true, "女王": true, "住人": true, "人間": true,
+	"御愁傷": true, "地方自治体": true, "自治体": true, "一休": true,
 }
 
 // honorificCommonNounSuffixes は、「社員皆さん」「来場者皆様」「常連客様」の
@@ -378,7 +404,9 @@ var honorificCommonNounSuffixes = []string{"皆", "客", "農家", "花嫁", "�
 	// 宗教団体のサイトの「月日御両神様」（2026-10-31 02:00 に実測した偽陽性。神の尊称で個人ではない）。
 	"両神",
 	// 「<中学校名>生徒さん制作のポスター」「<地域>教育機関様」（2026-10-31 06:00 に実測した偽陽性）。
-	"生徒", "教育機関", "取扱店"}
+	"生徒", "教育機関", "取扱店",
+	// 「<地域>地方自治体様」「<建物>住人さん」（2026-10-31 08:00 に実測した偽陽性）。
+	"自治体", "住人"}
 
 // countNameRe は「二名」「３名」「数名」のような人数の表記に一致する。
 var countNameRe = regexp.MustCompile(`^[一二三四五六七八九十百千数何0-9０-９]+名$`)
@@ -587,4 +615,29 @@ func rejectDaiGoNumber(line string, start, end int) bool {
 	before := strings.TrimRight(line[:start], " ")
 	after := strings.TrimLeft(line[end:], " ")
 	return !(strings.HasSuffix(before, "第") && strings.HasPrefix(after, "号"))
+}
+
+// allKanji は s が 1 文字以上で、すべて漢字（CJK 統合漢字・々）かを返す。
+func allKanji(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r != '々' && !unicode.Is(unicode.Han, r) {
+			return false
+		}
+	}
+	return true
+}
+
+// startsWithSurnameName は s が「辞書の 2 文字以上の姓 + 1〜3 文字の名」に分けられるかを返す。
+// 名が辞書に無い宛名「<姓><名>殿」を残すために使う。
+func startsWithSurnameName(s string) bool {
+	rs := []rune(s)
+	for i := 2; i <= 4 && i < len(rs); i++ {
+		if n := len(rs) - i; n >= 1 && n <= 3 && dict.IsSurname(string(rs[:i])) {
+			return true
+		}
+	}
+	return false
 }

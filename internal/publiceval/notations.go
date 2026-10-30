@@ -74,6 +74,7 @@ var notationCategories = []string{
 	"talk-event",           // 催し案内の「<姓><名>さん×<姓><名>さん」「登壇：」「聞き手：」「進行役：」（陽性）と、院号・施設名 + 敬称（陰性）
 	"reading-romaji",       // カタカナ読み・ローマ字併記の姓名「<姓> <名>(<セイ> <メイ>)」「<姓><名>（<SEI> <Mei>）」と「<姓><名>選手」（陽性）、氏子・大さん橋・英語の施設名（陰性）
 	"member-colon",         // 年報の学外活動一覧「<学会名> 委員会委員：<姓><名>」「代議員：<姓><名>、<姓><名>」（陽性）、空欄・人数・殿堂・人数 + 名様・一般語 + 敬称（陰性）
+	"donor-roster",         // 寄付者一覧の「<姓>　<名>　様」・役員名簿の「<姓>　<名>(理事長)」だけの行（陽性）と、建物名の「殿」・通りの名前・物語の呼び名 + 敬称（陰性）
 	"officer-shi",          // IR 資料の「取締役 <姓><名>氏」「常勤監査役 <姓><名>氏」（陽性）と、立場・神の尊称 + 敬称、連続した西暦年（陰性）
 	"gcp-service-account",  // Google Cloud のサービスアカウントのアドレス（陰性）と、個人のアドレス・似たドメイン・混在行（陽性）
 }
@@ -607,6 +608,23 @@ func notationSpecs() []notationCase {
 	pos("gcp-service-account", email, at("deploy", "x"+gsa))
 	pos("gcp-service-account", email, at("deploy", "gservice"+"account.co"))
 	pos("gcp-service-account", email, "連絡先 "+at("taro.yamada", "g"+"mail.com")+" / SA: "+at("deploy-bot", "kairo-proj.iam."+gsa))
+	// 運動公園のサイトの寄付者一覧「<姓>　<名>　様」と博物館の役員名簿「<姓>　<名>(理事長)」
+	// （2026-10-31 08:00 実測の Medium の見逃し）と、治水施設・霊屋・遺跡・商店街・ウェブコミック・
+	// 不動産のサイトの建物名の「殿」・通りの名前・物語の呼び名 + 敬称・申込様式の記入の指示
+	// （同じ回に実測した高再現率・Low の偽陽性）
+	pos("donor-roster", role, full(23, "　")+"　様")
+	pos("donor-roster", role, full(24, "　")+"(理事長)")
+	pos("donor-roster", role, full(25, "　")+"（外部理事）")
+	neg("donor-roster", "地下神殿コース 55分 ５５名")
+	neg("donor-roster", "架空鳳殿では秋の特別公開を予定しています")
+	neg("donor-roster", "平城宮第一次大極殿院")
+	neg("donor-roster", "架空乃木さん通り商店街")
+	neg("donor-roster", "溺愛彼氏と私のヒミツな関係。")
+	neg("donor-roster", "魔王様の城")
+	neg("donor-roster", "住人さんたちが屋上に集まり")
+	neg("donor-roster", "取引態様")
+	neg("form-word", "氏名（署名）")
+	neg("form-word", "①氏名（参加人数分）、②年齢をご記載ください。")
 	return out
 }
 
