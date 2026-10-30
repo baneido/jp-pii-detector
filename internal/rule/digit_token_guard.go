@@ -344,6 +344,9 @@ var honorificCommonNouns = map[string]bool{
 	// 温泉・レコード会社のサイトで実測した高再現率モードの偽陽性。神仏・聖職の尊称と、
 	// 職業・取引先を指す一般語で、特定の個人の氏名ではない）。
 	"観音": true, "大黒": true, "教皇": true, "職人": true, "飲食店": true, "作家": true,
+	// 「同業他社さんとのお付き合い」「大国様と八幡様」「親王様はその句を」（2026-10-31 04:00 に
+	// 和菓子店・祭りのサイトで実測した高再現率モードの偽陽性。取引先を指す一般語と、神・皇族の尊称）。
+	"同業他社": true, "他社": true, "同業者": true, "大国": true, "親王": true, "内親王": true,
 }
 
 // honorificCommonNounSuffixes は、「社員皆さん」「来場者皆様」「常連客様」の
@@ -385,6 +388,13 @@ func rejectHonorificCommonNoun(line string, start, end int) bool {
 	// 「南部杜氏の技」「越後杜氏」の「杜氏」は酒造りの職人を指す一般語で、「<姓>氏」の敬称ではない
 	// （2026-10-30 18:00 に新聞社サイトの広告文で実測した高再現率モードの偽陽性）。
 	if strings.HasPrefix(rest, "氏") && strings.HasSuffix(line[start:end], "杜") {
+		return false
+	}
+	// 「<神社>氏子青年会」「<地区>氏子が」の「氏子」は神社の信者を指す一般語で、「<名>氏」の敬称ではなく、
+	// 「横浜港大さん橋」の「さん橋」は桟橋（2026-10-31 04:00 に祭り・アリーナのサイトで実測した
+	// 高再現率モードの偽陽性）。
+	// 「<姓><名>氏子育て講演会」は「<姓><名>氏」+「子育て」なので、「氏子育」は除外しない。
+	if (strings.HasPrefix(rest, "氏子") && !strings.HasPrefix(rest, "氏子育")) || strings.HasPrefix(rest, "さん橋") {
 		return false
 	}
 	if !strings.HasPrefix(rest, "さん") && !strings.HasPrefix(rest, "様") && !strings.HasPrefix(rest, "さま") {
