@@ -57,6 +57,9 @@ var notationCategories = []string{
 	"lecturer-space",       // 空白区切りの「講師 <姓> <名>さん」
 	"tanto-space",          // 様式の「担当者 (<職>) <姓> <名>」
 	"grade-prefix",         // 学年の直後の氏名「6年生<姓><名>さん」
+	"tanto-wide",           // 担当欄の均等割付「担当：<姓>       <名>」
+	"exec-title-wide",      // 代表者欄の均等割付「代表取締役     <姓>      <名>」
+	"title-prefix",         // 職名に地続きの氏名「<町>町長<姓><名>様」
 }
 
 type notationCase struct {
@@ -294,6 +297,23 @@ func notationSpecs() []notationCase {
 	pos("grade-prefix", "person-name-high-recall", "架空小学校6年生"+full(2, "")+"さんが訪れました")
 	pos("grade-prefix", "person-name-high-recall", "2年"+full(3, "")+"さんの作品")
 	neg("grade-prefix", "5年間様子を見た中で")
+
+	// 担当欄の均等割付（姓と名の間が 2〜10 空白）
+	pos("tanto-wide", role, "担当："+full(0, "       "))
+	pos("tanto-wide", role, "○担当者名："+full(1, "         ")+"   電話 000-000-0000")
+	neg("tanto-wide", "担当：総務       企画")
+
+	// 代表者欄の均等割付（役職名 + 姓 + 4〜8 空白 + 名 + 行末）と所属括弧付きの広い空白
+	pos("exec-title-wide", role, "架空建設株式会社 代表取締役     "+full(3, "      "))
+	pos("exec-title-wide", role, "代表理事    "+n(4).sur+"   虹斗     氏（架空協会）")
+	neg("exec-title-wide", "代表取締役     就任      挨拶")
+
+	// 職名に地続きの氏名（職名を範囲に含めない）
+	pos("title-prefix", "person-name-high-recall", "架空町長"+full(5, "")+"様")
+	pos("title-prefix", "person-name-high-recall", "（委員長"+full(0, "")+"氏）")
+	neg("title-prefix", "中央殿・右脇殿・左脇殿の3棟")
+	neg("title-prefix", "市町村さんの方から意見がありました")
+	neg("title-prefix", "寄付ありがとうございます（株式会社長浜架空電機様）")
 
 	// 記入方法の説明が氏名ラベルに続く形（辞書不一致の値を拾う Low の強ラベル）
 	neg("form-word", "氏名（ふりがな）")
