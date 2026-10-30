@@ -449,6 +449,7 @@ func notationSpecs() []notationCase {
 	neg("honorific-compound", "代理人様の場合は代理人確認書類")
 	neg("honorific-compound", "将軍様の包囲網")
 	neg("honorific-compound", "〔講演会〕白描源氏絵の美")
+	pos("honorific-compound", "person-name-high-recall", n(0).sur+"源氏の新しい作品集")
 	return out
 }
 

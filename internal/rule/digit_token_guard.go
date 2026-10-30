@@ -327,8 +327,11 @@ func rejectHonorificCommonNoun(line string, start, end int) bool {
 	rest := line[end:]
 	// 「白描源氏絵」「源氏物語」の「源氏」は氏族・作品名で、「<姓>氏」の敬称ではない
 	// （2026-10-30 16:00 に美術館の講演会案内で実測した高再現率モードの偽陽性）。
-	if strings.HasPrefix(rest, "氏") && strings.HasSuffix(line[start:end], "源") {
-		return false
+	// ただし「<姓>源氏」のように「源」の前が 2 文字以上の辞書の姓なら、名「源」+ 敬称「氏」とみなす。
+	if v := line[start:end]; strings.HasPrefix(rest, "氏") && strings.HasSuffix(v, "源") {
+		if sur := strings.TrimSuffix(v, "源"); utf8.RuneCountInString(sur) < 2 || dict.MatchPersonName(sur) != dict.SurnameOnly {
+			return false
+		}
 	}
 	if !strings.HasPrefix(rest, "さん") && !strings.HasPrefix(rest, "様") {
 		return true
