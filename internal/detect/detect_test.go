@@ -5258,6 +5258,7 @@ func TestNameReadingAndTitleLineEnd(t *testing.T) {
 		{"○担当者名：佐藤         花子", "佐藤         花子"},
 		{"架空建設株式会社 代表取締役     山田      太郎", "山田      太郎"},
 		{"代表理事    鈴木   虹斗     氏（架空協会）", "鈴木   虹斗"},
+		{"架空協会    代表理事   佐藤     虹斗   氏（架空型）", "佐藤     虹斗"},
 	} {
 		fs := d.ScanLine("f.txt", 1, tc.line)
 		found := false
