@@ -60,6 +60,9 @@ var notationCategories = []string{
 	"tanto-wide",           // 担当欄の均等割付「担当：<姓>       <名>」
 	"exec-title-wide",      // 代表者欄の均等割付「代表取締役     <姓>      <名>」
 	"title-prefix",         // 職名に地続きの氏名「<町>町長<姓><名>様」
+	"org-head-ceo",         // 法人紹介「代表取締役社長 CEO：<姓> <名>）」
+	"seat-roster",          // 会議録の議席番号「1番     <姓>    <名>」
+	"reading-after-no",     // 助詞「の」に続く「<姓> <名>（<せい> <めい>）」
 }
 
 type notationCase struct {
@@ -314,6 +317,24 @@ func notationSpecs() []notationCase {
 	neg("title-prefix", "中央殿・右脇殿・左脇殿の3棟")
 	neg("title-prefix", "市町村さんの方から意見がありました")
 	neg("title-prefix", "寄付ありがとうございます（株式会社長浜架空電機様）")
+
+	// 法人紹介で職名とコロンの間に「CEO」「グループ」「兼社長」や空白が入る表記と「<姓><名> 以下」
+	pos("org-head-ceo", role, "架空製薬株式会社（本社：東京、代表取締役社長 CEO："+full(0, " ")+"）は、")
+	pos("org-head-ceo", role, "架空ホールディングス（代表取締役会長兼社長CEO："+full(1, " ")+"、以下「当社」）")
+	pos("org-head-ceo", role, "架空ライフグループ（代表取締役社長 グループ CEO："+full(2, " ")+"、以下「当社」）")
+	pos("org-head-ceo", role, "架空機構(理事長 : "+full(3, " ")+"、以下「架空機構」)")
+	pos("org-head-ceo", role, "架空通信株式会社（代表取締役社長："+full(4, "")+" 以下、架空通信）")
+	neg("org-head-ceo", "代表取締役社長 CEO：就任挨拶のお知らせ")
+
+	// 会議録の出席者表の議席番号 + 空白区切りの姓名
+	pos("seat-roster", role, "出席   委    員     1番     "+full(5, "    "))
+	pos("seat-roster", role, "会長        ５番   "+full(0, "   "))
+	neg("seat-roster", "３番   議案   説明")
+	neg("seat-roster", "日程第１番   報告   事項")
+
+	// 助詞「の」に続く読み括弧付きの姓名
+	pos("reading-after-no", role, "当日は、架空大学の"+n(1).sur+" 大（"+n(1).surYomi+" まさる）教授による講演")
+	neg("reading-after-no", "架空市の中央 公園（ちゅうおう こうえん）の整備")
 
 	// 記入方法の説明が氏名ラベルに続く形（辞書不一致の値を拾う Low の強ラベル）
 	neg("form-word", "氏名（ふりがな）")
