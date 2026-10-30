@@ -2169,6 +2169,25 @@ func TestAdjacentFindings(t *testing.T) {
 
 // docs 4.4「4-4-4-4 グループ除外」: クレジットカード様式の数字列の先頭
 // 12 桁が偶然マイナンバーの検査用数字を通過しても検出しない。
+// TestMyNumberRejectsDaiGoPermitNumber は、古物商許可番号のように「第」と「号」で囲まれた
+// 12 桁の許可・登録番号を、検査用数字を満たしてもマイナンバーとして報告しないことを固定する
+// （2026-10-30 14:00 に企業サイトで実測した偽陽性）。同じ 12 桁でも「第…号」で囲まれて
+// いなければ引き続き検出する。番号は検査用数字だけを合わせたダミー。
+func TestMyNumberRejectsDaiGoPermitNumber(t *testing.T) {
+	d := newDetector(t, "")
+	for _, line := range []string{
+		"古物商許可番号 架空県公安委員会 第123456789018号",
+		"許可番号：第 123456789018 号",
+	} {
+		for _, f := range d.ScanLine("f.txt", 1, line) {
+			if f.RuleID == "jp-my-number" {
+				t.Errorf("%q: マイナンバーとして検出した（%q）", line, f.Match)
+			}
+		}
+	}
+	assertRules(t, d.ScanLine("f.txt", 1, "個人番号 123456789018"), "jp-my-number")
+}
+
 func TestMyNumber4x4GroupExcluded(t *testing.T) {
 	d := newDetector(t, "")
 	// 有効なマイナンバー（区切りあり）は検査用数字を通過するが、後ろに -3456 が続く。
@@ -5271,6 +5290,15 @@ func TestNameReadingAndTitleLineEnd(t *testing.T) {
 		{"出席   委    員     1番     山田    太郎", "山田    太郎"},
 		{"会長        ５番   佐藤   花子", "佐藤   花子"},
 		{"当日は、架空大学の田中 大（たなか まさる）教授による講演", "田中 大"},
+		// 決算短信・適時開示の表紙の「(役職名) … (氏名) <姓> <名>」と、役職名と氏名の間に CEO・COO が入る表記
+		// （2026-10-30 14:00 実測の見逃し。以前は全ルールモードで取りこぼしていた。値はすべて架空）
+		{"代   表   者 (役職名) 代表取締役社長  (氏名) 山田 太郎", "山田 太郎"},
+		{"問合せ先責任者 (役職名) 常務取締役  (氏名) 佐藤 花子   (TEL) 00-0000-0000", "佐藤 花子"},
+		{"代表者 （役職名）代表取締役社長 （氏名）鈴木一郎", "鈴木一郎"},
+		{"架空製作所 代表取締役社長 ＣＯＯ 田中 次郎", "田中 次郎"},
+		{"代表取締役社長兼CEO 山田 太郎", "山田 太郎"},
+		{"代表者     （役職名） 代表取締役社長       （氏名）高橋                 健太", "高橋                 健太"},
+		{"問合せ先責任者 (役職名) 総務部長 (氏名) 伊藤 直樹 TEL 00-0000-0000", "伊藤 直樹"},
 	} {
 		fs := d.ScanLine("f.txt", 1, tc.line)
 		found := false
@@ -5318,6 +5346,10 @@ func TestNameReadingAndTitleLineEnd(t *testing.T) {
 		"日程第１番   報告   事項",
 		"代表取締役社長 CEO：就任挨拶のお知らせ",
 		"架空市の中央 公園（ちゅうおう こうえん）の整備",
+		// 決算短信の様式で氏名欄が未定、ラベルの説明文、CEO の後が氏名でない行は報告しない（2026-10-30 14:00）
+		"代表者 (役職名) 代表取締役社長  (氏名) 未定",
+		"(役職名)及び(氏名)を記入してください",
+		"代表取締役社長 ＣＯＯ 就任のお知らせ",
 	} {
 		for _, f := range d.ScanLine("f.txt", 1, line) {
 			if strings.HasPrefix(f.RuleID, "person-name") {
@@ -5352,11 +5384,21 @@ func TestPersonNameLowFormWords(t *testing.T) {
 		"氏名：　　　住所：",
 		"入札者の住所（所在地）、氏名（法人",
 		"入札者の住所（所在地）、氏名（法人名、代表者名）を記入",
+		// 申請様式の「氏名（自署）」は自筆で書く欄の指示（2026-10-30 14:00 実測の Low の偽陽性）
+		"氏名（自署）",
 	} {
 		for _, f := range d.ScanLine("f.txt", 1, line) {
 			if strings.HasPrefix(f.RuleID, "person-name") {
 				t.Errorf("%q: 氏名として検出した（%s %q）", line, f.RuleID, f.Match)
 			}
+		}
+	}
+	// 決算短信の表紙の「(氏名)」欄は、姓が辞書にない空白区切りの 2 語も Low で報告する
+	// （2026-10-30 14:00 実測の見逃し。値は辞書にない架空の語）。プレースホルダは報告しない。
+	assertRules(t, d.ScanLine("f.txt", 1, "問合せ先責任者 (役職名) 取締役  (氏名) 架空 一郎   (TEL) 00-0000-0000"), "person-name-role-label")
+	for _, f := range d.ScanLine("f.txt", 1, "代表者 (役職名) 代表取締役社長  (氏名) 未定 未定") {
+		if strings.HasPrefix(f.RuleID, "person-name") {
+			t.Errorf("プレースホルダを氏名として検出した（%s %q）", f.RuleID, f.Match)
 		}
 	}
 	assertRules(t, d.ScanLine("f.txt", 1, "氏名：山田 太郎"), "person-name")
@@ -5418,6 +5460,14 @@ high_recall = true
 		// 2026-10-30 10:00 実測: 社殿の名前（中央殿・右脇殿）と「市町村さん」
 		"中央殿・右脇殿・左脇殿の3棟",
 		"市町村さんの方から意見がありました",
+		// 2026-10-30 14:00 実測: 立場・続柄を指す一般語 + 敬称、工場・販売店（事業所）+ 様
+		"法人・事業主様の不動産のご相談",
+		"対象株主様へのご案内",
+		"新TVCM「義姉さんの家」篇",
+		"架空紡績(株) 架空川工場様　隣接地",
+		"販売店様向けサービス",
+		"売主様にお手間もご負担も掛けません",
+		"ページをご覧ください（架空製紙連合会様HPより）",
 	} {
 		for _, f := range d.ScanLine("f.txt", 1, line) {
 			if f.RuleID == "person-name-high-recall" {

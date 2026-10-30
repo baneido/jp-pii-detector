@@ -299,6 +299,11 @@ var honorificCommonNouns = map[string]bool{
 	"妊婦": true, "産婦": true, "妊産婦": true, "経産婦": true, "農家": true, "宮司": true, "花嫁": true,
 	// 県の会議録の「市町村さんの方から」（2026-10-30 10:00 に実測した高再現率モードの偽陽性）。
 	"市町村": true,
+	// 企業サイトの「法人・事業主様」「販売店様向けサービス」と、テレビ CM の題名「義姉さんの家」
+	// （2026-10-30 14:00 に実測した高再現率モードの偽陽性。立場・続柄を指す一般語）。
+	"事業主": true, "販売店": true, "義姉": true, "義兄": true, "義妹": true, "義弟": true, "義母": true, "義父": true,
+	// 不動産買取の案内の「売主様」「買主様」（2026-10-30 14:00 に実測した高再現率モードの偽陽性）。
+	"売主": true, "買主": true,
 }
 
 // honorificCommonNounSuffixes は、「社員皆さん」「来場者皆様」「常連客様」の
@@ -307,7 +312,9 @@ var honorificCommonNouns = map[string]bool{
 // 「出荷農家さん」「潮来花嫁さん」「<神社名>宮司さん」「<市名>災害協力会様」「旧<姓>印刷さん」
 // （2026-10-30 08:00 に実測した偽陽性）のように、立場を指す一般語や団体・店の名称の
 // 語尾も含める。団体・店は個人を識別しない（代表者名を含まない）。
-var honorificCommonNounSuffixes = []string{"皆", "客", "農家", "花嫁", "宮司", "妊婦", "産婦", "協力会", "自治会", "町内会", "生徒会", "児童会", "保護者会", "組合", "印刷"}
+// 「対象株主様」「<社名> <地名>工場様」（2026-10-30 14:00 に企業の IR・事業所案内で実測した偽陽性）の
+// 「株主」「工場」「販売店」「事業主」と、業界団体の「<業界>連合会様」も語尾に含める。
+var honorificCommonNounSuffixes = []string{"皆", "客", "農家", "花嫁", "宮司", "妊婦", "産婦", "協力会", "自治会", "町内会", "生徒会", "児童会", "保護者会", "組合", "印刷", "株主", "工場", "販売店", "事業主", "連合会"}
 
 // rejectHonorificCommonNoun は、敬称（さん・様）の直前の漢字列が一般語
 // （honorificCommonNouns・honorificCommonNounSuffixes）である場合に棄却する。
@@ -441,4 +448,14 @@ func endsWithKanji(s string) bool {
 // 2026-10-30 10:00 の全文書比較で実測した誤検出。
 func rejectKaishaChoPrefix(line string, start, end int) bool {
 	return !strings.HasSuffix(line[:start], "会社長")
+}
+
+// rejectDaiGoNumber は「第491150107800号」のように「第」と「号」で囲まれた数字列を棄却する。
+// 古物商許可番号（公安委員会の 12 桁）や各種の許可・登録番号はこの書き方で載り、マイナンバーの
+// 検査用数字を偶然満たすと jp-my-number の偽陽性になる。マイナンバーを「第…号」で書く様式はない。
+// 「第」「号」と数字の間の空白は許容する。
+func rejectDaiGoNumber(line string, start, end int) bool {
+	before := strings.TrimRight(line[:start], " ")
+	after := strings.TrimLeft(line[end:], " ")
+	return !(strings.HasSuffix(before, "第") && strings.HasPrefix(after, "号"))
 }
