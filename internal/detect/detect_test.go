@@ -5469,6 +5469,14 @@ high_recall = true
 			t.Errorf("%q: got %q, want [%q]", tc.line, got, tc.want)
 		}
 	}
+	// 「株式会社長<社名>様」の「社長」は職名ではない（2026-10-30 10:00 の全文書比較で実測した誤検出）。
+	for _, line := range []string{"寄付ありがとうございます（株式会社長浜架空電機様）"} {
+		for _, f := range d.ScanLine("f.txt", 1, line) {
+			if f.RuleID == "person-name-high-recall" {
+				t.Errorf("%q: unexpected person-name-high-recall %q", line, f.Match)
+			}
+		}
+	}
 }
 
 // TestAddressHighRecallNonAddressNumber は、高再現率の住所ルールが例規・告示の番号（<町>条例第 N 号）

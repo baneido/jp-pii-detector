@@ -313,6 +313,7 @@ func notationSpecs() []notationCase {
 	pos("title-prefix", "person-name-high-recall", "（委員長"+full(0, "")+"氏）")
 	neg("title-prefix", "中央殿・右脇殿・左脇殿の3棟")
 	neg("title-prefix", "市町村さんの方から意見がありました")
+	neg("title-prefix", "寄付ありがとうございます（株式会社長浜架空電機様）")
 
 	// 記入方法の説明が氏名ラベルに続く形（辞書不一致の値を拾う Low の強ラベル）
 	neg("form-word", "氏名（ふりがな）")

@@ -2157,7 +2157,7 @@ func Builtin() []Rule {
 				// 含めるため rejectHonorificTitlePrefix で棄却し、ここで職名を除いた範囲を拾い直す
 				// （2026-10-30 10:00 に実測した範囲の誤り）。
 				{Re: personNameHonorificAfterTitleRe, Base: Medium, Validate: honorificPersonNameValid,
-					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound, rejectHistoricalUjiName)},
+					ValidateLine: allValidateLine(rejectKaishaChoPrefix, rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound, rejectHistoricalUjiName)},
 				// 「6年生<姓><名>さん」「2年<姓><名>さん」のように学年の直後に続く氏名。上の無空白
 				// パターンは「年生<姓><名>」まで値に含めてしまうため rejectGradePrefix で棄却し、
 				// ここで学年を除いた範囲を拾い直す（2026-10-30 08:00 に実測した範囲の誤り）。検証は

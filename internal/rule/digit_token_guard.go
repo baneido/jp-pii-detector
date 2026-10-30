@@ -435,3 +435,10 @@ func endsWithKanji(s string) bool {
 	r, _ := utf8.DecodeLastRuneInString(s)
 	return r == '々' || unicode.Is(unicode.Han, r)
 }
+
+// rejectKaishaChoPrefix は、personNameHonorificAfterTitleRe が「株式会社長江電機様」のような
+// 「会社」に続く社名の「社長」を職名と取り違えた値を棄却する（値の直前が「会社長」）。
+// 2026-10-30 10:00 の全文書比較で実測した誤検出。
+func rejectKaishaChoPrefix(line string, start, end int) bool {
+	return !strings.HasSuffix(line[:start], "会社長")
+}
