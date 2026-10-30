@@ -743,6 +743,32 @@ var (
 		`(?:市長|町長|村長|区長|知事|教育長|議長|理事長|会長|社長|学長|院長|所長|局長)[ ]+` +
 			`([` + kanji + `]{1,4}[ ]{5,12}[` + kanji + `]{1,4})[ ]*(?:様|殿)[ ]*$`,
 	)
+	// personNameCommitteeListRe は会議録・議事要旨の出席者欄「出席委員 <姓><名>会長、<姓><名>委員、…」
+	// のように、姓名の直後に会議内の役職（会長・副会長・委員長・副委員長・委員・議長・副議長）が
+	// 続き読点で区切って並ぶ氏名を拾う（person-name-role-label）。町の審議会の議事要旨で、
+	// 全モードが取りこぼす見逃しを実測した（2026-10-30 08:00）。値は直前が行頭・読点・
+	// コロン・山括弧・空白のいずれかで、直後の役職のあとに読点か行末が来ること
+	// （rejectCommitteeListTail）と、姓名辞書の完全分割（姓+名）を要求する。姓だけの
+	// 「<姓>委員、」や「人権擁護委員、」「民生委員、」のような制度名は完全分割を通らない。
+	personNameCommitteeListRe = regexp.MustCompile(
+		`(?:^|[、,，：:＞>]|[ ])[ ]*([` + kanji + `]{3,8}?)(?:副委員長|委員長|副会長|会長|副議長|議長|委員)`,
+	)
+	// personNameLecturerSpaceRe は「（１）講師 <姓> <名>さん」「講師   <姓> <名>氏」のように、講師等の
+	// ラベルと氏名の間がコロンでなく空白で、氏名の後に敬称が付く形を拾う（person-name-role-label）。
+	// personNameLecturerLabelRe はコロン・スラッシュ区切りしか見ないため、市の報道資料で
+	// 取りこぼしていた（2026-10-30 08:00 実測）。空白区切りは「講師 派遣事業」のような
+	// 一般語とも並ぶため、敬称を必須にする。
+	personNameLecturerSpaceRe = regexp.MustCompile(
+		`(?:講師|講演者|審査員|パネリスト)[ ]+` + lecturerValue + `[ ]*(?:氏|先生|さん|様)`,
+	)
+	// personNameTantoSpaceRe は学校・自治体の様式の「担当者 <姓> <名>」「担当者 教頭 <姓> <名>」の
+	// ように、担当者ラベルと姓名の間が空白だけで、値の後に 2 個以上の空白か行末が来る形を拾う
+	// （person-name-role-label）。pdftotext -layout で表の欄がコロンなしに並ぶ形を全モードが
+	// 取りこぼしていた（2026-10-30 08:00 実測）。値は空白区切りの姓名で、姓名辞書の完全分割を要求する。
+	personNameTantoSpaceRe = regexp.MustCompile(
+		`担当者[ ]+(?:(?:教頭|校長|副校長|主任|主査|主事|係長|課長|主幹|副主幹|課長補佐)[ ]+)?` +
+			`([` + kanji + `]{1,4}[ ][` + kanji + `]{1,4})(?:[ ]{2,}|[ ]*$)`,
+	)
 )
 
 // personNamePlaceholders は氏名の値として現れるダミー語（人名ではない）。
@@ -1986,7 +2012,7 @@ func Builtin() []Rule {
 			ID:                "person-name-role-label",
 			Description:       "氏名（担当者・宛名ラベル付き）",
 			Prefilter:         PrefilterCJK,
-			PrefilterLiterals: []string{"担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "教授", "講師", "長：", "長:", "頭取：", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届"},
+			PrefilterLiterals: []string{"会長", "委員", "議長", "担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "教授", "講師", "長：", "長:", "頭取：", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届"},
 			Validate:          notPlaceholderName,
 			Patterns: []Pattern{
 				// 担当者・宛名・連絡先ラベル。敬称のような強い人物シグナルが無いため、
@@ -2061,6 +2087,11 @@ func Builtin() []Rule {
 				{Re: personNameKosekiTodokeRe, Base: Medium, Validate: validSpacedSurnameGiven},
 				{Re: personNameKosekiTodoke2Re, Base: Medium, Validate: validSpacedSurnameGiven},
 				{Re: personNameTitleHonorificWideRe, Base: Medium, Validate: validSpacedSurnameGiven},
+				// 会議録の出席者欄「<姓><名>会長、<姓><名>委員、」、空白区切りの「講師 <姓> <名>さん」、
+				// 様式の「担当者 <姓> <名>」（いずれも 2026-10-30 08:00 に実測した見逃し）。
+				{Re: personNameCommitteeListRe, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: rejectCommitteeListTail},
+				{Re: personNameLecturerSpaceRe, Base: Medium, Validate: validPersonNameFullSplit},
+				{Re: personNameTantoSpaceRe, Base: Medium, Validate: validPersonNameFullSplit},
 			},
 		},
 		{
@@ -2083,6 +2114,15 @@ func Builtin() []Rule {
 				), Base: Medium, Validate: honorificPersonNameValid,
 					// 「新品同様」「構文仕様」のような一般語の「様」と、
 					// 「初見さん」「常連さん」「社員皆さん」のような一般語 + 敬称を棄却する。
+					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound, rejectHistoricalUjiName, rejectGradePrefix)},
+				// 「6年生<姓><名>さん」「2年<姓><名>さん」のように学年の直後に続く氏名。上の無空白
+				// パターンは「年生<姓><名>」まで値に含めてしまうため rejectGradePrefix で棄却し、
+				// ここで学年を除いた範囲を拾い直す（2026-10-30 08:00 に実測した範囲の誤り）。検証は
+				// 上の無空白パターンと同じ honorificPersonNameValid（辞書にない子どもの名も残す）。
+				{Re: regexp.MustCompile(
+					`[0-9]年生?([` + kanji + `]{3,8})(?:さん|くん|ちゃん|様|氏)`,
+				), Base: Medium, Validate: honorificPersonNameValid,
+					// 学年の後の値も上の無空白パターンと同じ一般語・団体名の棄却を通す。
 					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound, rejectHistoricalUjiName)},
 				// 敬称の直前に空白が入る形（「鈴木一郎 様」）と、姓名の間に空白が
 				// 入る形（「山田 太郎様」）。上の無空白パターンは値と敬称が地続きの

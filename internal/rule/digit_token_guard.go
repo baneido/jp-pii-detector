@@ -155,7 +155,9 @@ var youCompoundStems = []string{"同", "仕", "模", "異", "種多"}
 // 作る文字。行政文書の「申請書様式」「共通様式」「別添様式２」で、直前の漢字列
 // （申請書・共通・別添）を敬称付き氏名として切り出す偽陽性を公開文書で実測した
 // （様式は書式を指す一般名詞で、個人情報保護法上の個人情報に当たらない）。
-var youCompoundTails = []string{"式", "相", "態"}
+//
+// 「5年間様子を見た」の「様子」も 2026-10-30 08:00 に実測した（直前の「年間」を氏名として報告していた）。
+var youCompoundTails = []string{"式", "相", "態", "子"}
 
 // rejectYouCompound は、敬称アンカーの「様」が一般語の一部（「新品同様」
 // 「従来同様」「構文仕様」「多種多様」「申請書様式」）である場合に棄却する。日本語ドキュメントの
@@ -291,11 +293,18 @@ var honorificCommonNouns = map[string]bool{
 	// 自治体の広報紙名「広報さんむ」等（「広報」+ ひらがなの紙名の先頭が「さん」）と、
 	// 「子供さん」「サンタさん」（2026-10-30 06:00 に実測した高再現率モードの偽陽性）。
 	"広報": true, "子供": true, "サンタ": true,
+	// 「妊婦さん」「産婦さん」「農家さん」「宮司さん」「花嫁さん」（2026-10-30 08:00 に実測した
+	// 高再現率モードの偽陽性。母子保健・催しの案内で立場を指す一般語）。
+	"妊婦": true, "産婦": true, "妊産婦": true, "経産婦": true, "農家": true, "宮司": true, "花嫁": true,
 }
 
 // honorificCommonNounSuffixes は、「社員皆さん」「来場者皆様」「常連客様」の
 // ように、一般語 + 敬称の前に別の語が付いた形の語尾。
-var honorificCommonNounSuffixes = []string{"皆", "客"}
+//
+// 「出荷農家さん」「潮来花嫁さん」「<神社名>宮司さん」「<市名>災害協力会様」「旧<姓>印刷さん」
+// （2026-10-30 08:00 に実測した偽陽性）のように、立場を指す一般語や団体・店の名称の
+// 語尾も含める。団体・店は個人を識別しない（代表者名を含まない）。
+var honorificCommonNounSuffixes = []string{"皆", "客", "農家", "花嫁", "宮司", "妊婦", "産婦", "協力会", "自治会", "町内会", "生徒会", "児童会", "保護者会", "組合", "印刷"}
 
 // rejectHonorificCommonNoun は、敬称（さん・様）の直前の漢字列が一般語
 // （honorificCommonNouns・honorificCommonNounSuffixes）である場合に棄却する。
@@ -338,6 +347,31 @@ func rejectHistoricalUjiName(line string, start, end int) bool {
 		}
 	}
 	return true
+}
+
+// rejectGradePrefix は、敬称アンカーの値が「6年生<姓><名>」「2年<姓><名>」のように数字の後の
+// 学年表記から始まる場合に棄却する（学年を除いた範囲は専用パターンで拾い直す）。
+func rejectGradePrefix(line string, start, end int) bool {
+	v := line[start:end]
+	if !strings.HasPrefix(v, "年") || start == 0 {
+		return true
+	}
+	c := line[start-1]
+	return !(c >= '0' && c <= '9')
+}
+
+// rejectCommitteeListTail は personNameCommitteeListRe の一致の直後（役職の後）が読点か
+// 行末であることを確かめる。「<姓><名>委員会」「<姓><名>会長賞」のように役職語が別の語の
+// 一部になる形を棄却する。
+func rejectCommitteeListTail(line string, start, end int) bool {
+	rest := line[end:]
+	for _, t := range []string{"副委員長", "委員長", "副会長", "会長", "副議長", "議長", "委員"} {
+		if r, ok := strings.CutPrefix(rest, t); ok {
+			r = strings.TrimLeft(r, " ")
+			return r == "" || strings.HasPrefix(r, "、") || strings.HasPrefix(r, ",") || strings.HasPrefix(r, "，")
+		}
+	}
+	return false
 }
 
 // endsWithKanji は s の最後のルーンが漢字（CJK 統合漢字・々）かを返す。
