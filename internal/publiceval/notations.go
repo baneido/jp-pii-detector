@@ -70,6 +70,7 @@ var notationCategories = []string{
 	"sensei-line",          // 講師一覧の行「<姓> <名> 先生」
 	"shrine-deity",         // 社殿名「<祖霊・宝物・参集>殿」・神仏の尊称「<天神・聖天>様」・「杜氏」（陰性）と、同じ形の氏名（陽性）
 	"lecturer-guest-san",   // 均等割付・スラッシュ区切りの「講 師／<姓> <名>さん（<肩書>）」と「ゲスト <姓> <名>さん(<職業>)」
+	"birth-range",          // 入園・受験資格の「<日付>～<日付>生まれ」・記入例（陰性）と、単独の「<日付>生まれ」（陽性）
 }
 
 type notationCase struct {
@@ -492,6 +493,26 @@ func notationSpecs() []notationCase {
 	neg("honorific-compound", "息子さんが通い")
 	neg("honorific-compound", "黄門様も会員のカード")
 	neg("honorific-compound", "架空市立殿田小学校の児童が施設見学に訪れました。")
+
+	// 神仏・聖職の尊称、職業・取引先・施設・神社の名称、幼稚園のクラス名 + 敬称（2026-10-30 22:00 実測の高再現率の偽陽性）
+	neg("honorific-compound", "観音様のお年夜")
+	neg("honorific-compound", "教皇様にもお会いできる")
+	neg("honorific-compound", "職人さんの謡曲教室")
+	neg("honorific-compound", "飲食店様からのお問い合わせ")
+	neg("honorific-compound", "別途作家様への申請をご案内します")
+	neg("honorific-compound", "架空刑務所さんとの官学連携事業")
+	neg("honorific-compound", "大丈夫桃組さんの分も掘ってきてあげる")
+	neg("shrine-deity", "大黒様のお歳夜")
+	neg("shrine-deity", "架空川上神社下社様 例祭")
+
+	// 入園・入学・受験資格の対象期間の端と記入例（2026-10-30 22:00 実測の偽陽性）。日付は架空。
+	neg("birth-range", "令和7年4月2日～令和8年4月1日生まれ")
+	neg("birth-range", "新年長児 ： 2021年4月2日～2022年4月1日生まれのお子さま")
+	neg("birth-range", "2004年4月2日生まれ～2008年4月1日生まれの方")
+	neg("birth-range", "（平成16年4月2日生まれ～平成20年4月1日生まれ）")
+	neg("birth-range", "例：2000年1月1日生まれの場合")
+	pos("birth-range", "jp-birthdate", "1990年1月1日生まれ。架空県出身。") // jp-pii-detector:ignore
+	pos("birth-range", "jp-birthdate", "平成2年3月4日生まれ")         // jp-pii-detector:ignore
 	return out
 }
 
