@@ -72,6 +72,7 @@ var notationCategories = []string{
 	"lecturer-guest-san",   // 均等割付・スラッシュ区切りの「講 師／<姓> <名>さん（<肩書>）」と「ゲスト <姓> <名>さん(<職業>)」
 	"birth-range",          // 入園・受験資格の「<日付>～<日付>生まれ」・記入例（陰性）と、単独の「<日付>生まれ」（陽性）
 	"talk-event",           // 催し案内の「<姓><名>さん×<姓><名>さん」「登壇：」「聞き手：」「進行役：」（陽性）と、院号・施設名 + 敬称（陰性）
+	"reading-romaji",       // カタカナ読み・ローマ字併記の姓名「<姓> <名>(<セイ> <メイ>)」「<姓><名>（<SEI> <Mei>）」と「<姓><名>選手」（陽性）、氏子・大さん橋・英語の施設名（陰性）
 	"officer-shi",          // IR 資料の「取締役 <姓><名>氏」「常勤監査役 <姓><名>氏」（陽性）と、立場・神の尊称 + 敬称、連続した西暦年（陰性）
 }
 
@@ -544,6 +545,23 @@ func notationSpecs() []notationCase {
 	neg("officer-shi", "排出量 最終処分量 2019   2020 2021 2022    2023 年度")
 	neg("form-word", "フリガナ（全角）")
 	neg("form-word", "氏名（会員番号その他管理ID）")
+
+	// スポーツチーム・映画祭のサイトのカタカナ読み・ローマ字併記の姓名と「<姓><名>選手」（2026-10-31 04:00 実測の
+	// Medium の見逃し）と、祭り・アリーナ・和菓子店・政府機関のサイトの「氏子」「大さん橋」・取引先や神の尊称 + 敬称・
+	// 記入指示（同じ回に実測した高再現率・Low の偽陽性）
+	pos("reading-romaji", role, "ゼネラルマネージャー　"+full(14, " ")+"(ヤマダ タロウ)")
+	pos("reading-romaji", role, full(15, " ")+"（スズキ　ハナコ）")
+	pos("reading-romaji", role, "審査員 "+full(16, "")+"（YAMADA Taro ）")
+	pos("reading-romaji", role, full(17, " ")+"（SATO Ichiro）")
+	pos("reading-romaji", role, full(18, "")+"選手　退団のお知らせ")
+	neg("reading-romaji", "架空駅（Tokyo Station）")
+	neg("reading-romaji", "日本代表選手の活躍")
+	neg("reading-romaji", "全日本選手権の結果")
+	neg("reading-romaji", "架空神社氏子青年崇敬会")
+	neg("reading-romaji", "架空港大さん橋ふ頭ビル")
+	neg("reading-romaji", "同業他社さんとのお付き合い")
+	neg("reading-romaji", "大国様の御神徳")
+	neg("form-word", "氏名（受験時のもの）")
 	return out
 }
 

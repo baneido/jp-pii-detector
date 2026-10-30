@@ -612,6 +612,38 @@ var (
 		`(?:^|[^` + kanji + hiragana + katakana + `]|の)` +
 			`([` + kanji + `]{1,4}[ ]{1,3}[` + kanji + `]{1,4})[ ]*[(（][ぁ-ゖー]{1,8}[ ]{1,3}[ぁ-ゖー]{1,8}[)）]`,
 	)
+	// personNameWithKanaReadingRe は personNameWithReadingRe のカタカナ読み版
+	// 「<姓> <名>(<セイ> <メイ>)」を拾う。2026-10-31 04:00 にアイスホッケーチームのサイトの
+	// スタッフ紹介「<姓> <名>(<セイ> <メイ>)」で、全ルールモードが取りこぼす見逃しを実測した。
+	// 読みの区切りは半角・全角の空白どちらも許す。検証は読みがなと同じく validSpacedSurnameGiven。
+	personNameWithKanaReadingRe = regexp.MustCompile(
+		`(?:^|[^` + kanji + hiragana + katakana + `]|の)` +
+			`([` + kanji + `]{1,4}[ ]{1,3}[` + kanji + `]{1,4})[ ]*[(（][ァ-ヺー]{1,8}[ 　]{1,3}[ァ-ヺー]{1,8}[)）]`,
+	)
+	// personNameRomajiParenRe / personNameRomajiParenSpacedRe は、映画祭の審査員紹介・
+	// 選手名鑑の「<姓><名>（TSUTSUI Takefumi）」「名前：<姓> <名>（TARO YAMADA）」のように、
+	// 漢字の姓名の直後にローマ字の姓名が括弧で続く表記を拾う（person-name-role-label）。
+	// 2026-10-31 04:00 に映画祭・ハンドボールチームのサイトで、高再現率モードでも取りこぼす
+	// 見逃しを実測した。「東京駅（Tokyo Station）」のような施設の英語名と区別するため、
+	// ローマ字は 2 語で少なくとも 1 語が全部大文字（姓を大文字で書く慣行）であることを要求し、
+	// 漢字側は姓名辞書の完全分割（空白なし）か、先頭語が姓（空白区切り）であることで検証する。
+	personNameRomajiParenRe = regexp.MustCompile(
+		`(?:^|[^` + kanji + hiragana + katakana + `])` +
+			`([` + kanji + `]{2,6})[ ]*[(（][ ]*` + romajiNamePair + `[ ]*[)）]`,
+	)
+	personNameRomajiParenSpacedRe = regexp.MustCompile(
+		`(?:^|[^` + kanji + hiragana + katakana + `])` +
+			`([` + kanji + `]{1,4}[ ]{1,3}[` + kanji + `]{1,4})[ ]*[(（][ ]*` + romajiNamePair + `[ ]*[)）]`,
+	)
+	// personNameSenshuRe は、スポーツチームのお知らせの見出し「<姓><名>選手　退団のお知らせ」
+	// 「<姓> <名>選手の活躍」のように、姓名に「選手」が直結する表記を拾う。2026-10-31 04:00 に
+	// バレーボールチームのニュース一覧で全ルールモードが取りこぼす見逃しを実測した。
+	// 「選手権」「選手会」を除くため直後の文字を区切り・助詞に限り、値は姓名辞書の完全分割で
+	// 検証する（「代表選手」「外国人選手」のような一般語は分割できず報告しない）。
+	personNameSenshuRe = regexp.MustCompile(
+		`(?:^|[^` + kanji + hiragana + katakana + `])` +
+			`([` + kanji + `]{2,6})選手(?:[ 　、。・！!（(がはのをにともへ]|$)`,
+	)
 	// personNameTantoReadingRe は「担当 <姓>(<よみ>)」のように、コロンのない担当欄で姓の
 	// 直後にひらがなの読みが括弧で続く表記を拾う（市の報道発表の問合せ先で実測）。
 	// 読み括弧が人名の根拠になるため、コロン必須の担当ラベル（#48）の例外として扱う。
@@ -761,6 +793,8 @@ var (
 			`[ ]?に対する業務禁止命令`,
 	)
 	// officerShi* は personNameOfficerShiRe 等の部品（役員の役職名と、氏名の並びの区切り）。
+	// romajiNamePair は personNameRomajiParen*Re の部品（ローマ字の姓名 2 語。どちらかが全部大文字）。
+	romajiNamePair  = `(?:[A-Z]{2,15}[ ]+[A-Z][A-Za-z]{1,15}|[A-Z][a-z]{1,15}[ ]+[A-Z]{2,15})`
 	officerShiTitle = `(?:社外取締役|常勤監査役|社外監査役|取締役|監査役)[ ]*`
 	officerShiSep   = `(?:、|および|及び)`
 	// lecturer* は personNameLecturerLabelRe / personNameLecturerLabel2Re の部品（講師等の
@@ -961,6 +995,9 @@ var personNameFormWordPrefixes = []string{
 	// 「氏名（旧氏、可）」、緊急連絡先欄の「氏名：　　続柄（　）」（2026-10-30 20:00 に旅館・学会・
 	// 社会福祉法人のサイトで実測した Low の偽陽性。どれも記入方法の指示か次の項目ラベル）。
 	"必須", "ニックネーム", "旧氏", "旧姓", "続柄",
+	// 資格試験の証明書申請の「氏名（受験時のもの）」（2026-10-31 04:00 に政府機関のサイトで実測した
+	// Low の偽陽性。どの時点の氏名を書くかの指示で、氏名ではない）。
+	"受験時", "婚姻前", "変更前", "変更後",
 }
 
 // personNameFormWordSchoolSuffixes は「学校・氏名：<市町村>立<校名>小学校　<学年>　<姓>　<名>　さん」
@@ -2233,7 +2270,7 @@ func Builtin() []Rule {
 			ID:                "person-name-role-label",
 			Description:       "氏名（担当者・宛名ラベル付き）",
 			Prefilter:         PrefilterCJK,
-			PrefilterLiterals: []string{"会長", "委員", "議長", "担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届", "監督", "先生", "講 師", "ゲスト", "登壇", "聞き手", "進行役", "さん×", "さん ×"},
+			PrefilterLiterals: []string{"会長", "委員", "議長", "担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届", "監督", "先生", "講 師", "ゲスト", "登壇", "聞き手", "進行役", "さん×", "さん ×", "選手"},
 			Validate:          notPlaceholderName,
 			Patterns: []Pattern{
 				// 担当者・宛名・連絡先ラベル。敬称のような強い人物シグナルが無いため、
@@ -2276,6 +2313,11 @@ func Builtin() []Rule {
 				// 要求したうえで姓名辞書の姓で検証する。
 				{Re: personNameWithReadingRe, Base: Medium, Validate: validSpacedSurnameGiven},
 				{Re: personNameTantoReadingRe, Base: Medium, Validate: validPersonNameSurnameOrFull},
+				// カタカナ読み・ローマ字の括弧が続く姓名と、「<姓><名>選手」（2026-10-31 04:00 に実測した見逃し）。
+				{Re: personNameWithKanaReadingRe, Base: Medium, Validate: validSpacedSurnameGiven},
+				{Re: personNameRomajiParenRe, Base: Medium, Validate: validPersonNameFullSplit},
+				{Re: personNameRomajiParenSpacedRe, Base: Medium, Validate: validSpacedSurnameGiven},
+				{Re: personNameSenshuRe, Base: Medium, Validate: validPersonNameFullSplit},
 				{Re: personNameTitleLineEndRe, Base: Medium, Validate: validSpacedSurnameGiven},
 				{Re: personNameTantoDeptSlashRe, Base: Medium, Validate: validPersonNameSurnameOrFull},
 				{Re: personNameTantoDeptSlash2Re, Base: Medium, Validate: validPersonNameSurnameOrFull},
