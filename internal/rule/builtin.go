@@ -585,8 +585,10 @@ var (
 	// ラベルも敬称もないため全ルールモードが取りこぼす見逃しを公開文書（県・市・国の
 	// 記者発表）で実測した。姓名と読みの両方が 2 語に分かれる形に限り、先頭語が姓名辞書の
 	// 姓であることを要求する（validSpacedSurnameGiven）。
+	// 2026-10-30 12:00 に「立命館大学の<姓> <名>（<せい> <めい>）教授」のように、直前が助詞「の」の
+	// ために取りこぼす見逃しを実測したため、直前の文字として「の」も許す。
 	personNameWithReadingRe = regexp.MustCompile(
-		`(?:^|[^` + kanji + hiragana + katakana + `])` +
+		`(?:^|[^` + kanji + hiragana + katakana + `]|の)` +
 			`([` + kanji + `]{1,4}[ ]{1,3}[` + kanji + `]{1,4})[ ]*[(（][ぁ-ゖー]{1,8}[ ]{1,3}[ぁ-ゖー]{1,8}[)）]`,
 	)
 	// personNameTantoReadingRe は「担当 <姓>(<よみ>)」のように、コロンのない担当欄で姓の
@@ -639,14 +641,39 @@ var (
 		regexp.MustCompile(tantoListPrefix + `(?:` + tantoListItem + tantoListSep + `){2}(` + tantoListName + `)` + tantoListReading + `(?:` + tantoListSep + tantoListItem + `)?` + tantoListEnd),
 		regexp.MustCompile(tantoListPrefix + `(?:` + tantoListItem + tantoListSep + `){3}(` + tantoListName + `)` + tantoListReading + tantoListEnd),
 	}
+	// orgHeadColonTitle は法人の長の職名と、コロンまでに挟まる「兼社長」「社長執行役員」「グループ」「CEO」と
+	// 空白（personNameOrgHeadColonRe・personNameOrgHeadColonIkaRe で共用）。
+	orgHeadColonTitle = `(?:理事長|代表取締役社長|代表取締役会長|代表取締役|代表執行役社長|取締役社長|社長執行役員|社長|会長|学長|総長|機構長|所長|代表理事|頭取|董事長|CEO|ＣＥＯ)` +
+		`(?:[ ]*(?:兼社長|兼CEO|兼ＣＥＯ|社長執行役員|グループ|CEO|ＣＥＯ))*[ ]*`
 	// personNameOrgHeadColonRe は報道発表の冒頭の法人紹介「（〇〇県〇〇市、理事長：<姓><名>、
 	// 以下「機構」）」「（理事長：<姓><名>    本部：…）」のように、法人の長の職名 + コロンの
 	// 後に続く氏名を拾う（person-name-role-label）。独立行政法人・企業の報道発表で全ルール
 	// モードが取りこぼす見逃しを実測した（2026-10-30 04:00）。値の後に読点・閉じ括弧・
 	// 2 個以上の空白・行末のいずれかを要求し、姓名辞書の完全分割（姓+名）でのみ報告する。
+	//
+	// 2026-10-30 12:00 に、企業の報道発表で「代表取締役社長 CEO：<姓> <名>）」「代表取締役会長兼社長CEO：
+	// <姓> <名>、」「代表取締役 社長執行役員 CEO：」「董事長兼CEO：」「理事長 : <姓> <名>、」のように、
+	// 職名とコロンの間に「兼社長」「社長執行役員」「グループ」「CEO」や空白が入る表記と、名が辞書に
+	// ない空白区切りの「<姓> <名>」を全モードで取りこぼす見逃しを実測した（新規 1500 文書で約 70 件）。
+	// 職名の後に orgHeadColonTail の語を挟むことを許し、空白で 2 語に分かれた値は姓だけ辞書で確かめる
+	// （validFullSplitOrSpacedSurnameGiven）。
 	personNameOrgHeadColonRe = regexp.MustCompile(
-		`(?:理事長|代表取締役社長|代表取締役|代表執行役社長|社長|会長|学長|総長|機構長|所長|代表理事|頭取)[：:][ ]*` +
+		orgHeadColonTitle + `[：:][ ]*` +
 			`([` + kanji + `]{2,8}(?:[ ][` + kanji + `]{1,8})?)(?:[ ]*[、,)）]|[ ]{2,}|[ ]*$)`,
+	)
+	// personNameOrgHeadColonIkaRe は「（本社：<所在地>、代表取締役社長：<姓><名> 以下、当社）」のように、
+	// 無空白の氏名の直後が空白 +「以下」になる法人紹介を拾う（2026-10-30 12:00 実測の見逃し）。
+	// personNameOrgHeadColonRe は「<姓><名> 以下」を空白区切りの 2 語として取り込んでしまうため別に持つ。
+	personNameOrgHeadColonIkaRe = regexp.MustCompile(
+		orgHeadColonTitle + `[：:][ ]*([` + kanji + `]{2,8})[ ]+以下`,
+	)
+	// personNameSeatNumberRe は農業委員会・議会の会議録の出席者表「出席   委    員     1番     <姓>    <名>」
+	// 「会長 ５番 <姓> <名>」のように、議席番号「N番」の直後に空白区切りの姓名が来て行が終わる表記を
+	// 拾う（person-name-role-label）。役職名が均等割付で分かれ、氏名にラベルも敬称もないため全モードで
+	// 取りこぼしていた（2026-10-30 12:00 に町の農業委員会の議事録 12 文書・約 90 件を実測）。
+	// 姓は辞書、名は 1〜3 文字で職名でないこと（validSpacedSurnameGiven）を要求する。
+	personNameSeatNumberRe = regexp.MustCompile(
+		`(?:^|[ ])[0-9０-９]{1,2}[ ]*番[ ]+([` + kanji + `]{1,4}[ ]{1,6}[` + kanji + `]{1,3})[ ]*$`,
 	)
 	// personNameBusinessOperatorLabelRe は特定商取引法に基づく行政処分の公表資料の処分対象
 	// 欄「事業者：<姓> <名>（65 歳）」（均等割付の字間スペース付き「事  業  者：」を含む）の
@@ -2047,7 +2074,7 @@ func Builtin() []Rule {
 			ID:                "person-name-role-label",
 			Description:       "氏名（担当者・宛名ラベル付き）",
 			Prefilter:         PrefilterCJK,
-			PrefilterLiterals: []string{"会長", "委員", "議長", "担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "教授", "講師", "長：", "長:", "頭取：", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届"},
+			PrefilterLiterals: []string{"会長", "委員", "議長", "担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届"},
 			Validate:          notPlaceholderName,
 			Patterns: []Pattern{
 				// 担当者・宛名・連絡先ラベル。敬称のような強い人物シグナルが無いため、
@@ -2097,7 +2124,10 @@ func Builtin() []Rule {
 				{Re: personNameTantoListRe[1], Base: Medium, Validate: validPersonNameSurnameOrFull},
 				{Re: personNameTantoListRe[2], Base: Medium, Validate: validPersonNameSurnameOrFull},
 				{Re: personNameTantoListRe[3], Base: Medium, Validate: validPersonNameSurnameOrFull},
-				{Re: personNameOrgHeadColonRe, Base: Medium, Validate: validPersonNameFullSplit},
+				{Re: personNameOrgHeadColonRe, Base: Medium, Validate: validFullSplitOrSpacedSurnameGiven},
+				{Re: personNameOrgHeadColonIkaRe, Base: Medium, Validate: validPersonNameFullSplit},
+				// 会議録の出席者表の議席番号 + 姓名（2026-10-30 12:00 に実測した見逃し）。
+				{Re: personNameSeatNumberRe, Base: Medium, Validate: validSpacedSurnameGiven},
 				// 代表権のある役職名 + 空白/「である」/括弧 + 氏名（行政処分の公表文書の本文）。
 				// 「代表者：」ラベルを伴わないため、姓+名の完全分割のみ Medium で報告する。
 				{Re: personNameExecTitleRe, Base: Medium, Validate: validPersonNameFullSplit},
