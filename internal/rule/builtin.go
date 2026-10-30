@@ -510,6 +510,9 @@ var (
 	// 「代 表 取 締 役」（字間の半角スペース 1 個。プリフィルタ「代 表」に一致する形）も許容する。
 	personNameExecTitleRe = regexp.MustCompile(
 		`(?:代表取締役社長|代表取締役会長|代表取締役副社長|代表取締役|代 表 取 締 役|代表執行役社長|代表執行役|代表理事長|代表理事|代表社員|取締役社長|取締役会長|取締役|監査役)` +
+			// 2026-10-30 14:00 に、上場企業の公告・報道発表で「代表取締役社長 ＣＯＯ <姓> <名>」のように
+			// 役職名と氏名の間に CEO・COO 等の略称が入る表記を全モードで取りこぼす見逃しを実測した。
+			`(?:[ ]*兼?(?:CEO|COO|CFO|CTO|ＣＥＯ|ＣＯＯ|ＣＦＯ|ＣＴＯ))?` +
 			`(?:[ ]+|であった|である|[(（][ ]*)` +
 			personNameSpacedValue,
 	)
@@ -701,6 +704,21 @@ var (
 	personNameRepNameSpacedRe = regexp.MustCompile(
 		`代表者(?:の?氏名|名)[ ]+` + personNameSpacedValue,
 	)
+	// personNameKessanHeaderRe は決算短信・適時開示の表紙の「代表者 (役職名) 代表取締役社長 (氏名) <姓> <名>」
+	// 「問合せ先責任者 (役職名) 常務取締役 (氏名) <姓> <名> (TEL) …」のように、括弧書きの「(役職名)」の後の
+	// 「(氏名)」に続く氏名を拾う（person-name-role-label）。東証の決算短信の様式で、上場企業の文書では
+	// ほぼ毎回この形で載るが、括弧書きのラベルにはコロンがないため全ルールモードが取りこぼす見逃しを
+	// 実測した（2026-10-30 14:00、新規 1950 文書のうち 76 文書・152 行）。「(役職名)」を同じ行に要求して
+	// 記入様式の単独の「(氏名)」とは区別し、値の後に 2 個以上の空白・行末・開き括弧（「(TEL)」）を要求する。
+	// 空白で 2 語に分かれた値は姓だけ辞書で確かめる（validFullSplitOrSpacedSurnameGiven）。
+	// 表紙の PDF 抽出では姓と名の間が均等割付で大きく空き（「（氏名）<姓>           <名>」）、
+	// 1 字の姓（「岸 泰造」）もあるため、値は personNameSpacedValue より広く取り、
+	// 後ろに「TEL」「ＴＥＬ」が 1 個の空白で続く形も許す。
+	personNameKessanHeaderRe = regexp.MustCompile(
+		`[(（]役職名[)）][^(（]{0,60}?[(（]氏名[)）][ ]*` +
+			`([` + kanji + `]{1,8}(?:[ ]{1,40}[` + kanji + `]{1,8})?)` +
+			`(?:[ ]{2,}|[ ]*$|[ ]*[(（]|[ ]+(?:TEL|ＴＥＬ|Tel|電話))`,
+	)
 	// personNameBanOrderRe は特定商取引法に基づく行政処分の公表文書の「<姓><名>に対する業務禁止命令」
 	// の氏名を拾う（person-name-role-label）。業務禁止命令（特商法第 8 条の 2 等）は法人の役員等の
 	// 個人を名宛人とする処分であり、この位置の値は自然人の氏名になる。愛媛県の処分公表で
@@ -826,6 +844,22 @@ var (
 // validFullSplitOrSpacedSurnameGiven は、姓名辞書の完全分割（姓+名）か、空白で 2 語に分かれた
 // 「<姓> <名>」（validSpacedSurnameGiven）のどちらかが成立する値を許可する。「<姓>   <名>   氏（<所属>）」
 // のように敬称と所属の括弧という強い構造がある形で、辞書にない名（2026-10-30 10:00 に実測）を拾うために使う。
+// validKessanSpacedPair は決算短信の表紙の「(氏名)」欄の値が、辞書照合なしでも氏名とみなせる
+// 形（空白で区切った漢字 1〜4 字の 2 語で、プレースホルダや記入説明でない）かを返す。
+// 様式自体が氏名欄であることを示すため、辞書にない珍しい姓（2026-10-30 14:00 に実測）も Low で拾う。
+func validKessanSpacedPair(v string) bool {
+	f := strings.Fields(v)
+	if len(f) != 2 || !notPlaceholderName(v) || !notFormWordValue(v) {
+		return false
+	}
+	for _, w := range f {
+		if n := len([]rune(w)); n < 1 || n > 4 {
+			return false
+		}
+	}
+	return true
+}
+
 func validFullSplitOrSpacedSurnameGiven(v string) bool {
 	return validPersonNameFullSplit(v) || validSpacedSurnameGiven(v)
 }
@@ -865,6 +899,9 @@ var personNameBracketFormHints = map[string]bool{
 	// 行が終わる記入説明。「法人」が姓名辞書に一致して Medium で報告される偽陽性を
 	// 実測した（2026-10-30 06:00）。
 	"法人": true,
+	// 申請書様式の「氏名（自署）」（本人が自筆で書く欄の指示）。「自署」を氏名として low で報告する
+	// 偽陽性を大学の申請様式で実測した（2026-10-30 14:00）。
+	"自署": true,
 }
 
 // rejectBracketedFormHint は、氏名ラベルの値が括弧で囲まれた記入方法の指示語
@@ -1362,8 +1399,10 @@ func Builtin() []Rule {
 			NegativeContext: digitRuleUnitAdjacentNegativeContext,
 			Validate:        validMyNumber,
 			Patterns: []Pattern{
+				// rejectDaiGoNumber は古物商許可番号「第<12 桁>号」等の許可・登録番号の棄却
+				// （2026-10-30 14:00 に企業サイトの古物商許可番号で偽陽性を実測した）。
 				{Re: dgNoAlnumHyphen(`\d{12}`), Base: Medium,
-					ValidateLine: allValidateLine(rejectNumericTokenPart, rejectHexDumpGroup)},
+					ValidateLine: allValidateLine(rejectNumericTokenPart, rejectHexDumpGroup, rejectDaiGoNumber)},
 				// 前後にハイフンが続く場合はクレジットカード等の
 				// 4-4-4-4 グループの一部とみなして除外する。
 				{Re: dgNoAlnumHyphen(`\d{4}-\d{4}-\d{4}`), Base: Medium},
@@ -2143,6 +2182,10 @@ func Builtin() []Rule {
 				{Re: personNameDefinedAsOperatorRe, Base: Medium, Validate: validPersonNameFullSplit},
 				// 監督処分簿の「代表者氏名  <姓> <名>」（コロンなし）と「<姓><名>に対する業務禁止命令」。
 				{Re: personNameRepNameSpacedRe, Base: Medium, Validate: validPersonNameFullSplit},
+				// 決算短信・適時開示の表紙の「(役職名) <役職> (氏名) <姓> <名>」（2026-10-30 14:00 に実測した見逃し）。
+				{Re: personNameKessanHeaderRe, Base: Medium, Validate: validFullSplitOrSpacedSurnameGiven},
+				// 同じ表紙で、姓が辞書にない（珍しい姓の）空白区切りの 2 語は Low で報告する。
+				{Re: personNameKessanHeaderRe, Base: Low, Validate: validKessanSpacedPair},
 				{Re: personNameBanOrderRe, Base: Medium, Validate: validPersonNameFullSplit},
 				// 講師・審査員等のラベル + 氏名、「<姓><名>氏（<所属>）」、戸籍の届出欄、
 				// 宛名欄の均等割付の姓名 + 様（いずれも 2026-10-30 06:00 に実測した見逃し）。

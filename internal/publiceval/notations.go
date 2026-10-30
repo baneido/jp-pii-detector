@@ -63,6 +63,8 @@ var notationCategories = []string{
 	"org-head-ceo",         // 法人紹介「代表取締役社長 CEO：<姓> <名>）」
 	"seat-roster",          // 会議録の議席番号「1番     <姓>    <名>」
 	"reading-after-no",     // 助詞「の」に続く「<姓> <名>（<せい> <めい>）」
+	"tanshin-header",       // 決算短信の表紙「(役職名) <役職> (氏名) <姓> <名>」と「代表取締役社長 ＣＯＯ <姓> <名>」
+	"permit-number",        // 許可・登録番号「第<12 桁>号」（陰性）と、囲まれていない個人番号（陽性）
 }
 
 type notationCase struct {
@@ -336,7 +338,25 @@ func notationSpecs() []notationCase {
 	pos("reading-after-no", role, "当日は、架空大学の"+n(1).sur+" 大（"+n(1).surYomi+" まさる）教授による講演")
 	neg("reading-after-no", "架空市の中央 公園（ちゅうおう こうえん）の整備")
 
+	// 決算短信・適時開示の表紙の括弧書きラベルと、役職名と氏名の間の CEO・COO
+	pos("tanshin-header", role, "代   表   者 (役職名) 代表取締役社長  (氏名) "+full(0, " "))
+	pos("tanshin-header", role, "問合せ先責任者 (役職名) 常務取締役管理本部長  (氏名) "+full(1, " ")+"   (TEL) 00-0000-0000")
+	pos("tanshin-header", role, "代表者 （役職名）代表取締役社長 （氏名）"+full(2, ""))
+	pos("tanshin-header", role, "架空製作所 代表取締役社長 ＣＯＯ "+full(3, " "))
+	pos("tanshin-header", role, "代表者     （役職名） 代表取締役社長       （氏名）"+full(4, "                 "))
+	pos("tanshin-header", role, "問合せ先責任者 (役職名) 総務部長 (氏名) "+full(5, " ")+" TEL 00-0000-0000")
+	neg("tanshin-header", "代表者 (役職名) 代表取締役社長  (氏名) 未定")
+	neg("tanshin-header", "(役職名)及び(氏名)を記入してください")
+	neg("tanshin-header", "代表取締役社長 ＣＯＯ 就任のお知らせ")
+
+	// 許可・登録番号「第<12 桁>号」（検査用数字を満たす 12 桁でもマイナンバーではない）
+	neg("permit-number", "古物商許可番号 架空県公安委員会 第123456789018号")
+	neg("permit-number", "許可番号：第 123456789018 号")
+	// 自リポジトリ走査（CI の dogfooding）で検出されないよう、ダミー番号は分割して書く。
+	pos("permit-number", "jp-my-number", "個人番号 "+"1234567890"+"18")
+
 	// 記入方法の説明が氏名ラベルに続く形（辞書不一致の値を拾う Low の強ラベル）
+	neg("form-word", "氏名（自署）")
 	neg("form-word", "氏名（ふりがな）")
 	neg("form-word", "氏名：団体名・職・氏名")
 	neg("form-word", "氏名（法人にあっては名称及び代表者の氏名）")
@@ -388,6 +408,13 @@ func notationSpecs() []notationCase {
 	neg("honorific-compound", "架空市災害協力会様に感謝状を贈呈しました")
 	neg("honorific-compound", "旧"+n(0).sur+"印刷さんのところを整備しました")
 	neg("honorific-compound", "5年間様子を見た中で")
+	neg("honorific-compound", "法人・事業主様の不動産のご相談")
+	neg("honorific-compound", "対象株主様へのご案内")
+	neg("honorific-compound", "新TVCM「義姉さんの家」篇")
+	neg("honorific-compound", "架空紡績(株) 架空川工場様　隣接地")
+	neg("honorific-compound", "販売店様向けサービス")
+	neg("honorific-compound", "売主様にお手間もご負担も掛けません")
+	neg("honorific-compound", "ページをご覧ください（架空製紙連合会様HPより）")
 	return out
 }
 
