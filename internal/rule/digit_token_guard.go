@@ -308,6 +308,13 @@ var honorificCommonNouns = map[string]bool{
 	// （2026-10-30 16:00 に企業・団体・図書館のサイトで実測した高再現率モードの偽陽性。
 	// いずれも立場・職業・組織を指す一般語で、特定の個人の氏名ではない）。
 	"企業": true, "団体": true, "放送局": true, "神父": true, "声優": true, "代理人": true, "将軍": true,
+	// 神社・寺院のサイトの「氏神様」「天神様」「聖天様」「大神様」「菅公様」「楠公さん」「孝徳天皇様」
+	// 「王太子様」と、「檀家さん」「叔父さん」「店舗様」「書店様」「個人様」（2026-10-30 18:00 に
+	// 神社・寺院・出版社のサイトで実測した高再現率モードの偽陽性。神仏・歴史上の人物の尊称や、
+	// 立場・続柄・取引先を指す一般語で、生存する特定の個人の氏名ではない）。
+	"氏神": true, "天神": true, "聖天": true, "大神": true, "菅公": true, "楠公": true, "王太子": true,
+	"檀家": true, "叔父": true, "叔母": true, "伯父": true, "伯母": true, "店舗": true, "書店": true, "個人": true,
+	"神様": true, "仏様": true, "明神": true,
 }
 
 // honorificCommonNounSuffixes は、「社員皆さん」「来場者皆様」「常連客様」の
@@ -318,7 +325,10 @@ var honorificCommonNouns = map[string]bool{
 // 語尾も含める。団体・店は個人を識別しない（代表者名を含まない）。
 // 「対象株主様」「<社名> <地名>工場様」（2026-10-30 14:00 に企業の IR・事業所案内で実測した偽陽性）の
 // 「株主」「工場」「販売店」「事業主」と、業界団体の「<業界>連合会様」も語尾に含める。
-var honorificCommonNounSuffixes = []string{"皆", "客", "農家", "花嫁", "宮司", "妊婦", "産婦", "協力会", "自治会", "町内会", "生徒会", "児童会", "保護者会", "組合", "印刷", "株主", "工場", "販売店", "事業主", "連合会", "企業", "団体", "放送局"}
+var honorificCommonNounSuffixes = []string{"皆", "客", "農家", "花嫁", "宮司", "妊婦", "産婦", "協力会", "自治会", "町内会", "生徒会", "児童会", "保護者会", "組合", "印刷", "株主", "工場", "販売店", "事業主", "連合会", "企業", "団体", "放送局",
+	// 「<諡号>天皇様」「秘仏毘沙門天様」「不動明王様」「<地名>大明神様」（2026-10-30 18:00 に神社・寺院の
+	// 由緒の案内で実測した偽陽性。神仏と歴史上の天皇の尊称）。
+	"天皇", "毘沙門天", "弁財天", "弁才天", "大黒天", "明王", "菩薩", "如来", "権現", "明神", "大神", "檀家", "書店", "店舗"}
 
 // rejectHonorificCommonNoun は、敬称（さん・様）の直前の漢字列が一般語
 // （honorificCommonNouns・honorificCommonNounSuffixes）である場合に棄却する。
@@ -333,7 +343,12 @@ func rejectHonorificCommonNoun(line string, start, end int) bool {
 			return false
 		}
 	}
-	if !strings.HasPrefix(rest, "さん") && !strings.HasPrefix(rest, "様") {
+	// 「南部杜氏の技」「越後杜氏」の「杜氏」は酒造りの職人を指す一般語で、「<姓>氏」の敬称ではない
+	// （2026-10-30 18:00 に新聞社サイトの広告文で実測した高再現率モードの偽陽性）。
+	if strings.HasPrefix(rest, "氏") && strings.HasSuffix(line[start:end], "杜") {
+		return false
+	}
+	if !strings.HasPrefix(rest, "さん") && !strings.HasPrefix(rest, "様") && !strings.HasPrefix(rest, "さま") {
 		return true
 	}
 	v := line[start:end]
@@ -385,11 +400,34 @@ func rejectGradePrefix(line string, start, end int) bool {
 // shrineHallWords は「中央殿・右脇殿・左脇殿の 3 棟」のように、神社の社殿の名前で「殿」の前に
 // 来る語。敬称アンカーは「殿」を敬称と読んで「右脇」を氏名として報告していた（2026-10-30 10:00 に
 // 町の文化財の案内で実測した高再現率モードの偽陽性）。「西脇」「東脇」は実在の姓なので含めない。
-var shrineHallWords = map[string]bool{"右脇": true, "左脇": true, "中央": true}
+//
+// 「祖霊殿」「参集殿」「宝物殿」「神楽殿」「儀式殿」「極楽殿」「日想殿」「神能殿」「立志殿」「<寺名>霊明殿」
+// のような社殿・堂の名前も同じく「殿」の前に来る（2026-10-30 18:00 に神社・寺院のサイトで実測した
+// 高再現率モードの偽陽性。新規分の神社・寺院の文書で「殿」の誤検出の大半を占めた）。
+var shrineHallWords = map[string]bool{"右脇": true, "左脇": true, "中央": true,
+	"祖霊": true, "参集": true, "宝物": true, "神楽": true, "儀式": true, "極楽": true, "日想": true,
+	"神能": true, "立志": true, "拝": true, "本": true, "幣": true, "舞": true, "社": true, "客": true,
+	"御": true, "宮": true, "寝": true, "仏": true, "祈祷": true, "祈願": true, "授与": true, "能楽": true,
+	"斎": true, "祭儀": true, "霊明": true, "舎利": true}
 
-// rejectShrineHall は「<社殿の位置>殿」（shrineHallWords 参照）を棄却する。
+// shrineHallSuffixes は「<寺名>霊明殿」「<神社名>祖霊殿」のように、前に寺社名が付いた社殿名の語尾。
+var shrineHallSuffixes = []string{"祖霊", "霊明", "参集", "宝物", "神楽", "儀式", "祈祷", "祈願", "授与"}
+
+// rejectShrineHall は「<社殿の位置・名前>殿」（shrineHallWords・shrineHallSuffixes 参照）を棄却する。
 func rejectShrineHall(line string, start, end int) bool {
-	return !(strings.HasPrefix(line[end:], "殿") && shrineHallWords[line[start:end]])
+	if !strings.HasPrefix(line[end:], "殿") {
+		return true
+	}
+	v := line[start:end]
+	if shrineHallWords[v] {
+		return false
+	}
+	for _, s := range shrineHallSuffixes {
+		if strings.HasSuffix(v, s) {
+			return false
+		}
+	}
+	return true
 }
 
 // honorificTitlePrefixes は、敬称アンカーの値の途中に現れたとき、その後ろだけが氏名になる職名。
