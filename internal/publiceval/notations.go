@@ -64,11 +64,12 @@ var notationCategories = []string{
 	"seat-roster",          // 会議録の議席番号「1番     <姓>    <名>」
 	"reading-after-no",     // 助詞「の」に続く「<姓> <名>（<せい> <めい>）」
 	"tanshin-header",       // 決算短信の表紙「(役職名) <役職> (氏名) <姓> <名>」と「代表取締役社長 ＣＯＯ <姓> <名>」
-	"permit-number",        // 許可・登録番号「第<12 桁>号」（陰性）と、囲まれていない個人番号（陽性）
+	"permit-number",        // 許可・登録番号「第<12 桁>号」・介護保険の事業所番号（陰性）と、囲まれていない個人番号（陽性）
 	"lecturer-space-paren", // 敬称のない講座案内「・講師 <姓> <名>（<所属><職名>）」
 	"director-credit",      // 出演作品一覧「「<作品名>」監督：<姓><名>」
 	"sensei-line",          // 講師一覧の行「<姓> <名> 先生」
 	"shrine-deity",         // 社殿名「<祖霊・宝物・参集>殿」・神仏の尊称「<天神・聖天>様」・「杜氏」（陰性）と、同じ形の氏名（陽性）
+	"lecturer-guest-san",   // 均等割付・スラッシュ区切りの「講 師／<姓> <名>さん（<肩書>）」と「ゲスト <姓> <名>さん(<職業>)」
 }
 
 type notationCase struct {
@@ -356,6 +357,9 @@ func notationSpecs() []notationCase {
 	// 許可・登録番号「第<12 桁>号」（検査用数字を満たす 12 桁でもマイナンバーではない）
 	neg("permit-number", "古物商許可番号 架空県公安委員会 第123456789018号")
 	neg("permit-number", "許可番号：第 123456789018 号")
+	// 介護保険の事業所番号・指定番号は施設の識別子（2026-10-30 20:00 実測の偽陽性）
+	neg("permit-number", "（架空県指定介護保険事業所番号：9876543210）")
+	neg("permit-number", "介護保険指定番号 9876543210")
 	// 自リポジトリ走査（CI の dogfooding）で検出されないよう、ダミー番号は分割して書く。
 	pos("permit-number", "jp-my-number", "個人番号 "+"1234567890"+"18")
 
@@ -386,6 +390,11 @@ func notationSpecs() []notationCase {
 	neg("form-word", "お名前（フルネーム、フリガナ）、生年月日を入力")
 	neg("form-word", "ご住所・お名前(ﾌﾘｶﾞﾅ)を明記の上")
 	neg("form-word", "■ 氏名（ペンネーム可）")
+	neg("form-word", "お名前(必須)")
+	neg("form-word", "お名前（ニックネーム可）(必須):")
+	neg("form-word", "住所、氏名（旧氏、可）、電話番号をお知らせください。")
+	neg("form-word", "連絡先   氏名：                    続柄（        ） 携帯番号")
+	neg("form-word", "学校・氏名：架空市立架空小学校　３年")
 	neg("form-word", "氏名（自署）")
 	neg("form-word", "氏名（ふりがな）")
 	neg("form-word", "氏名：団体名・職・氏名")
@@ -469,6 +478,20 @@ func notationSpecs() []notationCase {
 	pos("shrine-deity", "person-name-high-recall", full(2, "")+"さんが来場")
 	pos("shrine-deity", "person-name-high-recall", full(3, "")+"様のご来店")
 	pos("honorific-compound", "person-name-high-recall", n(0).sur+"源氏の新しい作品集")
+
+	// 催し案内の講師・ゲスト欄（均等割付・スラッシュ区切り・敬称の後の肩書の括弧）（2026-10-30 20:00 実測の見逃し）
+	pos("lecturer-guest-san", role, " 定 員 20名 講 師 "+full(1, " ")+"さん(弁理士)")
+	pos("lecturer-guest-san", role, "講 師／"+full(2, " ")+"さん（架空研究家）")
+	pos("lecturer-guest-san", role, "ゲスト "+full(3, " ")+"さん(架空デザイナー)              定 員 220名")
+	pos("lecturer-guest-san", role, "講 師 "+full(4, " ")+" さん(架空大学)")
+	neg("lecturer-guest-san", "ゲスト 架空 協会（予定）")
+	neg("lecturer-guest-san", "講 師 派遣事業（予定）")
+
+	// 取引先・続柄の一般語 + 敬称、時代劇の通称 + 様、「<市>立殿<地名>小学校」（2026-10-30 20:00 実測の高再現率の偽陽性）
+	neg("honorific-compound", "加盟店さんこんにちは！")
+	neg("honorific-compound", "息子さんが通い")
+	neg("honorific-compound", "黄門様も会員のカード")
+	neg("honorific-compound", "架空市立殿田小学校の児童が施設見学に訪れました。")
 	return out
 }
 
