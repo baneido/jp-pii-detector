@@ -1,6 +1,7 @@
 package rule
 
 import (
+	"regexp"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -296,6 +297,8 @@ var honorificCommonNouns = map[string]bool{
 	// 「妊婦さん」「産婦さん」「農家さん」「宮司さん」「花嫁さん」（2026-10-30 08:00 に実測した
 	// 高再現率モードの偽陽性。母子保健・催しの案内で立場を指す一般語）。
 	"妊婦": true, "産婦": true, "妊産婦": true, "経産婦": true, "農家": true, "宮司": true, "花嫁": true,
+	// 県の会議録の「市町村さんの方から」（2026-10-30 10:00 に実測した高再現率モードの偽陽性）。
+	"市町村": true,
 }
 
 // honorificCommonNounSuffixes は、「社員皆さん」「来場者皆様」「常連客様」の
@@ -358,6 +361,59 @@ func rejectGradePrefix(line string, start, end int) bool {
 	}
 	c := line[start-1]
 	return !(c >= '0' && c <= '9')
+}
+
+// shrineHallWords は「中央殿・右脇殿・左脇殿の 3 棟」のように、神社の社殿の名前で「殿」の前に
+// 来る語。敬称アンカーは「殿」を敬称と読んで「右脇」を氏名として報告していた（2026-10-30 10:00 に
+// 町の文化財の案内で実測した高再現率モードの偽陽性）。「西脇」「東脇」は実在の姓なので含めない。
+var shrineHallWords = map[string]bool{"右脇": true, "左脇": true, "中央": true}
+
+// rejectShrineHall は「<社殿の位置>殿」（shrineHallWords 参照）を棄却する。
+func rejectShrineHall(line string, start, end int) bool {
+	return !(strings.HasPrefix(line[end:], "殿") && shrineHallWords[line[start:end]])
+}
+
+// honorificTitlePrefixes は、敬称アンカーの値の途中に現れたとき、その後ろだけが氏名になる職名。
+// 「<町名>町長<姓><名>様」「（委員長<姓><名>氏）」のように職名と氏名が地続きのとき、無空白の
+// 敬称パターンは職名まで値に含めていた（2026-10-30 10:00 に実測した範囲の誤り）。
+var honorificTitlePrefixes = []string{"委員長", "理事長", "市長", "町長", "村長", "区長", "副会長", "会長", "社長", "校長", "園長", "議長", "館長", "知事"}
+
+// rejectHonorificTitlePrefix は、値が「…<職名><2 字以上>」の形（honorificTitlePrefixes 参照）なら
+// 棄却する。職名を除いた範囲は personNameHonorificAfterTitleRe で拾い直す。値が職名で
+// 終わる「<姓>社長様」や、職名を含まない値はそのまま通す。
+func rejectHonorificTitlePrefix(line string, start, end int) bool {
+	v := line[start:end]
+	for _, t := range honorificTitlePrefixes {
+		if i := strings.Index(v, t); i >= 0 && utf8.RuneCountInString(v[i+len(t):]) >= 2 {
+			return false
+		}
+	}
+	return true
+}
+
+// addressNonAddressNumberRe は、jp-address-high-recall の値が番地ではなく番号で終わる形。
+// 「<市>告示第 12 号」「<年><町>条例第 3 号」「<人名>選手を<町>ふるさと大使第 1 号」のような
+// 公文書・称号の番号（第〜号）と、「<町名>112 号線」のような道路の路線名（直後が「線」）。
+// 町の入札結果・例規の一覧で、新規分の住所（高再現率）の 15% がこの形だった（2026-10-30 10:00 実測）。
+var (
+	addressDaiGoTailRe = regexp.MustCompile(`第(?:[0-9０-９]{1,4}|[` + kanjiDigits + `]{1,6})号$`)
+	addressGoTailRe    = regexp.MustCompile(`(?:[0-9０-９]{1,4}|[` + kanjiDigits + `]{1,6})号$`)
+)
+
+// rejectAddressNonAddressNumber は addressNonAddress* の形（上記参照）を棄却する。丁目・番を含む
+// 値（「1 丁目第 2 号」のような実在の番地）は棄却しない。
+func rejectAddressNonAddressNumber(line string, start, end int) bool {
+	v := line[start:end]
+	if strings.Contains(v, "丁目") || strings.Contains(v, "番") {
+		return true
+	}
+	if addressDaiGoTailRe.MatchString(v) {
+		return false
+	}
+	if addressGoTailRe.MatchString(v) && strings.HasPrefix(line[end:], "線") {
+		return false
+	}
+	return true
 }
 
 // rejectCommitteeListTail は personNameCommitteeListRe の一致の直後（役職の後）が読点か

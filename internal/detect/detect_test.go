@@ -5252,6 +5252,12 @@ func TestNameReadingAndTitleLineEnd(t *testing.T) {
 		{"（１）講師 山田 太郎さん", "山田 太郎"},
 		{"担当者 教頭 鈴木 一郎           担当者 佐藤 花子", "鈴木 一郎"},
 		{"担当者 教頭 鈴木 一郎           担当者 佐藤 花子", "佐藤 花子"},
+		// 担当欄・代表者欄で姓と名の間が広く空いた表記と、所属括弧付きの「<姓>   <名>     氏（<所属>）」
+		// （2026-10-30 10:00 実測の見逃し。以前は姓だけを Low で報告するか、全モードで取りこぼしていた）
+		{"担当：山田       太郎", "山田       太郎"},
+		{"○担当者名：佐藤         花子", "佐藤         花子"},
+		{"架空建設株式会社 代表取締役     山田      太郎", "山田      太郎"},
+		{"代表理事    鈴木   虹斗     氏（架空協会）", "鈴木   虹斗"},
 	} {
 		fs := d.ScanLine("f.txt", 1, tc.line)
 		found := false
@@ -5291,6 +5297,9 @@ func TestNameReadingAndTitleLineEnd(t *testing.T) {
 		"山田太郎委員会の開催について",
 		"講師 派遣事業のご案内",
 		"担当者 総務 企画",
+		// 姓の後が職名だけの担当欄、役職名の後が一般語だけの行は報告しない（2026-10-30 10:00）
+		"担当：鈴木       主査",
+		"代表取締役     就任      挨拶",
 	} {
 		for _, f := range d.ScanLine("f.txt", 1, line) {
 			if strings.HasPrefix(f.RuleID, "person-name") {
@@ -5388,6 +5397,9 @@ high_recall = true
 		"5年間様子を見た中で",
 		"2年担任さんへ", // 学年 + 2 字の一般語（学年の後は 3 字以上だけ拾う）
 		"3年生徒会さんの発表",
+		// 2026-10-30 10:00 実測: 社殿の名前（中央殿・右脇殿）と「市町村さん」
+		"中央殿・右脇殿・左脇殿の3棟",
+		"市町村さんの方から意見がありました",
 	} {
 		for _, f := range d.ScanLine("f.txt", 1, line) {
 			if f.RuleID == "person-name-high-recall" {
@@ -5430,6 +5442,66 @@ high_recall = true
 		}
 		if len(got) != 1 || got[0] != tc.want {
 			t.Errorf("%q: got %q, want [%q]", tc.line, got, tc.want)
+		}
+	}
+}
+
+// TestHonorificTitlePrefixBoundary は「<町名>町長<姓><名>様」「委員長<姓><名>氏」で、職名を値に
+// 含めず氏名だけを報告することを確かめる（2026-10-30 10:00 実測の範囲の誤り）。
+func TestHonorificTitlePrefixBoundary(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"
+
+[rules]
+high_recall = true
+`)
+	for _, tc := range []struct{ line, want string }{
+		{"架空町長山田太郎様", "山田太郎"},
+		{"（委員長鈴木一郎氏）", "鈴木一郎"},
+	} {
+		var got []string
+		for _, f := range d.ScanLine("f.txt", 1, tc.line) {
+			if f.RuleID == "person-name-high-recall" {
+				got = append(got, f.Match)
+			}
+		}
+		if len(got) != 1 || got[0] != tc.want {
+			t.Errorf("%q: got %q, want [%q]", tc.line, got, tc.want)
+		}
+	}
+}
+
+// TestAddressHighRecallNonAddressNumber は、高再現率の住所ルールが例規・告示の番号（<町>条例第 N 号）
+// と道路の路線名（<町> N 号線）を住所として報告しないことを確かめる（2026-10-30 10:00 実測の偽陽性。
+// 新規分の住所（高再現率）の 15% がこの形だった）。丁目・番を含む番地は従来どおり報告する。
+// 自治体名は公開情報で、個人を識別しない。
+func TestAddressHighRecallNonAddressNumber(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"
+
+[rules]
+high_recall = true
+`)
+	for _, line := range []string{
+		"大槌町告示第120号",
+		"令和6年小豆島町条例第１１号",
+		"市道長島町252号線の改良",
+		"福生市議会だより第248号",
+		"富岡町暴力団排除条例第2条第3号",
+	} {
+		for _, f := range d.ScanLine("f.txt", 1, line) {
+			if f.RuleID == "jp-address-high-recall" {
+				t.Errorf("%q: unexpected %s %q", line, f.RuleID, f.Match)
+			}
+		}
+	}
+	for _, line := range []string{"長島町1丁目2番3号", "大井町金子123番地"} {
+		found := false
+		for _, f := range d.ScanLine("f.txt", 1, line) {
+			if f.RuleID == "jp-address-high-recall" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%q: jp-address-high-recall not reported", line)
 		}
 	}
 }

@@ -769,7 +769,36 @@ var (
 		`担当者[ ]+(?:(?:教頭|校長|副校長|主任|主査|主事|係長|課長|主幹|副主幹|課長補佐)[ ]+)?` +
 			`([` + kanji + `]{1,4}[ ][` + kanji + `]{1,4})(?:[ ]{2,}|[ ]*$)`,
 	)
+	// personNameTantoWideRe は「担当：<姓>       <名>」「担当者名：<姓>         <名>」のように、担当欄の
+	// 姓と名の間が pdftotext -layout の均等割付で 2〜10 個の空白になる表記を拾う
+	// （person-name-role-label）。既存の担当ラベルは空白 1 個までしか名を取り込まず、姓だけを Low で
+	// 報告していた（2026-10-30 10:00 に町の報道資料・イベント案内で実測）。値の後は 2 個以上の
+	// 空白か行末を要求し、姓は辞書、名は 1〜3 文字で職名でないこと（validSpacedSurnameGiven）を要求する。
+	personNameTantoWideRe = regexp.MustCompile(
+		`(?:担当者名|担当者|担当)[ ]*[:：][ ]*([` + kanji + `]{1,4}[ ]{2,10}[` + kanji + `]{1,3})(?:[ ]{2,}|[ ]*$)`,
+	)
+	// personNameExecTitleWideRe は入札結果の「<社名> 代表取締役     <姓>       <名>」のように、代表者の
+	// 役職名の後で姓と名の間が 5〜8 個の空白になり行が終わる表記を拾う（person-name-role-label）。
+	// personNameExecTitleRe は姓名の間の空白を 3 個までしか許さないため、町の入札結果で全モードが
+	// 取りこぼしていた（2026-10-30 10:00 実測）。表の列と区別するため、行末で終わる 2 語に限る。
+	personNameExecTitleWideRe = regexp.MustCompile(
+		`(?:代表取締役社長|代表取締役|代表理事|代表社員|取締役社長|理事長|組合長|社長)[ ]+` +
+			`([` + kanji + `]{1,4}[ ]{4,8}[` + kanji + `]{1,3})[ ]*$`,
+	)
+	// personNameHonorificAfterTitleRe は「<町名>町長<姓><名>様」「（委員長<姓><名>氏）」のように、職名と
+	// 氏名が地続きで敬称が付く形の、職名を除いた氏名を拾う（person-name-high-recall）。無空白の敬称
+	// パターンは職名まで値に含めるため rejectHonorificTitlePrefix で棄却し、ここで拾い直す。
+	personNameHonorificAfterTitleRe = regexp.MustCompile(
+		`(?:委員長|理事長|市長|町長|村長|区長|副会長|会長|社長|校長|園長|議長|館長|知事)([` + kanji + `]{2,6})(?:様|さん|氏|殿)`,
+	)
 )
+
+// validFullSplitOrSpacedSurnameGiven は、姓名辞書の完全分割（姓+名）か、空白で 2 語に分かれた
+// 「<姓> <名>」（validSpacedSurnameGiven）のどちらかが成立する値を許可する。「<姓>   <名>   氏（<所属>）」
+// のように敬称と所属の括弧という強い構造がある形で、辞書にない名（2026-10-30 10:00 に実測）を拾うために使う。
+func validFullSplitOrSpacedSurnameGiven(v string) bool {
+	return validPersonNameFullSplit(v) || validSpacedSurnameGiven(v)
+}
 
 // personNamePlaceholders は氏名の値として現れるダミー語（人名ではない）。
 // 値の正規表現が末尾の仮名を貪欲に取り込む（未定 → 未定です）ため、完全一致では
@@ -1037,6 +1066,9 @@ var spacedGivenStopwords = map[string]bool{
 	"担当": true, "宛": true, "様": true, "殿": true, "氏": true, "外": true, "他": true,
 	"以下": true, "ほか": true, "代理": true, "事務": true, "所長": true, "課長": true,
 	"電話": true, "内線": true, "直通": true, "代表": true, "携帯": true,
+	// 担当欄の「<姓>   主査」のように姓の後に職名だけが続く形（2026-10-30 10:00 の担当欄パターン追加時）。
+	"係長": true, "主査": true, "主事": true, "主任": true, "主幹": true, "部長": true, "室長": true,
+	"班長": true, "補佐": true, "係": true, "課": true, "班": true, "室": true,
 }
 
 // validSpacedSurnameGiven は空白で 2 語に分かれた「<姓> <名>」を検証する。先頭語が
@@ -1473,8 +1505,8 @@ func Builtin() []Rule {
 				// あり、不一致は棄却ではなく Medium への据え置きにしかならない
 				// ため recall には影響しない（dict.MunicipalityThenTownMatch の
 				// コメント参照）。
-				{Re: addressHighRecallMarkedRe, Base: High, Validate: dict.MunicipalityThenTownMatch},
-				{Re: addressHighRecallMarkedRe, Base: Medium},
+				{Re: addressHighRecallMarkedRe, Base: High, Validate: dict.MunicipalityThenTownMatch, ValidateLine: rejectAddressNonAddressNumber},
+				{Re: addressHighRecallMarkedRe, Base: Medium, ValidateLine: rejectAddressNonAddressNumber},
 				// マーカーなしダッシュ連結にも同じ twin 方式を適用する。High 側の
 				// Validate は notCalendarDateBanchiAndRealTown（notCalendarDateBanchi と
 				// dict.MunicipalityThenTownMatch の AND 合成）を使い、ISO 日付棄却が
@@ -1499,8 +1531,8 @@ func Builtin() []Rule {
 			Validate:          dict.MunicipalitySuffixMatch,
 			Patterns: []Pattern{
 				// マーカー付き twin と同じ手法（上記コメント参照）。
-				{Re: addressHighRecallKanjiRe, Base: High, Validate: dict.MunicipalityThenTownMatch},
-				{Re: addressHighRecallKanjiRe, Base: Medium},
+				{Re: addressHighRecallKanjiRe, Base: High, Validate: dict.MunicipalityThenTownMatch, ValidateLine: rejectAddressNonAddressNumber},
+				{Re: addressHighRecallKanjiRe, Base: Medium, ValidateLine: rejectAddressNonAddressNumber},
 			},
 		},
 		{
@@ -2083,7 +2115,7 @@ func Builtin() []Rule {
 				// 宛名欄の均等割付の姓名 + 様（いずれも 2026-10-30 06:00 に実測した見逃し）。
 				{Re: personNameLecturerLabelRe, Base: Medium, Validate: validPersonNameFullSplit},
 				{Re: personNameLecturerLabel2Re, Base: Medium, Validate: validPersonNameFullSplit},
-				{Re: personNameShiAffiliationRe, Base: Medium, Validate: validPersonNameFullSplit},
+				{Re: personNameShiAffiliationRe, Base: Medium, Validate: validFullSplitOrSpacedSurnameGiven},
 				{Re: personNameKosekiTodokeRe, Base: Medium, Validate: validSpacedSurnameGiven},
 				{Re: personNameKosekiTodoke2Re, Base: Medium, Validate: validSpacedSurnameGiven},
 				{Re: personNameTitleHonorificWideRe, Base: Medium, Validate: validSpacedSurnameGiven},
@@ -2092,6 +2124,9 @@ func Builtin() []Rule {
 				{Re: personNameCommitteeListRe, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: rejectCommitteeListTail},
 				{Re: personNameLecturerSpaceRe, Base: Medium, Validate: validPersonNameFullSplit},
 				{Re: personNameTantoSpaceRe, Base: Medium, Validate: validPersonNameFullSplit},
+				// 担当欄・代表者欄で姓と名の間が広く空いた表記（2026-10-30 10:00 に実測した見逃し）。
+				{Re: personNameTantoWideRe, Base: Medium, Validate: validSpacedSurnameGiven},
+				{Re: personNameExecTitleWideRe, Base: Medium, Validate: validSpacedSurnameGiven},
 			},
 		},
 		{
@@ -2114,7 +2149,12 @@ func Builtin() []Rule {
 				), Base: Medium, Validate: honorificPersonNameValid,
 					// 「新品同様」「構文仕様」のような一般語の「様」と、
 					// 「初見さん」「常連さん」「社員皆さん」のような一般語 + 敬称を棄却する。
-					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound, rejectHistoricalUjiName, rejectGradePrefix)},
+					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound, rejectHistoricalUjiName, rejectGradePrefix, rejectShrineHall, rejectHonorificTitlePrefix)},
+				// 「<町名>町長<姓><名>様」のように職名に地続きの氏名。上の無空白パターンは職名まで値に
+				// 含めるため rejectHonorificTitlePrefix で棄却し、ここで職名を除いた範囲を拾い直す
+				// （2026-10-30 10:00 に実測した範囲の誤り）。
+				{Re: personNameHonorificAfterTitleRe, Base: Medium, Validate: honorificPersonNameValid,
+					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound, rejectHistoricalUjiName)},
 				// 「6年生<姓><名>さん」「2年<姓><名>さん」のように学年の直後に続く氏名。上の無空白
 				// パターンは「年生<姓><名>」まで値に含めてしまうため rejectGradePrefix で棄却し、
 				// ここで学年を除いた範囲を拾い直す（2026-10-30 08:00 に実測した範囲の誤り）。検証は
