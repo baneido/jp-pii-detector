@@ -315,6 +315,10 @@ var honorificCommonNouns = map[string]bool{
 	"氏神": true, "天神": true, "聖天": true, "大神": true, "菅公": true, "楠公": true, "王太子": true,
 	"檀家": true, "叔父": true, "叔母": true, "伯父": true, "伯母": true, "店舗": true, "書店": true, "個人": true,
 	"神様": true, "仏様": true, "明神": true,
+	// 「加盟店さんこんにちは」「息子さんが通い」「黄門様も会員の」（2026-10-30 20:00 にラジオ局・
+	// 社会福祉法人・鉄道会社のサイトで実測した高再現率モードの偽陽性。取引先・続柄を指す一般語と
+	// 時代劇の登場人物の通称で、特定の個人の氏名ではない）。
+	"加盟店": true, "息子": true, "娘": true, "黄門": true,
 }
 
 // honorificCommonNounSuffixes は、「社員皆さん」「来場者皆様」「常連客様」の
@@ -410,6 +414,9 @@ var shrineHallWords = map[string]bool{"右脇": true, "左脇": true, "中央": 
 	"御": true, "宮": true, "寝": true, "仏": true, "祈祷": true, "祈願": true, "授与": true, "能楽": true,
 	"斎": true, "祭儀": true, "霊明": true, "舎利": true}
 
+// publicFounderSuffixes は学校・施設名の設置者を表す「市立」「県立」などの語尾。
+var publicFounderSuffixes = []string{"市立", "町立", "村立", "区立", "県立", "都立", "府立", "道立", "国立", "私立", "公立"}
+
 // shrineHallSuffixes は「<寺名>霊明殿」「<神社名>祖霊殿」のように、前に寺社名が付いた社殿名の語尾。
 var shrineHallSuffixes = []string{"祖霊", "霊明", "参集", "宝物", "神楽", "儀式", "祈祷", "祈願", "授与"}
 
@@ -419,6 +426,13 @@ func rejectShrineHall(line string, start, end int) bool {
 		return true
 	}
 	v := line[start:end]
+	// 「<市名>市立殿田小学校」のように、設置者の「<市町村・都道府県>立」の直後に「殿」で始まる
+	// 地名が来る学校名（2026-10-30 20:00 に大学のニュース一覧で実測した高再現率モードの偽陽性）。
+	for _, s := range publicFounderSuffixes {
+		if strings.HasSuffix(v, s) {
+			return false
+		}
+	}
 	if shrineHallWords[v] {
 		return false
 	}
