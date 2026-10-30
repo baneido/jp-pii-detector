@@ -616,7 +616,20 @@ var (
 			// pdftotext -layout では姓と名の間が 4 個の空白になる表記も実測したため 1〜4 個を
 			// 許容し、行末の直前に敬称（氏・様・先生）が付く「<職名> <姓> <名> 氏」も拾う。
 			// 敬称は報告スパンに含めない（名は最短一致にして「<名>氏」の氏を取り込まない）。
-			`([` + kanji + `]{1,4}[ ]{1,4}[` + kanji + `]{1,4}?)[ ]*(?:氏|様|先生)?[ ]*$`,
+			// 文書館のお知らせの「上席公文書専門官　<姓> <名>さん」（2026-10-31 00:00 に実測した見逃し）の
+			// ように「さん」で終わる形も拾う。
+			`([` + kanji + `]{1,4}[ ]{1,4}[` + kanji + `]{1,4}?)[ ]*(?:氏|様|先生|さん)?[ ]*$`,
+	)
+	// personNameTalkPairRe / personNameTalkPair2Re は書店・映画館の催し案内の
+	// 「【<日付>開催】<姓><名>さん×<姓><名>さん トークイベント」のように、2 人の登壇者を「×」で
+	// つないだ氏名を拾う（person-name-role-label）。書店のイベント一覧で、高再現率モードでしか
+	// 拾えない見逃しを実測した（2026-10-31 00:00、1 文書で 10 人超）。「さん」と「×」の組み合わせを
+	// 必須にし、値は姓名辞書の完全分割（姓+名）を要求する。1 人目は直前が漢字以外のときだけ拾う。
+	personNameTalkPairRe = regexp.MustCompile(
+		`(?:^|[^` + kanji + `])([` + kanji + `]{2,8}?)さん[ ]*[×✕][ ]*[` + kanji + katakana + `]`,
+	)
+	personNameTalkPair2Re = regexp.MustCompile(
+		`さん[ ]*[×✕][ ]*([` + kanji + `]{2,8}?)さん`,
 	)
 	// personNameTantoDeptSlashRe は「（担当：調査部／<姓>）」「（担当：社会情報部／<姓>、<姓>）」の
 	// ように、担当欄で部署名と姓をスラッシュで区切る表記を拾う（独立行政法人の調査公表資料で
@@ -731,7 +744,10 @@ var (
 	)
 	// lecturer* は personNameLecturerLabelRe / personNameLecturerLabel2Re の部品（講師等の
 	// ラベル、敬称、値の後の区切り）。
-	lecturerLabel     = `(?:講師|講演者|審査員|コーディネーター|ファシリテーター|オブザーバー|パネリスト)[ ]?[：:／/][ ]*`
+	//
+	// 映画館・書店の催し案内の「登壇：<姓><名>さん（<作品名>）」「聞き手：<姓><名>さん」「進行役：<姓><名>さん」
+	// も同じ形として拾う（2026-10-31 00:00 に実測した Medium・Low の見逃し）。
+	lecturerLabel     = `(?:講師|講演者|審査員|コーディネーター|ファシリテーター|オブザーバー|パネリスト|登壇者|登壇|聞き手|進行役)[ ]?[：:／/][ ]*`
 	lecturerHonorific = `[ ]*(?:氏|先生|さん|様)?`
 	lecturerEnd       = `(?:[ ]*[(（〔［【]|[ ]*[・、,]|[ ]*$|[ ]{2,})`
 	lecturerValue     = `([` + kanji + `]{2,8}?(?:[ ]{1,3}[` + kanji + `]{1,8}?)?)`
@@ -952,6 +968,8 @@ var personNameBracketFormHints = map[string]bool{
 	"ﾌﾘｶﾞﾅ": true, "フリカ\u3099ナ": true, "ﾌﾘｶﾅ": true, "ｶﾅ": true, "ﾖﾐ": true, "ペンネーム可": true,
 	// 「お名前(必須)」「お名前（ニックネーム可）」（2026-10-30 20:00 実測の low の偽陽性）。
 	"必須": true, "ニックネーム可": true, "旧氏": true,
+	// 「担当者名（部署・役職等）」（2026-10-31 00:00 にソフトウェア会社の問い合わせ案内で実測した low の偽陽性）。
+	"部署・役職等": true, "部署・役職": true, "役職等": true, "部署等": true,
 }
 
 // rejectBracketedFormHint は、氏名ラベルの値が括弧で囲まれた記入方法の指示語
@@ -2170,7 +2188,7 @@ func Builtin() []Rule {
 			ID:                "person-name-role-label",
 			Description:       "氏名（担当者・宛名ラベル付き）",
 			Prefilter:         PrefilterCJK,
-			PrefilterLiterals: []string{"会長", "委員", "議長", "担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届", "監督", "先生", "講 師", "ゲスト"},
+			PrefilterLiterals: []string{"会長", "委員", "議長", "担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届", "監督", "先生", "講 師", "ゲスト", "登壇", "聞き手", "進行役", "さん×", "さん ×"},
 			Validate:          notPlaceholderName,
 			Patterns: []Pattern{
 				// 担当者・宛名・連絡先ラベル。敬称のような強い人物シグナルが無いため、
@@ -2265,6 +2283,9 @@ func Builtin() []Rule {
 				{Re: personNameLecturerSpaceParenRe, Base: Medium, Validate: validFullSplitOrSpacedSurnameGiven},
 				{Re: personNameDirectorCreditRe, Base: Medium, Validate: validPersonNameFullSplit},
 				{Re: personNameSenseiLineRe, Base: Medium, Validate: validSpacedSurnameGiven},
+				// 催し案内の「<姓><名>さん×<姓><名>さん」（2026-10-31 00:00 に実測した見逃し）。
+				{Re: personNameTalkPairRe, Base: Medium, Validate: validPersonNameFullSplit},
+				{Re: personNameTalkPair2Re, Base: Medium, Validate: validPersonNameFullSplit},
 			},
 		},
 		{

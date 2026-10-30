@@ -71,6 +71,7 @@ var notationCategories = []string{
 	"shrine-deity",         // 社殿名「<祖霊・宝物・参集>殿」・神仏の尊称「<天神・聖天>様」・「杜氏」（陰性）と、同じ形の氏名（陽性）
 	"lecturer-guest-san",   // 均等割付・スラッシュ区切りの「講 師／<姓> <名>さん（<肩書>）」と「ゲスト <姓> <名>さん(<職業>)」
 	"birth-range",          // 入園・受験資格の「<日付>～<日付>生まれ」・記入例（陰性）と、単独の「<日付>生まれ」（陽性）
+	"talk-event",           // 催し案内の「<姓><名>さん×<姓><名>さん」「登壇：」「聞き手：」「進行役：」（陽性）と、院号・施設名 + 敬称（陰性）
 }
 
 type notationCase struct {
@@ -513,6 +514,20 @@ func notationSpecs() []notationCase {
 	neg("birth-range", "例：2000年1月1日生まれの場合")
 	pos("birth-range", "jp-birthdate", "1990年1月1日生まれ。架空県出身。") // jp-pii-detector:ignore
 	pos("birth-range", "jp-birthdate", "平成2年3月4日生まれ")         // jp-pii-detector:ignore
+
+	// 書店・映画館・文書館の催し案内の登壇者（2026-10-31 00:00 実測の Medium の見逃し）と、
+	// 文書館の近世文書目録の院号・戒名・官職名、施設名 + さん（同じ回に実測した高再現率の偽陽性）
+	pos("talk-event", role, "【10/16開催】"+full(5, "")+"さん×"+full(6, "")+"さん トーク＆サイン会")
+	pos("talk-event", role, "登壇："+full(7, "")+"さん（『架空の作品』）")
+	pos("talk-event", role, "聞き手："+full(8, "")+"さん")
+	pos("talk-event", role, "進行役："+full(9, "")+"さん")
+	pos("talk-event", role, "上席公文書専門官　"+full(10, " ")+"さん")
+	neg("talk-event", "架空院様五拾回御忌御法事之節御香奠等之儀")
+	neg("talk-event", "架空院殿直指宗心居士")
+	neg("talk-event", "２６７－００３０           4       新撰姓氏録")
+	neg("talk-event", "架空記念館さんのご協力により")
+	neg("talk-event", "黒石藩藩主は伏魔殿・おけら長屋に送り込む")
+	neg("form-word", "・担当者名（部署・役職等）")
 	return out
 }
 
