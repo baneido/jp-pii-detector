@@ -1948,7 +1948,7 @@ func Builtin() []Rule {
 				// 必須とする。区切りなし8桁の後置ラベル形は実測未確認のため対象外。
 				{Re: regexp.MustCompile(
 					`(?:^|[^0-9])((?:(?:19|20)\d{2}|(?:明治|大正|昭和|平成|令和|[MTSHRmtshr])(?:元|\d{1,2}))[年/.-]\d{1,2}[月/.-]\d{1,2}日?)生まれ`,
-				), Base: Medium},
+				), Base: Medium, ValidateLine: rejectBirthdateRangeOrExample},
 			},
 		},
 		{
@@ -3063,4 +3063,25 @@ func containsASCIIAlnum(s string) bool {
 		}
 	}
 	return false
+}
+
+// rejectBirthdateRangeOrExample は後置ラベル「生まれ」の値のうち、入園・入学・受験資格の
+// 「<日付>～<日付>生まれ」「<日付>生まれ～<日付>生まれ」のような対象期間の端と、記入例の
+// 「例：<日付>生まれの場合」を棄却する（2026-10-30 22:00 に幼稚園・学習塾・自動車教習所の
+// サイトで実測した偽陽性。期間の端や記入例は特定の個人の生年月日ではない）。
+// 「1985年1月2日生まれ。」のような単独の日付はこれまでどおり報告する。 jp-pii-detector:ignore
+func rejectBirthdateRangeOrExample(line string, start, end int) bool {
+	before := strings.TrimRight(line[:start], " \t　（(")
+	for _, s := range []string{"~", "〜", "～", "から", "例:", "例：", "例"} {
+		if strings.HasSuffix(before, s) {
+			return false
+		}
+	}
+	after := strings.TrimLeft(strings.TrimPrefix(line[end:], "生まれ"), " \t　")
+	for _, s := range []string{"~", "〜", "～", "から"} {
+		if strings.HasPrefix(after, s) {
+			return false
+		}
+	}
+	return true
 }
