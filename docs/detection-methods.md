@@ -470,6 +470,17 @@ exclude_kinds = ["public-business"]
   ドメイン第 1 ラベルにダミー値でよく使われる語（`hoge`・`fuga`・`dummy`・`hogehoge`・`sample`・
   `foo`・`bar`）を部分一致で含む場合も除外する（`barclays.co.jp` の `bar` のように、これらの語を
   偶然含む実在のローカル部・ドメインを巻き添えで棄却しうるトレードオフがある）
+- **非個人アドレスの除外**: Google Cloud のサービスアカウント（ドメインが `gserviceaccount.com`
+  またはそのサブドメイン。`<名前>@<プロジェクト>.iam.gserviceaccount.com`・
+  `<番号>-compute@developer.gserviceaccount.com`・`service-<番号>@gcp-sa-*.iam.gserviceaccount.com`・
+  `<プロジェクト>@appspot.gserviceaccount.com` など）は人ではなくワークロードの ID なので、
+  すべてのモード（low / medium / high-recall / opt-in プロファイル、モデル同梱ビルドを含む）で
+  報告しない。ドメインは大文字・小文字を区別せず末尾一致で判定するため、
+  `gserviceaccount.com.evil.example`・`xgserviceaccount.com`・`gserviceaccount.co` のような
+  似たドメインは従来どおり検出する。ローカル部のプロジェクト番号（12 桁）が偶然
+  マイナンバーの検査用数字を通過しても、アドレス内部に収まる一致はどのルール・モデル候補でも
+  棄却する（`--explain-dropped` では `service-account-email`）。SSH の拡張名
+  （`@openssh.com`・`@libssh.org`）と送信専用ローカル部（`noreply` 等）も同様に除外する
 - **EAI / Unicode confusable（高再現率のみ）**: `email-address-eai` は漢字・ひらがな・
   カタカナを少なくとも1文字含む EAI 候補に限定し、Unicode TLD を Punycode 化して
   同じ IANA 一覧へ照合する。`email-address-confusable` はメール候補内の代表的な

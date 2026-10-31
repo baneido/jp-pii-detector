@@ -63,6 +63,10 @@ const (
 	// DropReasonUUIDToken は候補が UUID トークンの内部に完全に含まれる
 	// ため破棄されたことを表す。
 	DropReasonUUIDToken = "uuid-token"
+	// DropReasonServiceAccountEmail は候補が Google Cloud のサービスアカウントの
+	// メールアドレス（*.gserviceaccount.com）の内部に完全に含まれるため
+	// 破棄されたことを表す（service_account.go）。
+	DropReasonServiceAccountEmail = "service-account-email"
 )
 
 // maxDroppedCandidates は collectDropped 有効時に、TakeDropped で回収する
