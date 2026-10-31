@@ -28,6 +28,28 @@ func allValidateLine(fs ...func(string, int, int) bool) func(string, int, int) b
 
 func isASCIIDigit(b byte) bool { return b >= '0' && b <= '9' }
 
+func isASCIILetter(b byte) bool { return (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') }
+
+// rejectLetterLedCodePart は、数字列が「A-20261105-0042」のような英字で
+// 始まるハイフン区切りコード（出荷番号・伝票番号・型番など）の一部である
+// 場合に棄却する。直前がハイフンのときだけ、英数字とハイフンの連なりを
+// さかのぼり、その先頭が英字なら棄却する。「1234-12345678」のように数字から
+// 始まる連なりや、直後の枝番（「12345678-01」）には影響しない。
+func rejectLetterLedCodePart(line string, start, end int) bool {
+	if start == 0 || line[start-1] != '-' {
+		return true
+	}
+	i := start - 1
+	for i > 0 {
+		b := line[i-1]
+		if b != '-' && !isASCIIDigit(b) && !isASCIILetter(b) {
+			break
+		}
+		i--
+	}
+	return !isASCIILetter(line[i])
+}
+
 // rejectNumericTokenPart は、数字列が独立した番号ではなく、より大きな数値・
 // 識別子トークンの一部である場合に棄却する。
 //   - 小数の一部: 直前が「数字 + .」（"29.7062300000000015" の小数部、

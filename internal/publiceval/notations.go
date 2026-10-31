@@ -77,6 +77,8 @@ var notationCategories = []string{
 	"donor-roster",         // 寄付者一覧の「<姓>　<名>　様」・役員名簿の「<姓>　<名>(理事長)」だけの行（陽性）と、建物名の「殿」・通りの名前・物語の呼び名 + 敬称（陰性）
 	"officer-shi",          // IR 資料の「取締役 <姓><名>氏」「常勤監査役 <姓><名>氏」（陽性）と、立場・神の尊称 + 敬称、連続した西暦年（陰性）
 	"gcp-service-account",  // Google Cloud のサービスアカウントのアドレス（陰性）と、個人のアドレス・似たドメイン・混在行（陽性）
+	"applicant-label",      // 書類の「申請者 <姓> <名>」「届出人：」「お客様氏名：」と 1 文字の姓（陽性）、申請者 + 一般語（陰性）
+	"id-label-guard",       // 「基礎年金番号」等の直後の値と同じ行の「注文」「伝票」、空白区切りの免許証番号（陽性）と、英字で始まるコードの一部・西暦の並び（陰性）
 }
 
 type notationCase struct {
@@ -629,6 +631,28 @@ func notationSpecs() []notationCase {
 	neg("donor-roster", "取引態様")
 	neg("form-word", "氏名（署名）")
 	neg("form-word", "①氏名（参加人数分）、②年齢をご記載ください。")
+	// 申請書・受付票の「申請者 <姓> <名>」「届出人：<姓> <名>」「お客様氏名：<1 文字の姓> <名> 様」
+	// （2026-10-31 20:00 の回、Pro の匿名化評価で見逃していた形を合成した例）と、申請者 + 一般語（陰性）
+	const person = "person-name"
+	pos("applicant-label", person, "申請者 "+full(26, " "))
+	pos("applicant-label", person, "届出人："+full(27, " "))
+	pos("applicant-label", person, "申請者氏名："+full(28, " "))
+	pos("applicant-label", person, "お客様氏名：林 "+"ひなた"+" 様")
+	pos("applicant-label", person, "氏名：林 "+"太郎")
+	neg("applicant-label", "申請者 本人")
+	neg("applicant-label", "申請者 各位")
+	neg("applicant-label", "申請者 東京 都内在住")
+	neg("applicant-label", "申請者 本田 技研")
+	// 個人に割り当てられる番号のラベル直後の値は、同じ行の「注文」「伝票」で棄却しない。
+	// 空白区切り（4-4-4）の免許証番号も拾う。英字で始まるハイフン区切りのコードの
+	// 一部（出荷番号）と、西暦の並びは拾わない。番号はすべて架空。
+	pos("id-label-guard", "jp-pension-number", "基礎年金番号："+"7034-30"+"4059"+" 注文の控えは別送します")
+	pos("id-label-guard", "jp-pension-number", "年金番号 "+"1234-56"+"7890"+" 伝票は同封しません")
+	pos("id-label-guard", "jp-drivers-license", "免許証番号 "+"5649 0078 30"+"71")
+	pos("id-label-guard", "jp-drivers-license", "運転免許証の番号 "+"3071 5649 00"+"78")
+	neg("id-label-guard", "出荷番号 A-"+"2026"+"1105-0042 被保険者証を同封")
+	neg("id-label-guard", "免許の更新 2023 2024 2025 年度")
+	neg("id-label-guard", "注文番号 "+"7034-30"+"4059"+" 年金")
 	return out
 }
 

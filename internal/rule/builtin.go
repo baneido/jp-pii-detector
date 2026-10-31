@@ -335,7 +335,8 @@ var (
 	// 「ﾌﾘｶﾞﾅ」は normalize.Line で「フリカ」+ 結合濁点 + 「ナ」（ガではなくカ+結合濁点）
 	// に畳まれるため、これがないと半角カナ表記のラベル行を取りこぼす。
 	personNameLabelJP = `(?:氏名|お名前|ご氏名|名前|姓名|フリ(?:ガ|カ\x{3099})ナ|ふりがな|フルネーム|` +
-		`患者名|契約者名|利用者名|顧客名|会員名|申込者名|請求先名|受取人|担当者名)(?:漢字|カナ|かな)?`
+		`患者名|契約者名|利用者名|顧客名|会員名|申込者名|請求先名|受取人|担当者名|` +
+		`お客様(?:氏名|名)|申請者(?:氏名|名)|申込者氏名)(?:漢字|カナ|かな)?`
 	// personNameLabelASCIIStrong は語そのものが「人」を表す ASCII キー。
 	// 辞書照合なしで検出する（収録外の人名も拾う）。user_name / account_name /
 	// contact_name はハンドル名・システム名でありうるため強ラベルには入れず、
@@ -367,8 +368,11 @@ var (
 	// （U+30FB、「ジョン・スミス」等）も値の一部として許容する（#48）。
 	// 既知の軽微な限界: `氏名: 山田 様` のように値の後に敬称が続くと、敬称まで
 	// マスク対象に含まれうる（検出の成否・評価には影響しない表示上の過剰取り込み）。
-	personNameValue = `[` + kanji + hiragana + katakana + `\x{30FB}]{2,12}` +
-		`(?:[ ][` + kanji + hiragana + katakana + `\x{30FB}]{1,12})?`
+	// 「林 ひなた」のように 1 文字の姓（漢字）を空白で区切った形も、後ろに名が
+	// 続く場合に限り許容する（1 文字だけの値は従来どおり捕捉しない）。
+	personNameValue = `(?:[` + kanji + hiragana + katakana + `\x{30FB}]{2,12}` +
+		`(?:[ ][` + kanji + hiragana + katakana + `\x{30FB}]{1,12})?` +
+		`|[` + kanji + `][ ][` + kanji + hiragana + katakana + `\x{30FB}]{1,12})`
 	// personNameValueShort は弱いラベル（姓・名の単一フィールド）用。1 文字も
 	// 捕捉し、長さ・人名らしさの最終判断は validSurnameField 等の検証器に委ねる。
 	personNameValueShort = `[` + kanji + hiragana + katakana + `]{1,12}` +
@@ -415,6 +419,14 @@ var (
 		personNameBoundary +
 			`(?:` + personNameLabelJP + `|` + personNameLabelASCIIStrong + `)` +
 			personNameSepOrBracket +
+			`(` + personNameValue + `)`,
+	)
+	// personNameApplicantLabelRe は「申請者」「届出人」など、氏名を付けない
+	// 申請者系ラベル用パターン。区切りはコロン等（personNameSep）か半角空白。
+	personNameApplicantLabelRe = regexp.MustCompile(
+		personNameBoundary +
+			`(?:申請者|申込者|申請人|届出人)` +
+			`(?:` + personNameSep + `|[ ]+)` +
 			`(` + personNameValue + `)`,
 	)
 	// personNameUserNameRe は姓名どちらが入るか不定の ASCII キー
@@ -1886,6 +1898,12 @@ func Builtin() []Rule {
 				// （my-number の 4-4-4 空白区切りパターンと同じ手法）。
 				{Re: dg(`\d{4}\.\d{4}\.\d{4}`), Base: Medium, RequireContext: true,
 					ValidateLine: rejectSeparatedDigitGroup(".", 4)},
+				// 半角スペース区切り（4-4-4、「免許証番号 1234 5678 9012」）。
+				// ドット区切りと同じく Base Medium・文脈必須とし、前後に同じ幅の
+				// 空白区切りグループが続く長い数字列（カード番号など）の一部は
+				// ValidateLine で棄却する。
+				{Re: dg(`\d{4} \d{4} \d{4}`), Base: Medium, RequireContext: true,
+					ValidateLine: allValidateLine(rejectSeparatedDigitGroup(" ", 4), rejectNumericTokenPart, rejectHexDumpGroup, rejectYearSequence)},
 			},
 		},
 		{
@@ -2094,7 +2112,10 @@ func Builtin() []Rule {
 			RequireContextWindow: digitRuleRequireContextWindow,
 			Validate:             validHealthInsurance,
 			Patterns: []Pattern{
-				{Re: dg(`\d{8}`), Base: Medium, RequireContext: true},
+				// 英字で始まるハイフン区切りコード（「出荷番号 A-20261105-0042」）の
+				// 一部は、隣の行に被保険者番号があっても拾わない。
+				{Re: dg(`\d{8}`), Base: Medium, RequireContext: true,
+					ValidateLine: rejectLetterLedCodePart},
 				// 空白区切り8桁（4+4）。8桁連結時と同じ RequireContext・窓
 				// （ルール既定の 40 ルーン）を使う。validHealthInsurance は区切り
 				// 文字を含む生のマッチ文字列に対して AllSame を判定するため、
@@ -2212,6 +2233,7 @@ func Builtin() []Rule {
 			// （フリ・カ・結合濁点・ナ。"フリガナ" の合成済み ガ ではない）。
 			PrefilterLiterals: []string{
 				"名", "姓", "苗字", "フリガナ", "フリガナ", "ふりがな", "フルネーム", "受取人", "name",
+				"申請者", "申込者", "申請人", "届出人",
 			},
 			// プレースホルダ（未定・該当なし・テスト等）の値はすべてのパターンで
 			// 棄却する。非人物キー（project_name 等）はラベルの前方境界で除外する。
@@ -2229,6 +2251,11 @@ func Builtin() []Rule {
 				// 高い Medium を残す。
 				{Re: personNameStrongLabelRe, Base: Medium, Validate: dict.IsPersonName, ValidateLine: rejectBracketedFormHint},
 				{Re: personNameStrongLabelRe, Base: Low, Validate: notFormWordValue, ValidateLine: rejectBracketedFormHint},
+				// 書類の「申請者 鈴木 由美」のように、氏名を付けない申請者・届出人
+				// ラベルの後にコロンまたは空白だけを挟んで氏名が続く形。ラベルが
+				// 一般語でもあるため、姓＋名に分割できる値（dict.SplitsAsFullName）
+				// だけを Medium で拾い、辞書照合なしの Low 版は持たない。
+				{Re: personNameApplicantLabelRe, Base: Medium, Validate: dict.SplitsAsFullName, ValidateLine: rejectBracketedFormHint},
 				// 弱いラベル: 姓側（姓・名字・苗字・last_name）。validSurnameField が
 				// 姓名辞書で検証済み（単独要素は 2 文字以上の姓、または姓+名に
 				// 分割できる氏名のみ許可）のため、Base は Medium。
