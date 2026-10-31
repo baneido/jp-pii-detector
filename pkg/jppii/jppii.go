@@ -52,6 +52,19 @@ type Options struct {
 	// cgo 有効でビルドしたバイナリでのみ使える。
 	ModelDir  string
 	ModelFull bool
+
+	// 以下は後から足したオプション。ゼロ値なら従来と同じ動きになる。
+
+	// DisableIgnoreMarkers を true にすると、行内の ignore マーカー
+	// （jp-pii-detector:ignore と旧 pii-allow）がある行も検出する。既定（false）は
+	// 従来どおり、マーカーのある行を検出しない。CLI に対応するフラグはない。
+	// 検出の結果を返すだけで、入力を書き換えることはない。
+	DisableIgnoreMarkers bool
+	// NoDecodeEscapes を true にすると、ScanText が JSON の \uXXXX エスケープを
+	// 読める形に戻してから走査する前処理（--stdin と同じ）を行わない。
+	// Finding.Offset などの位置を、渡した text の位置としていつも受け取りたい
+	// 呼び出し側向け。既定（false）は従来どおりエスケープを戻す。
+	NoDecodeEscapes bool
 }
 
 // Finding は 1 件の検出。Match は生値なので、表示・保存の前に必ず Masked を使うこと。
@@ -67,6 +80,60 @@ type Finding struct {
 	Column     int // 1 始まり（ルーン単位）
 	Match      string
 	Confidence string // low|medium|high
+
+	// 以下は後から足した項目。既存の項目の値と意味は変えていない。
+
+	// Kind は検出の大きな種別。このパッケージの走査では常に "pii"。
+	Kind string
+	// SubKind はルールごとの細かい種別（例: jp-phone-number の mobile・fixed・
+	// service・ip・international）。そのルールに細かい種別がなければ空。
+	SubKind string
+	// Reason は検出の根拠（ルール・モデル・外部の認識器のどれが見つけたか）。
+	Reason Reason
+	// HasOffset が true のとき、Offset/EndOffset と ByteOffset/ByteEndOffset に
+	// 位置が入る。位置が入るのは ScanText の結果だけで、ScanPaths・ScanStaged・
+	// ScanDiff では常に false（ファイルは文字コードの変換をしてから走査するため）。
+	// ScanText でも、JSON のエスケープを戻して走査した場合（Result.EscapesDecoded）
+	// は、渡した text の中の位置にならないので false になる。
+	HasOffset bool
+	// Offset/EndOffset は ScanText に渡した text の先頭から数えた、文字（ルーン）
+	// 単位の半開区間 [Offset, EndOffset)。先頭の BOM も 1 文字として数える。
+	Offset    int
+	EndOffset int
+	// ByteOffset/ByteEndOffset は同じ区間を UTF-8 のバイト単位で表したもの。
+	// HasOffset が true なら text[ByteOffset:ByteEndOffset] == Match が成り立つ。
+	ByteOffset    int
+	ByteEndOffset int
+}
+
+// 検出の根拠（Reason.Source）の値。
+const (
+	SourceRule     = "rule"     // 組み込みルールまたは設定のカスタムルール
+	SourceModel    = "model"    // ローカルの推論モデル（Sumi、Options.ModelDir）
+	SourceExternal = "external" // 設定の [external_recognizer] の外部コマンド
+)
+
+// Reason は 1 件の検出の根拠（CLI の --explain が表示する情報の一部）。
+// Finding を == で比べたり map のキーにしたりする既存のコードが壊れないよう、
+// 比較できる型（文字列と真偽値）だけで作る。
+type Reason struct {
+	// Source は検出した仕組み（SourceRule・SourceModel・SourceExternal）。
+	Source string
+	// Model / External は Source が SourceModel / SourceExternal のとき true。
+	Model    bool
+	External bool
+	// Validated はチェックサムなどの検証に通ったとき true。
+	Validated bool
+	// ContextPromoted は周りのキーワードで信頼度が上がったとき true。
+	ContextPromoted bool
+	// CooccurrenceBoosted は近くにある別の種類の検出によって信頼度が上がったとき true。
+	CooccurrenceBoosted bool
+	// PathDemoted はテスト用のパス（testdata/ など）にあるため信頼度が下がったとき true。
+	PathDemoted bool
+	// BaseConfidence / FinalConfidence は調整前と調整後の信頼度（low|medium|high、
+	// 記録がなければ空）。
+	BaseConfidence  string
+	FinalConfidence string
 }
 
 // Masked は検出値を CLI の既定と同じ規則で伏せ字にした文字列を返す。
@@ -90,6 +157,13 @@ type Result struct {
 	Findings []Finding
 	Warnings []error
 	Stats    Stats
+
+	// 以下は ScanText だけが設定する（後から足した項目）。
+	// BOMStripped は text の先頭の BOM を除いて走査したとき true。
+	BOMStripped bool
+	// EscapesDecoded は JSON の \uXXXX エスケープを戻して走査したとき true。
+	// このとき Finding の位置は入らない（HasOffset が false）。
+	EscapesDecoded bool
 }
 
 // RuleInfo は検出ルールの説明。
@@ -102,10 +176,11 @@ type RuleInfo struct {
 
 // Scanner は設定済みの検出器。並行に使わないこと（1 走査ずつ）。
 type Scanner struct {
-	cfg      *config.Config
-	det      *detect.Detector
-	rec      *model.Recognizer
-	reportAt rule.Confidence
+	cfg             *config.Config
+	det             *detect.Detector
+	rec             *model.Recognizer
+	reportAt        rule.Confidence
+	noDecodeEscapes bool
 }
 
 // NewScanner は Options から Scanner を構築する。
@@ -147,7 +222,10 @@ func NewScanner(opts Options) (*Scanner, error) {
 		}
 		det.SetScanMinConfidence(t)
 	}
-	s := &Scanner{cfg: cfg, det: det, reportAt: reportAt}
+	if opts.DisableIgnoreMarkers {
+		det.SetIgnoreMarkersEnabled(false)
+	}
+	s := &Scanner{cfg: cfg, det: det, reportAt: reportAt, noDecodeEscapes: opts.NoDecodeEscapes}
 	if opts.ModelDir != "" {
 		rec, err := model.Open(opts.ModelDir)
 		if err != nil {
@@ -208,9 +286,15 @@ func (s *Scanner) ScanDiff(diffRange string) (Result, error) {
 
 // ScanText はテキスト 1 本を走査する（--stdin と同じ前処理）。name は報告用の名前。
 func (s *Scanner) ScanText(name, text string) Result {
+	input := text
 	text = strings.TrimPrefix(text, "\uFEFF")
-	if decoded, ok := source.DecodeEscapedView(text); ok {
-		text = decoded
+	bomStripped := len(text) != len(input)
+	escapesDecoded := false
+	if !s.noDecodeEscapes {
+		if decoded, ok := source.DecodeEscapedView(text); ok {
+			text = decoded
+			escapesDecoded = true
+		}
 	}
 	fs := s.det.ScanContent(name, text)
 	var warns []error
@@ -223,7 +307,54 @@ func (s *Scanner) ScanText(name, text string) Result {
 			fs = s.det.MergeExternalFindings(name, text, fs, cands)
 		}
 	}
-	return s.withModelErr(Result{Findings: s.convert(fs, nil), Warnings: warns})
+	res := Result{Findings: s.convert(fs, nil), Warnings: warns, BOMStripped: bomStripped, EscapesDecoded: escapesDecoded}
+	if !escapesDecoded {
+		setOffsets(res.Findings, fs, input, text, bomStripped)
+	}
+	return s.withModelErr(res)
+}
+
+// setOffsets は ScanText の検出に、渡された text（input）の中の位置を付ける。
+// scanned は実際に走査した文字列（input から先頭の BOM を除いたもの）。
+// 計算した区間の文字列が Match と一致しない検出には位置を付けない。
+func setOffsets(out []Finding, in []detect.Finding, input, scanned string, bomStripped bool) {
+	in = detect.ComputeOffsets(scanned, append([]detect.Finding(nil), in...))
+	runeShift, byteShift := 0, 0
+	if bomStripped {
+		runeShift, byteShift = 1, len("\uFEFF")
+	}
+	var idx runeByteIndex
+	for i := range in {
+		if i >= len(out) || !in[i].HasOffset {
+			continue
+		}
+		bs, ok1 := idx.byteAt(scanned, in[i].Offset)
+		be, ok2 := idx.byteAt(scanned, in[i].EndOffset)
+		if !ok1 || !ok2 || scanned[bs:be] != in[i].Match {
+			continue
+		}
+		f := &out[i]
+		f.HasOffset = true
+		f.Offset, f.EndOffset = in[i].Offset+runeShift, in[i].EndOffset+runeShift
+		f.ByteOffset, f.ByteEndOffset = bs+byteShift, be+byteShift
+	}
+}
+
+// runeByteIndex は文字（ルーン）位置からバイト位置への変換表を遅延して作る。
+type runeByteIndex struct{ starts []int }
+
+func (x *runeByteIndex) byteAt(s string, r int) (int, bool) {
+	if x.starts == nil {
+		x.starts = make([]int, 0, len(s)+1)
+		for b := range s {
+			x.starts = append(x.starts, b)
+		}
+		x.starts = append(x.starts, len(s))
+	}
+	if r < 0 || r >= len(x.starts) {
+		return 0, false
+	}
+	return x.starts[r], true
 }
 
 // Rules は実効ルール（カスタムルールを含む）の一覧を返す。
@@ -271,9 +402,28 @@ func (s *Scanner) convert(in []detect.Finding, norm func(string) string) []Findi
 		if norm != nil {
 			rp = norm(f.File)
 		}
-		out = append(out, Finding{RuleID: f.RuleID, Description: f.Description, File: f.File, RepoPath: rp, Line: f.Line, Column: f.Column, Match: f.Match, Confidence: f.Confidence.String()})
+		kind := f.Kind
+		if kind == "" {
+			kind = "pii"
+		}
+		out = append(out, Finding{RuleID: f.RuleID, Description: f.Description, File: f.File, RepoPath: rp, Line: f.Line, Column: f.Column, Match: f.Match, Confidence: f.Confidence.String(),
+			Kind: kind, SubKind: f.Reason.Kind, Reason: convertReason(f.Reason)})
 	}
 	return out
+}
+
+func convertReason(r detect.DetectReason) Reason {
+	src := SourceRule
+	switch {
+	case r.Model:
+		src = SourceModel
+	case r.External:
+		src = SourceExternal
+	}
+	return Reason{Source: src, Model: r.Model, External: r.External, Validated: r.Validated,
+		ContextPromoted:     r.ContextPromoted,
+		CooccurrenceBoosted: r.CooccurrenceBoosted, PathDemoted: r.PathDemoted,
+		BaseConfidence: r.BaseConfidence, FinalConfidence: r.FinalConfidence}
 }
 
 // Mask は値を CLI の既定と同じ規則で伏せ字にする。

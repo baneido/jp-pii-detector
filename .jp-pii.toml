@@ -26,6 +26,8 @@ paths = [
   "^internal/source/(encoding|gitdiff)_test\\.go$",
   # モデルの候補行選択のテスト（架空の電話番号・生年月日を含む）
   "^internal/model/prefilter_test\\.go$",
+  # 公開 API の位置・互換のテスト（架空の氏名・電話番号・メールアドレスを含む）
+  "^pkg/jppii/(span|compat)_test\\.go$",
   # 外部フィクスチャのローカルコピー（実在しうる PII を含む。.gitignore 済みで未コミット）
   "^pii-fixtures\\.json$",
   # Presidio 連携アダプタのサンプル/デモ（架空の PII を含む）

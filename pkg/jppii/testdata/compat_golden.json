@@ -1,0 +1,14 @@
+{
+  "default": {
+    "findings": 6,
+    "sha256": "117b81702868b6e735dcb714fc60ddb8d3feda1243acf12caa3eb9b8fc8453ef"
+  },
+  "high-recall": {
+    "findings": 6,
+    "sha256": "848ac691752087ce31389a3593c08d01cb76c4e6efcb25b23567df9e6d4d383f"
+  },
+  "low": {
+    "findings": 6,
+    "sha256": "7d69caf1c188afe0ecc38c8ff0cb0c03ed8d6cd136e68d20b54a33fb85135d00"
+  }
+}

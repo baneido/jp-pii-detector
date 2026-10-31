@@ -440,7 +440,7 @@ func (d *Detector) columnNameFinding(file string, lineNo int, origLine, norm str
 	// 正規表現を通らないため、ignore マーカーが自然には効かない（マーカーは
 	// 最終列の本文の一部として読み飛ばされるだけ）。値が乗る行に対して明示的に
 	// 判定する（scanLineWithContext と同じ「値が乗る行基準」）。
-	if ignoredLine(origLine) {
+	if d.lineIgnored(origLine) {
 		return Finding{}, false
 	}
 	field := norm[f.start:f.end]
