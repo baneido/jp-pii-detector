@@ -135,7 +135,13 @@ func (d *Detector) candidateToFinding(file string, lines []string, c external.Ca
 	// 変換される（またはその逆）ことがある。normalize.Line は 1 ルーン→1 ルーンの
 	// 変換が不変条件（CLAUDE.md）なので、正規化後の文字列でも同じ [start:end] が
 	// そのまま対応する。
-	normEntity := string([]rune(normalize.Line(lineText))[start:end])
+	normRunes := []rune(normalize.Line(lineText))
+	normEntity := string(normRunes[start:end])
+	// サービスアカウントのメールアドレス（service_account.go）の内部に収まる候補は、
+	// 組み込みルールと同じくモデル・外部レコグナイザでも報告しない。
+	if bs := len(string(normRunes[:start])); insideServiceAccountEmail(string(normRunes), bs, bs+len(normEntity)) {
+		return Finding{}, false
+	}
 	if d.allowlisted(normEntity) {
 		return Finding{}, false
 	}

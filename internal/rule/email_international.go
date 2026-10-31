@@ -40,6 +40,11 @@ func validEAIEmail(m string) bool {
 		strings.Contains(local, "..") || hasEAILabelPrefix(local) || !validEAILocal(local) {
 		return false
 	}
+	// GCP のサービスアカウント・SSH の拡張名などのドメインは ASCII 版の
+	// email-address と同じく個人のアドレスとして扱わない。
+	if nonPersonalEmail(local, strings.ToLower(domain)) {
+		return false
+	}
 	labels := strings.Split(domain, ".")
 	if len(labels) < 2 {
 		return false

@@ -75,6 +75,7 @@ var notationCategories = []string{
 	"reading-romaji",       // カタカナ読み・ローマ字併記の姓名「<姓> <名>(<セイ> <メイ>)」「<姓><名>（<SEI> <Mei>）」と「<姓><名>選手」（陽性）、氏子・大さん橋・英語の施設名（陰性）
 	"member-colon",         // 年報の学外活動一覧「<学会名> 委員会委員：<姓><名>」「代議員：<姓><名>、<姓><名>」（陽性）、空欄・人数・殿堂・人数 + 名様・一般語 + 敬称（陰性）
 	"officer-shi",          // IR 資料の「取締役 <姓><名>氏」「常勤監査役 <姓><名>氏」（陽性）と、立場・神の尊称 + 敬称、連続した西暦年（陰性）
+	"gcp-service-account",  // Google Cloud のサービスアカウントのアドレス（陰性）と、個人のアドレス・似たドメイン・混在行（陽性）
 }
 
 type notationCase struct {
@@ -578,6 +579,34 @@ func notationSpecs() []notationCase {
 	neg("member-colon", "架空中学校生徒さん制作のポスター")
 	neg("member-colon", "風邪様症状の発生")
 	neg("form-word", "クラス、カーNo.氏名（ドライバー名）、使用目的を明記")
+
+	// Google Cloud のサービスアカウントのメールアドレス（ドメインが gserviceaccount.com または
+	// そのサブドメイン）は個人ではなくワークロードの ID なので、どのモードでも検出しない（陰性）。
+	// ローカル部のプロジェクト番号はマイナンバーの検査数字を満たす 12 桁も含める。
+	// 個人のアドレスと、末尾一致しない似たドメインは従来どおり検出する（陽性）。
+	// 自己走査で検出されないよう、アドレスは「@」の前後で分けて組み立てる。
+	const email = "email-address"
+	at := func(local, domain string) string { return local + "@" + domain }
+	gsa := "gservice" + "account.com"
+	mn := func(head string) string { return head + "00000" + "0012" } // 12 桁（検査数字を満たす）
+	neg("gcp-service-account", at("deploy-bot", "kairo-proj-482913.iam."+gsa))
+	neg("gcp-service-account", "client_email: "+at("runner", "kairo-proj.iam."+gsa))
+	neg("gcp-service-account", at(mn("300")+"-compute", "developer."+gsa))
+	neg("gcp-service-account", "SA："+at("service-"+mn("300"), "gcp-sa-pubsub.iam."+gsa))
+	neg("gcp-service-account", at("service-"+mn("300"), "compute-system.iam."+gsa))
+	neg("gcp-service-account", at("kairo-proj-482913", "appspot."+gsa))
+	neg("gcp-service-account", "Cloud Build: "+at(mn("300"), "cloudbuild."+gsa))
+	neg("gcp-service-account", "担当者メール "+at("Deploy-Bot", "Kairo-Proj.IAM.GServiceAccount.COM"))
+	neg("gcp-service-account", "member: serviceAccount:"+at("taro-yamada", "kairo-proj.iam."+gsa))
+	neg("gcp-service-account", "担当: "+at("やまだ", "kairo-proj.iam."+gsa))
+	pos("gcp-service-account", email, "メール："+at("taro.yamada", "g"+"mail.com"))
+	pos("gcp-service-account", email, at("taro.yamada+gcp", "g"+"mail.com"))
+	pos("gcp-service-account", email, "連絡先 "+at("t-yamada", "kairo-tech.co.jp"))
+	pos("gcp-service-account", email, at("hanako.sato", "kairo-tech.com"))
+	pos("gcp-service-account", email, at("deploy", "kairo-proj."+gsa+".evil.jp"))
+	pos("gcp-service-account", email, at("deploy", "x"+gsa))
+	pos("gcp-service-account", email, at("deploy", "gservice"+"account.co"))
+	pos("gcp-service-account", email, "連絡先 "+at("taro.yamada", "g"+"mail.com")+" / SA: "+at("deploy-bot", "kairo-proj.iam."+gsa))
 	return out
 }
 

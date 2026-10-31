@@ -1350,6 +1350,12 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 					}
 					continue
 				}
+				if insideServiceAccountEmail(norm, start, end) {
+					if d.collectDropped {
+						d.recordDroppedMatch(r.ID, file, lineNo, norm, start, DropReasonServiceAccountEmail, p.Base)
+					}
+					continue
+				}
 				reason := DetectReason{
 					BaseConfidence: p.Base.String(),
 					RequireContext: p.RequireContext,

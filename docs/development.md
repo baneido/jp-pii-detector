@@ -195,7 +195,8 @@ relaxedの各spanスコア、`FindingFP` / `Negatives` / `ConfidenceMiss`をす�
 （`min_confidence` 未満で破棄。cooccurrence_boost で保持に回った候補が
 最終的に昇格しなかった場合を含む）・`overlap-lost`（resolveOverlaps で
 負けた）・`path-demotion-below-min`（パス降格後に `min_confidence` 未満）・
-`uuid-token`（UUID 内部の部分一致）。
+`uuid-token`（UUID 内部の部分一致）・
+`service-account-email`（Google Cloud のサービスアカウントのアドレス内部の一致）。
 
 既定では完全に無効で、性能・挙動・出力のいずれにも影響しません。
 `detect.Detector` に `CollectDropped(true)` を呼んだ場合のみ、`ScanContent` /

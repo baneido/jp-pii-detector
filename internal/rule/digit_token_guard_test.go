@@ -270,11 +270,21 @@ func TestNonPersonalEmail(t *testing.T) {
 		{"curve25519-sha256@libssh.org", false},
 		{"deploy@my-proj.iam.gserviceaccount.com", false},
 		{"123456789012-compute@developer.gserviceaccount.com", false},
+		{"service-123456789012@gcp-sa-pubsub.iam.gserviceaccount.com", false},
+		{"service-123456789012@compute-system.iam.gserviceaccount.com", false},
+		{"kairo-proj@appspot.gserviceaccount.com", false},
+		{"123456789012@cloudbuild.gserviceaccount.com", false},
+		{"runner@gserviceaccount.com", false},
+		{"Deploy@Kairo-Proj.IAM.GServiceAccount.COM", false},
 		{"noreply@corp.co.jp", false},
 		{"No-Reply@corp.co.jp", false},
 		{"taro.yamada@corp.co.jp", true},
 		// 似たドメイン・ローカル部は棄却しない。
 		{"taro@notopenssh.com", true},
+		{"deploy@kairo-proj.gserviceaccount.com.evil.jp", true},
+		{"deploy@xgserviceaccount.com", true},
+		{"deploy@gserviceaccount.co", true},
+		{"taro.yamada+gcp@gmail.com", true},
 		{"noreply.taro@corp.co.jp", true},
 	}
 	for _, c := range cases {

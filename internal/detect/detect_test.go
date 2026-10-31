@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/baneido/jp-pii-detector/internal/config"
+	"github.com/baneido/jp-pii-detector/internal/external"
 	"github.com/baneido/jp-pii-detector/internal/normalize"
 	"github.com/baneido/jp-pii-detector/internal/rule"
 	"github.com/baneido/jp-pii-detector/internal/testfixtures"
@@ -5782,5 +5783,128 @@ high_recall = true
 		if !found {
 			t.Errorf("%q: jp-address-high-recall not reported", line)
 		}
+	}
+}
+
+// TestServiceAccountEmailNotDetected は、Google Cloud のサービスアカウントの
+// メールアドレス（ドメインが gserviceaccount.com またはそのサブドメイン）を、
+// どのモード（low / medium / high-recall / 名簿ファイル判定を含む全 opt-in）でも
+// 個人情報として報告しないことを固定する。ローカル部のプロジェクト番号
+// （マイナンバーの検査数字を満たす 12 桁を含む）も数値ルールとして報告しない。
+// 一方、個人のアドレス（gmail.com・会社ドメイン・.co.jp・+タグ）と、
+// 末尾一致しない似たドメインは従来どおり検出する。値はすべて架空。
+func TestServiceAccountEmailNotDetected(t *testing.T) {
+	modes := map[string]string{
+		"low":         `min_confidence = "low"`,
+		"medium":      ``,
+		"high-recall": "[rules]\nhigh_recall = true",
+		"all-opt-in":  "min_confidence = \"low\"\n[rules]\nhigh_recall = true\nname_roster = true",
+	}
+	sa := []string{
+		"deploy-bot@kairo-proj-482913.iam.gserviceaccount.com",
+		"123456789018-compute@developer.gserviceaccount.com",
+		"service-987654321093@gcp-sa-pubsub.iam.gserviceaccount.com",
+		"service-400000000009@compute-system.iam.gserviceaccount.com",
+		"kairo-proj-482913@appspot.gserviceaccount.com",
+		"300000000012@cloudbuild.gserviceaccount.com",
+		"runner@gserviceaccount.com",
+		"Deploy-Bot@Kairo-Proj.IAM.GServiceAccount.COM",
+		"サービスアカウント: deploy-bot@kairo-proj-482913.iam.gserviceaccount.com",
+		"メール：123456789018-compute@developer.gserviceaccount.com",
+		"担当者メール service-987654321093@gcp-sa-cloudbuild.iam.gserviceaccount.com",
+		`"client_email": "taro-yamada@kairo-proj.iam.gserviceaccount.com",`,
+		"member: serviceAccount:runner@kairo-proj.iam.gserviceaccount.com",
+		"gcloud iam service-accounts keys create key.json --iam-account=runner@kairo-proj.iam.gserviceaccount.com.",
+		"やまだ@kairo-proj.iam.gserviceaccount.com",
+	}
+	personal := []string{
+		"taro.yamada@gmail.com",
+		"taro.yamada+gcp@gmail.com",
+		"t-yamada@kairo-tech.co.jp",
+		"hanako.sato@kairo-tech.com",
+		// 似たドメイン（後ろに続く・ラベルの途中・TLD 違い・ドメイン名に含むだけ）
+		"deploy@kairo-proj.gserviceaccount.com.evil.jp",
+		"deploy@xgserviceaccount.com",
+		"deploy@gserviceaccount.co",
+		"deploy@gserviceaccount.com-mail.jp",
+		"gserviceaccount.com.taro@gmail.com",
+	}
+	for name, toml := range modes {
+		t.Run(name, func(t *testing.T) {
+			d := newDetector(t, toml)
+			for _, line := range sa {
+				if fs := d.ScanLine("f.txt", 1, line); len(fs) != 0 {
+					t.Errorf("%q: findings = %v, want none", line, ruleIDs(fs))
+				}
+			}
+			for _, line := range personal {
+				assertRules(t, d.ScanLine("f.txt", 1, line), "email-address")
+			}
+			// 同じ行にサービスアカウントと個人のアドレスがあれば、個人のほうだけを報告する。
+			fs := d.ScanLine("f.txt", 1, "連絡先 taro.yamada@gmail.com / SA: deploy-bot@kairo-proj.iam.gserviceaccount.com")
+			if len(fs) != 1 || fs[0].Match != "taro.yamada@gmail.com" {
+				t.Errorf("mixed line: findings = %+v, want only taro.yamada@gmail.com", fs)
+			}
+			// 日本語ローカル部（high-recall の email-address-eai）も個人ドメインなら検出する。
+			if strings.Contains(toml, "high_recall") {
+				assertRules(t, d.ScanLine("f.txt", 1, "やまだ@kairo-tech.co.jp"), "email-address-eai")
+			}
+		})
+	}
+}
+
+// TestServiceAccountEmailSpans は insideServiceAccountEmail の境界判定を固定する。
+func TestServiceAccountEmailSpans(t *testing.T) {
+	cases := []struct {
+		line, m string
+		want    bool
+	}{
+		{"id 300000000012@cloudbuild.gserviceaccount.com", "300000000012", true},
+		{"a@b.iam.gserviceaccount.com, 300000000012", "300000000012", false},
+		{"300000000012@cloudbuild.gserviceaccount.com.evil.jp", "300000000012", false},
+		{"300000000012@xgserviceaccount.com", "300000000012", false},
+		{"300000000012@gserviceaccount.co", "300000000012", false},
+		{"@gserviceaccount.com 300000000012", "300000000012", false},
+		{"x@.gserviceaccount.com", "x", false},
+		{"末尾ピリオド x@p.iam.gserviceaccount.com.", "x@p.iam.gserviceaccount.com", true},
+		{"担当: やまだ@kairo-proj.iam.gserviceaccount.com", "やまだ", true},
+		{"担当: やまだ@kairo-proj.iam.gserviceaccount.com", "担当", false},
+	}
+	for _, c := range cases {
+		s := strings.Index(c.line, c.m)
+		if got := insideServiceAccountEmail(c.line, s, s+len(c.m)); got != c.want {
+			t.Errorf("insideServiceAccountEmail(%q, %q) = %v, want %v", c.line, c.m, got, c.want)
+		}
+	}
+}
+
+// TestMergeExternalFindingsDropsServiceAccountEmail は、モデル・外部レコグナイザの
+// 候補がサービスアカウントのアドレスの内部に収まる場合も報告しないことを固定する。
+func TestMergeExternalFindingsDropsServiceAccountEmail(t *testing.T) {
+	d := newDetector(t, "")
+	content := "SA: 300000000012@cloudbuild.gserviceaccount.com\nmail: 300000000012@kairo-tech.co.jp\n"
+	cands := []external.Candidate{
+		{File: "f.go", RuleID: "jp-my-number-external", Line: 1, Column: 5, Length: 12, Confidence: "high"},
+		{File: "f.go", RuleID: "email-address-external", Line: 1, Column: 5, Length: 43, Confidence: "high"},
+		{File: "f.go", RuleID: "jp-my-number-external", Line: 2, Column: 7, Length: 12, Confidence: "high"},
+	}
+	// 日本語のローカル部をモデルが人名とみなした場合も棄却する。
+	content += "SA: やまだ@kairo-proj.iam.gserviceaccount.com\n"
+	cands = append(cands, external.Candidate{File: "f.go", RuleID: "person-name-external", Line: 3, Column: 5, Length: 3, Confidence: "high"})
+	got := d.MergeExternalFindings("f.go", content, nil, cands)
+	if len(got) != 1 || got[0].Line != 2 {
+		t.Fatalf("got = %+v, want only the line-2 candidate", got)
+	}
+}
+
+// TestServiceAccountEmailDroppedReason は、サービスアカウントのアドレス内部の
+// 数値一致が service-account-email として棄却記録されることを確認する。
+func TestServiceAccountEmailDroppedReason(t *testing.T) {
+	d := newDetector(t, "")
+	d.CollectDropped(true)
+	assertRules(t, d.ScanLine("f.txt", 1, "300000000012@cloudbuild.gserviceaccount.com"))
+	dropped := d.TakeDropped()
+	if _, ok := findDropped(dropped, "jp-my-number", DropReasonServiceAccountEmail); !ok {
+		t.Fatalf("service-account-email が記録されていない: %+v", dropped)
 	}
 }
