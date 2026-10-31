@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -229,6 +230,50 @@ func TestRunMaxFindingsCapsCandidates(t *testing.T) {
 	cands, diags := Run(context.Background(), cfg, []FileInput{{File: "a.txt", Text: "x"}})
 	if len(cands) != 10 {
 		t.Errorf("candidates = %d (diagnostics=%v), want exactly MaxFindings=10", len(cands), diags)
+	}
+}
+
+// TestRunDetailedReportsTruncation は上限を超えた候補を読み捨てたとき、件数を
+// Truncated と診断メッセージで知らせることを確認する（黙って捨てない）。
+func TestRunDetailedReportsTruncation(t *testing.T) {
+	t.Setenv("JP_PII_EXTERNAL_TEST_HELPER", "1")
+	cfg := helperConfig("many") // 2000 件送る
+	cfg.MaxFindings = 10
+	o := RunDetailed(context.Background(), cfg, []FileInput{{File: "a.txt", Text: "x"}})
+	if len(o.Candidates) != 10 {
+		t.Fatalf("candidates = %d, want 10", len(o.Candidates))
+	}
+	if o.Truncated == nil || o.Truncated.Limit != 10 || o.Truncated.Received != 2000 {
+		t.Fatalf("Truncated = %+v, want Limit=10 Received=2000", o.Truncated)
+	}
+	if !errors.Is(o.Truncated, ErrMaxFindingsExceeded) {
+		t.Error("errors.Is(Truncated, ErrMaxFindingsExceeded) = false")
+	}
+	found := false
+	for _, d := range o.Diagnostics {
+		if strings.Contains(d, "max_findings") && strings.Contains(d, "1990") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("上限超過の診断メッセージが無い: %v", o.Diagnostics)
+	}
+	// Run（従来の API）でも同じ診断メッセージが返る。
+	_, diags := Run(context.Background(), cfg, []FileInput{{File: "a.txt", Text: "x"}})
+	if len(diags) == 0 {
+		t.Error("Run が上限超過を診断メッセージで返していない")
+	}
+}
+
+// TestRunDetailedNoTruncationAtExactLimit は候補数がちょうど上限のときは
+// 読み捨てがないので Truncated が nil であることを確認する。
+func TestRunDetailedNoTruncationAtExactLimit(t *testing.T) {
+	t.Setenv("JP_PII_EXTERNAL_TEST_HELPER", "1")
+	cfg := helperConfig("many")
+	cfg.MaxFindings = 2000
+	o := RunDetailed(context.Background(), cfg, []FileInput{{File: "a.txt", Text: "x"}})
+	if len(o.Candidates) != 2000 || o.Truncated != nil {
+		t.Fatalf("candidates = %d, Truncated = %+v; want 2000, nil", len(o.Candidates), o.Truncated)
 	}
 }
 

@@ -73,6 +73,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -105,7 +106,8 @@ type Config struct {
 	// Timeout は子プロセスの実行タイムアウト。0 以下なら DefaultTimeout を使う。
 	Timeout time.Duration
 	// MaxFindings は 1 回の Run で受理する候補数の上限。0 以下なら
-	// DefaultMaxFindings を使う。上限到達後に届いた行は読み捨てる
+	// DefaultMaxFindings を使う。上限到達後に届いた行は読み捨て、件数を
+	// Outcome.Truncated と診断メッセージで知らせる
 	// （子プロセスの標準出力パイプを詰まらせないため読み続けるが、Candidate には
 	// 積まない）。
 	MaxFindings int
@@ -154,21 +156,62 @@ type response struct {
 	Confidence string `json:"confidence"`
 }
 
-// Run は cfg.Command を 1 回だけ起動し、inputs を JSONL で送信して候補を集める。
+// ErrMaxFindingsExceeded は外部レコグナイザが返した候補が MaxFindings の上限を
+// 超え、超過分を読み捨てたことを表す。errors.Is で判定できる（実体は
+// *MaxFindingsError）。上限を超えた走査は「候補の一部しか使っていない」ため、
+// 組み込み側はこれを見て走査を失敗扱いにできる。
+var ErrMaxFindingsExceeded = errors.New("外部レコグナイザの候補数が max_findings の上限を超えたため、超過分を読み捨てました")
+
+// MaxFindingsError は上限超過の件数（値は含まない）。
+type MaxFindingsError struct {
+	// Limit は適用した上限（max_findings、未設定なら DefaultMaxFindings）。
+	Limit int
+	// Received は子プロセスから受け取った候補の総数（読み捨てた分を含む）。
+	Received int
+}
+
+func (e *MaxFindingsError) Error() string {
+	return fmt.Sprintf("外部レコグナイザの候補 %d 件のうち、max_findings の上限 %d 件を超えた %d 件を読み捨てました（上限を上げるには [external_recognizer] max_findings を設定してください）",
+		e.Received, e.Limit, e.Received-e.Limit)
+}
+
+// Is は errors.Is(err, ErrMaxFindingsExceeded) を true にする。
+func (e *MaxFindingsError) Is(target error) bool { return target == ErrMaxFindingsExceeded }
+
+// Outcome は RunDetailed の結果。
+type Outcome struct {
+	Candidates  []Candidate
+	Diagnostics []string
+	// Truncated は候補が上限を超えて読み捨てたときだけ非 nil。候補を丸ごと
+	// 破棄した失敗時（Candidates が nil）は nil。
+	Truncated *MaxFindingsError
+}
+
+// Run は RunDetailed の結果のうち候補と診断メッセージだけを返す。上限超過は
+// 診断メッセージにも 1 行入るので、黙って読み捨てることはない。
+func Run(ctx context.Context, cfg Config, inputs []FileInput) (candidates []Candidate, diagnostics []string) {
+	o := RunDetailed(ctx, cfg, inputs)
+	return o.Candidates, o.Diagnostics
+}
+
+// RunDetailed は cfg.Command を 1 回だけ起動し、inputs を JSONL で送信して候補を集める。
 //
-// cfg.Enabled() が false、または inputs が空の場合は何もせず (nil, nil) を返す
+// cfg.Enabled() が false、または inputs が空の場合は何もせず空の Outcome を返す
 // （プロセスは一切起動しない。既定の未設定状態でコストがかからないことの根拠）。
 //
 // タイムアウト・0 以外の終了コード・標準出力の JSON 構文/型エラーは、いずれも
-// 「この走査回の候補をすべて破棄」として扱い (nil, diagnostics) を返す。呼び出し側は
+// 「この走査回の候補をすべて破棄」として扱い、候補なし（Candidates が nil）と診断メッセージだけを返す。呼び出し側は
 // これを「外部候補なし」として扱い、通常の検出だけで走査を継続すればよい
 // （検出器本体を壊さないという設計方針）。diagnostics は空の場合もある成功時にも
 // 子プロセスの標準エラー出力があれば含まれる（人間可読なログ用途。値そのものは
 // 含めていない前提だが、子が何を書くかは制御できないため、呼び出し側は
 // レポートには出さずログ相当として扱うこと）。
-func Run(ctx context.Context, cfg Config, inputs []FileInput) (candidates []Candidate, diagnostics []string) {
+//
+// 候補が上限（MaxFindings）を超えた場合は、超過分を読み捨てたうえで
+// Truncated に件数を入れ、診断メッセージにも同じ内容を 1 行加える。
+func RunDetailed(ctx context.Context, cfg Config, inputs []FileInput) Outcome {
 	if !cfg.Enabled() || len(inputs) == 0 {
-		return nil, nil
+		return Outcome{}
 	}
 	timeout := cfg.Timeout
 	if timeout <= 0 {
@@ -185,17 +228,17 @@ func Run(ctx context.Context, cfg Config, inputs []FileInput) (candidates []Cand
 	cmd := exec.CommandContext(cctx, cfg.Command[0], cfg.Command[1:]...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return nil, []string{fmt.Sprintf("標準入力パイプを作成できません: %v", err)}
+		return Outcome{Diagnostics: []string{fmt.Sprintf("標準入力パイプを作成できません: %v", err)}}
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, []string{fmt.Sprintf("標準出力パイプを作成できません: %v", err)}
+		return Outcome{Diagnostics: []string{fmt.Sprintf("標準出力パイプを作成できません: %v", err)}}
 	}
 	var stderrBuf bytes.Buffer
 	cmd.Stderr = &stderrBuf
 
 	if err := cmd.Start(); err != nil {
-		return nil, []string{fmt.Sprintf("外部レコグナイザを起動できません（command=%v）: %v", cfg.Command, err)}
+		return Outcome{Diagnostics: []string{fmt.Sprintf("外部レコグナイザを起動できません（command=%v）: %v", cfg.Command, err)}}
 	}
 
 	// 標準入力への書き込みは別ゴルーチンで行う。子プロセスが全リクエストを
@@ -218,6 +261,7 @@ func Run(ctx context.Context, cfg Config, inputs []FileInput) (candidates []Cand
 	ok := true
 	var diags []string
 	var cands []Candidate
+	received := 0
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxResponseLineBytes)
 readLoop:
@@ -243,6 +287,7 @@ readLoop:
 			cancel()
 			break readLoop
 		}
+		received++
 		if len(cands) >= maxFindings {
 			// 上限到達後も読み捨てを続け、パイプを詰まらせて子プロセスを
 			// ブロックさせないようにする（新規候補としては積まない）。
@@ -285,7 +330,12 @@ readLoop:
 		diags = append(diags, "外部レコグナイザの標準エラー出力: "+strings.TrimSpace(stderrBuf.String()))
 	}
 	if !ok {
-		return nil, diags
+		return Outcome{Diagnostics: diags}
 	}
-	return cands, diags
+	out := Outcome{Candidates: cands, Diagnostics: diags}
+	if received > maxFindings {
+		out.Truncated = &MaxFindingsError{Limit: maxFindings, Received: received}
+		out.Diagnostics = append(out.Diagnostics, out.Truncated.Error())
+	}
+	return out
 }

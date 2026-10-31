@@ -7,6 +7,7 @@ import (
 
 	"github.com/baneido/jp-pii-detector/internal/config"
 	"github.com/baneido/jp-pii-detector/internal/detect"
+	"github.com/baneido/jp-pii-detector/internal/external"
 	"github.com/baneido/jp-pii-detector/internal/rule"
 	"github.com/baneido/jp-pii-detector/internal/source"
 )
@@ -21,6 +22,18 @@ type ScanInfo struct {
 	DiffRange string
 	StdinText string
 	cfg       *config.Config
+	truncated *external.MaxFindingsError
+}
+
+// ExternalMaxFindingsExceeded は、外部レコグナイザの候補が max_findings を超えて
+// 超過分を読み捨てたときに errors.Is(err, external.ErrMaxFindingsExceeded) が
+// true になるエラーを返す（超えていなければ nil）。CLI 本体は従来どおり標準エラーへの
+// 警告だけで続行するが、組み込み側は AfterScan でこれを見て走査を失敗扱いにできる。
+func (si ScanInfo) ExternalMaxFindingsExceeded() error {
+	if si.truncated == nil {
+		return nil
+	}
+	return si.truncated
 }
 
 // Files は Mode が full / paths のとき、PII 走査と同じ規則で選んだ走査対象ファイルを返す。

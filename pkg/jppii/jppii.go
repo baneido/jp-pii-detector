@@ -152,6 +152,11 @@ type Stats struct {
 	ExcludedPaths   int
 }
 
+// ErrExternalMaxFindings は外部レコグナイザの候補が max_findings の上限を超え、
+// 超過分を読み捨てたことを表す。Result.Warnings の要素や
+// ScanInfo.ExternalMaxFindingsExceeded() の戻り値に errors.Is で使う。
+var ErrExternalMaxFindings = external.ErrMaxFindingsExceeded
+
 // Result は走査結果。Warnings が空でなければ走査は不完全（CLI では exit 2）。
 type Result struct {
 	Findings []Finding
@@ -261,6 +266,9 @@ func (s *Scanner) ScanPaths(paths []string) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	if st.ExternalTruncated != nil {
+		warns = append(warns, fmt.Errorf("external-recognizer: %w", st.ExternalTruncated))
+	}
 	res := Result{Findings: s.convert(fs, RepoRelativeFunc()), Warnings: warns}
 	res.Stats = Stats{FilesDiscovered: st.FilesDiscovered, FilesScanned: st.FilesScanned, SkippedFiles: st.SkippedBinary + st.SkippedTooLarge, ExcludedPaths: st.ExcludedPaths + st.ExcludedDefaultDirs + st.ExcludedGitignored}
 	return s.withModelErr(res), nil
@@ -299,12 +307,18 @@ func (s *Scanner) ScanText(name, text string) Result {
 	fs := s.det.ScanContent(name, text)
 	var warns []error
 	if s.cfg.ExternalRecognizerEnabled() {
-		cands, diags := external.Run(context.Background(), s.cfg.ExternalRecognizerConfig(), []external.FileInput{{File: name, Text: text}})
-		for _, d := range diags {
+		o := external.RunDetailed(context.Background(), s.cfg.ExternalRecognizerConfig(), []external.FileInput{{File: name, Text: text}})
+		for _, d := range o.Diagnostics {
+			if o.Truncated != nil && d == o.Truncated.Error() {
+				continue // 下で ErrExternalMaxFindings として 1 件だけ入れる
+			}
 			warns = append(warns, errors.New("external-recognizer: "+d))
 		}
-		if len(cands) > 0 {
-			fs = s.det.MergeExternalFindings(name, text, fs, cands)
+		if o.Truncated != nil {
+			warns = append(warns, fmt.Errorf("external-recognizer: %w", o.Truncated))
+		}
+		if len(o.Candidates) > 0 {
+			fs = s.det.MergeExternalFindings(name, text, fs, o.Candidates)
 		}
 	}
 	res := Result{Findings: s.convert(fs, nil), Warnings: warns, BOMStripped: bomStripped, EscapesDecoded: escapesDecoded}

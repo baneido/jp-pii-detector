@@ -2,13 +2,16 @@ package source
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"testing"
 
 	"github.com/baneido/jp-pii-detector/internal/config"
 	"github.com/baneido/jp-pii-detector/internal/detect"
+	"github.com/baneido/jp-pii-detector/internal/external"
 )
 
 // TestHelperProcess はモック外部レコグナイザの本体（internal/external/external_test.go
@@ -34,6 +37,18 @@ func TestHelperProcess(t *testing.T) {
 	}
 
 	switch args[0] {
+	case "mark-three":
+		// 何を受け取っても同じ候補を 3 件返す（max_findings の上限超過の確認用）。
+		dec := json.NewDecoder(os.Stdin)
+		for {
+			var req struct{}
+			if err := dec.Decode(&req); err != nil {
+				break
+			}
+		}
+		for range 3 {
+			os.Stdout.WriteString(`{"file":"a.txt","rule_id":"ext-marker-external","line":1,"column":1,"length":1,"confidence":"high"}` + "\n")
+		}
 	case "mark-each-file":
 		// 受け取った各ファイルにつき 1 件、固定スパンの候補を返す
 		// （テストは「どのファイルが子プロセスへ送られたか」を検証できる）。
@@ -84,7 +99,7 @@ func TestScanPathsWithoutExternalRecognizerNeverInvokesRunExternalRecognizer(t *
 	}
 	// runExternalRecognizer 自体を直接呼び、未設定時は候補マップ構築にすら
 	// 進まないことを確認する（呼び出しコストがゼロであることの直接的な根拠）。
-	got := runExternalRecognizer(cfg, []string{filepath.Join(tmp, "a.txt")}, []string{"no pii here\n"}, []bool{false})
+	got, _ := runExternalRecognizer(cfg, []string{filepath.Join(tmp, "a.txt")}, []string{"no pii here\n"}, []bool{false})
 	if got != nil {
 		t.Fatalf("runExternalRecognizer() = %v, want nil when disabled", got)
 	}
@@ -161,5 +176,42 @@ func TestScanPathsExternalRecognizerDoesNotReceiveSkippedFiles(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("external finding count = %d, want 1 (only a.txt should have been sent)", count)
+	}
+}
+
+// TestScanPathsReportsExternalMaxFindingsExceeded は外部レコグナイザの候補が
+// max_findings を超えたとき、超過を黙って捨てずに ScanStats.ExternalTruncated で
+// 件数を返すことを確認する（組み込み側が走査を失敗扱いにするための手がかり）。
+func TestScanPathsReportsExternalMaxFindingsExceeded(t *testing.T) {
+	t.Setenv("JP_PII_EXTERNAL_TEST_HELPER", "1")
+	for _, tc := range []struct {
+		limit     int
+		truncated bool
+	}{{2, true}, {3, false}, {10, false}} {
+		tmp := t.TempDir()
+		writeFile(t, filepath.Join(tmp, "a.txt"), []byte("no pii here\n"))
+		cfg, err := config.Parse(externalHelperConfigTOML("mark-three") + "max_findings = " + strconv.Itoa(tc.limit) + "\n")
+		if err != nil {
+			t.Fatal(err)
+		}
+		d, err := detect.New(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _, st, err := ScanPathsWithStats(d, cfg, []string{tmp})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := st.ExternalTruncated != nil; got != tc.truncated {
+			t.Fatalf("limit=%d: ExternalTruncated = %v, want truncated=%v", tc.limit, st.ExternalTruncated, tc.truncated)
+		}
+		if tc.truncated {
+			if !errors.Is(st.ExternalTruncated, external.ErrMaxFindingsExceeded) {
+				t.Errorf("limit=%d: errors.Is(ErrMaxFindingsExceeded) = false", tc.limit)
+			}
+			if st.ExternalTruncated.Limit != 2 || st.ExternalTruncated.Received != 3 {
+				t.Errorf("limit=%d: got %+v, want Limit=2 Received=3", tc.limit, *st.ExternalTruncated)
+			}
+		}
 	}
 }
