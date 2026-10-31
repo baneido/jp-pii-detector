@@ -328,6 +328,10 @@ func notationSpecs() []notationCase {
 	// 職名に地続きの氏名（職名を範囲に含めない）
 	pos("title-prefix", "person-name-high-recall", "架空町長"+full(5, "")+"様")
 	pos("title-prefix", "person-name-high-recall", "（委員長"+full(0, "")+"氏）")
+	// 職名の直後の宛名「<職名>　<姓><名>殿」は、姓が旧字体などで辞書に無くても残す
+	// （2026-10-31 20:00 の全体比較で実測。建物名 + 殿の除外が宛名まで消していた）
+	pos("title-prefix", "person-name-high-recall", "代表取締役　德架正和殿")
+	pos("title-prefix", "person-name-high-recall", "理事長 德架正和殿")
 	neg("title-prefix", "中央殿・右脇殿・左脇殿の3棟")
 	neg("title-prefix", "市町村さんの方から意見がありました")
 	neg("title-prefix", "寄付ありがとうございます（株式会社長浜架空電機様）")

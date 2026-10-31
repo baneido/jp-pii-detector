@@ -259,7 +259,9 @@ func rejectHonorificWordCompound(line string, start, end int) bool {
 		// 高再現率の人名候補の半数以上を占めた）。宛名の「<姓><名>殿」「<姓>殿」は姓名辞書に
 		// 一致するので、漢字だけの値が辞書の姓・名・姓名のどれにも当たらない場合だけ棄却する。
 		// 「<名>女王殿下」のような殿下は上の switch で扱うため対象外にする。
-		if !strings.HasPrefix(rest, "殿下") {
+		// ただし「代表取締役   <姓><名>殿」のように直前が職名の宛名は、姓が旧字体などで辞書に
+		// 無くても個人の氏名なので残す（2026-10-31 20:00 の全体比較で実測した見逃し）。
+		if !strings.HasPrefix(rest, "殿下") && !precededByAddresseeTitle(line[:start]) {
 			v := strings.ReplaceAll(strings.ReplaceAll(val, " ", ""), "　", "")
 			if allKanji(v) && !dict.IsPersonName(v) && !dict.SplitsAsFullName(v) && !startsWithSurnameName(v) {
 				return false
@@ -615,6 +617,22 @@ func rejectDaiGoNumber(line string, start, end int) bool {
 	before := strings.TrimRight(line[:start], " ")
 	after := strings.TrimLeft(line[end:], " ")
 	return !(strings.HasSuffix(before, "第") && strings.HasPrefix(after, "号"))
+}
+
+// addresseeTitleSuffixes は、宛名の「<職名> <姓><名>殿」の職名として扱う語。
+var addresseeTitleSuffixes = []string{"取締役", "代表者", "代表", "社長", "会長", "理事長", "理事", "監事",
+	"部長", "課長", "所長", "支店長", "店長", "院長", "校長", "園長", "館長", "組合長", "委員長", "議長",
+	"知事", "市長", "町長", "村長", "区長"}
+
+// precededByAddresseeTitle は before（値の直前までの行）が空白を除いて職名で終わるかを返す。
+func precededByAddresseeTitle(before string) bool {
+	b := strings.TrimRight(before, " 　\t")
+	for _, t := range addresseeTitleSuffixes {
+		if strings.HasSuffix(b, t) {
+			return true
+		}
+	}
+	return false
 }
 
 // allKanji は s が 1 文字以上で、すべて漢字（CJK 統合漢字・々）かを返す。

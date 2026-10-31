@@ -2628,7 +2628,7 @@
         {
           "rule_id": "person-name-high-recall",
           "row": {
-            "tp": 44,
+            "tp": 46,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -2787,12 +2787,12 @@
         }
       ],
       "micro": {
-        "tp": 1095,
+        "tp": 1097,
         "fp": 1,
         "fn": 4,
-        "precision": 0.9990875912408759,
-        "recall": 0.9963603275705186,
-        "f1": 0.9977220956719818
+        "precision": 0.9990892531876139,
+        "recall": 0.9963669391462306,
+        "f1": 0.9977262391996362
       },
       "micro_span_exact": {
         "tp": 149,
@@ -3737,7 +3737,7 @@
         {
           "rule_id": "person-name-high-recall",
           "row": {
-            "tp": 44,
+            "tp": 46,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -3936,12 +3936,12 @@
         }
       ],
       "micro": {
-        "tp": 1125,
+        "tp": 1127,
         "fp": 1,
         "fn": 4,
-        "precision": 0.9991119005328597,
-        "recall": 0.9964570416297609,
-        "f1": 0.9977827050997783
+        "precision": 0.999113475177305,
+        "recall": 0.9964633068081344,
+        "f1": 0.9977866312527668
       },
       "micro_span_exact": {
         "tp": 149,
@@ -3999,8 +3999,8 @@
     }
   ],
   "dataset": {
-    "total_cases": 1435,
-    "positive_cases": 1129,
+    "total_cases": 1437,
+    "positive_cases": 1131,
     "negative_cases": 306,
     "span_annotated_cases": 147,
     "per_rule": [
@@ -4094,7 +4094,7 @@
       },
       {
         "rule_id": "person-name-high-recall",
-        "positive_cases": 44
+        "positive_cases": 46
       },
       {
         "rule_id": "person-name-role-label",
@@ -4124,7 +4124,7 @@
       },
       {
         "name": "line",
-        "cases": 1353
+        "cases": 1355
       }
     ],
     "per_format": [
@@ -4146,7 +4146,7 @@
       },
       {
         "name": "unspecified",
-        "cases": 1361
+        "cases": 1363
       }
     ],
     "per_source_class": [
@@ -4160,11 +4160,11 @@
       },
       {
         "name": "public-synthetic",
-        "cases": 982
+        "cases": 984
       }
     ]
   },
   "dataset_quality": {
-    "spanless_positive_count": 982
+    "spanless_positive_count": 984
   }
 }
