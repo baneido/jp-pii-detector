@@ -644,7 +644,7 @@ func notationSpecs() []notationCase {
 	neg("applicant-label", "申請者 東京 都内在住")
 	neg("applicant-label", "申請者 本田 技研")
 	neg("applicant-label", "毎年 申請者 中川"+"町")
-	neg("applicant-label", "申請者 所 在 地")
+	neg("applicant-label", "申請者 所 在 地") // jp-pii-detector:ignore（陰性ケースの文字列。CLI の自己走査では引用符と括弧で文脈が変わる）
 	// 個人に割り当てられる番号のラベル直後の値は、同じ行の「注文」「伝票」で棄却しない。
 	// 空白区切り（4-4-4）の免許証番号も拾う。英字で始まるハイフン区切りのコードの
 	// 一部（出荷番号）と、西暦の並びは拾わない。番号はすべて架空。

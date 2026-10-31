@@ -1929,7 +1929,7 @@ func Builtin() []Rule {
 				// （my-number の 4-4-4 空白区切りパターンと同じ手法）。
 				{Re: dg(`\d{4}\.\d{4}\.\d{4}`), Base: Medium, RequireContext: true,
 					ValidateLine: rejectSeparatedDigitGroup(".", 4)},
-				// 半角スペース区切り（4-4-4、「免許証番号 1234 5678 9012」）。
+				// 半角スペース区切り（4-4-4、「免許証番号 <4桁> <4桁> <4桁>」）。
 				// ドット区切りと同じく Base Medium・文脈必須とし、前後に同じ幅の
 				// 空白区切りグループが続く長い数字列（カード番号など）の一部は
 				// ValidateLine で棄却する。
@@ -2282,7 +2282,7 @@ func Builtin() []Rule {
 				// 高い Medium を残す。
 				{Re: personNameStrongLabelRe, Base: Medium, Validate: dict.IsPersonName, ValidateLine: rejectBracketedFormHint},
 				{Re: personNameStrongLabelRe, Base: Low, Validate: notFormWordValue, ValidateLine: rejectBracketedFormHint},
-				// 書類の「申請者 鈴木 由美」のように、氏名を付けない申請者・届出人
+				// 書類の「申請者 <姓> <名>」のように、氏名を付けない申請者・届出人
 				// ラベルの後にコロンまたは空白だけを挟んで氏名が続く形。ラベルが
 				// 一般語でもあるため、姓＋名に分割できる値（dict.SplitsAsFullName）
 				// だけを Medium で拾い、辞書照合なしの Low 版は持たない。
