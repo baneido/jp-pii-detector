@@ -172,6 +172,8 @@ func TestCompatOldAPISurface(t *testing.T) {
 		_ func(jppii.Finding) string                           = jppii.Finding.Masked
 		_ func(jppii.Finding, string) string                   = jppii.Finding.Fingerprint
 		_ jppii.ConfidenceLevel                                = jppii.ConfidenceHigh
+		_ func(jppii.ScanInfo) error                           = jppii.ScanInfo.ExternalMaxFindingsExceeded
+		_ error                                                = jppii.ErrExternalMaxFindings
 	)
 	empty := ""
 	_ = jppii.Options{ConfigPath: "", ConfigTOML: &empty, MinConfidence: "", FailOn: "", HighRecall: false,

@@ -566,6 +566,13 @@ timeout_seconds = 30                # 既定 30
 max_findings = 1000                 # 既定 1000
 ```
 
+`max_findings` を超えた候補は読み捨てるが、黙っては捨てない。標準エラーに
+「候補 N 件のうち上限を超えた M 件を読み捨てた」という警告を出し（値は出さない）、
+ライブラリ（`pkg/jppii`）では `Result.Warnings` に `jppii.ErrExternalMaxFindings`
+（`errors.Is` で判定できる）を入れる。`jppii.RunScan` の `Hooks.AfterScan` では
+`ScanInfo.ExternalMaxFindingsExceeded()` で同じエラーを受け取れるので、組み込み側は
+これを見て走査を失敗扱いにできる。CLI の終了コードは従来どおり変えない。
+
 動くサンプル（辞書 1 語をハードコードして返すだけのデモ）が
 [`integrations/external-recognizer/`](../integrations/external-recognizer/) にある。
 

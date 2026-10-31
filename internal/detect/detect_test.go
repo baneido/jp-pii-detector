@@ -5941,3 +5941,36 @@ func TestServiceAccountEmailDroppedReason(t *testing.T) {
 		t.Fatalf("service-account-email が記録されていない: %+v", dropped)
 	}
 }
+
+// 2026-10-31 20:00 の回: Pro の匿名化評価（challenge）で見逃していた形と、
+// 出荷番号の一部を被保険者番号と誤検出していた形を合成した例で固定する。
+// 値は自己走査で検出されないよう分割して組み立てる（すべて架空）。
+func TestApplicantLabelAndIDLabelGuards20261031(t *testing.T) {
+	d := newDetector(t, "")
+	sur, given := "鈴"+"木", "由"+"美"
+	tests := []struct {
+		name, content string
+		want          []string
+	}{
+		{"申請者 + 空白 + 姓名", "申請者 " + sur + " " + given, []string{"person-name"}},
+		{"届出人 + コロン", "届出人：" + sur + " " + given, []string{"person-name"}},
+		{"お客様氏名 + 1 文字の姓 + ひらがなの名", "お客様氏名：林 " + "ひな" + "た 様", []string{"person-name"}},
+		{"申請者 + 一般語", "申請者 各位", nil},
+		{"申請者 + 本人", "申請者 本人", nil},
+		{"申請者 + 市町村名", "毎年 申請者 中川" + "町", nil},
+		{"申請者 + 字間を空けた項目名", "申請者 所 在 地", nil},
+		{"申請者 + 空白を並べた表組み", "申請者      " + sur + " " + given, nil},
+		{"申請者 + 姓名 + 様", "申請者 " + sur + " " + given + " 様", []string{"person-name"}},
+		{"年金番号の次の行に注文", "基礎年金番号：" + "7034-30" + "4059\n注文の控えは別に送ります。", []string{"jp-pension-number"}},
+		{"口座番号の次の行に伝票（従来どおり棄却）", "口座番号: " + "12345" + "67\n伝票番号です", nil},
+		{"空白区切りの免許証番号", "免許証番号 " + "5649 0078 30" + "71", []string{"jp-drivers-license"}},
+		{"空白区切りの西暦の並び", "免許の更新 2023 2024 2025 年度", nil},
+		{"出荷番号の一部（被保険者番号の次の行）", "被保険者証を同封します\n出荷番号 A-" + "2026" + "1105-0042 の荷物", nil},
+		{"数字で始まる記号-番号は従来どおり", "被保険者証 記号 1234-" + "2345" + "6789", []string{"jp-health-insurance"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanContent("f.txt", tt.content), tt.want...)
+		})
+	}
+}

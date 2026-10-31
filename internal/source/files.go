@@ -62,6 +62,9 @@ type ScanStats struct {
 	// ExcludedGitignored は .gitignore 等で無視されていたため列挙しなかった
 	// ファイル・ディレクトリの数（[scan] respect_gitignore / --no-gitignore）。
 	ExcludedGitignored int
+	// ExternalTruncated は外部レコグナイザの候補が max_findings を超え、
+	// 超過分を読み捨てたときだけ非 nil（件数のみで値は持たない）。
+	ExternalTruncated *external.MaxFindingsError
 }
 
 // SkippedFiles は列挙後に内容判定で走査しなかったファイル数を返す。
@@ -303,7 +306,8 @@ func scanFilesWithStats(d *detect.Detector, cfg *config.Config, files []string, 
 		close(readJobs)
 		wg.Wait()
 
-		extByFile := runExternalRecognizer(cfg, files, texts, skip)
+		extByFile, truncated := runExternalRecognizer(cfg, files, texts, skip)
+		stats.ExternalTruncated = truncated
 
 		scanJobs := make(chan int)
 		for range workers {
@@ -373,9 +377,11 @@ func scanFilesWithStats(d *detect.Detector, cfg *config.Config, files []string, 
 // 標準エラー出力）は標準エラーへログとして出力するだけで、戻り値には含めない
 // （呼び出し元 scanFiles/ScanPaths の warnings ＝ exit code 2 判定には使わない。
 // 外部レコグナイザの不調で通常の検出そのものを失敗させないため）。
-func runExternalRecognizer(cfg *config.Config, files, texts []string, skip []bool) map[string][]external.Candidate {
+// 候補が max_findings を超えたときは、2 つ目の戻り値で件数を返す（ScanStats に
+// 載せ、組み込み側が走査を失敗扱いにできるようにする）。
+func runExternalRecognizer(cfg *config.Config, files, texts []string, skip []bool) (map[string][]external.Candidate, *external.MaxFindingsError) {
 	if !cfg.ExternalRecognizerEnabled() {
-		return nil
+		return nil, nil
 	}
 	inputs := make([]external.FileInput, 0, len(files))
 	for i, path := range files {
@@ -385,20 +391,20 @@ func runExternalRecognizer(cfg *config.Config, files, texts []string, skip []boo
 		inputs = append(inputs, external.FileInput{File: filepath.ToSlash(path), Text: texts[i]})
 	}
 	if len(inputs) == 0 {
-		return nil
+		return nil, nil
 	}
-	candidates, diagnostics := external.Run(context.Background(), cfg.ExternalRecognizerConfig(), inputs)
-	for _, msg := range diagnostics {
+	o := external.RunDetailed(context.Background(), cfg.ExternalRecognizerConfig(), inputs)
+	for _, msg := range o.Diagnostics {
 		fmt.Fprintln(os.Stderr, "jp-pii-detect: external-recognizer:", msg)
 	}
-	if len(candidates) == 0 {
-		return nil
+	if len(o.Candidates) == 0 {
+		return nil, o.Truncated
 	}
-	byFile := make(map[string][]external.Candidate, len(candidates))
-	for _, c := range candidates {
+	byFile := make(map[string][]external.Candidate, len(o.Candidates))
+	for _, c := range o.Candidates {
 		byFile[c.File] = append(byFile[c.File], c)
 	}
-	return byFile
+	return byFile, o.Truncated
 }
 
 // isBinary は先頭 8KB に NUL バイトが含まれるかで判定する。

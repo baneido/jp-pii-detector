@@ -149,8 +149,50 @@ func (d *Detector) hasNegativeContextNear(s string, start, end, radius int, rune
 	if len(generic) == 0 {
 		return false
 	}
+	if d.ownNumberLabelDirectlyBefore(rs, runeStart, radius, posCtx, generic) {
+		return false
+	}
 	return d.containsAnyContext(contextWindow(s, start, end, radius, runes), generic)
 }
+
+// ownNumberLabelDirectlyBefore は、値の直前（コロン・空白などのグルーだけを
+// 挟む）に、このルール自身の正文脈語を含み、personalIDNumberLabels のどれかで
+// 終わるラベル（「基礎年金番号：」「免許証番号 」など）があるかを返す。true のとき、窓の中の一般的な負文脈語
+// （「注文」「伝票」など、多くは次の行の別の文）では棄却しない。ラベル自体に
+// 一般的な負文脈語が入っている場合（「注文番号」など）は false。
+// 抑制を外す方向にしか働かない（採番ラベル・通貨・カウンタの判定は先に済んでいる）。
+func (d *Detector) ownNumberLabelDirectlyBefore(rs []rune, start, radius int, posCtx, generic []string) bool {
+	if len(posCtx) == 0 {
+		return false
+	}
+	from := max(start-radius, 0)
+	i := skipLabelGlue(rs, start, from)
+	if i < from {
+		return false
+	}
+	tokenStart := readTokenBackward(rs, i, from, numberingSuffixMaxTokenRunes, isNumberingTokenRune)
+	token := rs[tokenStart : i+1]
+	if len(token) < numberingSuffixMinTokenRunes {
+		return false
+	}
+	label := string(token)
+	strong := false
+	for _, l := range personalIDNumberLabels {
+		if strings.HasSuffix(label, l) {
+			strong = true
+			break
+		}
+	}
+	if !strong {
+		return false
+	}
+	return d.containsAnyContext(label, posCtx) && !d.containsAnyContext(label, generic)
+}
+
+// personalIDNumberLabels は、それだけで個人に割り当てられる番号の種類が決まる
+// ラベル。電話番号・口座番号のように、取引や注文の文脈にも普通に出てくる
+// 番号のラベルは含めない（それらは従来どおり近くの「伝票」等で棄却する）。
+var personalIDNumberLabels = []string{"年金番号", "免許証番号", "被保険者番号"}
 
 // hasNegativeContextNearAdjacentLabelOnly は NegativeContextAdjacentLabelOnly
 // 用の制限版判定。kws のうち採番ラベル接頭クラス

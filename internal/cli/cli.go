@@ -283,13 +283,14 @@ func RunScan(args []string, h *Hooks) int {
 			// が false のためここに一切コストがかからない。git diff 系
 			// （--staged/--diff）は対象外（設計メモ・CLAUDE.md 参照）。
 			if cfg.ExternalRecognizerEnabled() {
-				candidates, diagnostics := external.Run(context.Background(), cfg.ExternalRecognizerConfig(),
+				o := external.RunDetailed(context.Background(), cfg.ExternalRecognizerConfig(),
 					[]external.FileInput{{File: "<stdin>", Text: text}})
-				for _, msg := range diagnostics {
+				for _, msg := range o.Diagnostics {
 					fmt.Fprintln(os.Stderr, "jp-pii-detect: external-recognizer:", msg)
 				}
-				if len(candidates) > 0 {
-					stdinFindings = det.MergeExternalFindings("<stdin>", text, stdinFindings, candidates)
+				scanStats.ExternalTruncated = o.Truncated
+				if len(o.Candidates) > 0 {
+					stdinFindings = det.MergeExternalFindings("<stdin>", text, stdinFindings, o.Candidates)
 				}
 			}
 			// ComputeOffsets は外部レコグナイザ由来の finding も含めて
@@ -327,6 +328,7 @@ func RunScan(args []string, h *Hooks) int {
 			DiffRange: *diffRange,
 			StdinText: stdinText,
 			cfg:       cfg,
+			truncated: scanStats.ExternalTruncated,
 		})
 		if herr != nil {
 			return fail(herr)
