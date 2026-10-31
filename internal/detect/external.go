@@ -122,7 +122,7 @@ func (d *Detector) candidateToFinding(file string, lines []string, c external.Ca
 	// ignore マーカーは値が乗る行（value-bearing line）ごとに判定する。行全体を
 	// 対象にする ignoredLine を使うため、ラベルだけの隣接行にマーカーがあっても
 	// この判定には影響しない（scanAdjacentLines 等、他の cross-line 経路と同じ原則）。
-	if ignoredLine(lineText) {
+	if d.lineIgnored(lineText) {
 		return Finding{}, false
 	}
 	match := string(runes[start:end])

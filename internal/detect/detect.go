@@ -165,6 +165,10 @@ type DetectReason struct {
 type Detector struct {
 	rules []rule.Rule
 	cfg   *config.Config
+	// skipIgnoreMarkers が true なら、行内の ignore マーカー（IgnoreMarker と
+	// 旧 AllowMarker）があっても検出する。既定（false）は従来どおりマーカー行を
+	// 除外する。CLI は設定しない（pkg/jppii の Options.DisableIgnoreMarkers 専用）。
+	skipIgnoreMarkers bool
 	// patternGates は rules と同じ添字で並ぶ、パターンごとの正規表現スキップ
 	// ゲート（構文木から導出したマッチ成立の必要条件。pattern_gate.go 参照）。
 	// New で 1 回だけ構築し、走査中は読み取り専用。
@@ -900,7 +904,7 @@ func (d *Detector) scanAdjacentLines(file string, firstLineNo int, first string,
 			if f.RuleID == "person-name" && f.matchEnd > sep+1 {
 				continue
 			}
-			if ignoredLine(first) {
+			if d.lineIgnored(first) {
 				continue
 			}
 			if firstRunes == nil {
@@ -916,7 +920,7 @@ func (d *Detector) scanAdjacentLines(file string, firstLineNo int, first string,
 			if f.RuleID == "person-name" && f.matchStart < sep {
 				continue
 			}
-			if ignoredLine(second) {
+			if d.lineIgnored(second) {
 				continue
 			}
 			if secondRunes == nil {
@@ -927,7 +931,7 @@ func (d *Detector) scanAdjacentLines(file string, firstLineNo int, first string,
 			if start < 0 || end > len(secondRunes) {
 				continue
 			}
-			if ignoredLine(second) {
+			if d.lineIgnored(second) {
 				continue
 			}
 			f.Line = secondLineNo
@@ -1070,7 +1074,7 @@ func (d *Detector) scanAdjacentLinesDiff(file string, firstLineNo int, first str
 			if f.RuleID == "person-name" && f.matchEnd > sep+1 {
 				continue
 			}
-			if !firstAdded || ignoredLine(first) {
+			if !firstAdded || d.lineIgnored(first) {
 				continue
 			}
 			if firstRunes == nil {
@@ -1086,7 +1090,7 @@ func (d *Detector) scanAdjacentLinesDiff(file string, firstLineNo int, first str
 			if f.RuleID == "person-name" && f.matchStart < sep {
 				continue
 			}
-			if !secondAdded || ignoredLine(second) {
+			if !secondAdded || d.lineIgnored(second) {
 				continue
 			}
 			if secondRunes == nil {
@@ -1165,7 +1169,7 @@ func runeOffsetToByteOffset(s string, target int) (int, bool) {
 
 // ScanLine は 1 行を走査する。lineNo は 1 始まり。
 func (d *Detector) ScanLine(file string, lineNo int, line string) []Finding {
-	if line == "" || ignoredLine(line) {
+	if line == "" || d.lineIgnored(line) {
 		return nil
 	}
 	return d.scanLineNoIgnore(file, lineNo, line, 0)
@@ -1177,7 +1181,7 @@ func (d *Detector) ScanLine(file string, lineNo int, line string) []Finding {
 // （ScanContent 専用の保持モード。ScanLine/ScanDiffHunk の経路は常に nil を渡し
 // 既存挙動を変えない）。
 func (d *Detector) scanLineWithContext(file string, lineNo int, line string, st *lineScanState, lineCtx lineContext, retainBudget *int) []Finding {
-	if line == "" || ignoredLine(line) {
+	if line == "" || d.lineIgnored(line) {
 		return nil
 	}
 	return d.scanLineNoIgnoreWithContext(file, lineNo, line, st, lineCtx, 0, retainBudget)
@@ -1525,6 +1529,16 @@ func retainForCooccurrenceBoost(retainBudget *int, ruleID string, reason DetectR
 	}
 	*retainBudget--
 	return true
+}
+
+// SetIgnoreMarkersEnabled は行内の ignore マーカーで検出を除外するかを設定する。
+// 既定は true（除外する）。false にすると、マーカーのある行も通常の行と同じく
+// 走査する（検出の結果を返すだけで、入力は変更しない）。
+func (d *Detector) SetIgnoreMarkersEnabled(enabled bool) { d.skipIgnoreMarkers = !enabled }
+
+// lineIgnored は ignore マーカーを有効にしている場合に限り ignoredLine を適用する。
+func (d *Detector) lineIgnored(line string) bool {
+	return !d.skipIgnoreMarkers && ignoredLine(line)
 }
 
 func ignoredLine(line string) bool {
