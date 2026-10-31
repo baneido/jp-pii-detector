@@ -112,7 +112,9 @@ func TestHonorificWithSpaceBeforeSuffix(t *testing.T) {
 	}{
 		{"敬称前の空白", "鈴木一郎 様", []string{"person-name-high-recall"}},
 		{"姓名間の空白", "山田 太郎様", []string{"person-name-high-recall"}},
-		{"両方の空白", "山田 太郎 様", []string{"person-name-high-recall"}},
+		// 行全体が「<姓> <名> 様」の行は寄付者一覧の形として Medium の
+		// person-name-role-label が拾う（2026-10-31 08:00）。
+		{"両方の空白", "山田 太郎 様", []string{"person-name-role-label"}},
 		// 辞書照合を必須にしたことで、空白を挟む日常語・テンプレート断片は
 		// 従来どおり棄却される。
 		{"テンプレート断片（対応 様）", "対応 様", nil},
