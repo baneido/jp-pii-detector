@@ -1045,6 +1045,12 @@ func validFullSplitOrSpacedSurnameGiven(v string) bool {
 // 職名・一般語（spacedGivenStopwords）の場合は報告しない。
 func validLetterSpacedName(v string) bool {
 	f := strings.Fields(strings.TrimSpace(v))
+	// 末尾の語が敬称（「村長    <姓>   <名>   様」）のときは報告しない。敬称まで値に含めると
+	// 範囲がずれ、既存の「<姓> <名> 様」のパターンが正しい範囲で拾うため（2026-11-01 08:00 の
+	// 全コーパス比較で実測した範囲のずれ）。
+	if len(f) > 0 && honorificTailWords[f[len(f)-1]] {
+		return false
+	}
 	if len(f) < 3 || len(f) > 5 {
 		return false
 	}
@@ -1077,6 +1083,9 @@ func validLetterSpacedName(v string) bool {
 	return false
 }
 
+// honorificTailWords は字間を空けた名簿・所属括弧の値の末尾に来たとき、値に含めない敬称。
+var honorificTailWords = map[string]bool{"様": true, "氏": true, "殿": true, "君": true, "さん": true}
+
 // affiliationParenNameStopSuffixes は personNameAffiliationParenLineRe の値の語尾のうち、
 // 人名ではなく組織・地名を示すもの（「<地名> 市（…会長）」のような表記の誤検出を防ぐ）。
 var affiliationParenNameStopSuffixes = []string{"都", "府", "県", "市", "町", "村", "区", "郡", "会", "部", "課", "局", "室", "所", "庁", "省", "大学", "学校", "協会", "連盟", "団"}
@@ -1085,6 +1094,12 @@ var affiliationParenNameStopSuffixes = []string{"都", "府", "県", "市", "町
 // 姓名辞書の完全分割か、空白区切りで先頭語が辞書の姓であることを要求する。
 func validAffiliationParenName(v string) bool {
 	t := strings.ReplaceAll(strings.TrimSpace(v), " ", "")
+	// 「<姓> <名>氏（<所属>）」の敬称まで値に含めない（既存の敬称のパターンが正しい範囲で拾う）。
+	for w := range honorificTailWords {
+		if strings.HasSuffix(t, w) {
+			return false
+		}
+	}
 	for _, suf := range affiliationParenNameStopSuffixes {
 		if strings.HasSuffix(t, suf) {
 			return false

@@ -6060,3 +6060,26 @@ func TestRosterSpacedAndFamilyHonorificGuards20261101(t *testing.T) {
 		})
 	}
 }
+
+// TestRosterSpanExcludesHonorific20261101 は、字間を空けた名簿・所属括弧のパターンが敬称まで
+// 値に含めないこと（範囲のずれがないこと）を合成データで固定する。
+func TestRosterSpanExcludesHonorific20261101(t *testing.T) {
+	med := newDetector(t, "")
+	tests := []struct{ content, want string }{
+		{"架空村長    田中   守   様", "田中   守"},
+		{"架空町議会議長     山田    衛 様", "山田    衛"},
+		{"高橋 健太氏（架空新聞社論説委員長）", "高橋 健太"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.content, func(t *testing.T) {
+			fs := med.ScanContent("f.txt", tt.content)
+			if len(fs) != 1 || fs[0].RuleID != "person-name-role-label" || fs[0].Match != tt.want {
+				var got []string
+				for _, f := range fs {
+					got = append(got, f.RuleID+":"+f.Match)
+				}
+				t.Fatalf("findings = %v, want person-name-role-label:%q", got, tt.want)
+			}
+		})
+	}
+}
