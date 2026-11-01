@@ -2710,7 +2710,7 @@ func Builtin() []Rule {
 				// 様式の「担当者 <姓> <名>」（いずれも 2026-10-30 08:00 に実測した見逃し）。
 				// 氏名の直後の職名、職名に直結する氏名、出演者表記、学生名簿の行、受賞クレジット
 				// （2026-11-01 20:00 に実測した見逃し）。
-				{Re: personNamePostTitleRe, Base: Medium, Validate: validPersonNameFullSplit},
+				{Re: personNamePostTitleRe, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: rejectPostTitleFragment},
 				{Re: personNameTitleNameLineEndRe, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: rejectChoTaniPrefix},
 				{Re: personNameTitleNameParticleRe, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: rejectChoTaniPrefix},
 				{Re: personNameCreditBracketRe, Base: Medium, Validate: validFullSplitOrSpacedSurnameGiven},

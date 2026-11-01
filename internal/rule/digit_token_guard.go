@@ -727,3 +727,16 @@ func startsWithSurnameName(s string) bool {
 func rejectChoTaniPrefix(line string, start, end int) bool {
 	return !(strings.HasSuffix(line[:start], "長") && strings.HasPrefix(line[start:end], "谷"))
 }
+
+// rejectPostTitleFragment は personNamePostTitleRe の値が「北澤准教授」の「北澤准」のように、
+// 肩書きの一部（准・副・特任・名誉・客員）まで取り込んだ形を落とす。姓だけでは姓名辞書の
+// 分割を通らないため、正規表現の最短一致が肩書きの頭の 1〜2 字を名として取り込んでしまう。
+func rejectPostTitleFragment(line string, start, end int) bool {
+	v := line[start:end]
+	for _, s := range []string{"准", "副", "特任", "名誉", "客員"} {
+		if strings.HasSuffix(v, s) {
+			return false
+		}
+	}
+	return true
+}
