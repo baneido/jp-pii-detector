@@ -721,3 +721,9 @@ func startsWithSurnameName(s string) bool {
 	}
 	return false
 }
+
+// rejectChoTaniPrefix は、職名に直結する氏名の値が「谷」で始まり、直前が「長」で終わる
+// （「施設長谷川<名>」の「長谷川」「長谷部」のように職名の「長」が姓の一部になりうる）場合に棄却する。
+func rejectChoTaniPrefix(line string, start, end int) bool {
+	return !(strings.HasSuffix(line[:start], "長") && strings.HasPrefix(line[start:end], "谷"))
+}

@@ -6158,3 +6158,38 @@ func TestEmailFollowedByJapanese20261101(t *testing.T) {
 		assertRules(t, d.ScanLine("f.txt", 1, line))
 	}
 }
+
+func TestPostTitleCreditAndRowNames20261101Evening(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct{ line, match string }{
+		{"架空大学の渡辺四郎教授が受賞しました", "渡辺四郎"}, // jp-pii-detector:ignore
+		{"・中村五郎特任准教授（情報学）", "中村五郎"},    // jp-pii-detector:ignore
+		{"山本三郎弁護士が登壇します", "山本三郎"},      // jp-pii-detector:ignore
+		{"小林六郎理事長・学長のあいさつ", "小林六郎"},    // jp-pii-detector:ignore
+		{"加藤七郎市長と面会", "加藤七郎"},          // jp-pii-detector:ignore
+		{"会長 山田太郎", "山田太郎"},            // jp-pii-detector:ignore
+		{"施設長佐藤一郎へ花束を贈呈", "佐藤一郎"},      // jp-pii-detector:ignore
+		{"プロジェクト代表鈴木次郎とともに", "鈴木次郎"},   // jp-pii-detector:ignore
+		{"田中花子［ヴァイオリン］", "田中花子"},       // jp-pii-detector:ignore
+		{"高橋 健一［ピアノ］", "高橋 健一"},        // jp-pii-detector:ignore
+		{"【作・演出】 伊藤 二郎", "伊藤 二郎"},      // jp-pii-detector:ignore
+		{"情報学科 2年 山口太郎", "山口太郎"},       // jp-pii-detector:ignore
+		{"架空株式会社：松本十郎", "松本十郎"},        // jp-pii-detector:ignore
+	}
+	for _, tt := range tests {
+		t.Run(tt.line, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, "person-name-role-label")
+			if fs[0].Match != tt.match {
+				t.Errorf("match = %q, want %q", fs[0].Match, tt.match)
+			}
+		})
+	}
+	for _, line := range []string{
+		"客員教授が来日", "顧問弁護士に相談", "名誉教授の称号", "前市長と面会", "施設長谷川一郎へ",
+		"会長 挨拶", "代表電話へおかけください", "【会場】 中央公民館", "情報学科 2年 必修科目",
+		"株式会社：所在地", "東京交響楽団［管弦楽］", "大学院教授会の議事",
+	} {
+		t.Run(line, func(t *testing.T) { assertRules(t, d.ScanLine("f.txt", 1, line)) })
+	}
+}
