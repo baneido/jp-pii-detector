@@ -433,6 +433,18 @@ var (
 			`(?:` + personNameSep + `|[ 　])` +
 			`(` + personNameValue + `)`,
 	)
+	// personNameApplicantHiraganaRe は申請者・届出人ラベルの後に、ひらがなだけの
+	// 「<姓> <名>」（各 2〜5 字、半角空白 1 つ区切り）が続き、行末・句読点・敬称で
+	// 終わる形。ひらがな表記の人名は姓名辞書に載らないため、personNameApplicantLabelRe
+	// の辞書照合では拾えない（2026-11-01 の見逃し）。辞書の裏付けが無いので Low 版
+	// だけを持ち、助詞・接続詞の並び（申請者 による もの 等）は validHiraganaFullName で除く。
+	personNameApplicantHiraganaRe = regexp.MustCompile(
+		personNameBoundary +
+			`(?:申請者|申込者|申請人|届出人)` +
+			`(?:` + personNameSep + `|[ 　])` +
+			`([` + hiragana + `]{2,5} [` + hiragana + `]{2,5})` +
+			`(?:$|[ 　、。,.)）」様殿]|さん)`,
+	)
 	// personNameUserNameRe は姓名どちらが入るか不定の ASCII キー
 	// （user_name / account_name / contact_name）用パターン。
 	// personNameLabelASCIIStrong と同じく `(?i:...)` で大文字・キャメルケース表記
@@ -783,7 +795,11 @@ var (
 	}
 	// orgHeadColonTitle は法人の長の職名と、コロンまでに挟まる「兼社長」「社長執行役員」「グループ」「CEO」と
 	// 空白（personNameOrgHeadColonRe・personNameOrgHeadColonIkaRe で共用）。
-	orgHeadColonTitle = `(?:理事長|代表取締役社長|代表取締役会長|代表取締役|代表執行役社長|取締役社長|社長執行役員|社長|会長|学長|総長|機構長|所長|代表理事|頭取|董事長|CEO|ＣＥＯ)` +
+	//
+	// 2026-11-01 に、自治体・団体の連名の報道発表で「（市長：<姓><名>）」「（加東市 代表理事組合長：<姓><名>）」
+	// 「（<地名> 局長：<姓><名>）」の首長・組合長・局長を全モードで取りこぼす見逃しを実測したため、
+	// 市長・町長・村長・区長・知事・組合長・局長を足した。
+	orgHeadColonTitle = `(?:理事長|代表取締役社長|代表取締役会長|代表取締役|代表執行役社長|取締役社長|社長執行役員|社長|会長|学長|総長|機構長|所長|代表理事|頭取|董事長|CEO|ＣＥＯ|市長|町長|村長|区長|知事|組合長|局長)` +
 		`(?:[ ]*(?:兼社長|兼CEO|兼ＣＥＯ|社長執行役員|グループ|CEO|ＣＥＯ))*[ ]*`
 	// personNameOrgHeadColonRe は報道発表の冒頭の法人紹介「（〇〇県〇〇市、理事長：<姓><名>、
 	// 以下「機構」）」「（理事長：<姓><名>    本部：…）」のように、法人の長の職名 + コロンの
@@ -890,6 +906,15 @@ var (
 	// 2 人目（「講師：<姓><名>先生・<姓><名>先生」）は personNameLecturerLabel2Re で拾う。
 	personNameLecturerLabelRe = regexp.MustCompile(
 		lecturerLabel + lecturerValue + lecturerHonorific + lecturerEnd,
+	)
+	// personNameLecturerTitleRe は「講師：樹木医 <姓> <名>」「講師：弁護士 <姓><名>氏」のように、講師等の
+	// ラベルと氏名の間に職業名（〜医・〜士・〜師・〜家・教授 等）が空白区切りで挟まる形を拾う。
+	// personNameLecturerLabelRe は職業名を値の 1 語目として取り込み、氏名の完全分割に失敗して
+	// 全モードで取りこぼしていた（2026-11-01 実測）。職業名は語尾で限定し、値は姓名辞書の完全分割
+	// （validPersonNameFullSplit）でのみ報告する。
+	personNameLecturerTitleRe = regexp.MustCompile(
+		lecturerLabel + `[` + kanji + katakana + `]{0,10}(?:医|士|師|家|教授|准教授|研究員|代表|会長|理事長|所長|館長)[ ]+` +
+			lecturerValue + lecturerHonorific + lecturerEnd,
 	)
 	personNameLecturerLabel2Re = regexp.MustCompile(
 		lecturerLabel + `[` + kanji + `]{2,8}?(?:[ ]{1,3}[` + kanji + `]{1,8}?)?` + lecturerHonorific + `[ ]*[・、,][ ]*` +
@@ -1214,6 +1239,39 @@ var personNameBracketFormHints = map[string]bool{
 
 // validApplicantName は、申請者系ラベルの値が姓名に分割でき、かつ市区町村名
 // （「<地名>市」など、様式の「申請者 <市名>」）でないことを確かめる。
+// hiraganaNameStopwords は、ひらがなだけの「<語> <語>」を氏名とみなさない語。
+// 申請者ラベルの後に続きやすい助詞・接続詞・指示語・補助動詞など。
+var hiraganaNameStopwords = map[string]bool{
+	"から": true, "まで": true, "より": true, "による": true, "について": true, "および": true,
+	"または": true, "ならびに": true, "もしくは": true, "その": true, "この": true, "あの": true,
+	"どの": true, "ほか": true, "など": true, "ごと": true, "とき": true, "こと": true,
+	"もの": true, "ため": true, "ところ": true, "として": true, "に対し": true, "にて": true,
+	"です": true, "ます": true, "でした": true, "ました": true, "される": true, "する": true,
+	"した": true, "して": true, "なし": true, "あり": true, "ない": true, "いる": true,
+	"ある": true, "なる": true, "では": true, "には": true, "とは": true, "への": true,
+	"からの": true, "ご本人": true, "ほんにん": true, "だいりにん": true, "みてい": true,
+	"みとうろく": true, "ふめい": true, "なまえ": true, "しめい": true, "ふりがな": true,
+	"せい": true, "めい": true, "おなまえ": true,
+}
+
+// validHiraganaFullName は personNameApplicantHiraganaRe の値（ひらがなの
+// 「<語> <語>」）が氏名として妥当かを返す。どちらかの語が停止語なら棄却する。
+func validHiraganaFullName(v string) bool {
+	if !notPlaceholderName(v) {
+		return false
+	}
+	parts := strings.Fields(v)
+	if len(parts) != 2 {
+		return false
+	}
+	for _, p := range parts {
+		if hiraganaNameStopwords[p] {
+			return false
+		}
+	}
+	return true
+}
+
 func validApplicantName(v string) bool {
 	t := strings.TrimSpace(v)
 	for _, suf := range []string{"市", "町", "村", "区", "都", "道", "府", "県", "郡"} {
@@ -1263,6 +1321,9 @@ var personNameFormWordParts = []string{
 	// 「氏名（会員番号その他管理ID）」（2026-10-31 02:00 にスポーツクラブの個人情報の共同利用の案内で
 	// 実測した low の偽陽性）と、「（全角）」「（半角）」の入力形式の指示。
 	"番号", "全角", "半角",
+	// 申込書の「申請者 氏名：<空欄> 当日可能連絡先（携帯）：」の次の欄名（2026-11-01 の追いつきサイクルで
+	// 実測した low の偽陽性）。
+	"連絡先",
 }
 
 // notFormWordValue は氏名候補 v が記入方法の説明（personNameFormWordPrefixes /
@@ -2417,6 +2478,8 @@ func Builtin() []Rule {
 				// 一般語でもあるため、姓＋名に分割できる値（dict.SplitsAsFullName）
 				// だけを Medium で拾い、辞書照合なしの Low 版は持たない。
 				{Re: personNameApplicantLabelRe, Base: Medium, Validate: validApplicantName, ValidateLine: allValidateLine(rejectBracketedFormHint, rejectSpacedFormWord)},
+				// 同じラベルの後の、ひらがなだけの氏名（辞書に載らない）。Low のみ。
+				{Re: personNameApplicantHiraganaRe, Base: Low, Validate: validHiraganaFullName},
 				// 弱いラベル: 姓側（姓・名字・苗字・last_name）。validSurnameField が
 				// 姓名辞書で検証済み（単独要素は 2 文字以上の姓、または姓+名に
 				// 分割できる氏名のみ許可）のため、Base は Medium。
@@ -2583,6 +2646,7 @@ func Builtin() []Rule {
 				// 講師・審査員等のラベル + 氏名、「<姓><名>氏（<所属>）」、戸籍の届出欄、
 				// 宛名欄の均等割付の姓名 + 様（いずれも 2026-10-30 06:00 に実測した見逃し）。
 				{Re: personNameLecturerLabelRe, Base: Medium, Validate: validPersonNameFullSplit},
+				{Re: personNameLecturerTitleRe, Base: Medium, Validate: validPersonNameFullSplit},
 				{Re: personNameLecturerLabel2Re, Base: Medium, Validate: validPersonNameFullSplit},
 				{Re: personNameShiAffiliationRe, Base: Medium, Validate: validFullSplitOrSpacedSurnameGiven},
 				{Re: personNameKosekiTodokeRe, Base: Medium, Validate: validSpacedSurnameGiven},
