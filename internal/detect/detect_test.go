@@ -682,6 +682,18 @@ func TestEmailRule(t *testing.T) {
 	}
 }
 
+func TestApplicantHiraganaName20261101(t *testing.T) {
+	d := newDetector(t, "min_confidence = \"low\"\n")
+	for _, line := range []string{"申請者 やまだ たろう", "届出人：すずき はなこ 様"} { // jp-pii-detector:ignore
+		assertRules(t, d.ScanLine("f.txt", 1, line), "person-name")
+	}
+	for _, line := range []string{"申請者 による もの", "申請者 または だいりにん"} {
+		assertRules(t, d.ScanLine("f.txt", 1, line))
+	}
+	// 既定（medium）では報告しない。
+	assertRules(t, newDetector(t, "").ScanLine("f.txt", 1, "申請者 やまだ たろう")) // jp-pii-detector:ignore
+}
+
 func TestInternationalEmailHighRecall(t *testing.T) {
 	enabled := newDetector(t, highRecallTOML)
 	disabled := newDetector(t, "")
@@ -6081,5 +6093,33 @@ func TestRosterSpanExcludesHonorific20261101(t *testing.T) {
 				t.Fatalf("findings = %v, want person-name-role-label:%q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestHeadColonAndLecturerTitle20261101(t *testing.T) {
+	d := newDetector(t, "")
+	for _, line := range []string{
+		"架空県架空市（市長：高橋健太）、架空農協",     // jp-pii-detector:ignore
+		"JA 架空（架空市 代表理事組合長：田中美咲）、", // jp-pii-detector:ignore
+		"架空県民局（架空市 局長：伊藤直樹）",       // jp-pii-detector:ignore
+		"講師：樹木医 山田 太郎",             // jp-pii-detector:ignore
+		"講師：弁護士 佐藤花子氏（架空法律事務所）",    // jp-pii-detector:ignore
+	} {
+		assertRules(t, d.ScanLine("f.txt", 1, line), "person-name-role-label")
+	}
+	for _, line := range []string{"市長：挨拶", "講師：樹木医 未定"} {
+		assertRules(t, d.ScanLine("f.txt", 1, line))
+	}
+}
+
+func TestShrineAndRetailHonorificFP20261101(t *testing.T) {
+	d := newDetector(t, "min_confidence = \"low\"\n"+highRecallTOML)
+	for _, line := range []string{
+		"庚申さんの縁結び", "地蔵様にお参りいただき", "仁王像様　修繕を終えお戻りになられました",
+		"「御堂さんの屋根が見える」", "皆々様を幸せに", "小売店様やホームセンター様など",
+		"架空石材店様より蓮をご寄附戴きました",
+		"申請者    氏名：                     当日可能連絡先（携帯）：",
+	} {
+		assertRules(t, d.ScanLine("f.txt", 1, line))
 	}
 }

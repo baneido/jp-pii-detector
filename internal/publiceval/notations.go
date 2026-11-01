@@ -81,6 +81,7 @@ var notationCategories = []string{
 	"id-label-guard",       // 「基礎年金番号」等の直後の値と同じ行の「注文」「伝票」、空白区切りの免許証番号（陽性）と、英字で始まるコードの一部・西暦の並び（陰性）
 	"particle-honorific",   // ひらがなに地続きの「…のある<姓><名>氏より」「…の<姓><名>さんが」（陽性）と、文様・檀信徒・水神 + 様、掲示板の呼び名 + さん、氏名欄の記入の指示（陰性）
 	"roster-spaced",        // 役員名簿の字間を空けた氏名、所属括弧が続く委員名簿の氏名、読み括弧付きの担当欄の姓（陽性）と、続柄・職名・神の使い + 様/さん、鎌倉殿、一般語 + 殿下、記入の指示（陰性）
+	"head-lecturer-kana",   // 首長・組合長・局長 + コロンの氏名、講師 + 職業名 + 氏名、申請者 + ひらがなの氏名（陽性）と、神仏・寺院の呼び名・取引先 + 様/さん、氏名欄の次の欄名（陰性）
 }
 
 type notationCase struct {
@@ -704,6 +705,28 @@ func notationSpecs() []notationCase {
 	neg("roster-spaced", "ピュア姫×高慢殿下、新婚逆転ラブ！")
 	neg("roster-spaced", "名前（姓・名）の字画数を判断します")
 	neg("roster-spaced", "件名には、1）お名前（パスポートの英字名） 2）受験学科名")
+	// 自治体・団体の連名の報道発表の「（市長：<姓><名>）」「（架空市 代表理事組合長：<姓><名>）」、
+	// 講演会の案内の「講師：樹木医 <姓> <名>」、申込書の「申請者 <ひらがなの姓> <ひらがなの名>」
+	// （2026-11-01 の追いつきサイクルで実測した見逃し）と、寺社・企業のサイトの「庚申さん」「地蔵様」
+	// 「仁王像様」「御堂さん」「皆々様」「小売店様」「<地名>石材店様」、申込書の氏名欄の次の欄名
+	// （同じ回に実測した高再現率・Low の偽陽性）
+	pos("head-lecturer-kana", role, "架空県架空市（市長："+full(39, "")+"）、架空農協")
+	pos("head-lecturer-kana", role, "JA 架空（架空市 代表理事組合長："+full(40, "")+"）、")
+	pos("head-lecturer-kana", role, "架空県架空県民局（架空市 局長："+full(41, "")+"）")
+	pos("head-lecturer-kana", role, "講師：樹木医 "+full(42, " "))
+	pos("head-lecturer-kana", role, "講師：弁護士 "+full(43, "")+"氏（架空法律事務所）")
+	pos("head-lecturer-kana", person, "申請者 やまの はなこ")
+	pos("head-lecturer-kana", person, "届出人：かわの たろう 様")
+	neg("head-lecturer-kana", "庚申さんの縁結び")
+	neg("head-lecturer-kana", "地蔵様にお参りいただき")
+	neg("head-lecturer-kana", "仁王像様　修繕を終えお戻りになられました")
+	neg("head-lecturer-kana", "「御堂さんの屋根が見える」")
+	neg("head-lecturer-kana", "皆々様を幸せに")
+	neg("head-lecturer-kana", "小売店様やホームセンター様など")
+	neg("head-lecturer-kana", "架空石材店様より蓮をご寄附戴きました")
+	neg("head-lecturer-kana", "申請者    氏名：                     当日可能連絡先（携帯）：")
+	neg("head-lecturer-kana", "申請者 による もの")
+	neg("head-lecturer-kana", "市長：挨拶")
 	return out
 }
 
