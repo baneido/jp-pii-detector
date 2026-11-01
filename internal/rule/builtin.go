@@ -1287,6 +1287,8 @@ var personNameBracketFormHints = map[string]bool{
 	// 申込書・募集要項で実測した low の偽陽性）。読み・事業者名・責任者・代表者・全員分の指示。
 	"ヨミガナ": true, "よみがな": true, "事業者名": true, "責任者": true, "代表者": true, "代表者名": true,
 	"全員分": true,
+	// 「お名前（カード名義）の変更」（2026-11-02 08:00 に通販サイトの案内で実測した low の偽陽性）。
+	"カード名義": true, "名義": true, "口座名義": true,
 }
 
 // validApplicantName は、申請者系ラベルの値が姓名に分割でき、かつ市区町村名
@@ -1420,6 +1422,10 @@ var personNameOrgSuffixes = []string{
 	"株式会社", "有限会社", "合同会社", "合資会社", "会社", "商事", "商店", "銀行",
 	"信用金庫", "工業", "産業", "製作所", "事務所", "病院", "医院", "大学", "学校",
 	"学園", "学院", "協会", "財団", "法人", "組合", "支店", "本店", "支社", "本社",
+	// 「<市>消防庁様」「<地名>税関様」「<社名>生命保険様」「<社名>新聞様」（2026-11-02 08:00 に
+	// リース会社の自治体・取引先の実績一覧で実測した高再現率モードの偽陽性。官公庁・保険会社・
+	// 報道機関の名称で、個人を識別しない）。
+	"庁", "税関", "保険", "生命", "新聞", "通信社",
 }
 
 // notOrgName は氏名候補 v が組織名の語尾で終わらないことを返す。敬称（様/さん）は
@@ -2813,7 +2819,8 @@ func Builtin() []Rule {
 						`([` + hiragana + katakana + `]{2,8})(?:様|さん|氏|殿)`,
 				), Base: Medium, Validate: dict.IsPersonNameExtended,
 					// 「サンタさん」のような一般語 + 敬称を棄却する（honorificCommonNouns）。
-					ValidateLine: rejectHonorificCommonNoun},
+					// 「カナ氏名」の「氏」は項目名「氏名」の一部（2026-11-02 08:00 に実測した偽陽性）。
+					ValidateLine: allValidateLine(rejectHonorificCommonNoun, rejectShimeiCompound)},
 			},
 		},
 		{
@@ -3552,7 +3559,9 @@ func containsASCIIAlnum(s string) bool {
 // 「1985年1月2日生まれ。」のような単独の日付はこれまでどおり報告する。 jp-pii-detector:ignore
 func rejectBirthdateRangeOrExample(line string, start, end int) bool {
 	before := strings.TrimRight(line[:start], " \t　（(")
-	for _, s := range []string{"~", "〜", "～", "から", "例:", "例：", "例"} {
+	// 「例）<日付>生まれの方」（2026-11-02 08:00 に申込案内で実測した偽陽性）のように、例の後に
+	// 閉じ括弧が来る記入例も棄却する（行は正規化済みなので全角の「）」は「)」になっている）。
+	for _, s := range []string{"~", "〜", "～", "から", "例:", "例：", "例", "例)", "例）"} {
 		if strings.HasSuffix(before, s) {
 			return false
 		}

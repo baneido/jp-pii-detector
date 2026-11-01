@@ -6193,3 +6193,35 @@ func TestPostTitleCreditAndRowNames20261101Evening(t *testing.T) {
 		t.Run(line, func(t *testing.T) { assertRules(t, d.ScanLine("f.txt", 1, line)) })
 	}
 }
+
+// 2026-11-02 08:00 の候補 6〜10。値はすべて架空（「架空」を含む団体名・合成の日付）で、
+// 実在の文書の値は使わない。
+//   - 6: 団体名（庁・税関・保険・生命・新聞の語尾）、新聞社の略称、書式語（本人・連帯保証人・カナ氏名）+ 様/さん/氏
+//   - 7: PDF 抽出の康熙部首（⼾ U+2F3E は NFKC だと旧字の 戶 になり、市区町村の辞書に一致しない）
+//   - 8: 「さん」が語の一部（さんご、さん + カタカナ語）
+//   - 9: 書式欄の括弧書き「お名前（カード名義）」
+//   - 10: 入力例「例）<日付>生まれの方」
+func TestOrgFormWordHonorificAndExampleFP20261102(t *testing.T) {
+	for _, toml := range []string{"", "min_confidence = \"low\"\n", "min_confidence = \"low\"\n" + highRecallTOML} {
+		d := newDetector(t, toml)
+		for _, line := range []string{
+			"架空消防庁様", "架空税関様", "架空生命保険様", "架空日報新聞様", "【知事】産経さん。", "日刊工さん、どうぞ",
+			"本人様の確認書類", "連帯保証人様必要書類", "「受験番号+カナ氏名」で保存",
+			"東京都江⼾川区様", "⼤同⽣命保険様",
+			"地球さんご賞作品集", "「発達凸凹さんフェスタ」",
+			"お名前（カード名義）の変更", "お名前(名義)",
+			"例）2005年１月５日生まれの方", "例) 2005年1月5日生まれ",
+		} {
+			t.Run(line, func(t *testing.T) { assertRules(t, d.ScanLine("f.txt", 1, line)) })
+		}
+	}
+	// 個人の氏名 + 敬称と単独の生年月日は従来どおり検出する。
+	d := newDetector(t, "min_confidence = \"low\"\n"+highRecallTOML)
+	for _, tt := range []struct{ line, rule string }{
+		{"山田様からのご依頼", "person-name-high-recall"},   // jp-pii-detector:ignore
+		{"田中さんフェスタに参加", "person-name-high-recall"}, // jp-pii-detector:ignore
+		{"1985年1月2日生まれの方です", "jp-birthdate"},       // jp-pii-detector:ignore
+	} {
+		t.Run(tt.line, func(t *testing.T) { assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.rule) })
+	}
+}
