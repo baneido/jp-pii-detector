@@ -733,10 +733,28 @@ func rejectChoTaniPrefix(line string, start, end int) bool {
 // 分割を通らないため、正規表現の最短一致が肩書きの頭の 1〜2 字を名として取り込んでしまう。
 func rejectPostTitleFragment(line string, start, end int) bool {
 	v := line[start:end]
-	for _, s := range []string{"准", "副", "特任", "名誉", "客員"} {
+	for _, s := range []string{"准", "副", "特任", "名誉", "客員", "元", "前"} {
 		if strings.HasSuffix(v, s) {
 			return false
 		}
+	}
+	// 値全体が 1 つの姓のときは、姓名の分割が偶然通っただけ。
+	if dict.IsSurname(v) {
+		return false
+	}
+	title := strings.TrimPrefix(line[end:], "副")
+	// 「長岡京市長」「田原本町長」「設楽町町長」は自治体の長で、値は自治体名。
+	for _, h := range []string{"市長", "町長", "村長", "区長"} {
+		if strings.HasPrefix(title, h) {
+			unit := h[:len(h)-len("長")]
+			if dict.IsMunicipalityOrPrefecture(v+unit) || dict.IsMunicipalityOrPrefecture(v) {
+				return false
+			}
+		}
+	}
+	// 「神戸大学長」は大学の長で、値は大学の略称。
+	if strings.HasPrefix(title, "学長") && strings.HasSuffix(v, "大") {
+		return false
 	}
 	return true
 }
