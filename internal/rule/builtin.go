@@ -694,6 +694,36 @@ var (
 	personNameTantoReadingRe = regexp.MustCompile(
 		`担当[ ]+([` + kanji + `]{1,4})[(（][ぁ-ゖー]{1,8}[)）]`,
 	)
+	// personNameLetterSpacedTitleRe は「秋田県知事     <姓 1 字> <姓 1 字> <名 1 字> <名 1 字>」
+	// 「〇〇県東京事務所長   <姓> <名 1 字> <名 1 字>」のように、法人の役員名簿・委員名簿で
+	// 職名の後の氏名を 1 字ずつ空白で区切った（字間を空けた）表記を拾う
+	// （person-name-role-label）。2026-11-01 08:00 に全国団体の事業報告書の役員名簿で、
+	// 1 文書 16 人を全ルールモードが取りこぼす見逃しを実測した。職名の直後に 2 個以上の空白、
+	// 値は 1〜3 字の漢字の語が空白区切りで 3〜5 個並び、行末か括弧で終わる形に限る。
+	// 語をつなげた値が「辞書の姓 + 1〜3 字の名」に分けられる場合だけ報告する
+	// （validLetterSpacedName）。
+	personNameLetterSpacedTitleRe = regexp.MustCompile(
+		`(?:知[ ]?事|市[ ]?長|町[ ]?長|村[ ]?長|区[ ]?長|所長|総長|理事長|会[ ]?長|社[ ]?長|学[ ]?長|校長|議長|局長|部長|課長|館長|委員長)[ ]{2,}` +
+			`((?:[` + kanji + `]{1,3}[ ]{1,8}){2,4}[` + kanji + `]{1,3})[ ]*(?:[(（]|$)`,
+	)
+	// personNameAffiliationParenLineRe は委員名簿・報告書の執筆者一覧の
+	// 「<姓> <名>（<大学名>教育学部教授）」「委員 <姓>  <名>（<団体名>会長・<学校名>校長）」のように、
+	// 行頭の氏名の直後に所属と職名の括弧書きが続く表記を拾う（person-name-role-label）。
+	// 2026-11-01 08:00 に国の事業報告書の委員名簿で、全ルールモードが取りこぼす見逃しを実測した
+	// （1 文書 8 件）。括弧内は職名（教授・会長・委員長・校長 等）で終わることを要求し、値は
+	// 姓名辞書の完全分割か、空白区切りで先頭語が辞書の姓であること（validAffiliationParenName）で検証する。
+	personNameAffiliationParenLineRe = regexp.MustCompile(
+		`^[ ]*(?:委員[ ]+)?([` + kanji + `]{1,4}[ ]{1,4}[` + kanji + `]{1,3}|[` + kanji + `]{2,6})[ ]*[（(]` +
+			`[^（()）]{2,40}(?:名誉教授|准教授|教授|講師|会長|委員長|校長|園長|理事長|所長|館長|学長|院長|代表|主任研究員|研究員)[）)]`,
+	)
+	// personNameTantoReadingColonRe は「担当：<姓>（<せい>）」「担当者　　<姓>（<せい>）」のように、
+	// 担当欄の姓の直後にひらがなの読み括弧が続く表記を拾う（person-name-role-label）。
+	// 2026-11-01 08:00 に学生寮のサイトの問合せ先で、辞書にない珍しい姓を全ルールモードが取りこぼす
+	// 見逃しを実測した。読み括弧はふりがなで人名であることを示すため、辞書にない姓も報告するが、
+	// 部署・業務の名前（総務課・事務局・総務 等）は除く（validTantoReadingSurname）。
+	personNameTantoReadingColonRe = regexp.MustCompile(
+		`(?:担当|担当者)(?:[ ]*[：:][ ]*|[ ]+)([` + kanji + `]{2,4})[(（][ぁ-ゖー]{2,10}[)）]`,
+	)
 	// personNameTitleLineEndRe は「課長補佐 <姓> <名>」「国税庁長官 <姓> <名>」のように、
 	// 行政機関の職名の直後に空白区切りの姓名が来て行が終わる表記を拾う
 	// （person-name-role-label）。国の記者発表の担当者一覧・通知文の発信者欄で全ルール
@@ -1009,6 +1039,85 @@ func validFullSplitOrSpacedSurnameGiven(v string) bool {
 	return validPersonNameFullSplit(v) || validSpacedSurnameGiven(v)
 }
 
+// validLetterSpacedName は personNameLetterSpacedTitleRe の値（1〜3 字の語が空白区切りで
+// 3〜5 個並ぶ）を検証する。1 字の語が 2 個以上あること（字間を空けた表記であること）と、
+// 語をつなげた値が先頭から「辞書の姓 + 1〜3 字の名」に分けられることを要求する。名側が
+// 職名・一般語（spacedGivenStopwords）の場合は報告しない。
+func validLetterSpacedName(v string) bool {
+	f := strings.Fields(strings.TrimSpace(v))
+	if len(f) < 3 || len(f) > 5 {
+		return false
+	}
+	single := 0
+	for _, w := range f {
+		if utf8.RuneCountInString(w) == 1 {
+			single++
+		}
+	}
+	if single < 2 {
+		return false
+	}
+	if dict.SplitsAsFullName(strings.Join(f, "")) {
+		return true
+	}
+	for k := 1; k < len(f); k++ {
+		sur, given := strings.Join(f[:k], ""), strings.Join(f[k:], "")
+		if n := utf8.RuneCountInString(given); n < 1 || n > 3 || spacedGivenStopwords[given] {
+			continue
+		}
+		if dict.IsSurname(sur) {
+			return true
+		}
+		// 姓が辞書にない（大井川・後藤田など）場合でも、役職名の直後で字間を空けた並びは
+		// 名簿の書式なので、名の側が辞書の名で姓が 1〜3 字なら氏名とみなす。
+		if utf8.RuneCountInString(sur) <= 3 && utf8.RuneCountInString(given) >= 2 && dict.IsGivenName(given) {
+			return true
+		}
+	}
+	return false
+}
+
+// affiliationParenNameStopSuffixes は personNameAffiliationParenLineRe の値の語尾のうち、
+// 人名ではなく組織・地名を示すもの（「<地名> 市（…会長）」のような表記の誤検出を防ぐ）。
+var affiliationParenNameStopSuffixes = []string{"都", "府", "県", "市", "町", "村", "区", "郡", "会", "部", "課", "局", "室", "所", "庁", "省", "大学", "学校", "協会", "連盟", "団"}
+
+// validAffiliationParenName は所属括弧が続く行頭の氏名を検証する。組織・地名の語尾を除き、
+// 姓名辞書の完全分割か、空白区切りで先頭語が辞書の姓であることを要求する。
+func validAffiliationParenName(v string) bool {
+	t := strings.ReplaceAll(strings.TrimSpace(v), " ", "")
+	for _, suf := range affiliationParenNameStopSuffixes {
+		if strings.HasSuffix(t, suf) {
+			return false
+		}
+	}
+	return validFullSplitOrSpacedSurnameGiven(v)
+}
+
+// tantoReadingStopSuffixes は「担当：<語>（<よみ>）」の語のうち部署名を示す語尾。
+var tantoReadingStopSuffixes = []string{"課", "部", "係", "室", "班", "局", "所", "庁", "省", "会", "団", "店", "グループ", "センター", "窓口"}
+
+// tantoReadingStopWords は「担当：<語>（<よみ>）」の語のうち、部署・業務の名前である一般語。
+var tantoReadingStopWords = map[string]bool{
+	"総務": true, "事務": true, "広報": true, "庶務": true, "経理": true, "人事": true, "営業": true,
+	"受付": true, "企画": true, "管理": true, "会計": true, "教務": true, "学務": true, "代表": true,
+}
+
+// validTantoReadingSurname は personNameTantoReadingColonRe の値（担当欄の姓）を検証する。
+// 読み括弧があるため姓名辞書は要求しないが、部署・業務の名前（語尾が課・部・係 等か、
+// 総務・事務 等の一般語）は報告しない。
+func validTantoReadingSurname(v string) bool {
+	t := strings.TrimSpace(v)
+	if tantoReadingStopWords[t] {
+		return false
+	}
+	for _, suf := range tantoReadingStopSuffixes {
+		if strings.HasSuffix(t, suf) {
+			return false
+		}
+	}
+	return true
+}
+
 // personNamePlaceholders は氏名の値として現れるダミー語（人名ではない）。
 // 値の正規表現が末尾の仮名を貪欲に取り込む（未定 → 未定です）ため、完全一致では
 // なく部分一致（strings.Contains）で棄却する。
@@ -1048,6 +1157,12 @@ var personNameFormWordPrefixes = []string{
 	// 申込様式の「氏名（署名）」「氏名（代表）」「①氏名（参加人数分）」（2026-10-31 08:00 に実測した
 	// Low の偽陽性。署名する欄・代表者だけ書く・人数分書くという記入の指示で、氏名ではない）。
 	"署名", "代表", "参加人数",
+	// 申込フォームの「氏名（英語表記で入力）」と、学校行事の申込の「氏名(学年)」（2026-10-31 20:00 に
+	// 大学・学校のサイトで実測した Low の偽陽性。表記の指示と、併せて書く項目の名前で、氏名ではない）。
+	"英語表記", "ローマ字", "学年",
+	// 命名・姓名判断の案内の「名前（姓・名）の字画数」と、語学学校の出願案内の「お名前（パスポートの
+	// 英字名）」（2026-11-01 08:00 に実測した Low の偽陽性。記入する項目と表記の指示で、氏名ではない）。
+	"姓・名", "姓名", "パスポート",
 }
 
 // personNameFormWordSchoolSuffixes は「学校・氏名：<市町村>立<校名>小学校　<学年>　<姓>　<名>　さん」
@@ -2362,7 +2477,7 @@ func Builtin() []Rule {
 			ID:                "person-name-role-label",
 			Description:       "氏名（担当者・宛名ラベル付き）",
 			Prefilter:         PrefilterCJK,
-			PrefilterLiterals: []string{"会長", "委員", "議長", "担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届", "監督", "先生", "講 師", "ゲスト", "登壇", "聞き手", "進行役", "さん×", "さん ×", "選手", "議員", "理事", "監事", "幹事", "様", "館長", "顧問"},
+			PrefilterLiterals: []string{"会長", "委員", "議長", "担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "知 事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届", "監督", "先生", "講 師", "ゲスト", "登壇", "聞き手", "進行役", "さん×", "さん ×", "選手", "議員", "理事", "監事", "幹事", "様", "館長", "顧問"},
 			Validate:          notPlaceholderName,
 			Patterns: []Pattern{
 				// 担当者・宛名・連絡先ラベル。敬称のような強い人物シグナルが無いため、
@@ -2415,6 +2530,11 @@ func Builtin() []Rule {
 				{Re: personNameSpacedSamaLineRe, Base: Medium, Validate: validSpacedSurnameGiven},
 				{Re: personNameParenRoleLineRe, Base: Medium, Validate: validFullSplitOrSpacedSurnameGiven},
 				{Re: personNameTitleLineEndRe, Base: Medium, Validate: validSpacedSurnameGiven},
+				// 字間を空けた役員名簿の氏名、所属括弧が続く委員名簿の氏名、読み括弧付きの担当欄の
+				// 姓（2026-11-01 08:00 に実測した見逃し）。
+				{Re: personNameLetterSpacedTitleRe, Base: Medium, Validate: validLetterSpacedName},
+				{Re: personNameAffiliationParenLineRe, Base: Medium, Validate: validAffiliationParenName},
+				{Re: personNameTantoReadingColonRe, Base: Medium, Validate: validTantoReadingSurname},
 				{Re: personNameTantoDeptSlashRe, Base: Medium, Validate: validPersonNameSurnameOrFull},
 				{Re: personNameTantoDeptSlash2Re, Base: Medium, Validate: validPersonNameSurnameOrFull},
 				{Re: personNameTantoListRe[0], Base: Medium, Validate: validPersonNameSurnameOrFull},
@@ -2511,6 +2631,15 @@ func Builtin() []Rule {
 				), Base: Medium, Validate: honorificPersonNameValid,
 					// 学年の後の値も上の無空白パターンと同じ一般語・団体名の棄却を通す。
 					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound, rejectHistoricalUjiName)},
+				// 「ゆかりのある<姓><名>氏より寄贈」のように、ひらがな（助詞・活用語尾）に地続きの
+				// 氏名 + 敬称。上の無空白パターンは直前がひらがなのとき一致しないため、文中の人名を
+				// 全モードで取りこぼしていた（2026-10-31 20:00 に寺院のサイトで実測した見逃し）。
+				// 直前の語と地続きのぶん一般語を拾いやすいので、姓 + 名の完全分割
+				// （validPersonNameFullSplit）が成立する 3〜6 字の値だけを許可する。
+				{Re: regexp.MustCompile(
+					`[` + hiragana + `]([` + kanji + `]{3,6})(?:様|さん|氏|殿)`,
+				), Base: Medium, Validate: validPersonNameFullSplit,
+					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound, rejectHistoricalUjiName, rejectShrineHall, rejectHonorificTitlePrefix)},
 				// 敬称の直前に空白が入る形（「鈴木一郎 様」）と、姓名の間に空白が
 				// 入る形（「山田 太郎様」）。上の無空白パターンは値と敬称が地続きの
 				// ときしか一致しないため、フォーム・宛名書きで一般的なこの表記を

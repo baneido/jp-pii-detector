@@ -5974,3 +5974,89 @@ func TestApplicantLabelAndIDLabelGuards20261031(t *testing.T) {
 		})
 	}
 }
+
+// TestParticleHonorificAndCommonNounGuards20261031 は 2026-10-31 20:00 の回に公開文書で実測した
+// 見逃し・誤検出を合成データで固定する（実在の氏名・文書は使わない）。
+//   - 見逃し: ひらがな（助詞・活用語尾）に地続きの「…のある<姓><名>氏より」。氏名は個人情報保護法
+//     2 条 1 項の「特定の個人を識別することができるもの」に当たるため、高再現率モードで拾う。
+//   - 誤検出: 「鳳凰文様」（模様の一般語）、「檀信徒様」（寺の信者の総称）、「水神様」（神の尊称）、
+//     掲示板の「分析さん」（投稿の内容から付けた呼び名）、「氏名（英語表記で入力）」「氏名(学年)」
+//     （記入の指示）。どれも特定の個人を識別しないため、報告しない。
+func TestParticleHonorificAndCommonNounGuards20261031(t *testing.T) {
+	hr := newDetector(t, "min_confidence = \"low\"\n[rules]\nhigh_recall = true\n")
+	sur, given := "鈴"+"木", "一"+"郎"
+	tests := []struct {
+		name, content string
+		want          []string
+	}{
+		{"ひらがなに地続きの姓名 + 氏", "ゆかりのある" + sur + given + "氏より寄贈", []string{"person-name-high-recall"}},
+		{"助詞の後の姓名 + さん", "研究科の" + sur + given + "さんが受賞", []string{"person-name-high-recall"}},
+		{"ひらがなの後の一般語 + 様（姓名に分割できない）", "これは見本品様式です", nil},
+		{"名の末字が文の 2 字 + 様", sur + "　美" + "文様", []string{"person-name-high-recall"}},
+		{"姓名 + 文 + 様", sur + "博" + "文様", []string{"person-name-high-recall"}},
+		{"模様の文様", "鳳凰文様の大皿", nil},
+		{"檀信徒様", "檀信徒様へのお知らせ", nil},
+		{"水神様", "境内の水神様をお祀り", nil},
+		{"掲示板の呼び名", "分析さんの投稿", nil},
+		{"氏名（英語表記で入力）", "氏名（英語表記で入力）", nil},
+		{"氏名(学年)", "氏名(学年)", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, hr.ScanContent("f.txt", tt.content), tt.want...)
+		})
+	}
+}
+
+// TestRosterSpacedAndFamilyHonorificGuards20261101 は 2026-11-01 08:00 の回に公開文書で実測した
+// 見逃し・誤検出を合成データで固定する（実在の氏名・文書は使わない）。
+//   - 見逃し: 役員名簿の字間を空けた氏名「<県名>知事     <姓> <姓> <名> <名>」、委員名簿の
+//     「<姓> <名>（<所属>教授）」、担当欄の「担当：<辞書にない姓>（<よみ>）」、職名も字間を空けた
+//     「<県> 知 事   <姓> <名>」、姓が辞書にない「<姓3字> <名> <名>」。法人の役員・委員・
+//     担当者の氏名も個人情報保護法 2 条 1 項の「特定の個人を識別することができるもの」に当たる。
+//   - 誤検出: 「長男様」「担当さん」「支配人さん」（続柄・職名）、「御眷属様」（神の使い）、
+//     「鎌倉殿」（大河ドラマの題名）、「高慢殿下」（漫画の題名）、「名前（姓・名）」
+//     「お名前（パスポートの英字名）」（記入の指示）、「担当：総務課（そうむか）」（部署名）。
+//     どれも特定の個人を識別しないため、報告しない。
+func TestRosterSpacedAndFamilyHonorificGuards20261101(t *testing.T) {
+	med := newDetector(t, "")
+	hr := newDetector(t, "min_confidence = \"low\"\n[rules]\nhigh_recall = true\n")
+	tests := []struct {
+		name, content string
+		want          []string
+	}{
+		{"字間を空けた役員名簿の氏名", "評議員         架空県知事     鈴 木 一 郎", []string{"person-name-role-label"}},
+		{"字間を空けた事務所長の氏名", "理事        架空県東京事務所長   佐 藤 花 子", []string{"person-name-role-label"}},
+		{"空白の幅がまちまちの字間", "◎ 架空県知事          山    田       太   郎   （◎：委員長）", []string{"person-name-role-label"}},
+		{"所属括弧が続く委員名簿", "高橋 健太（全国架空教育連盟専門委員長）", []string{"person-name-role-label"}},
+		{"委員 + 所属括弧", "委員 田中  美咲（架空大学名誉教授）（座長）", []string{"person-name-role-label"}},
+		{"担当：辞書にない姓 + 読み", "担当：架野" + "迫（かのさこ）まで", []string{"person-name-role-label"}},
+		{"担当者 + 空白 + 読み", "担当者　　架野" + "迫（かのさこ）", []string{"person-name-role-label"}},
+		{"字間を空けた職名の後の氏名", "架 空 県 知 事         山 田 花 子", []string{"person-name-role-label"}},
+		{"辞書にない姓 + 辞書の名（字間）", "架空県知事     架 野 迫 " + "太 郎", []string{"person-name-role-label"}},
+		{"字間を空けた職名の後の見出し語", "架 空 県 知 事   挨 拶 文 書", nil},
+		{"担当：部署名 + 読み", "担当：総務課（そうむか）まで", nil},
+		{"担当：業務名 + 読み", "担当：総務（そうむ）", nil},
+		{"字間を空けた職名", "東京事務所長   総 務 課 長", nil},
+		{"地名 + 所属括弧", "大阪 市（全国市長会会長）", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, med.ScanContent("f.txt", tt.content), tt.want...)
+		})
+	}
+	negs := []string{
+		"喪主の長男様と長女様にご挨拶",
+		"担当さんが的確で、支配人さんも親切でした。",
+		"お犬さま・御眷属様と親しまれ",
+		"大河ドラマ「鎌倉殿の13人」の放映に合わせ",
+		"ピュア姫×高慢殿下、新婚逆転ラブ！",
+		"名前（姓・名）の字画数を判断します",
+		"件名には、1）お名前（パスポートの英字名） 2）受験学科名",
+	}
+	for _, c := range negs {
+		t.Run("hr:"+c, func(t *testing.T) {
+			assertRules(t, hr.ScanContent("f.txt", c))
+		})
+	}
+}

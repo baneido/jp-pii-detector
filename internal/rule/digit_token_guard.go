@@ -190,6 +190,13 @@ func rejectYouCompound(line string, start, end int) bool {
 	if !strings.HasPrefix(line[end:], "様") {
 		return true
 	}
+	// 「鳳凰文様」「唐草文様」の「文様」は模様を指す一般語で、「<名>文」+ 敬称「様」ではない
+	// （2026-10-31 20:00 に美術館の収蔵品解説で実測した高再現率モードの偽陽性）。「<姓><名>文様」の
+	// ように値が姓名に分割できる形と、「<姓>　<名>様」の名だけが値になる 2 字の形（寄付者名簿の
+	// 「<姓>　美文様」を同じ回に実測）は、名の末字が「文」の人名とみなして棄却しない。
+	if v := line[start:end]; utf8.RuneCountInString(v) >= 3 && strings.HasSuffix(v, "文") && !dict.SplitsAsFullName(v) && !dict.IsPersonName(v) {
+		return false
+	}
 	after := line[end+len("様"):]
 	for _, t := range youCompoundTails {
 		if strings.HasPrefix(after, t) {
@@ -241,6 +248,15 @@ func rejectHonorificWordCompound(line string, start, end int) bool {
 		return false
 	case strings.HasSuffix(val, "彼") && strings.HasPrefix(rest, "氏"):
 		// 「溺愛彼氏」の「彼氏」（2026-10-31 08:00 にウェブコミックのサイトで実測した偽陽性）。
+		return false
+	case strings.HasSuffix(val, "鎌倉") && strings.HasPrefix(rest, "殿"):
+		// 大河ドラマの題名「鎌倉殿の13人」の「鎌倉殿」（鎌倉幕府の将軍を指す呼び名。2026-11-01 08:00 に
+		// 寺院・観光案内のサイトで実測した高再現率モードの偽陽性）。
+		return false
+	case strings.HasPrefix(rest, "殿下") && utf8.RuneCountInString(val) == 2 && allKanji(val) &&
+		!dict.IsPersonName(val) && !dict.IsSurname(val) && !dict.SplitsAsFullName(val):
+		// ウェブ漫画の題名「ピュア姫×高慢殿下」のように、殿下の前が人名ではない 2 字の一般語の場合
+		// （2026-11-01 08:00 に実測した高再現率モードの偽陽性）。「<名>殿下」は名が姓名辞書に載るため残す。
 		return false
 	case strings.HasSuffix(val, "態") && strings.HasPrefix(rest, "様"):
 		// 不動産広告の「取引態様」の「態様」（2026-10-31 08:00 に賃貸住宅のサイトで実測した偽陽性）。
@@ -403,6 +419,14 @@ var honorificCommonNouns = map[string]bool{
 	// 挨拶の言葉で、特定の個人の氏名ではない）。
 	"竜神": true, "龍神": true, "魔王": true, "王子": true, "女王": true, "住人": true, "人間": true,
 	"御愁傷": true, "地方自治体": true, "自治体": true, "一休": true,
+	// 電子掲示板の「分析さんの投稿」（2026-10-31 20:00 に実測した高再現率モードの偽陽性。投稿の
+	// 内容から付けた呼び名で、氏名ではない）。
+	"分析": true,
+	// 葬儀社の口コミの「長男様」「長女様」「支配人さん」「担当さんが的確で」と、神社の由緒の
+	// 「御眷属様」（2026-11-01 08:00 に実測した高再現率モードの偽陽性。続柄・職名・神の使いを
+	// 指す一般語で、特定の個人の氏名ではない）。
+	"長男": true, "長女": true, "次男": true, "次女": true, "三男": true, "三女": true,
+	"支配人": true, "担当": true, "眷属": true, "御眷属": true,
 }
 
 // honorificCommonNounSuffixes は、「社員皆さん」「来場者皆様」「常連客様」の
@@ -427,6 +451,9 @@ var honorificCommonNounSuffixes = []string{"皆", "客", "農家", "花嫁", "�
 	"記念館", "博物館", "美術館", "資料館", "文学館", "図書館", "文書館", "公民館", "会館",
 	// 宗教団体のサイトの「月日御両神様」（2026-10-31 02:00 に実測した偽陽性。神の尊称で個人ではない）。
 	"両神",
+	// 寺院のサイトの「檀信徒様へのお知らせ」と、由緒の「水神様をお祀り」（2026-10-31 20:00 に実測した
+	// 高再現率モードの偽陽性。寺の信者の総称と神の尊称で、個人を識別しない）。
+	"信徒", "水神",
 	// 「<中学校名>生徒さん制作のポスター」「<地域>教育機関様」（2026-10-31 06:00 に実測した偽陽性）。
 	"生徒", "教育機関", "取扱店",
 	// 「<地域>地方自治体様」「<建物>住人さん」（2026-10-31 08:00 に実測した偽陽性）。
