@@ -79,6 +79,8 @@ var notationCategories = []string{
 	"gcp-service-account",  // Google Cloud のサービスアカウントのアドレス（陰性）と、個人のアドレス・似たドメイン・混在行（陽性）
 	"applicant-label",      // 書類の「申請者 <姓> <名>」「届出人：」「お客様氏名：」と 1 文字の姓（陽性）、申請者 + 一般語・市町村名・字間を空けた項目名（陰性）
 	"id-label-guard",       // 「基礎年金番号」等の直後の値と同じ行の「注文」「伝票」、空白区切りの免許証番号（陽性）と、英字で始まるコードの一部・西暦の並び（陰性）
+	"particle-honorific",   // ひらがなに地続きの「…のある<姓><名>氏より」「…の<姓><名>さんが」（陽性）と、文様・檀信徒・水神 + 様、掲示板の呼び名 + さん、氏名欄の記入の指示（陰性）
+	"roster-spaced",        // 役員名簿の字間を空けた氏名、所属括弧が続く委員名簿の氏名、読み括弧付きの担当欄の姓（陽性）と、続柄・職名・神の使い + 様/さん、鎌倉殿、一般語 + 殿下、記入の指示（陰性）
 }
 
 type notationCase struct {
@@ -655,6 +657,53 @@ func notationSpecs() []notationCase {
 	neg("id-label-guard", "出荷番号 A-"+"2026"+"1105-0042 被保険者証を同封")
 	neg("id-label-guard", "免許の更新 2023 2024 2025 年度")
 	neg("id-label-guard", "注文番号 "+"7034-30"+"4059"+" 年金")
+	// 寺院・大学のサイトの「ゆかりのある<姓><名>氏より寄贈」「研究科の<姓><名>さんが受賞」
+	// （2026-10-31 20:00 の回に実測した全モードの見逃し）と、美術館・寺院・掲示板・申込様式の
+	// 「<模様>文様」「檀信徒様」「水神様」「分析さん」「氏名（英語表記で入力）」「氏名(学年)」
+	// （同じ回に実測した高再現率・Low の偽陽性）
+	pos("particle-honorific", "person-name-high-recall", "ゆかりのある"+full(29, "")+"氏より寄贈されました")
+	pos("particle-honorific", "person-name-high-recall", "架空研究科の"+full(30, "")+"さんが受賞")
+	pos("particle-honorific", "person-name-high-recall", "撮影は"+full(31, "")+"氏")
+	pos("particle-honorific", "person-name-high-recall", "寄付者　"+n(32).sur+"　美文様")
+	neg("particle-honorific", "鳳凰文様の大皿")
+	neg("particle-honorific", "木造彩色・切金文様 像高31.4cm")
+	neg("particle-honorific", "檀信徒様へのお知らせ")
+	neg("particle-honorific", "境内の水神様をお祀りしています")
+	neg("particle-honorific", "分析さんの投稿によると")
+	neg("particle-honorific", "氏名（英語表記で入力）")
+	neg("particle-honorific", "氏名(学年)")
+	// 全国団体の事業報告書の役員名簿「<県名>知事     <姓 1 字> <姓 1 字> <名 1 字> <名 1 字>」、国の事業
+	// 報告書の委員名簿「<姓> <名>（<所属>教授）」、学生寮の問合せ先「担当：<珍しい姓>（<よみ>）」
+	// （2026-11-01 08:00 の回に実測した全モードの見逃し）と、葬儀社の口コミ・神社の由緒・観光案内・
+	// ウェブ漫画・命名の案内・語学学校の出願案内の偽陽性（同じ回に実測した高再現率・Low の偽陽性）
+	ls := func(i int, gap string) string {
+		var parts []string
+		for _, r := range n(i).sur + n(i).given {
+			parts = append(parts, string(r))
+		}
+		return strings.Join(parts, gap)
+	}
+	pos("roster-spaced", role, "評議員         架空県知事     "+ls(33, " "))
+	pos("roster-spaced", role, "理事        架空県東京事務所長   "+ls(34, " "))
+	pos("roster-spaced", role, "◎ 架空県知事               "+ls(35, "    ")+"   （◎：委員長）")
+	pos("roster-spaced", role, full(36, " ")+"（全国架空教育連盟専門委員長）")
+	pos("roster-spaced", role, "委員 "+full(37, "  ")+"（架空大学名誉教授）（座長）")
+	pos("roster-spaced", role, "平日の9:00～17:00、担当：架野"+"迫（かのさこ）まで。")
+	pos("roster-spaced", role, "担当者　　架野"+"迫（かのさこ）")
+	pos("roster-spaced", role, "架 空 県 知 事         "+ls(38, " "))
+	pos("roster-spaced", role, "架空県知事     架 野 迫 "+"太 郎")
+	neg("roster-spaced", "架 空 県 知 事   挨 拶 文 書")
+	neg("roster-spaced", "担当：総務課（そうむか）まで")
+	neg("roster-spaced", "担当：総務（そうむ）")
+	neg("roster-spaced", "東京事務所長   総 務 課 長")
+	neg("roster-spaced", "大阪 市（全国市長会会長）")
+	neg("roster-spaced", "喪主の長男様と長女様にご挨拶")
+	neg("roster-spaced", "担当さんが的確で、支配人さんも親切でした。")
+	neg("roster-spaced", "お犬さま・御眷属様と親しまれ")
+	neg("roster-spaced", "大河ドラマ「鎌倉殿の13人」の放映に合わせ")
+	neg("roster-spaced", "ピュア姫×高慢殿下、新婚逆転ラブ！")
+	neg("roster-spaced", "名前（姓・名）の字画数を判断します")
+	neg("roster-spaced", "件名には、1）お名前（パスポートの英字名） 2）受験学科名")
 	return out
 }
 
