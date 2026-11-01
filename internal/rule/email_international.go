@@ -14,7 +14,12 @@ var (
 	// ASCII メールの境界には全Unicode Letter/Numberを含める。高再現率モードが
 	// 無効でも、EAI/confusable候補のASCII接尾部だけを通常メールとして
 	// 切り出す部分一致を防ぐ。
-	emailASCIIRe = regexp.MustCompile(`(?:^|[^\p{L}\p{N}._%+-])([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})(?:[^\p{L}\p{N}_%+:-]|$)`)
+	//
+	// ただし右境界は、漢字・ひらがな・カタカナを例外として許す。「hanako@<ドメイン>宛に」
+	// 「<アドレス>までご連絡ください」のように和文が空白なしで直後に続く形を全モードで取りこぼす
+	// 見逃しを 2026-11-01 20:00 に実測したため。日本語のドメインラベルの途中（EAI の
+	// 「user@abc.co例.jp」の ASCII 部分）は rejectEAIDomainContinuation で棄却する。
+	emailASCIIRe = regexp.MustCompile(`(?:^|[^\p{L}\p{N}._%+-])([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})(?:[^\p{L}\p{N}_%+:-]|[\p{Han}\p{Hiragana}\p{Katakana}]|$)`)
 	// EAI はローカル部・ドメインとも Unicode Letter/Number を許す。左境界を
 	// 空白・引用符・構造区切りへ限定し、日本語本文がローカル部へ吸着するのを防ぐ。
 	emailEAIRe = regexp.MustCompile(`(?:^|[\s"'(<\[{=:,;|、])([\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+)(?:[^\p{L}\p{N}_%+:-]|$)`)
@@ -318,4 +323,30 @@ func adaptPunycodeBias(delta, points int, first bool) int {
 		k += 36
 	}
 	return k + 36*delta/(delta+38)
+}
+
+// rejectEAIDomainContinuation は、ASCII メール候補の直後に和文の文字が続き、その連なりの後に
+// 「.」+ 文字が来る（「user@abc.co例.jp」のように日本語を含むドメインラベルの途中で切れている）
+// 場合に棄却する。「<アドレス>宛に」「<アドレス>まで。」のような和文の続きは通す。
+func rejectEAIDomainContinuation(line string, start, end int) bool {
+	rest := line[end:]
+	r, size := utf8.DecodeRuneInString(rest)
+	if size == 0 || !(unicode.Is(unicode.Han, r) || unicode.Is(unicode.Hiragana, r) || unicode.Is(unicode.Katakana, r)) {
+		return true
+	}
+	i := 0
+	for i < len(rest) {
+		r, size = utf8.DecodeRuneInString(rest[i:])
+		if !(unicode.IsLetter(r) || unicode.IsNumber(r) || r == '-') {
+			break
+		}
+		i += size
+	}
+	if i < len(rest) && rest[i] == '.' {
+		next, _ := utf8.DecodeRuneInString(rest[i+1:])
+		if unicode.IsLetter(next) || unicode.IsNumber(next) {
+			return false
+		}
+	}
+	return true
 }

@@ -961,6 +961,54 @@ var (
 		`(?:市長|町長|村長|区長|知事|教育長|議長|理事長|会長|社長|学長|院長|所長|局長)[ ]+` +
 			`([` + kanji + `]{1,4}[ ]{5,12}[` + kanji + `]{1,4})[ ]*(?:様|殿)[ ]*$`,
 	)
+	// personNamePostTitleRe は大学・法律事務所のニュースの「<姓><名>教授が受賞」「<姓><名>弁護士が
+	// 登壇」「<姓><名>理事長・学長」「<姓><名>市長と面会」のように、氏名の直後に職名が直結する表記を
+	// 拾う（person-name-role-label）。2026-11-01 20:00 に大学ニュース・法律事務所のお知らせで、
+	// 1 文書 30 人以上を Medium・Low が取りこぼす見逃しを実測した。値の直前は漢字・かなでない
+	// 文字か助詞「の」、職名の直後は区切り・助詞・行末に限り、値は姓名辞書の完全分割（姓+名）を
+	// 要求する（「客員教授」「顧問弁護士」のような一般語は分割できず報告しない）。
+	personNamePostTitleRe = regexp.MustCompile(
+		`(?:^|[^` + kanji + hiragana + katakana + `]|の)([` + kanji + `]{3,6}?)` +
+			`(?:特任准教授|特任教授|特任講師|特任助教|名誉教授|准教授|教授|講師|助教|弁護士|副理事長|理事長|副学長|学長|` +
+			`副市長|市長|町長|村長|教育長|副会長|会長|教諭|センター長|候補)` +
+			`(?:[ 、。・，,！!）)（(」がはのをにともへやら]|$)`,
+	)
+	// personNameTitleNameLineEndRe / personNameTitleNameParticleRe は「会長 <姓><名>」で行が終わる形と、
+	// 「施設長<姓><名>へ」「プロジェクト代表<姓><名>とともに」のように、前に付く職名と氏名の間に
+	// 区切りがなく助詞が続く形を拾う（person-name-role-label）。2026-11-01 20:00 に団体概要・研究所の
+	// ニュースで全モードが取りこぼす見逃しを実測した。値は姓名辞書の完全分割（姓+名）を要求し、
+	// 「施設長谷川<名>」のように職名の「長」が姓の一部になりうる形は rejectChoTaniPrefix で除く。
+	personNameTitleNameLineEndRe = regexp.MustCompile(
+		`(?:会長|副会長|理事長|代表理事|施設長|所長|館長|学長|院長|園長|校長|社長|代表|委員長|センター長)[ ]+` +
+			`([` + kanji + `]{3,6})[ ]*$`,
+	)
+	personNameTitleNameParticleRe = regexp.MustCompile(
+		`(?:会長|理事長|代表理事|施設長|所長|館長|学長|院長|園長|校長|社長|代表|委員長|センター長)` +
+			`([` + kanji + `]{3,6}?)(?:へ|と|が|は|より|から|による|の[^` + kanji + `]|、)`,
+	)
+	// personNameCreditBracketRe は公演一覧の「<姓><名>［ヴァイオリン］」「<姓> <名>［指揮］」のように、
+	// 出演者の氏名の直後に角括弧で楽器・役割が続く表記を拾い、personNameCreditLabelRe は
+	// 「【作・演出】 <姓> <名>」のように隅付き括弧の役割の後に続く氏名を拾う（person-name-role-label）。
+	// 2026-11-01 20:00 にホールの主催公演一覧で 1 文書 24 人を全モードが取りこぼす見逃しを実測した。
+	personNameCreditBracketRe = regexp.MustCompile(
+		`(?:^|[^` + kanji + hiragana + katakana + `])` +
+			`([` + kanji + `]{1,4}[ ]{1,3}[` + kanji + `]{1,4}|[` + kanji + `]{3,6})[ ]*[［\[][` + kanji + katakana + `・ ]{1,12}[］\]]`,
+	)
+	personNameCreditLabelRe = regexp.MustCompile(
+		`【(?:作|演出|作・演出|作・構成|脚本|構成|振付|指揮|出演|作曲|編曲|原作|監修|演奏|司会|朗読|語り|ピアノ|美術|照明)】[ ]*` +
+			`([` + kanji + `]{1,4}[ ]{1,3}[` + kanji + `]{1,4}|[` + kanji + `]{3,6})(?:[ ]*$|[ ]*[、,／/【])`,
+	)
+	// personNameStudentRowRe は学生名簿の表の行「<学科> <学年> <姓><名>」、personNameCompanyCreditRe は
+	// 受賞作品のクレジット「<社名>株式会社：<姓><名>」を拾う（person-name-role-label）。2026-11-01 20:00 に
+	// 大学ニュースで実測した見逃し。いずれも値は姓名辞書の完全分割（空白区切りなら先頭語が姓）を要求する。
+	personNameStudentRowRe = regexp.MustCompile(
+		`(?:学科|学部|専攻|研究科|コース|学年)[ ]+[0-9０-９]{1,2}年(?:生)?[ ]+` +
+			`([` + kanji + `]{1,4}[ ]{1,3}[` + kanji + `]{1,4}|[` + kanji + `]{3,6})[ ]*$`,
+	)
+	personNameCompanyCreditRe = regexp.MustCompile(
+		`(?:株式会社|有限会社|合同会社|事務所)[ ]*[：:][ ]*` +
+			`([` + kanji + `]{1,4}[ ]{1,3}[` + kanji + `]{1,4}|[` + kanji + `]{3,6})(?:[ ]*$|[ ]*[、,／/）)])`,
+	)
 	// personNameCommitteeListRe は会議録・議事要旨の出席者欄「出席委員 <姓><名>会長、<姓><名>委員、…」
 	// のように、姓名の直後に会議内の役職（会長・副会長・委員長・副委員長・委員・議長・副議長）が
 	// 続き読点で区切って並ぶ氏名を拾う（person-name-role-label）。町の審議会の議事要旨で、
@@ -1235,6 +1283,10 @@ var personNameBracketFormHints = map[string]bool{
 	"部署・役職等": true, "部署・役職": true, "役職等": true, "部署等": true,
 	// 「フリガナ（全角）」（2026-10-31 02:00 に動物病院の問い合わせフォームで実測した low の偽陽性）。
 	"全角": true, "半角": true, "全角カナ": true, "全角カタカナ": true,
+	// 「氏名（ヨミガナ）」「名前（事業者名）」「氏名(責任者)」「ふりがな（全員分）」（2026-11-01 20:00 に
+	// 申込書・募集要項で実測した low の偽陽性）。読み・事業者名・責任者・代表者・全員分の指示。
+	"ヨミガナ": true, "よみがな": true, "事業者名": true, "責任者": true, "代表者": true, "代表者名": true,
+	"全員分": true,
 }
 
 // validApplicantName は、申請者系ラベルの値が姓名に分割でき、かつ市区町村名
@@ -1312,6 +1364,8 @@ func rejectBracketedFormHint(line string, start, end int) bool {
 	// 「（フルネーム、フリガナ）」のように読点で次の指示語が続く形も括弧書きの指示とみなす。
 	closed := strings.HasPrefix(after, ")") || strings.HasPrefix(after, "）") || after == "" ||
 		strings.HasPrefix(after, "、") || strings.HasPrefix(after, ",") ||
+		// 「お名前(カナ/Alphabet)」のように斜線で次の指示語が続く形（2026-11-01 20:00 実測の medium の偽陽性）。
+		strings.HasPrefix(after, "/") || strings.HasPrefix(after, "／") ||
 		strings.TrimSpace(line[start:end]) == "法人"
 	return !(open && closed)
 }
@@ -2048,7 +2102,7 @@ func Builtin() []Rule {
 				// ValidateLine は URL のユーザー情報（"http://gopher@test.com"、
 				// "ssh://git@github.com/user/repo"）を棄却する（OSS コーパスでの実測。
 				// digit_token_guard.go の rejectURLUserinfo 参照）。
-				{Re: emailASCIIRe, Base: High, ValidateLine: rejectURLUserinfo},
+				{Re: emailASCIIRe, Base: High, ValidateLine: allValidateLine(rejectURLUserinfo, rejectEAIDomainContinuation)},
 			},
 		},
 		{
@@ -2555,7 +2609,7 @@ func Builtin() []Rule {
 			ID:                "person-name-role-label",
 			Description:       "氏名（担当者・宛名ラベル付き）",
 			Prefilter:         PrefilterCJK,
-			PrefilterLiterals: []string{"会長", "委員", "議長", "担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "知 事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届", "監督", "先生", "講 師", "ゲスト", "登壇", "聞き手", "進行役", "さん×", "さん ×", "選手", "議員", "理事", "監事", "幹事", "様", "館長", "顧問"},
+			PrefilterLiterals: []string{"会長", "委員", "議長", "担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "知 事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届", "監督", "先生", "講 師", "ゲスト", "登壇", "聞き手", "進行役", "さん×", "さん ×", "選手", "議員", "理事", "監事", "幹事", "様", "館長", "顧問", "［", "[", "】", "年 ", "会社：", "会社:", "事務所：", "事務所:", "教諭", "助教", "候補", "学長", "市長", "町長", "村長", "施設長", "所長", "院長", "園長", "校長", "社長", "センター長", "教育長"},
 			Validate:          notPlaceholderName,
 			Patterns: []Pattern{
 				// 担当者・宛名・連絡先ラベル。敬称のような強い人物シグナルが無いため、
@@ -2654,6 +2708,15 @@ func Builtin() []Rule {
 				{Re: personNameTitleHonorificWideRe, Base: Medium, Validate: validSpacedSurnameGiven},
 				// 会議録の出席者欄「<姓><名>会長、<姓><名>委員、」、空白区切りの「講師 <姓> <名>さん」、
 				// 様式の「担当者 <姓> <名>」（いずれも 2026-10-30 08:00 に実測した見逃し）。
+				// 氏名の直後の職名、職名に直結する氏名、出演者表記、学生名簿の行、受賞クレジット
+				// （2026-11-01 20:00 に実測した見逃し）。
+				{Re: personNamePostTitleRe, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: rejectPostTitleFragment},
+				{Re: personNameTitleNameLineEndRe, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: rejectChoTaniPrefix},
+				{Re: personNameTitleNameParticleRe, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: rejectChoTaniPrefix},
+				{Re: personNameCreditBracketRe, Base: Medium, Validate: validFullSplitOrSpacedSurnameGiven},
+				{Re: personNameCreditLabelRe, Base: Medium, Validate: validFullSplitOrSpacedSurnameGiven},
+				{Re: personNameStudentRowRe, Base: Medium, Validate: validFullSplitOrSpacedSurnameGiven},
+				{Re: personNameCompanyCreditRe, Base: Medium, Validate: validFullSplitOrSpacedSurnameGiven},
 				{Re: personNameCommitteeListRe, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: rejectCommitteeListTail},
 				{Re: personNameLecturerSpaceRe, Base: Medium, Validate: validPersonNameFullSplit},
 				{Re: personNameTantoSpaceRe, Base: Medium, Validate: validPersonNameFullSplit},

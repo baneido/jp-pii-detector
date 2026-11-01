@@ -431,6 +431,11 @@ var honorificCommonNouns = map[string]bool{
 	// 企業のサイトの「小売店様やホームセンター様」（2026-11-01 の追いつきサイクルで実測した高再現率
 	// モードの偽陽性。神仏・仏像・寺院の呼び名、呼びかけの言葉、取引先を指す一般語で、個人ではない）。
 	"庚申": true, "地蔵": true, "お地蔵": true, "仁王": true, "仁王像": true, "御堂": true, "皆々": true, "小売店": true,
+	// 寺社・祭りのサイトの「大仏様に歌を奉納」「福娘さんの選考」「弁天さんと言えば」「オキツネさん、」と、
+	// 茶道の流派の「裏千家様」（2026-11-01 20:00 に実測した高再現率モードの偽陽性。神仏・神の使いの呼び名、
+	// 祭りの役名、流派名で、特定の個人の氏名ではない）。
+	"大仏": true, "福娘": true, "弁天": true, "オキツネ": true, "お狐": true, "お稲荷": true, "稲荷": true,
+	"裏千家": true, "表千家": true,
 }
 
 // honorificCommonNounSuffixes は、「社員皆さん」「来場者皆様」「常連客様」の
@@ -463,7 +468,9 @@ var honorificCommonNounSuffixes = []string{"皆", "客", "農家", "花嫁", "�
 	// 「<地域>地方自治体様」「<建物>住人さん」（2026-10-31 08:00 に実測した偽陽性）。
 	"自治体", "住人",
 	// 「<地名>石材店様より」「<地名>小売店様」「<寺名>地蔵様」（2026-11-01 の追いつきサイクルで実測した偽陽性）。
-	"石材店", "小売店", "地蔵"}
+	"石材店", "小売店", "地蔵",
+	// 「<寺名>大仏様」「<地名>弁天さん」（2026-11-01 20:00 に実測した偽陽性。仏像・神の呼び名）。
+	"大仏", "弁天"}
 
 // countNameRe は「二名」「３名」「数名」のような人数の表記に一致する。
 var countNameRe = regexp.MustCompile(`^[一二三四五六七八九十百千数何0-9０-９]+名$`)
@@ -713,4 +720,41 @@ func startsWithSurnameName(s string) bool {
 		}
 	}
 	return false
+}
+
+// rejectChoTaniPrefix は、職名に直結する氏名の値が「谷」で始まり、直前が「長」で終わる
+// （「施設長谷川<名>」の「長谷川」「長谷部」のように職名の「長」が姓の一部になりうる）場合に棄却する。
+func rejectChoTaniPrefix(line string, start, end int) bool {
+	return !(strings.HasSuffix(line[:start], "長") && strings.HasPrefix(line[start:end], "谷"))
+}
+
+// rejectPostTitleFragment は personNamePostTitleRe の値が「北澤准教授」の「北澤准」のように、
+// 肩書きの一部（准・副・特任・名誉・客員）まで取り込んだ形を落とす。姓だけでは姓名辞書の
+// 分割を通らないため、正規表現の最短一致が肩書きの頭の 1〜2 字を名として取り込んでしまう。
+func rejectPostTitleFragment(line string, start, end int) bool {
+	v := line[start:end]
+	for _, s := range []string{"准", "副", "特任", "名誉", "客員", "元", "前"} {
+		if strings.HasSuffix(v, s) {
+			return false
+		}
+	}
+	// 値全体が 1 つの姓のときは、姓名の分割が偶然通っただけ。
+	if dict.IsSurname(v) {
+		return false
+	}
+	title := strings.TrimPrefix(line[end:], "副")
+	// 「長岡京市長」「田原本町長」「設楽町町長」は自治体の長で、値は自治体名。
+	for _, h := range []string{"市長", "町長", "村長", "区長"} {
+		if strings.HasPrefix(title, h) {
+			unit := h[:len(h)-len("長")]
+			if dict.IsMunicipalityOrPrefecture(v+unit) || dict.IsMunicipalityOrPrefecture(v) {
+				return false
+			}
+		}
+	}
+	// 「神戸大学長」は大学の長で、値は大学の略称。
+	if strings.HasPrefix(title, "学長") && strings.HasSuffix(v, "大") {
+		return false
+	}
+	return true
 }

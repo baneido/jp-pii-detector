@@ -93,8 +93,17 @@ func matchesRule(ruleID, value string) bool {
 // 英字だけの氏名スパン（コード中の識別子 os, def など）は、ローマ字辞書に一致するか、
 // 確率が highProb 以上で「John Smith」のように大文字始まりの 2 語以上のときだけ報告する。
 func confirmSpan(sp span, runes []rune, ps, pe int) (ruleID string, start, end int, ok bool) {
+	if sp.typ == "NAME" {
+		pe = trimHonorificTail(runes, ps, pe)
+	}
 	value := string(runes[ps:pe])
 	switch {
+	case sp.typ == "DOB" && foundingDateBefore(runes, ps):
+		return "", 0, 0, false
+	case sp.typ == "ADDRESS" && pe-ps == 1:
+		// 「錦ケ丘８丁目バス停」の「８」のような 1 文字だけの住所は、番地の断片で
+		// 住所として読めないので落とす。
+		return "", 0, 0, false
 	case sp.typ == "BANK_ACCOUNT" && !numericShape(normalize.Line(value)):
 		if sp.prob < highProb || !bankWordRe.MatchString(value) {
 			return "", 0, 0, false
@@ -127,6 +136,40 @@ func confirmSpan(sp span, runes []rune, ps, pe int) (ruleID string, start, end i
 	}
 	id, ok := confirm(sp.typ, value)
 	return id, ps, pe, ok
+}
+
+// trimHonorificTail は氏名スパンが「<姓><名>さんが」のように敬称から後ろまで
+// 含んでしまったとき、敬称の手前で切った終端を返す。先頭が敬称のスパンは触らない。
+func trimHonorificTail(runes []rune, ps, pe int) int {
+	for i := ps + 1; i < pe; i++ {
+		if honorificAt(runes, i) && i+honorificLen(runes, i) <= pe {
+			return i
+		}
+	}
+	return pe
+}
+
+func honorificLen(runes []rune, pos int) int {
+	rest := string(runes[pos:min(len(runes), pos+3)])
+	for _, h := range honorifics {
+		if strings.HasPrefix(rest, h) {
+			return len([]rune(h))
+		}
+	}
+	return 0
+}
+
+// foundingDateRe は日付の直前（同じ行の 8 文字以内）にあると、その日付が生年月日ではなく
+// 団体の設立日や記入例であることを示す語。「設立：昭和<年>」「設立認可 <年>」
+// 「会社設立日 <年>」「創立」「開局」「例：<年>」を想定する。
+var foundingDateRe = regexp.MustCompile(`(?:設立|創立|創業|開局|開校|開設|例)[^\n]{0,3}$`)
+
+func foundingDateBefore(runes []rune, ps int) bool {
+	s := ps
+	for s > 0 && ps-s < 8 && runes[s-1] != '\n' {
+		s--
+	}
+	return foundingDateRe.MatchString(strings.TrimRight(string(runes[s:ps]), " 　"))
 }
 
 // bankWordRe は口座のスパンが銀行の情報を含むことを示す語。
