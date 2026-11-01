@@ -6123,3 +6123,38 @@ func TestShrineAndRetailHonorificFP20261101(t *testing.T) {
 		assertRules(t, d.ScanLine("f.txt", 1, line))
 	}
 }
+
+func TestFormHintBracketAndDeityHonorificFP20261101Evening(t *testing.T) {
+	for _, toml := range []string{"", "min_confidence = \"low\"\n", "min_confidence = \"low\"\n" + highRecallTOML} {
+		d := newDetector(t, toml)
+		for _, line := range []string{
+			"氏名（ヨミガナ）", "名前（事業者名）", "氏名(責任者)", "④ふりがな（全員分）", "お名前(カナ/Alphabet)",
+			"大仏様に歌を奉納", "福娘さんの選考", "弁天さんと言えば", "オキツネさん、女性守護", "裏千家様の茶会",
+		} {
+			assertRules(t, d.ScanLine("f.txt", 1, line))
+		}
+	}
+	// 括弧書きの指示を除いても、実際の氏名の値は従来どおり検出する。
+	d := newDetector(t, "min_confidence = \"low\"\n")
+	assertRules(t, d.ScanLine("f.txt", 1, "氏名（ヨミガナ）：山田 太郎（ヤマダ タロウ）"), "person-name-role-label") // jp-pii-detector:ignore
+}
+
+func TestEmailFollowedByJapanese20261101(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct{ line, match string }{
+		{"お申し込みは hanako@abc-kyokai.or.jp宛にお送りください。", "hanako@abc-kyokai.or.jp"}, // jp-pii-detector:ignore
+		{"【連絡】seminar@abc-kyokai.or.jpまでご連絡ください。", "seminar@abc-kyokai.or.jp"},  // jp-pii-detector:ignore
+		{"窓口 info@abc-kyokai.or.jpへ。", "info@abc-kyokai.or.jp"},                 // jp-pii-detector:ignore
+	}
+	for _, tt := range tests {
+		fs := d.ScanLine("f.txt", 1, tt.line)
+		assertRules(t, fs, "email-address")
+		if fs[0].Match != tt.match {
+			t.Errorf("match = %q, want %q", fs[0].Match, tt.match)
+		}
+	}
+	// 日本語を含むドメインラベルの途中（EAI の ASCII 部分）は通常のメールとして切り出さない。
+	for _, line := range []string{"連絡先: user@abc.co例え.jp", "user@abc.co例.jp"} {
+		assertRules(t, d.ScanLine("f.txt", 1, line))
+	}
+}

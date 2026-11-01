@@ -1235,6 +1235,10 @@ var personNameBracketFormHints = map[string]bool{
 	"部署・役職等": true, "部署・役職": true, "役職等": true, "部署等": true,
 	// 「フリガナ（全角）」（2026-10-31 02:00 に動物病院の問い合わせフォームで実測した low の偽陽性）。
 	"全角": true, "半角": true, "全角カナ": true, "全角カタカナ": true,
+	// 「氏名（ヨミガナ）」「名前（事業者名）」「氏名(責任者)」「ふりがな（全員分）」（2026-11-01 20:00 に
+	// 申込書・募集要項で実測した low の偽陽性）。読み・事業者名・責任者・代表者・全員分の指示。
+	"ヨミガナ": true, "よみがな": true, "事業者名": true, "責任者": true, "代表者": true, "代表者名": true,
+	"全員分": true,
 }
 
 // validApplicantName は、申請者系ラベルの値が姓名に分割でき、かつ市区町村名
@@ -1312,6 +1316,8 @@ func rejectBracketedFormHint(line string, start, end int) bool {
 	// 「（フルネーム、フリガナ）」のように読点で次の指示語が続く形も括弧書きの指示とみなす。
 	closed := strings.HasPrefix(after, ")") || strings.HasPrefix(after, "）") || after == "" ||
 		strings.HasPrefix(after, "、") || strings.HasPrefix(after, ",") ||
+		// 「お名前(カナ/Alphabet)」のように斜線で次の指示語が続く形（2026-11-01 20:00 実測の medium の偽陽性）。
+		strings.HasPrefix(after, "/") || strings.HasPrefix(after, "／") ||
 		strings.TrimSpace(line[start:end]) == "法人"
 	return !(open && closed)
 }
@@ -2048,7 +2054,7 @@ func Builtin() []Rule {
 				// ValidateLine は URL のユーザー情報（"http://gopher@test.com"、
 				// "ssh://git@github.com/user/repo"）を棄却する（OSS コーパスでの実測。
 				// digit_token_guard.go の rejectURLUserinfo 参照）。
-				{Re: emailASCIIRe, Base: High, ValidateLine: rejectURLUserinfo},
+				{Re: emailASCIIRe, Base: High, ValidateLine: allValidateLine(rejectURLUserinfo, rejectEAIDomainContinuation)},
 			},
 		},
 		{
