@@ -82,6 +82,7 @@ var notationCategories = []string{
 	"particle-honorific",   // ひらがなに地続きの「…のある<姓><名>氏より」「…の<姓><名>さんが」（陽性）と、文様・檀信徒・水神 + 様、掲示板の呼び名 + さん、氏名欄の記入の指示（陰性）
 	"roster-spaced",        // 役員名簿の字間を空けた氏名、所属括弧が続く委員名簿の氏名、読み括弧付きの担当欄の姓（陽性）と、続柄・職名・神の使い + 様/さん、鎌倉殿、一般語 + 殿下、記入の指示（陰性）
 	"head-lecturer-kana",   // 首長・組合長・局長 + コロンの氏名、講師 + 職業名 + 氏名、申請者 + ひらがなの氏名（陽性）と、神仏・寺院の呼び名・取引先 + 様/さん、氏名欄の次の欄名（陰性）
+	"title-credit-form",    // 氏名の直後・直前の肩書き、出演者の［楽器］・【役割】、名簿行・社名：氏名、和文が直後に続くメール（陽性）と、肩書きだけ・長谷川の「長」、書式欄の括弧書き、神仏・役名 + 敬称（陰性）
 }
 
 type notationCase struct {
@@ -727,6 +728,42 @@ func notationSpecs() []notationCase {
 	neg("head-lecturer-kana", "申請者    氏名：                     当日可能連絡先（携帯）：")
 	neg("head-lecturer-kana", "申請者 による もの")
 	neg("head-lecturer-kana", "市長：挨拶")
+	// 大学のニュースの「<姓><名>教授」「<姓><名>特任准教授」、自治体の「<姓><名>市長」、
+	// 団体の「会長 <姓><名>」「施設長<姓><名>へ」、公演一覧の「<姓><名>［ヴァイオリン］」
+	// 「【作・演出】 <姓> <名>」、名簿の「<学科> 2年 <姓><名>」、表彰の「<社名>：<姓><名>」、
+	// 「<メール>宛に」（2026-11-01 20:00 のサイクルで実測した見逃し）と、
+	// 肩書きだけの語・「施設長谷川」・書式欄の括弧書き・神仏や役名 + 敬称（同じ回の偽陽性）
+	pos("title-credit-form", role, "架空大学の"+full(44, "")+"教授が受賞しました")
+	pos("title-credit-form", role, "・"+full(45, "")+"特任准教授（情報学）")
+	pos("title-credit-form", role, full(46, "")+"弁護士が登壇します")
+	pos("title-credit-form", role, full(47, "")+"理事長・学長のあいさつ")
+	pos("title-credit-form", role, full(48, "")+"市長と面会")
+	pos("title-credit-form", role, "会長 "+full(49, ""))
+	pos("title-credit-form", role, "施設長"+full(50, "")+"へ花束を贈呈")
+	pos("title-credit-form", role, "プロジェクト代表"+full(51, "")+"とともに")
+	pos("title-credit-form", role, full(52, "")+"［ヴァイオリン］")
+	pos("title-credit-form", role, full(53, " ")+"［ピアノ］")
+	pos("title-credit-form", role, "【作・演出】 "+full(54, " "))
+	pos("title-credit-form", role, "情報学科 2年 "+full(55, ""))
+	pos("title-credit-form", role, "架空株式会社："+full(56, ""))
+	pos("title-credit-form", email, "お申し込みは kikaku@kakuu-kyokai.or.jp宛にお送りください。") // jp-pii-detector:ignore
+	pos("title-credit-form", email, "【連絡先】seminar@kakuu-kyokai.or.jpまでご連絡ください。")  // jp-pii-detector:ignore
+	neg("title-credit-form", "客員教授が来日")
+	neg("title-credit-form", "顧問弁護士に相談")
+	neg("title-credit-form", "前市長と面会")
+	neg("title-credit-form", "会長 挨拶")
+	neg("title-credit-form", "【会場】 中央公民館")
+	neg("title-credit-form", "情報学科 2年 必修科目")
+	neg("title-credit-form", "架空交響楽団［管弦楽］")
+	neg("title-credit-form", "氏名（ヨミガナ）")
+	neg("title-credit-form", "名前（事業者名）")
+	neg("title-credit-form", "氏名(責任者)")
+	neg("title-credit-form", "④ふりがな（全員分）")
+	neg("title-credit-form", "お名前(カナ/Alphabet)")
+	neg("title-credit-form", "大仏様に歌を奉納")
+	neg("title-credit-form", "福娘さんの選考")
+	neg("title-credit-form", "弁天さんと言えば")
+	neg("title-credit-form", "オキツネさん、女性守護")
 	return out
 }
 
