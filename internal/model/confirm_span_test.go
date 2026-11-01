@@ -119,3 +119,45 @@ func TestRecognizeDropsNamePartsOfLongerWords(t *testing.T) {
 		t.Errorf("語の一部を氏名にした、または正しい氏名を落とした: %+v", got)
 	}
 }
+
+func TestRecognizeDropsFoundingDatesAndExamples(t *testing.T) {
+	for _, tc := range []struct{ text, span string }{
+		{"設立：昭和61年1月1日", "昭和61年1月1日"},
+		{"設立認可 昭和27年1月1日", "昭和27年1月1日"},
+		{"会社設立日 1995年1月1日", "1995年1月1日"},
+		{"創立 1960年4月1日", "1960年4月1日"},
+		{"例：1990（平成2）年1月1日", "1990（平成2）年1月1日"},
+	} {
+		t.Run(tc.text, func(t *testing.T) {
+			r := fakeRecognizer(t, tc.text, []fakeSpan{{tc.span, "DOB", 10}})
+			if got, _ := r.Recognize(tc.text); len(got) != 0 {
+				t.Errorf("got %+v", got)
+			}
+		})
+	}
+	text := "創業者の生年月日 1950年1月1日" // jp-pii-detector:ignore
+	r := fakeRecognizer(t, text, []fakeSpan{{"1950年1月1日", "DOB", 10}})
+	if got, _ := r.Recognize(text); len(got) != 1 || got[0].RuleID != "jp-birthdate" {
+		t.Errorf("生年月日を落とした: %+v", got)
+	}
+}
+
+func TestRecognizeDropsSingleCharacterAddress(t *testing.T) {
+	text := "架空ケ丘８丁目バス停で降りる"
+	r := fakeRecognizer(t, text, []fakeSpan{{"８", "ADDRESS", 10}})
+	if got, _ := r.Recognize(text); len(got) != 0 {
+		t.Errorf("got %+v", got)
+	}
+}
+
+func TestRecognizeTrimsNameSpanAtHonorific(t *testing.T) {
+	text := "架空花子さんが来た"
+	r := fakeRecognizer(t, text, []fakeSpan{{"架空花子さんが", "NAME", 10}})
+	got, err := r.Recognize(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Column != 1 || got[0].Length != 4 {
+		t.Fatalf("got %+v", got)
+	}
+}
