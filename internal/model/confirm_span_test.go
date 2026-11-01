@@ -161,3 +161,29 @@ func TestRecognizeTrimsNameSpanAtHonorific(t *testing.T) {
 		t.Fatalf("got %+v", got)
 	}
 }
+
+// 2026-11-02 08:00 の候補 11。会社概要の表で「設立」「創業」のラベルが日付の前の行にある形と、
+// 応募資格の「<日付>以降に生まれた者」は生年月日ではない（日付はすべて合成）。
+func TestRecognizeDropsFoundingDatesOnPreviousLineAndRanges(t *testing.T) {
+	for _, tc := range []struct{ text, span string }{
+		{"会社概要\n設立\n平成7年1月1日", "平成7年1月1日"},
+		{"創業\n1933年1月1日", "1933年1月1日"},
+		{"創立年月日\n\n1952年1月1日", "1952年1月1日"},
+		{"（１）年齢　昭和５７年４月２日以降に生まれた者", "昭和５７年４月２日以降"},
+		{"（１）年齢　昭和５７年４月２日以降に生まれた者", "昭和５７年４月２日"},
+		{"平成2年4月1日以前に生まれた方", "平成2年4月1日"},
+	} {
+		t.Run(tc.text, func(t *testing.T) {
+			r := fakeRecognizer(t, tc.text, []fakeSpan{{tc.span, "DOB", 10}})
+			if got, _ := r.Recognize(tc.text); len(got) != 0 {
+				t.Errorf("got %+v", got)
+			}
+		})
+	}
+	for _, text := range []string{"生年月日\n1950年1月1日", "設立者\n山田\n生年月日 1950年1月1日"} { // jp-pii-detector:ignore
+		r := fakeRecognizer(t, text, []fakeSpan{{"1950年1月1日", "DOB", 10}})
+		if got, _ := r.Recognize(text); len(got) != 1 || got[0].RuleID != "jp-birthdate" {
+			t.Errorf("生年月日を落とした: %q %+v", text, got)
+		}
+	}
+}
