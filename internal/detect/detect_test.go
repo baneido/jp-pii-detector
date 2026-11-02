@@ -6225,3 +6225,30 @@ func TestOrgFormWordHonorificAndExampleFP20261102(t *testing.T) {
 		t.Run(tt.line, func(t *testing.T) { assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.rule) })
 	}
 }
+
+// 2026-11-02 08:00 の候補 1。会社概要の役員一覧で、姓が辞書にない役員を全モードで取りこぼしていた。
+// 姓「鍬形」は辞書にない合成の姓（実在の文書の値ではない）。名は辞書にある一般的な名。
+func TestExecTitleRareSurname20261102(t *testing.T) {
+	d := newDetector(t, "")
+	for _, tt := range []struct{ line, match string }{
+		{"代表取締役　鍬形　洋", "鍬形　洋"},       // jp-pii-detector:ignore
+		{"取締役　鍬形 孝憲", "鍬形 孝憲"},       // jp-pii-detector:ignore
+		{"取締役 鍬形孝憲", "鍬形孝憲"},         // jp-pii-detector:ignore
+		{"監査役   鍬形   一郎", "鍬形   一郎"}, // jp-pii-detector:ignore
+	} {
+		t.Run(tt.line, func(t *testing.T) {
+			fs := d.ScanLine("f.txt", 1, tt.line)
+			assertRules(t, fs, "person-name-role-label")
+			if fs[0].Match != tt.match {
+				t.Errorf("match = %q, want %q", fs[0].Match, tt.match)
+			}
+		})
+	}
+	// 役職の続き・一般語は氏名にしない。
+	for _, line := range []string{
+		"取締役 社外 一郎", "取締役会 議事録", "取締役 営業本部長", "代表取締役 就任 挨拶", "取締役 会議資料",
+		"監査役 監査報告", "取締役 常務執行役員", "代表取締役 交代のお知らせ",
+	} {
+		t.Run(line, func(t *testing.T) { assertRules(t, d.ScanLine("f.txt", 1, line)) })
+	}
+}

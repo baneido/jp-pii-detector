@@ -1620,6 +1620,37 @@ func validSpacedSurnameGiven(v string) bool {
 	return dict.IsSurname(f[0])
 }
 
+// validExecRareSurnameGiven は役員の役職名（代表取締役・取締役・監査役 等）の直後の値のうち、
+// 姓が辞書にない「<姓> <名>」「<姓><名>」を検証する。会社概要の役員一覧で、辞書にない姓の役員を
+// 全モードで取りこぼす見逃しを 2026-11-02 08:00 に実測した（姓が辞書にある役員は同じ表で検出
+// できていた）。役職名が人名の位置を強く示すので、姓側は辞書を要求せず 2〜3 字の漢字で職名・
+// 組織の語尾でないことだけを見て、名側は名の辞書に一致すること（空白なしは 2 字以上）を要求する。
+func validExecRareSurnameGiven(v string) bool {
+	v = strings.TrimSpace(v)
+	sur, given := "", ""
+	if f := strings.Fields(v); len(f) == 2 {
+		sur, given = f[0], f[1]
+	} else if r := []rune(v); len(f) == 1 && len(r) == 4 {
+		sur, given = string(r[:2]), string(r[2:])
+	} else {
+		return false
+	}
+	n := utf8.RuneCountInString(sur)
+	if n < 2 || n > 3 || !allKanji(sur) || !notOrgName(sur) || !notRoleWord(sur) || execSurnameStopwords[sur] {
+		return false
+	}
+	if g := utf8.RuneCountInString(given); g < 1 || g > 3 || spacedGivenStopwords[given] || !dict.IsGivenName(given) {
+		return false
+	}
+	return true
+}
+
+// execSurnameStopwords は役職名の直後に来うる、姓ではない漢字語（役職・役割の続き）。
+var execSurnameStopwords = map[string]bool{
+	"社外": true, "常勤": true, "非常勤": true, "常務": true, "専務": true, "執行": true, "代表": true,
+	"副社": true, "筆頭": true, "独立": true, "新任": true, "退任": true, "就任": true, "選任": true,
+}
+
 func validPersonNameSurnameOnly(v string) bool {
 	return dict.MatchPersonName(strings.TrimSpace(v)) == dict.SurnameOnly
 }
@@ -2685,7 +2716,10 @@ func Builtin() []Rule {
 				{Re: personNameSeatNumberRe, Base: Medium, Validate: validSpacedSurnameGiven},
 				// 代表権のある役職名 + 空白/「である」/括弧 + 氏名（行政処分の公表文書の本文）。
 				// 「代表者：」ラベルを伴わないため、姓+名の完全分割のみ Medium で報告する。
-				{Re: personNameExecTitleRe, Base: Medium, Validate: validPersonNameFullSplit},
+				// 姓が辞書にない役員（「取締役 <珍しい姓> <名>」）は validExecRareSurnameGiven で拾う。
+				{Re: personNameExecTitleRe, Base: Medium, Validate: func(v string) bool {
+					return validPersonNameFullSplit(v) || validExecRareSurnameGiven(v)
+				}},
 				{Re: personNameExecTitleAndRe, Base: Medium, Validate: validPersonNameFullSplit},
 				// 当事者ラベル（審査申立人・原告 等）+ 空白 + 氏名と「（総代）氏名」。
 				// 「原告 主張」「被告 会社」等の一般語は姓名辞書ゲートで落ちる。
