@@ -98,7 +98,7 @@ func confirmSpan(sp span, runes []rune, ps, pe int) (ruleID string, start, end i
 	}
 	value := string(runes[ps:pe])
 	switch {
-	case sp.typ == "DOB" && foundingDateBefore(runes, ps):
+	case sp.typ == "DOB" && (foundingDateBefore(runes, ps) || foundingLabelPrevLine(runes, ps) || dateRangeBound(runes, ps, pe)):
 		return "", 0, 0, false
 	case sp.typ == "ADDRESS" && pe-ps == 1:
 		// 「錦ケ丘８丁目バス停」の「８」のような 1 文字だけの住所は、番地の断片で
@@ -163,6 +163,51 @@ func honorificLen(runes []rune, pos int) int {
 // 団体の設立日や記入例であることを示す語。「設立：昭和<年>」「設立認可 <年>」
 // 「会社設立日 <年>」「創立」「開局」「例：<年>」を想定する。
 var foundingDateRe = regexp.MustCompile(`(?:設立|創立|創業|開局|開校|開設|例)[^\n]{0,3}$`)
+
+// foundingLabelRe は、会社概要の表で日付の前の行に単独で置かれる設立日・創業日のラベル。
+var foundingLabelRe = regexp.MustCompile(`^(?:会社|法人)?(?:設立|創立|創業|開業|開局|開校|開設)(?:年月日|日|年)?[:：]?$`)
+
+// foundingLabelPrevLine は、日付が行頭にあり、その前の行（空行は 2 行まで飛ばす）が設立・創業の
+// ラベルだけのとき true を返す。「設立\n平成<年>…」「創業\n<年>…」のように表のラベルが前の行に
+// 分かれた形を、モデルが生年月日にする誤検出を 2026-11-02 08:00 に実測した（標本の 8 件中 6 件）。
+func foundingLabelPrevLine(runes []rune, ps int) bool {
+	i := ps
+	for i > 0 && runes[i-1] != '\n' {
+		i--
+		if runes[i] != ' ' && runes[i] != '　' && runes[i] != '\t' {
+			return false
+		}
+	}
+	for blank := 0; i > 0 && blank <= 2; {
+		end := i - 1 // 前の行の改行
+		s := end
+		for s > 0 && runes[s-1] != '\n' {
+			s--
+		}
+		line := strings.Trim(string(runes[s:end]), " 　\t\r")
+		if line == "" {
+			blank++
+			i = s
+			continue
+		}
+		return foundingLabelRe.MatchString(line)
+	}
+	return false
+}
+
+// dateRangeBound は、日付が「<日付>以降に生まれた者」「<日付>以前」のように応募資格・対象期間の
+// 端であるとき true を返す（2026-11-02 08:00 に募集要項で実測したモデルの生年月日の誤検出）。
+// モデルのスパンが「以降」まで含む場合と、スパンの直後に続く場合の両方を扱う。
+func dateRangeBound(runes []rune, ps, pe int) bool {
+	v := strings.TrimRight(string(runes[ps:pe]), " 　")
+	after := strings.TrimLeft(string(runes[pe:min(len(runes), pe+4)]), " 　")
+	for _, w := range []string{"以降", "以前", "以後"} {
+		if strings.HasSuffix(v, w) || strings.HasPrefix(after, w) {
+			return true
+		}
+	}
+	return false
+}
 
 func foundingDateBefore(runes []rune, ps int) bool {
 	s := ps

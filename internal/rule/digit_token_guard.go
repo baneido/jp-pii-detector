@@ -272,6 +272,17 @@ func rejectHonorificWordCompound(line string, start, end int) bool {
 	if strings.HasPrefix(rest, "さんぽ") || strings.HasPrefix(rest, "さん通り") {
 		return false
 	}
+	// 「地球さんご賞」（さんご＝珊瑚）と、「発達凸凹さんフェスタ」のように「さん」の直後にカタカナ語が
+	// 続く催し名（2026-11-02 08:00 に実測した高再現率モードの偽陽性）。後者は「<姓>さんフェスタ」を
+	// 巻き添えにしないよう、値が姓名辞書（姓・名・姓名）のどれにも当たらない場合だけ棄却する。
+	if strings.HasPrefix(rest, "さんご") {
+		return false
+	}
+	if r, _ := utf8.DecodeRuneInString(strings.TrimPrefix(rest, "さん")); strings.HasPrefix(rest, "さん") &&
+		unicode.Is(unicode.Katakana, r) && r != 'ー' &&
+		!dict.IsPersonName(val) && !dict.IsSurname(val) && !dict.SplitsAsFullName(val) {
+		return false
+	}
 	// 「北九州市様」「兵庫県様」「横須賀市さん」（導入事例・取引先としての自治体）。
 	// 自治体名は個人を識別しないため、市区町村名・都道府県名との完全一致だけを棄却する。
 	if (strings.HasPrefix(rest, "様") || strings.HasPrefix(rest, "さん")) && dict.IsMunicipalityOrPrefecture(val) {
@@ -436,6 +447,11 @@ var honorificCommonNouns = map[string]bool{
 	// 祭りの役名、流派名で、特定の個人の氏名ではない）。
 	"大仏": true, "福娘": true, "弁天": true, "オキツネ": true, "お狐": true, "お稲荷": true, "稲荷": true,
 	"裏千家": true, "表千家": true,
+	// 本人確認・契約書類の案内の「本人様の確認書類」「連帯保証人様必要書類」と、記者会見録の
+	// 「【知事】産経さん。」「日刊工さん、」（2026-11-02 08:00 に実測した高再現率モードの偽陽性。
+	// 書式の語と、報道機関の略称で、特定の個人の氏名ではない）。
+	"本人": true, "ご本人": true, "御本人": true, "保証人": true, "連帯保証人": true,
+	"産経": true, "日経": true, "読売": true, "日刊工": true, "共同通信": true, "時事通信": true,
 }
 
 // honorificCommonNounSuffixes は、「社員皆さん」「来場者皆様」「常連客様」の
