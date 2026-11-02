@@ -6252,3 +6252,51 @@ func TestExecTitleRareSurname20261102(t *testing.T) {
 		t.Run(line, func(t *testing.T) { assertRules(t, d.ScanLine("f.txt", 1, line)) })
 	}
 }
+
+// 2026-11-02 20:00 の候補 1・2。担当欄・委員欄の列挙で 2 人目以降（「担当者名」ラベル、スラッシュ区切り、
+// 並びの後の補足の括弧、3 人目以降の委員）と、「兼」でつないだ役員の役職名の後の氏名を全ルールモードが
+// 取りこぼしていた（モデルは検出）。値はすべてありふれた姓名の架空の組み合わせ（実在の文書の値ではない）。
+func TestTantoListAndCompoundExecTitle20261102b(t *testing.T) {
+	d := newDetector(t, "")
+	matches := func(line string) []string {
+		var out []string
+		for _, f := range d.ScanLine("f.txt", 1, line) {
+			out = append(out, f.Match)
+		}
+		return out
+	}
+	for _, tt := range []struct {
+		line string
+		want []string
+	}{
+		{"担当：田中、佐藤、鈴木（第一部）", []string{"田中", "佐藤", "鈴木"}},                       // jp-pii-detector:ignore
+		{"広報担当：田中 / 鈴木", []string{"田中", "鈴木"}},                                 // jp-pii-detector:ignore
+		{"担当者名：田中、佐藤、高橋", []string{"田中", "佐藤", "高橋"}},                          // jp-pii-detector:ignore
+		{"編集委員：田中太郎、佐藤花子、鈴木一郎、", []string{"田中太郎", "佐藤花子", "鈴木一郎"}},             // jp-pii-detector:ignore
+		{"編集委員：高橋次郎、伊藤三郎、渡辺四郎、山本五郎", []string{"高橋次郎", "伊藤三郎", "渡辺四郎", "山本五郎"}}, // jp-pii-detector:ignore
+		{"代表取締役兼社長執行役員　田中 太郎", []string{"田中 太郎"}},                              // jp-pii-detector:ignore
+		{"代表取締役 兼 会長 佐藤次郎", []string{"佐藤次郎"}},                                  // jp-pii-detector:ignore
+	} {
+		t.Run(tt.line, func(t *testing.T) {
+			got := matches(tt.line)
+			for _, w := range tt.want {
+				found := false
+				for _, g := range got {
+					if g == w {
+						found = true
+					}
+				}
+				if !found {
+					t.Errorf("missing %q in %q", w, got)
+				}
+			}
+		})
+	}
+	// 部署名・業務名の列挙、「兼」の後の役職以外の語は氏名にしない。
+	for _, line := range []string{
+		"担当：総務、経理（第一部）", "広報担当：企画 / 広報", "代表取締役兼社長執行役員 営業本部長", "代表取締役 兼 務 解消",
+		"編集委員：本年度、次年度、来年度、",
+	} {
+		t.Run(line, func(t *testing.T) { assertRules(t, d.ScanLine("f.txt", 1, line)) })
+	}
+}
