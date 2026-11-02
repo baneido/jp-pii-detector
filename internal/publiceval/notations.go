@@ -32,57 +32,58 @@ var notationNames = []notationName{
 
 // notationCategories は表記の分類（ケースの tag notation:<分類> と ID に使う）。
 var notationCategories = []string{
-	"officer-title",        // 役員の肩書き（代表取締役・取締役・監査役・代表者氏名 等）
-	"professional-party",   // 士業・裁判官・当事者・事業者のラベル、業務禁止命令の名宛人
-	"yago-kojin",           // 屋号こと氏名、氏名（個人／個人事業主）
-	"contact-tel",          // 問合せ先の「役職 + 姓 + Tel」
-	"contact-extension",    // 問合せ先の内線
-	"contact-reading",      // 問合せ先の読み括弧
-	"gov-title",            // 〜官（調整官・専門官・推進官 等）の問合せ先
-	"name-spacing",         // 姓と名の間の複数空白（PDF レイアウト抽出）
-	"cjk-radical",          // 康熙部首・部首補助の混入
-	"variant-kanji",        // 異体字（﨑・髙・𠮷）
-	"form-word",            // 項目名・様式名の誤検出型（陰性のみ）
-	"name-reading",         // 空白区切りの姓名 + 空白区切りの読み括弧、担当 + 姓（よみ）
-	"title-line-end",       // 職名 + 空白区切りの姓名で終わる行
-	"honorific-compound",   // 敬称と同じ字を含む一般語（多様・編さん・両殿下・夫婦別氏・〜氏遺跡・自治体名 + 様・社殿・さんぽ・故人）
-	"tanto-dept-slash",     // 担当欄の「部署／姓」
-	"tanto-list",           // 担当欄に並べた複数の姓（担当：<姓>・<姓>）
-	"org-head-colon",       // 法人紹介の「理事長：<姓><名>」
-	"lecturer-label",       // 講師・審査員等のラベル + 氏名
-	"shi-affiliation",      // 人物紹介の「<姓><名>氏（<所属>）」
-	"koseki-todoke",        // 広報紙の戸籍の届出欄（出生届・死亡届・婚姻届）
-	"title-honorific-wide", // 宛名欄の均等割付「<村>長 <姓>      <名>   様」
-	"committee-list",       // 会議録の出席者欄「<姓><名>会長、<姓><名>委員、」
-	"lecturer-space",       // 空白区切りの「講師 <姓> <名>さん」
-	"tanto-space",          // 様式の「担当者 (<職>) <姓> <名>」
-	"grade-prefix",         // 学年の直後の氏名「6年生<姓><名>さん」
-	"tanto-wide",           // 担当欄の均等割付「担当：<姓>       <名>」
-	"exec-title-wide",      // 代表者欄の均等割付「代表取締役     <姓>      <名>」
-	"title-prefix",         // 職名に地続きの氏名「<町>町長<姓><名>様」
-	"org-head-ceo",         // 法人紹介「代表取締役社長 CEO：<姓> <名>）」
-	"seat-roster",          // 会議録の議席番号「1番     <姓>    <名>」
-	"reading-after-no",     // 助詞「の」に続く「<姓> <名>（<せい> <めい>）」
-	"tanshin-header",       // 決算短信の表紙「(役職名) <役職> (氏名) <姓> <名>」と「代表取締役社長 ＣＯＯ <姓> <名>」
-	"permit-number",        // 許可・登録番号「第<12 桁>号」・介護保険の事業所番号（陰性）と、囲まれていない個人番号（陽性）
-	"lecturer-space-paren", // 敬称のない講座案内「・講師 <姓> <名>（<所属><職名>）」
-	"director-credit",      // 出演作品一覧「「<作品名>」監督：<姓><名>」
-	"sensei-line",          // 講師一覧の行「<姓> <名> 先生」
-	"shrine-deity",         // 社殿名「<祖霊・宝物・参集>殿」・神仏の尊称「<天神・聖天>様」・「杜氏」（陰性）と、同じ形の氏名（陽性）
-	"lecturer-guest-san",   // 均等割付・スラッシュ区切りの「講 師／<姓> <名>さん（<肩書>）」と「ゲスト <姓> <名>さん(<職業>)」
-	"birth-range",          // 入園・受験資格の「<日付>～<日付>生まれ」・記入例（陰性）と、単独の「<日付>生まれ」（陽性）
-	"talk-event",           // 催し案内の「<姓><名>さん×<姓><名>さん」「登壇：」「聞き手：」「進行役：」（陽性）と、院号・施設名 + 敬称（陰性）
-	"reading-romaji",       // カタカナ読み・ローマ字併記の姓名「<姓> <名>(<セイ> <メイ>)」「<姓><名>（<SEI> <Mei>）」と「<姓><名>選手」（陽性）、氏子・大さん橋・英語の施設名（陰性）
-	"member-colon",         // 年報の学外活動一覧「<学会名> 委員会委員：<姓><名>」「代議員：<姓><名>、<姓><名>」（陽性）、空欄・人数・殿堂・人数 + 名様・一般語 + 敬称（陰性）
-	"donor-roster",         // 寄付者一覧の「<姓>　<名>　様」・役員名簿の「<姓>　<名>(理事長)」だけの行（陽性）と、建物名の「殿」・通りの名前・物語の呼び名 + 敬称（陰性）
-	"officer-shi",          // IR 資料の「取締役 <姓><名>氏」「常勤監査役 <姓><名>氏」（陽性）と、立場・神の尊称 + 敬称、連続した西暦年（陰性）
-	"gcp-service-account",  // Google Cloud のサービスアカウントのアドレス（陰性）と、個人のアドレス・似たドメイン・混在行（陽性）
-	"applicant-label",      // 書類の「申請者 <姓> <名>」「届出人：」「お客様氏名：」と 1 文字の姓（陽性）、申請者 + 一般語・市町村名・字間を空けた項目名（陰性）
-	"id-label-guard",       // 「基礎年金番号」等の直後の値と同じ行の「注文」「伝票」、空白区切りの免許証番号（陽性）と、英字で始まるコードの一部・西暦の並び（陰性）
-	"particle-honorific",   // ひらがなに地続きの「…のある<姓><名>氏より」「…の<姓><名>さんが」（陽性）と、文様・檀信徒・水神 + 様、掲示板の呼び名 + さん、氏名欄の記入の指示（陰性）
-	"roster-spaced",        // 役員名簿の字間を空けた氏名、所属括弧が続く委員名簿の氏名、読み括弧付きの担当欄の姓（陽性）と、続柄・職名・神の使い + 様/さん、鎌倉殿、一般語 + 殿下、記入の指示（陰性）
-	"head-lecturer-kana",   // 首長・組合長・局長 + コロンの氏名、講師 + 職業名 + 氏名、申請者 + ひらがなの氏名（陽性）と、神仏・寺院の呼び名・取引先 + 様/さん、氏名欄の次の欄名（陰性）
-	"title-credit-form",    // 氏名の直後・直前の肩書き、出演者の［楽器］・【役割】、名簿行・社名：氏名、和文が直後に続くメール（陽性）と、肩書きだけ・長谷川の「長」、書式欄の括弧書き、神仏・役名 + 敬称（陰性）
+	"officer-title",              // 役員の肩書き（代表取締役・取締役・監査役・代表者氏名 等）
+	"professional-party",         // 士業・裁判官・当事者・事業者のラベル、業務禁止命令の名宛人
+	"yago-kojin",                 // 屋号こと氏名、氏名（個人／個人事業主）
+	"contact-tel",                // 問合せ先の「役職 + 姓 + Tel」
+	"contact-extension",          // 問合せ先の内線
+	"contact-reading",            // 問合せ先の読み括弧
+	"gov-title",                  // 〜官（調整官・専門官・推進官 等）の問合せ先
+	"name-spacing",               // 姓と名の間の複数空白（PDF レイアウト抽出）
+	"cjk-radical",                // 康熙部首・部首補助の混入
+	"variant-kanji",              // 異体字（﨑・髙・𠮷）
+	"form-word",                  // 項目名・様式名の誤検出型（陰性のみ）
+	"name-reading",               // 空白区切りの姓名 + 空白区切りの読み括弧、担当 + 姓（よみ）
+	"title-line-end",             // 職名 + 空白区切りの姓名で終わる行
+	"honorific-compound",         // 敬称と同じ字を含む一般語（多様・編さん・両殿下・夫婦別氏・〜氏遺跡・自治体名 + 様・社殿・さんぽ・故人）
+	"tanto-dept-slash",           // 担当欄の「部署／姓」
+	"tanto-list",                 // 担当欄に並べた複数の姓（担当：<姓>・<姓>）
+	"org-head-colon",             // 法人紹介の「理事長：<姓><名>」
+	"lecturer-label",             // 講師・審査員等のラベル + 氏名
+	"shi-affiliation",            // 人物紹介の「<姓><名>氏（<所属>）」
+	"koseki-todoke",              // 広報紙の戸籍の届出欄（出生届・死亡届・婚姻届）
+	"title-honorific-wide",       // 宛名欄の均等割付「<村>長 <姓>      <名>   様」
+	"committee-list",             // 会議録の出席者欄「<姓><名>会長、<姓><名>委員、」
+	"lecturer-space",             // 空白区切りの「講師 <姓> <名>さん」
+	"tanto-space",                // 様式の「担当者 (<職>) <姓> <名>」
+	"grade-prefix",               // 学年の直後の氏名「6年生<姓><名>さん」
+	"tanto-wide",                 // 担当欄の均等割付「担当：<姓>       <名>」
+	"exec-title-wide",            // 代表者欄の均等割付「代表取締役     <姓>      <名>」
+	"title-prefix",               // 職名に地続きの氏名「<町>町長<姓><名>様」
+	"org-head-ceo",               // 法人紹介「代表取締役社長 CEO：<姓> <名>）」
+	"seat-roster",                // 会議録の議席番号「1番     <姓>    <名>」
+	"reading-after-no",           // 助詞「の」に続く「<姓> <名>（<せい> <めい>）」
+	"tanshin-header",             // 決算短信の表紙「(役職名) <役職> (氏名) <姓> <名>」と「代表取締役社長 ＣＯＯ <姓> <名>」
+	"permit-number",              // 許可・登録番号「第<12 桁>号」・介護保険の事業所番号（陰性）と、囲まれていない個人番号（陽性）
+	"lecturer-space-paren",       // 敬称のない講座案内「・講師 <姓> <名>（<所属><職名>）」
+	"director-credit",            // 出演作品一覧「「<作品名>」監督：<姓><名>」
+	"sensei-line",                // 講師一覧の行「<姓> <名> 先生」
+	"shrine-deity",               // 社殿名「<祖霊・宝物・参集>殿」・神仏の尊称「<天神・聖天>様」・「杜氏」（陰性）と、同じ形の氏名（陽性）
+	"lecturer-guest-san",         // 均等割付・スラッシュ区切りの「講 師／<姓> <名>さん（<肩書>）」と「ゲスト <姓> <名>さん(<職業>)」
+	"birth-range",                // 入園・受験資格の「<日付>～<日付>生まれ」・記入例（陰性）と、単独の「<日付>生まれ」（陽性）
+	"talk-event",                 // 催し案内の「<姓><名>さん×<姓><名>さん」「登壇：」「聞き手：」「進行役：」（陽性）と、院号・施設名 + 敬称（陰性）
+	"reading-romaji",             // カタカナ読み・ローマ字併記の姓名「<姓> <名>(<セイ> <メイ>)」「<姓><名>（<SEI> <Mei>）」と「<姓><名>選手」（陽性）、氏子・大さん橋・英語の施設名（陰性）
+	"member-colon",               // 年報の学外活動一覧「<学会名> 委員会委員：<姓><名>」「代議員：<姓><名>、<姓><名>」（陽性）、空欄・人数・殿堂・人数 + 名様・一般語 + 敬称（陰性）
+	"donor-roster",               // 寄付者一覧の「<姓>　<名>　様」・役員名簿の「<姓>　<名>(理事長)」だけの行（陽性）と、建物名の「殿」・通りの名前・物語の呼び名 + 敬称（陰性）
+	"officer-shi",                // IR 資料の「取締役 <姓><名>氏」「常勤監査役 <姓><名>氏」（陽性）と、立場・神の尊称 + 敬称、連続した西暦年（陰性）
+	"gcp-service-account",        // Google Cloud のサービスアカウントのアドレス（陰性）と、個人のアドレス・似たドメイン・混在行（陽性）
+	"applicant-label",            // 書類の「申請者 <姓> <名>」「届出人：」「お客様氏名：」と 1 文字の姓（陽性）、申請者 + 一般語・市町村名・字間を空けた項目名（陰性）
+	"id-label-guard",             // 「基礎年金番号」等の直後の値と同じ行の「注文」「伝票」、空白区切りの免許証番号（陽性）と、英字で始まるコードの一部・西暦の並び（陰性）
+	"particle-honorific",         // ひらがなに地続きの「…のある<姓><名>氏より」「…の<姓><名>さんが」（陽性）と、文様・檀信徒・水神 + 様、掲示板の呼び名 + さん、氏名欄の記入の指示（陰性）
+	"roster-spaced",              // 役員名簿の字間を空けた氏名、所属括弧が続く委員名簿の氏名、読み括弧付きの担当欄の姓（陽性）と、続柄・職名・神の使い + 様/さん、鎌倉殿、一般語 + 殿下、記入の指示（陰性）
+	"head-lecturer-kana",         // 首長・組合長・局長 + コロンの氏名、講師 + 職業名 + 氏名、申請者 + ひらがなの氏名（陽性）と、神仏・寺院の呼び名・取引先 + 様/さん、氏名欄の次の欄名（陰性）
+	"title-credit-form",          // 氏名の直後・直前の肩書き、出演者の［楽器］・【役割】、名簿行・社名：氏名、和文が直後に続くメール（陽性）と、肩書きだけ・長谷川の「長」、書式欄の括弧書き、神仏・役名 + 敬称（陰性）
+	"org-honorific-rare-officer", // 役員の役職名の後の辞書にない姓 + 名、姓 + 様/さん（陽性）と、団体名・報道機関の略称・書式語 + 様/さん、康熙部首入りの団体名 + 様、さんご・さん + カタカナ語、カード名義、例）の生年月日（陰性）
 }
 
 type notationCase struct {
@@ -767,6 +768,39 @@ func notationSpecs() []notationCase {
 	neg("title-credit-form", "福娘さんの選考")
 	neg("title-credit-form", "弁天さんと言えば")
 	neg("title-credit-form", "オキツネさん、女性守護")
+	// 会社概要の「代表取締役　<辞書にない姓>　<名>」（2026-11-02 08:00 のサイクルで実測した見逃し）と、
+	// 自治体実績一覧の「<団体名>様」（康熙部首入りを含む）、記者会見の「<報道機関の略称>さん」、
+	// 書式語 + 様、「さんご」「さん + カタカナ語」、カード名義の括弧書き、入力例の生年月日（同じ回の偽陽性）。
+	// 姓「鍬形」は辞書にない合成の姓で、自己走査に掛からないよう部品から組み立てる
+	rare := "鍬" + "形"
+	pos("org-honorific-rare-officer", role, "代表取締役　"+rare+"　"+n(0).given)
+	pos("org-honorific-rare-officer", role, "取締役　"+rare+" "+n(1).given)
+	pos("org-honorific-rare-officer", role, "取締役 "+rare+n(2).given)
+	pos("org-honorific-rare-officer", role, "監査役   "+rare+"   "+n(2).given)
+	pos("org-honorific-rare-officer", "person-name-high-recall", n(0).sur+"様からのご依頼")
+	pos("org-honorific-rare-officer", "person-name-high-recall", n(4).sur+"さんフェスタに参加")
+	neg("org-honorific-rare-officer", "取締役 社外 "+n(2).given)
+	neg("org-honorific-rare-officer", "取締役会 議事録")
+	neg("org-honorific-rare-officer", "取締役 営業本部長")
+	neg("org-honorific-rare-officer", "代表取締役 交代のお知らせ")
+	neg("org-honorific-rare-officer", "取締役 常務執行役員")
+	neg("org-honorific-rare-officer", "架空消防庁様")
+	neg("org-honorific-rare-officer", "架空税関様")
+	neg("org-honorific-rare-officer", "架空生命保険様")
+	neg("org-honorific-rare-officer", "架空日報新聞様")
+	neg("org-honorific-rare-officer", "【知事】産経さん。")
+	neg("org-honorific-rare-officer", "日刊工さん、どうぞ")
+	neg("org-honorific-rare-officer", "本人様の確認書類")
+	neg("org-honorific-rare-officer", "連帯保証人様必要書類")
+	neg("org-honorific-rare-officer", "「受験番号+カナ氏名」で保存")
+	neg("org-honorific-rare-officer", "東京都江\u2f3e川区様")
+	neg("org-honorific-rare-officer", "\u2f24同\u2f63命保険様")
+	neg("org-honorific-rare-officer", "地球さんご賞作品集")
+	neg("org-honorific-rare-officer", "「発達凸凹さんフェスタ」")
+	neg("org-honorific-rare-officer", "お名前（カード名義）の変更")
+	neg("org-honorific-rare-officer", "お名前(名義)")
+	neg("org-honorific-rare-officer", "例）2005年１月５日生まれの方")
+	neg("org-honorific-rare-officer", "例) 2005年1月5日生まれ")
 	return out
 }
 
