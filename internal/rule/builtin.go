@@ -495,12 +495,15 @@ var (
 			`([` + kanji + `]{2,8}(?:[ ][` + kanji + `]{1,8})?)`,
 	)
 	// tantoList* は personNameTantoListRe の部品（担当ラベル、姓、読み括弧、区切り、右アンカー）。
-	tantoListPrefix  = `担当者?[：:][ ]*`
+	// 2026-11-02 20:00 に「担当者名：<姓>、<姓>、<姓>」「広報担当：<姓> / <姓>」「担当：<姓>、<姓>、<姓>（第一部）」で
+	// 2 人目以降を全ルールモードが取りこぼす見逃しを実測したため、ラベル「担当者名」、区切りのスラッシュ、
+	// 並びの直後の開き括弧（補足の括弧書き）を足した。各値は従来どおり姓名辞書で検証する。
+	tantoListPrefix  = `担当者?名?[：:][ ]*`
 	tantoListName    = `[` + kanji + `]{1,4}`
 	tantoListReading = `(?:[(（][ぁ-ゖー]{1,8}[)）])?`
 	tantoListItem    = tantoListName + tantoListReading
-	tantoListSep     = `[ ]*[・、,･][ ]*`
-	tantoListEnd     = `(?:[ ]*[)）]|[ ]*$|[ ]{2,}|[ ]*(?i:tel)|[ ]*電話)`
+	tantoListSep     = `[ ]*[・、,･/／][ ]*`
+	tantoListEnd     = `(?:[ ]*[)）]|[ ]*$|[ ]{2,}|[ ]*(?i:tel)|[ ]*電話|[ ]*[(（][^ぁ-ゖ)）])`
 	// personNameSpacedValue は空白区切りのラベル（士業の肩書・役員の役職名・当事者ラベル）の
 	// 後に続く氏名の値。PDF のレイアウト抽出（pdftotext -layout）では姓と名の間が複数の
 	// 空白になるため 1〜3 個を許容する。値の検証（姓名辞書の完全分割）は空白の個数に
@@ -540,8 +543,12 @@ var (
 		`(?:代表取締役社長|代表取締役会長|代表取締役副社長|代表取締役|代 表 取 締 役|代表執行役社長|代表執行役|代表理事長|代表理事|代表社員|取締役社長|取締役会長|取締役|監査役)` +
 			// 2026-10-30 14:00 に、上場企業の公告・報道発表で「代表取締役社長 ＣＯＯ <姓> <名>」のように
 			// 役職名と氏名の間に CEO・COO 等の略称が入る表記を全モードで取りこぼす見逃しを実測した。
+			// 2026-11-02 20:00 に、会社概要の「代表取締役兼社長執行役員　<姓> <名>」のように
+			// 役職を「兼」でつないだ表記を全ルールモードが取りこぼす見逃しを実測した（モデルは検出）。
+			// 「兼」の後は役職語に限定し、値の検証は従来どおり姓名辞書の完全分割（または辞書にない姓＋辞書の名）。
+			`(?:[ 　]*兼[ 　]*(?:社長執行役員|会長執行役員|副社長執行役員|専務執行役員|常務執行役員|執行役員社長|最高経営責任者|執行役員|副社長|社長|会長|専務|常務))?` +
 			`(?:[ ]*兼?(?:CEO|COO|CFO|CTO|ＣＥＯ|ＣＯＯ|ＣＦＯ|ＣＴＯ))?` +
-			`(?:[ ]+|であった|である|[(（][ ]*)` +
+			`(?:[ 　]+|であった|である|[(（][ ]*)` +
 			personNameSpacedValue,
 	)
 	// personNameOfficerShiRe 〜 personNameOfficerShi4Re は、株主総会招集通知・
@@ -686,6 +693,12 @@ var (
 	personNameMemberColon2Re = regexp.MustCompile(
 		memberColonTitle + `[` + kanji + `]{2,8}(?:[ ][` + kanji + `]{1,8})?[ ]*[、,，][ ]*` + memberColonName + memberColonEnd,
 	)
+	// personNameMemberColon3Re / personNameMemberColon4Re は同じ並びの 3・4 人目を拾う。2026-11-02 20:00 に
+	// 学会のニュースレターの編集委員欄「編集委員：<姓><名>、<姓><名>、<姓><名>、」で 3 人目以降を
+	// 全ルールモードが取りこぼす見逃しを実測した。並びの先頭がコロン付きの職名であることは 2 人目と同じ。
+	memberColonPrev          = `[` + kanji + `]{2,8}(?:[ ][` + kanji + `]{1,8})?[ ]*[、,，][ ]*`
+	personNameMemberColon3Re = regexp.MustCompile(memberColonTitle + memberColonPrev + memberColonPrev + memberColonName + memberColonEnd)
+	personNameMemberColon4Re = regexp.MustCompile(memberColonTitle + memberColonPrev + memberColonPrev + memberColonPrev + memberColonName + memberColonEnd)
 	// personNameSpacedSamaLineRe は、寄付者・協賛者の一覧のように 1 行に「<姓>　<名>　様」だけが
 	// 並ぶ表記を拾う（person-name-role-label）。2026-10-31 08:00 に運動公園のサイトの寄付者一覧で、
 	// Medium と Low が全件を取りこぼす見逃しを実測した。行全体が空白区切りの姓名 + 敬称「様」で
@@ -2696,6 +2709,8 @@ func Builtin() []Rule {
 				{Re: personNameSenshuRe, Base: Medium, Validate: validPersonNameFullSplit},
 				{Re: personNameMemberColonRe, Base: Medium, Validate: validFullSplitOrSpacedSurnameGiven},
 				{Re: personNameMemberColon2Re, Base: Medium, Validate: validFullSplitOrSpacedSurnameGiven},
+				{Re: personNameMemberColon3Re, Base: Medium, Validate: validFullSplitOrSpacedSurnameGiven},
+				{Re: personNameMemberColon4Re, Base: Medium, Validate: validFullSplitOrSpacedSurnameGiven},
 				{Re: personNameSpacedSamaLineRe, Base: Medium, Validate: validSpacedSurnameGiven},
 				{Re: personNameParenRoleLineRe, Base: Medium, Validate: validFullSplitOrSpacedSurnameGiven},
 				{Re: personNameTitleLineEndRe, Base: Medium, Validate: validSpacedSurnameGiven},
