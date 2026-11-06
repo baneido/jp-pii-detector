@@ -84,6 +84,7 @@ var notationCategories = []string{
 	"head-lecturer-kana",         // 首長・組合長・局長 + コロンの氏名、講師 + 職業名 + 氏名、申請者 + ひらがなの氏名（陽性）と、神仏・寺院の呼び名・取引先 + 様/さん、氏名欄の次の欄名（陰性）
 	"title-credit-form",          // 氏名の直後・直前の肩書き、出演者の［楽器］・【役割】、名簿行・社名：氏名、和文が直後に続くメール（陽性）と、肩書きだけ・長谷川の「長」、書式欄の括弧書き、神仏・役名 + 敬称（陰性）
 	"org-honorific-rare-officer", // 役員の役職名の後の辞書にない姓 + 名、姓 + 様/さん（陽性）と、団体名・報道機関の略称・書式語 + 様/さん、康熙部首入りの団体名 + 様、さんご・さん + カタカナ語、カード名義、例）の生年月日（陰性）
+	"tanto-list-multi",           // 担当欄・委員欄の 2 人目以降と「兼」でつないだ役職名の後の氏名（陽性）、部署名・業務名・年度語の列挙・役職以外の語（陰性）
 }
 
 type notationCase struct {
@@ -801,6 +802,22 @@ func notationSpecs() []notationCase {
 	neg("org-honorific-rare-officer", "お名前(名義)")
 	neg("org-honorific-rare-officer", "例）2005年１月５日生まれの方")
 	neg("org-honorific-rare-officer", "例) 2005年1月5日生まれ")
+	// 2026-11-02 20:00 のサイクルで実測した見逃し: 担当欄・委員欄の 2 人目以降（「担当者名：」ラベル、
+	// スラッシュ区切り、並びの直後の補足の括弧、3・4 人目の委員）と、役職を「兼」でつないだ
+	// 「代表取締役兼社長執行役員　<姓> <名>」。値は架空の定番名の部品の組み立てで、文書の値ではない。
+	pos("tanto-list-multi", role, "担当："+n(0).sur+"、"+n(1).sur+"、"+n(2).sur+"（第一部）")
+	pos("tanto-list-multi", role, "広報担当："+n(3).sur+" / "+n(4).sur)
+	// 先頭の姓は「担当者名」ラベルで既存の person-name も正しく拾うため、期待は両方
+	pos("tanto-list-multi", role+",person-name", "担当者名："+n(5).sur+"、"+n(0).sur+"、"+n(1).sur)
+	pos("tanto-list-multi", role, "編集委員："+full(0, "")+"、"+full(1, "")+"、"+full(2, "")+"、")
+	pos("tanto-list-multi", role, "編集委員："+full(3, "")+"、"+full(4, "")+"、"+full(5, "")+"、"+full(0, ""))
+	pos("tanto-list-multi", role, "代表取締役兼社長執行役員　"+full(1, " "))
+	pos("tanto-list-multi", role, "代表取締役 兼 会長 "+full(2, ""))
+	neg("tanto-list-multi", "担当：総務、経理（第一部）")
+	neg("tanto-list-multi", "広報担当：企画 / 広報")
+	neg("tanto-list-multi", "代表取締役兼社長執行役員 営業本部長")
+	neg("tanto-list-multi", "代表取締役 兼 務 解消")
+	neg("tanto-list-multi", "編集委員：本年度、次年度、来年度、")
 	return out
 }
 
@@ -822,8 +839,11 @@ func NotationCases() []evalcase.Case {
 		}
 		if s.want != "" {
 			c.SourceClass = "public-synthetic"
-			c.Want = []string{s.want}
-			c.Tags = append(c.Tags, "rule:"+s.want)
+			// want は「,」区切りで複数のルールを書ける（同じ値を 2 つのルールが正しく拾う行用）。
+			for _, w := range strings.Split(s.want, ",") {
+				c.Want = append(c.Want, w)
+				c.Tags = append(c.Tags, "rule:"+w)
+			}
 		} else {
 			c.SourceClass = "hard-negative"
 			c.Tags = append(c.Tags, "scenario:hard-negative-notation-"+s.category)
