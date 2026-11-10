@@ -85,6 +85,7 @@ var notationCategories = []string{
 	"title-credit-form",          // 氏名の直後・直前の肩書き、出演者の［楽器］・【役割】、名簿行・社名：氏名、和文が直後に続くメール（陽性）と、肩書きだけ・長谷川の「長」、書式欄の括弧書き、神仏・役名 + 敬称（陰性）
 	"org-honorific-rare-officer", // 役員の役職名の後の辞書にない姓 + 名、姓 + 様/さん（陽性）と、団体名・報道機関の略称・書式語 + 様/さん、康熙部首入りの団体名 + 様、さんご・さん + カタカナ語、カード名義、例）の生年月日（陰性）
 	"tanto-list-multi",           // 担当欄・委員欄の 2 人目以降と「兼」でつないだ役職名の後の氏名（陽性）、部署名・業務名・年度語の列挙・役職以外の語（陰性）
+	"titled-name-list",           // 職名の後の姓名が読点・閉じ括弧・敬称で終わる表記（課長補佐 氏名、/（研究院 教授 氏名）/ 大臣 氏名 / 講師：氏名 氏）（陽性）、職名 + 部署・研究室・業務語、「様々」（陰性）
 }
 
 type notationCase struct {
@@ -818,6 +819,20 @@ func notationSpecs() []notationCase {
 	neg("tanto-list-multi", "代表取締役兼社長執行役員 営業本部長")
 	neg("tanto-list-multi", "代表取締役 兼 務 解消")
 	neg("tanto-list-multi", "編集委員：本年度、次年度、来年度、")
+	// 2026-11-10 のサイクルで実測した見逃し: 職名の後の「<姓> <名>」が行末以外（読点・閉じ括弧・敬称）で
+	// 終わる表記（省庁の担当者列挙・大学の記者発表の所属職名の括弧書き・大臣/理事長）と、
+	// 「将来様々な」の「様々」を敬称と誤る偽陽性。値は架空の定番名の部品の組み立てで、文書の値ではない。
+	pos("titled-name-list", role, "企画市場局 総務課 課長補佐 "+full(0, " ")+"、")
+	pos("titled-name-list", role, "課長補佐 "+full(1, " ")+"、課長補佐 "+full(2, " "))
+	pos("titled-name-list", role, "新技術を開発（工学研究院　教授　"+full(3, "　")+"）")
+	pos("titled-name-list", role, "防災大臣　"+full(4, " "))
+	pos("titled-name-list", role, "法人（理事長 "+full(5, " ")+"）は、新規課題を採択した。")
+	pos("titled-name-list", role, "講師：財務局 総務課長 "+full(0, " ")+" 氏 他")
+	neg("titled-name-list", "教授 "+n(1).sur+" 研究室、")
+	neg("titled-name-list", "課長補佐 総務 担当、")
+	neg("titled-name-list", "大臣 官房 総務課、")
+	neg("titled-name-list", "社長 就任 のお知らせ、")
+	neg("titled-name-list", "将来様々な分野で活躍する人材を育成します。")
 	return out
 }
 

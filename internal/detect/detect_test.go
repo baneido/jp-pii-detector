@@ -6300,3 +6300,35 @@ func TestTantoListAndCompoundExecTitle20261102b(t *testing.T) {
 		t.Run(line, func(t *testing.T) { assertRules(t, d.ScanLine("f.txt", 1, line)) })
 	}
 }
+
+// 2026-11-10 の公開文書 1,927 件の人手確認で実測した見逃し。職名の後の「<姓> <名>」が行末以外
+// （読点・閉じ括弧・敬称）で終わる形（省庁の担当者列挙、大学の記者発表の所属職名の括弧書き、
+// 大臣・理事長）を全ルールモードが取りこぼしていた。値はありふれた姓名の架空の組み合わせ。
+// 氏名として報告してよいのは姓辞書 + 名辞書に一致する値だけで、職名の後の部署・研究室・業務語は報告しない。
+func TestTitledNameList20261110(t *testing.T) {
+	d := newDetector(t, "")
+	for _, tt := range []struct{ line, want string }{
+		{"企画市場局 総務課 課長補佐 田中 太郎、", "田中 太郎"},     // jp-pii-detector:ignore
+		{"新技術を開発（工学研究院　教授　佐藤　花子）", "佐藤 花子"},    // jp-pii-detector:ignore
+		{"防災大臣　鈴木 一郎", "鈴木 一郎"},                // jp-pii-detector:ignore
+		{"法人（理事長 高橋 次郎）は、新規課題を採択した。", "高橋 次郎"}, // jp-pii-detector:ignore
+	} {
+		t.Run(tt.line, func(t *testing.T) {
+			found := false
+			for _, f := range d.ScanLine("f.txt", 1, tt.line) {
+				if strings.ReplaceAll(f.Match, "　", " ") == tt.want {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("%q を検出できていない", tt.want)
+			}
+		})
+	}
+	for _, line := range []string{
+		"教授 田中 研究室、", "課長補佐 総務 担当、", "大臣 官房 総務課、", "社長 就任 のお知らせ、",
+		"将来様々な分野で活躍する人材を育成します。",
+	} {
+		t.Run(line, func(t *testing.T) { assertRules(t, d.ScanLine("f.txt", 1, line)) })
+	}
+}
