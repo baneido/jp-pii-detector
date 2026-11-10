@@ -2493,6 +2493,18 @@ func Builtin() []Rule {
 				{Re: regexp.MustCompile(
 					`(?:^|[^0-9A-Za-z-])(\d{6})[[:space:]　]*[:：=]?[[:space:]　]*保険者番号(?:[^0-9]|$)`,
 				), Base: Medium, RequireContext: true, RequireContextWindow: healthInsurance6DigitContextWindow},
+				// 被保険者証の記号・番号（「被保険者証記号・番号: <記号>-<番号>」）。記号は
+				// 英数字、番号は数字で、両者をハイフン・中点・スラッシュ・空白で区切る。
+				// 記号・番号の形自体は社内コードや型番と区別できないため、正規表現に
+				// 「被保険者証／被保険者／保険証」＋「記号・番号」のラベルを直結で
+				// 埋め込み、ラベルの無い値は拾わない（healthInsuranceSymbolNumberLabeledRe）。
+				{Re: healthInsuranceSymbolNumberLabeledRe, Base: Medium, RequireContext: true,
+					Validate: validHealthInsuranceSymbolNumber},
+				// 記号と番号に別々のラベルが付く形（「保険証 記号: <記号> 番号: <番号>」）。
+				// ゆうちょの記号番号と同じく、捕捉値は記号の先頭から番号の末尾まで
+				// （間の「番号」ラベルを含む）とする。
+				{Re: healthInsuranceSymbolNumberSplitRe, Base: Medium, RequireContext: true,
+					Validate: validHealthInsuranceSymbolNumber},
 			},
 		},
 		{
@@ -3083,7 +3095,67 @@ func validHealthInsurance(m string) bool {
 	if checksum.AllSame(m) {
 		return false
 	}
-	return len(m) != 6 || checksum.Modulus10Weight21(m)
+	// M10W21 は数字 6 桁の保険者番号だけに適用する。被保険者証の記号・番号
+	// （「AB-123」のように英字や区切りを含む）は 6 文字でも対象外。
+	return len(m) != 6 || !isASCIIDigits(m) || checksum.Modulus10Weight21(m)
+}
+
+// healthInsuranceSymbolNumberLabel は被保険者証の記号・番号のラベル（区切りの前まで）。
+// 「被保険者証記号・番号」「被保険者証の記号番号」「保険証 記号及び番号」
+// 「被保険者記号・番号（枝番）」などを受ける。normalize.Line は全角英数字・
+// ハイフン類を半角へ寄せるが、括弧・中点・スラッシュはそのままの場合があるため
+// 全角も並べる。
+const healthInsuranceSymbolNumberLabel = `(?:被保険者証|被保険者|保険証)[[:space:]　]*の?[[:space:]　]*` +
+	`記号[・･/／、,]?(?:及び|および|と)?番号` +
+	`(?:[・･/／、,]?枝番(?:号)?|[(（]枝番(?:号)?[)）])?`
+
+// healthInsuranceSymbolNumberSep はラベルと値の間（空白・助詞「は」・コロン・等号・
+// 開き引用符）。
+const healthInsuranceSymbolNumberSep = `[[:space:]　]*(?:は|[:：=])?[[:space:]　]*["'「]?`
+
+var (
+	// healthInsuranceSymbolNumberLabeledRe は「<ラベル><区切り><記号><区切り><番号>
+	// [<区切り><枝番>]」。記号は英数字 1〜10 文字、番号は数字 1〜10 桁、枝番は
+	// 数字 1〜3 桁。値の直後が英数字・ハイフンなら（より長いコードの一部）拾わない。
+	healthInsuranceSymbolNumberLabeledRe = regexp.MustCompile(
+		healthInsuranceSymbolNumberLabel + healthInsuranceSymbolNumberSep +
+			`([0-9A-Za-z]{1,10}[-/／・･ 　]\d{1,10}(?:[-/／・･ 　]\d{1,3})?)(?:[^0-9A-Za-z-]|$)`,
+	)
+	// healthInsuranceSymbolNumberSplitRe は「<被保険者証|保険証>[の] 記号 <記号>
+	// [、] 番号 <番号>」。記号側のラベルの直前に被保険者証・保険証を必須にし、
+	// ゆうちょの「記号 … 番号 …」とは衝突させない。
+	healthInsuranceSymbolNumberSplitRe = regexp.MustCompile(
+		`(?:被保険者証|保険証)[[:space:]　]*の?[[:space:]　]*記号[[:space:]　]*[:：=]?[[:space:]　]*["'「]?` +
+			`([0-9A-Za-z]{1,10}["'」]?[[:space:]　]*[,、]?[[:space:]　]*番号[[:space:]　]*[:：=]?[[:space:]　]*["'「]?\d{1,10})(?:[^0-9A-Za-z-]|$)`,
+	)
+)
+
+// validHealthInsuranceSymbolNumber は被保険者証の記号・番号のうち、番号が 2 桁
+// 以上の全桁同一（「AB-0000」「12-9999」等の記入例・ダミー）を棄却する。捕捉値を
+// ASCII 英数字の並びに切ると、両パターンとも 2 つ目が番号になる（1 つ目が記号、
+// 3 つ目があれば枝番。分割形の間の「番号」ラベルは英数字ではないので数えない）。
+// 枝番は「00」が普通にあるため判定に使わない。
+func validHealthInsuranceSymbolNumber(m string) bool {
+	tokens := strings.FieldsFunc(m, func(r rune) bool {
+		return !(r >= '0' && r <= '9' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z')
+	})
+	if len(tokens) < 2 {
+		return false
+	}
+	number := tokens[1]
+	return len(number) < 2 || !checksum.AllSame(number)
+}
+
+func isASCIIDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // validPassport は旅券（パスポート）番号（英字 2 + 数字 7）の末尾 7 桁が

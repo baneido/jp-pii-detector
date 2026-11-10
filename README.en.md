@@ -73,7 +73,7 @@ rules disabled).
 | Residence card number | **1.00** | 2 letters + 8 digits + 2 letters + context required |
 | Bank account number | **0.97** | 7 digits + context keyword required |
 | Japan Post Bank symbol/number | **0.64** | Official symbol check digit + correlated number + Japan Post Bank context required |
-| Health insurance number | **1.00** | 8 digits + context keyword required |
+| Health insurance number | **1.00** | 8 digits + context keyword required; also the insured card symbol/number when directly labeled (被保険者証記号・番号) |
 | Employment insurance number | **1.00** | 4-6-1 digit structure + context keyword required |
 | Long-term care insurance number | **1.00** | 10 digits + context keyword required |
 | Resident record code | **1.00** | 11 digits + context keyword required |

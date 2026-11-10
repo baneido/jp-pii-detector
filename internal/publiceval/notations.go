@@ -65,6 +65,7 @@ var notationCategories = []string{
 	"seat-roster",                // 会議録の議席番号「1番     <姓>    <名>」
 	"reading-after-no",           // 助詞「の」に続く「<姓> <名>（<せい> <めい>）」
 	"tanshin-header",             // 決算短信の表紙「(役職名) <役職> (氏名) <姓> <名>」と「代表取締役社長 ＣＯＯ <姓> <名>」
+	"health-ins-symbol",          // 被保険者証の記号・番号「被保険者証記号・番号: <記号>-<番号>」（ラベル直結のみ）
 	"permit-number",              // 許可・登録番号「第<12 桁>号」・介護保険の事業所番号（陰性）と、囲まれていない個人番号（陽性）
 	"lecturer-space-paren",       // 敬称のない講座案内「・講師 <姓> <名>（<所属><職名>）」
 	"director-credit",            // 出演作品一覧「「<作品名>」監督：<姓><名>」
@@ -671,6 +672,16 @@ func notationSpecs() []notationCase {
 	pos("id-label-guard", "jp-drivers-license", "免許証番号 "+"5649 0078 30"+"71")
 	pos("id-label-guard", "jp-drivers-license", "運転免許証の番号 "+"3071 5649 00"+"78")
 	neg("id-label-guard", "出荷番号 A-"+"2026"+"1105-0042 被保険者証を同封")
+	// 被保険者証の記号・番号（処方箋・診療の記録の様式）。ラベルが値に直結する形だけを拾い、
+	// 記号・番号だけのラベル、型番、記入例（番号が全桁同一）は拾わない。番号はすべて架空。
+	pos("health-ins-symbol", "jp-health-insurance", "被保険者証記号・番号: QX7RZ-"+"4821"+"3906")
+	pos("health-ins-symbol", "jp-health-insurance", "保険者番号は"+"3123"+"4567、被保険者証記号・番号は MK-"+"58"+"21、公費負担者番号は別紙です。")
+	pos("health-ins-symbol", "jp-health-insurance", "被保険者証の記号・番号 7Q-"+"482"+"13-00")
+	pos("health-ins-symbol", "jp-health-insurance", "保険証 記号: "+"45"+"21 番号: 37")
+	neg("health-ins-symbol", "記号・番号: QX7RZ-"+"4821"+"3906")
+	neg("health-ins-symbol", "型番 QX7RZ-"+"4821"+"3906")
+	neg("health-ins-symbol", "被保険者証記号・番号: AB-"+"00"+"00")
+	neg("health-ins-symbol", "被保険者証の記号・番号 2024 年度から変更")
 	neg("id-label-guard", "免許の更新 2023 2024 2025 年度")
 	neg("id-label-guard", "注文番号 "+"7034-30"+"4059"+" 年金")
 	// 寺院・大学のサイトの「ゆかりのある<姓><名>氏より寄贈」「研究科の<姓><名>さんが受賞」
