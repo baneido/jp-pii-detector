@@ -60,6 +60,48 @@ type Options struct {
 	// プロファイルはいずれも無効のまま（ゼロ値）で、PR 時の公開合成コーパス評価
 	// （internal/publiceval）の opt-in 全有効プロファイルだけが使う。
 	NameRoster bool
+	// FoldRuleFamilies は、検出のルール ID を RuleFamily で系統へ畳んでから正解と
+	// 突き合わせる。評価コーパス（Nemotron-PII-Japan）は「氏名」「住所」の正解に
+	// どのルールで検出すべきかを持たないため、person-name-role-label 等の派生ルールの
+	// 検出も person-name の検出として数える。公開合成コーパス（internal/publiceval）は
+	// ルール単位の正解を持つため使わない。
+	FoldRuleFamilies bool
+}
+
+// RuleFamily は派生ルールの ID を、評価コーパスの正解が使う系統の ID へ畳む。
+func RuleFamily(id string) string {
+	switch id {
+	case "person-name-role-label", "person-name-high-recall", "person-name-structured",
+		"person-name-romaji", "person-name-roster":
+		return "person-name"
+	case "jp-address-high-recall":
+		return "jp-address"
+	case "email-address-eai", "email-address-confusable":
+		return "email-address"
+	}
+	return id
+}
+
+// foldFindings は検出のルール ID を系統へ畳み、畳んだ結果同じ位置・同じ系統に
+// なった重複を 1 件にする（同じ氏名を person-name と person-name-structured が
+// 両方報告しても、正解 1 件に対する検出は 1 件として数える）。
+func foldFindings(findings []detect.Finding) []detect.Finding {
+	type key struct {
+		id                string
+		line, col, length int
+	}
+	seen := map[key]bool{}
+	out := make([]detect.Finding, 0, len(findings))
+	for _, f := range findings {
+		f.RuleID = RuleFamily(f.RuleID)
+		k := key{f.RuleID, f.Line, f.Column, len([]rune(f.Match))}
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, f)
+	}
+	return out
 }
 
 // Evaluate はデータセット全体を走査し、ルールごとの指標を返す。
@@ -227,6 +269,9 @@ func EvaluateCasesStratifiedWithOptions(cases []Case, opts Options) (Stratified,
 		findings, err := scanCase(d, c)
 		if err != nil {
 			return Stratified{}, err
+		}
+		if opts.FoldRuleFamilies {
+			findings = foldFindings(findings)
 		}
 		for _, f := range findings {
 			got[f.RuleID] = true

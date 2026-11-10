@@ -3,6 +3,7 @@ package detect
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -192,6 +193,10 @@ type Detector struct {
 	// 複数行の氏名検出を ScanContent で行うかの判定と、検出結果の ID・説明の
 	// 単一の出所として使う。高再現率モードでのみ有効になる。
 	crossLineName *rule.Rule
+	// sectionName は person-name ルール（有効時のみ非 nil）。帳票の見出し行
+	// （rule.CrossLineNameSectionRe）の次行にある氏名を既定で検出する
+	// scanSectionHeadingNames の ID・説明の出所として使う。
+	sectionName *rule.Rule
 	// nameRoster は person-name-roster ルール（有効時のみ非 nil）。ラベルの無い
 	// 氏名の羅列をファイル単位で判定する走査（name_roster.go）を ScanContent で
 	// 行うかの判定と、検出結果の ID・説明の単一の出所として使う。専用の
@@ -230,6 +235,7 @@ func New(cfg *config.Config) (*Detector, error) {
 	var rules []rule.Rule
 	var crossLineName *rule.Rule
 	var nameRoster *rule.Rule
+	var sectionName *rule.Rule
 	for _, r := range rule.Builtin() {
 		if !disabled[r.ID] {
 			rules = append(rules, r)
@@ -240,6 +246,9 @@ func New(cfg *config.Config) (*Detector, error) {
 			case "person-name-roster":
 				nr := r
 				nameRoster = &nr
+			case "person-name":
+				pr := r
+				sectionName = &pr
 			}
 		}
 	}
@@ -291,6 +300,7 @@ func New(cfg *config.Config) (*Detector, error) {
 		prefilterFold:     prefilterFold,
 		crossLineName:     crossLineName,
 		nameRoster:        nameRoster,
+		sectionName:       sectionName,
 		cooccurrenceBoost: cfg.Rules.CooccurrenceBoost,
 	}, nil
 }
@@ -396,6 +406,8 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 	// 名簿ファイル判定は crossLineName（高再現率）とは独立した opt-in のため、
 	// nil ガードの外側で呼ぶ。
 	candidates = append(candidates, d.scanNameRosterFile(file, lines)...)
+	candidates = append(candidates, d.scanSectionHeadingNames(file, lines)...)
+	candidates = append(candidates, d.scanFieldAdjacentNames(file, lines)...)
 	if d.crossLineName != nil {
 		candidates = append(candidates, d.scanCrossLineNames(file, lines)...)
 		candidates = append(candidates, d.scanCrossLineSurnameGivenPairs(file, lines)...)
@@ -414,6 +426,7 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 			candidates = append(candidates, d.scanMarkdownTableNameColumns(file, lines)...)
 		}
 	}
+	candidates = append(candidates, d.repeatedNameMentions(file, lines, candidates)...)
 
 	// 隣接行の負コンテキスト（金額・数量・連番 ID 等）で抑制される候補は、
 	// cooccurrence_boost のアンカーにも昇格対象にも使わない。
@@ -823,6 +836,13 @@ func (d *Detector) ScanDiffHunkOpts(file string, lines []DiffLine, opts DiffScan
 	// 同様 crossLineName の nil ガードの外で呼ぶ＝高再現率モードに依存しない。
 	// 詳細は scanCrossLineYuchoPairsDiff のコメント）。
 	candidates = append(candidates, d.scanCrossLineYuchoPairsDiff(file, texts, added)...)
+	// 帳票の人物欄見出し（scanSectionHeadingNames）の diff 版。見出しが文脈行でも
+	// 値が追加行なら報告し、値が文脈行に乗る finding は捨てる（ゆうちょ別行ペアと同じ）。
+	for _, f := range append(d.scanSectionHeadingNames(file, texts), d.scanFieldAdjacentNames(file, texts)...) {
+		if idx := f.Line - 1; idx >= 0 && idx < len(added) && added[idx] {
+			candidates = append(candidates, f)
+		}
+	}
 
 	// 文脈行由来の cross-line 負コンテキストは適用しない（上記の設計意図）。
 	// 非追加行を空文字にマスクした行スライスを使うことで、
@@ -986,9 +1006,266 @@ func (d *Detector) scanCrossLineNames(file string, lines []string) []Finding {
 		if j < 0 {
 			continue
 		}
-		out = append(out, d.crossLineNameValues(file, lines, j)...)
+		out = append(out, d.crossLineNameValues(d.crossLineName, rule.ValidCrossLineName, file, lines, j)...)
 	}
 	return out
+}
+
+// scanSectionHeadingNames は、帳票の人物欄の見出し行（`患者情報` `【申込者情報】`
+// 等、rule.CrossLineNameSectionRe）の次の非空行から始まる氏名行を、既定で有効な
+// person-name として検出する。見出しは氏名ラベルより弱い手がかりのため、値側は
+// scanCrossLineNames と同じく行全体が氏名の形で、かつ姓名辞書照合
+// （ValidCrossLineName）を通ることを必須にする。高再現率モードに依存させない
+// のは、辞書照合を必須にした値行の判定だけで誤検出を抑えられるため。
+func (d *Detector) scanSectionHeadingNames(file string, lines []string) []Finding {
+	if d.sectionName == nil || rule.Medium < d.scanMinConf {
+		return nil
+	}
+	var out []Finding
+	for i := range lines {
+		heading, label := d.nameHeadingLine(lines[i])
+		if !heading {
+			continue
+		}
+		// 高再現率モードでは、氏名ラベル行の次行を scanCrossLineNames も person-name-structured
+		// として報告する。同じ ID・同じ範囲にそろえ、重複の除去で 1 件にまとめる。
+		r := d.sectionName
+		if label && d.crossLineName != nil {
+			r = d.crossLineName
+		}
+		j := nextNonBlankIndex(lines, i, maxAdjacentLineGap)
+		// 人物欄では見出しと氏名の間に「患者ID: …」「顧客ID: …」のような項目行が挟まることが
+		// あるため、氏名の形でない「ラベル: 値」の行を 2 行まで読み飛ばす。
+		for skipped := 0; j >= 0 && skipped < 2 && isFieldLine(lines[j]); skipped++ {
+			j = nextNonBlankIndex(lines, j, maxAdjacentLineGap)
+		}
+		if j < 0 {
+			continue
+		}
+		// 見出しの直後の 1 行だけを見る（lines[:j+1]）。氏名の形の行が続く限り伝播させると、
+		// 町名の一覧のように全行が氏名の形をしたファイルで遠く離れた行まで報告してしまう。
+		// 名簿の複数行への伝播は高再現率モードの scanCrossLineNames が担う。
+		valid := rule.ValidSectionName
+		if !label && !d.isPersonSectionHeading(lines[i]) && !rule.PersonIDFieldRe.MatchString(normalize.Line(lines[i])) {
+			// 一般の項目行（`審査受付日: …`）の次行は手がかりが弱いため、空白で 2 語に分かれた値に限る。
+			valid = func(v string) bool { return strings.Contains(strings.TrimSpace(v), " ") && rule.ValidSectionName(v) }
+		}
+		found := d.crossLineNameValues(r, valid, file, lines[:j+1], j)
+		// 辞書に無い氏名も、次の行が人物の項目行（`生年月日: …` 等）なら、見出しと項目行の
+		// 2 つの手がかりがそろうため形だけで採る。
+		// 人物欄の見出しの直後で、さらに次の行が項目行（`生年月日: …` 等）か見出し（`【住所】`）なら、
+		// 2 つの手がかりがそろうため辞書に無い氏名も形だけで採る。項目行を見出しとみなした場合
+		// （PersonIDFieldRe 等）は手がかりが 1 つなので形だけでは採らない。
+		if len(found) == 0 && !label && d.isPersonSectionHeading(lines[i]) {
+			if k := nextNonBlankIndex(lines, j, maxAdjacentLineGap); k >= 0 {
+				nk := normalize.Line(lines[k])
+				if rule.FieldLineRe.MatchString(nk) || bracketHeadingRe.MatchString(nk) {
+					found = d.crossLineNameValues(r, rule.ValidSectionNameShape, file, lines[:j+1], j)
+				}
+			}
+		}
+		out = append(out, found...)
+	}
+	return out
+}
+
+// isFieldLine は line が「ラベル: 値」の項目行（ラベルは 12 ルーン以内）かを返す。
+func isFieldLine(line string) bool {
+	norm := normalize.Line(line)
+	i := strings.Index(norm, ":")
+	return i > 0 && utf8.RuneCountInString(norm[:i]) <= 12 && strings.TrimSpace(norm[i+1:]) != ""
+}
+
+// nameHeadingLine は line が次の行に氏名を置く見出し行か（heading）と、それが `氏名:`
+// `お客様名` のような値を伴わない氏名ラベル行か（label）を返す。見出しには人物欄の見出し
+// （rule.CrossLineNameSectionRe 等）と氏名ラベル行の両方を含む。
+func (d *Detector) nameHeadingLine(line string) (heading, label bool) {
+	if utf8.RuneCountInString(line) > 40 {
+		return false, false
+	}
+	norm := normalize.Line(line)
+	if rule.CrossLineNameLabelRe.MatchString(norm) || rule.CrossLineNameHeaderRe.MatchString(norm) {
+		return true, true
+	}
+	if rule.CrossLineNameSectionRe.MatchString(norm) || rule.CrossLineNamePartyHeadingRe.MatchString(norm) {
+		return true, false
+	}
+	if m := rule.CrossLineNameRoleHeadingRe.FindStringSubmatch(norm); m != nil && rule.IsRoleHeadingWord(m[1]) {
+		return true, false
+	}
+	return rule.FieldLineRe.MatchString(norm), false
+}
+
+// bracketHeadingRe は「【住所】」「■申込内容」のような区切りの見出し行。
+var bracketHeadingRe = regexp.MustCompile(`^\s*(?:【[^】]{1,12}】|[■□◆◇●○][^:：]{1,12})\s*$`)
+
+// isPersonSectionHeading は line が人物欄の見出し（項目行や氏名ラベル行ではない）かを返す。
+func (d *Detector) isPersonSectionHeading(line string) bool {
+	norm := normalize.Line(line)
+	if rule.CrossLineNameSectionRe.MatchString(norm) || rule.CrossLineNamePartyHeadingRe.MatchString(norm) {
+		return true
+	}
+	m := rule.CrossLineNameRoleHeadingRe.FindStringSubmatch(norm)
+	return m != nil && rule.IsRoleHeadingWord(m[1])
+}
+
+// scanFieldAdjacentNames は、見出しの無い帳票で氏名だけの行が人物の属性の項目行の直前に
+// ある形（`<姓> <名>` の次行に `生年月日: …`）と、「<姓> <名>。」だけの行を person-name として
+// 検出する。値は scanSectionHeadingNames と同じ rule.ValidSectionName で検証する。
+func (d *Detector) scanFieldAdjacentNames(file string, lines []string) []Finding {
+	if d.sectionName == nil || rule.Medium < d.scanMinConf {
+		return nil
+	}
+	var out []Finding
+	for j := range lines {
+		if utf8.RuneCountInString(lines[j]) > 80 || strings.TrimSpace(lines[j]) == "" {
+			continue
+		}
+		norm := normalize.Line(lines[j])
+		out = append(out, d.surnameGivenFieldNames(file, lines, j, norm)...)
+		if utf8.RuneCountInString(lines[j]) > 40 {
+			continue
+		}
+		if m := rule.StandaloneNameSentenceRe.FindStringSubmatchIndex(norm); m != nil {
+			entity := norm[m[2]:m[3]]
+			if rule.ValidSectionName(entity) && !d.allowlisted(entity) {
+				rs := utf8.RuneCountInString(norm[:m[2]])
+				out = append(out, d.sectionNameFinding(file, lines, j, rs, rs+utf8.RuneCountInString(entity)))
+			}
+			continue
+		}
+		k := nextNonBlankIndex(lines, j, 1)
+		if k < 0 || !rule.PersonAttrFieldRe.MatchString(normalize.Line(lines[k])) {
+			continue
+		}
+		// 「氏名: <姓> <名>」の次行が人物の項目行なら、ラベルと項目行の 2 つの手がかりがそろうため、
+		// 辞書に無い氏名も形で採る（辞書に一致する値は同一行の person-name が既に拾う）。
+		if m := rule.StrongLabelSpacedValueLineRe.FindStringSubmatchIndex(norm); m != nil {
+			entity := norm[m[2]:m[3]]
+			if rule.ValidSectionNameShape(entity) && !d.allowlisted(entity) {
+				rs := utf8.RuneCountInString(norm[:m[2]])
+				out = append(out, d.sectionNameFinding(file, lines, j, rs, rs+utf8.RuneCountInString(entity)))
+			}
+			continue
+		}
+		out = append(out, d.crossLineNameValues(d.sectionName, rule.ValidSectionName, file, lines[:j+1], j)...)
+	}
+	return out
+}
+
+// surnameGivenFieldNames は、姓の欄と名の欄の組（「申立人姓: X」の次行が「申立人名: Y」、
+// または同じ行の「姓: X、名: Y」）の値を、それぞれ person-name として検出する。
+func (d *Detector) surnameGivenFieldNames(file string, lines []string, j int, norm string) []Finding {
+	var out []Finding
+	add := func(line int, lineNorm string, start, end int) {
+		entity := lineNorm[start:end]
+		if d.allowlisted(entity) {
+			return
+		}
+		rs := utf8.RuneCountInString(lineNorm[:start])
+		out = append(out, d.sectionNameFinding(file, lines, line, rs, rs+utf8.RuneCountInString(entity)))
+	}
+	if m := rule.SurnameGivenSameLineRe.FindStringSubmatchIndex(norm); m != nil {
+		if rule.ValidSurnameGivenFieldPair(norm[m[2]:m[3]], norm[m[4]:m[5]]) {
+			add(j, norm, m[2], m[3])
+			add(j, norm, m[4], m[5])
+		}
+		return out
+	}
+	ms := rule.SurnameFieldLineRe.FindStringSubmatchIndex(norm)
+	if ms == nil || j+1 >= len(lines) {
+		return nil
+	}
+	next := normalize.Line(lines[j+1])
+	mg := rule.GivenFieldLineRe.FindStringSubmatchIndex(next)
+	if mg == nil || norm[ms[2]:ms[3]] != next[mg[2]:mg[3]] ||
+		!rule.ValidSurnameGivenFieldPair(norm[ms[4]:ms[5]], next[mg[4]:mg[5]]) {
+		return nil
+	}
+	add(j, norm, ms[4], ms[5])
+	add(j+1, next, mg[4], mg[5])
+	return out
+}
+
+// repeatedNameMentions は、同じファイルで medium 以上の氏名として検出した「<姓> <名>」（空白を
+// 含む 4 ルーン以上の値）が他の行に現れる箇所を person-name として検出する。帳票の欄で拾えた
+// 氏名が、本文で「<姓> <名>さんは」のように手がかりなしで繰り返される形を拾うため。新たな
+// 誤検出は元の検出が誤りの場合にしか生じない。
+func (d *Detector) repeatedNameMentions(file string, lines []string, candidates []Finding) []Finding {
+	if d.sectionName == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var names []string
+	for _, f := range candidates {
+		if f.Confidence < rule.Medium || !strings.HasPrefix(f.RuleID, "person-name") ||
+			!strings.Contains(f.Match, " ") || utf8.RuneCountInString(f.Match) < 4 || seen[f.Match] {
+			continue
+		}
+		seen[f.Match] = true
+		names = append(names, f.Match)
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	// 既にある検出（どのルールでも）と重なる位置は報告しない（元の検出の ID を残す）。
+	covered := map[int][][2]int{}
+	for _, f := range candidates {
+		covered[f.Line-1] = append(covered[f.Line-1], [2]int{f.start, f.end})
+	}
+	overlaps := func(j, rs, re int) bool {
+		for _, c := range covered[j] {
+			if rs < c[1] && c[0] < re {
+				return true
+			}
+		}
+		return false
+	}
+	var out []Finding
+	for j, line := range lines {
+		if d.lineIgnored(line) {
+			continue
+		}
+		for _, name := range names {
+			for off := 0; ; {
+				i := strings.Index(line[off:], name)
+				if i < 0 {
+					break
+				}
+				start := off + i
+				rs := utf8.RuneCountInString(line[:start])
+				re := rs + utf8.RuneCountInString(name)
+				if !overlaps(j, rs, re) {
+					out = append(out, d.sectionNameFinding(file, lines, j, rs, re))
+				}
+				off = start + len(name)
+			}
+		}
+	}
+	return out
+}
+
+// sectionNameFinding は lines[j] の [rs, re)（ルーン位置）を person-name の Finding にする。
+func (d *Detector) sectionNameFinding(file string, lines []string, j, rs, re int) Finding {
+	f := Finding{
+		RuleID:      d.sectionName.ID,
+		Description: d.sectionName.Description,
+		File:        file,
+		Line:        j + 1,
+		Column:      rs + 1,
+		Match:       string([]rune(lines[j])[rs:re]),
+		Confidence:  rule.Medium,
+		Reason: DetectReason{
+			BaseConfidence:  rule.Medium.String(),
+			FinalConfidence: rule.Medium.String(),
+			Validated:       true,
+		},
+		start:         rs,
+		end:           re,
+		scoreEvidence: confidenceScoreEvidence{structuredPair: true},
+	}
+	finalizeFindingScore(&f)
+	return f
 }
 
 // crossLineNameValues は、ラベル行に続く値行の並びから氏名の Finding を集める。
@@ -1011,7 +1288,7 @@ func (d *Detector) scanCrossLineNames(file string, lines []string) []Finding {
 //
 // from はラベル行の論理隣接（nextNonBlankIndex）で求めた最初の値行。以降は
 // 物理的に連続する行だけを見る（空行はここで必ず形の判定に落ちて打ち切りになる）。
-func (d *Detector) crossLineNameValues(file string, lines []string, from int) []Finding {
+func (d *Detector) crossLineNameValues(r *rule.Rule, valid func(string) bool, file string, lines []string, from int) []Finding {
 	var out []Finding
 	for j := from; j < len(lines); j++ {
 		normValue := normalize.Line(lines[j])
@@ -1020,7 +1297,7 @@ func (d *Detector) crossLineNameValues(file string, lines []string, from int) []
 			break
 		}
 		entity := normValue[m[2]:m[3]]
-		if !rule.ValidCrossLineName(entity) || d.allowlisted(entity) {
+		if !valid(entity) || d.allowlisted(entity) {
 			continue
 		}
 		// 正規化は 1:1（ルーン数保存）のため、norm 上のルーン位置は元行と一致する。
@@ -1028,8 +1305,8 @@ func (d *Detector) crossLineNameValues(file string, lines []string, from int) []
 		re := rs + len([]rune(entity))
 		origRunes := []rune(lines[j])
 		finding := Finding{
-			RuleID:      d.crossLineName.ID,
-			Description: d.crossLineName.Description,
+			RuleID:      r.ID,
+			Description: r.Description,
 			File:        file,
 			Line:        j + 1,
 			Column:      rs + 1,

@@ -106,8 +106,15 @@ func EvaluateConfidenceCalibrationCases(cases []Case, opts Options) ([]Confidenc
 	return result, nil
 }
 
+// spansContainedByIgnoringRule は、検出と正解のどちらかがもう一方を包含するかを
+// ルールを問わず判定する。評価コーパス（Nemotron-PII-Japan）の住所の正解は建物名・
+// 部屋番号まで含み、検出器は番地までを住所として報告する。検出した値が正解の内側に
+// あれば、その値は PII であり、校正（その値が PII かの確度）の陽性として数える。
 func spansContainedByIgnoringRule(want, got Span) bool {
-	return spanLine(want) == spanLine(got) && got.Start <= want.Start && got.End >= want.End
+	if spanLine(want) != spanLine(got) {
+		return false
+	}
+	return (got.Start <= want.Start && got.End >= want.End) || (want.Start <= got.Start && want.End >= got.End)
 }
 
 func wilsonLower95(successes, total int) float64 {

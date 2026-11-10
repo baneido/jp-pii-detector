@@ -1,9 +1,11 @@
 /jp-pii-detect
 dist/
 
-# 評価データセット/テストフィクスチャのローカルコピー（実在しうる PII を含むため非コミット）。
-# CI と開発者は GCS から取得し、JP_PII_FIXTURES でパスを渡す。docs/development.md 参照。
+# 評価コーパスのローカルコピー（PII の形をした合成値を大量に含むため非コミット）。
+# CI と開発者は go run ./cmd/pii-fixture fetch で生成し、JP_PII_FIXTURES でパスを渡す。
+# docs/development.md 参照。
 /pii-fixtures.json
+/corpus.json
 
 # 郵便番号ビットセットの生成入力（日本郵便 KEN_ALL / 事業所の個別郵便番号）。
 # 生成物の postal_codes.bitset はコミットするが、ダウンロードした生の zip/CSV は

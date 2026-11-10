@@ -48,6 +48,9 @@ func TestNameDictIntegrity(t *testing.T) {
 	dupCheck("given_names.txt", mustRead("given_names.txt"))
 	dupCheck("given_names_katakana_org.txt", mustRead("given_names_katakana_org.txt"))
 	dupCheck("name_homographs.txt", mustRead("name_homographs.txt"))
+	// IPADIC 由来の追加分は、既定辞書と重複しないことも検査する（重複は生成器の不具合）。
+	dupCheck("surnames.txt+surnames_ipadic.txt", mustRead("surnames.txt")+"\n"+mustRead("surnames_ipadic.txt"))
+	dupCheck("given_names.txt+given_names_ipadic.txt", mustRead("given_names.txt")+"\n"+mustRead("given_names_ipadic.txt"))
 
 	givenNames := givenNameSet()
 	for s := range surnameSet() {
@@ -69,6 +72,15 @@ func TestIsSurnameAndGivenName(t *testing.T) {
 	}
 	if IsGivenName("山田") {
 		t.Errorf("IsGivenName(山田) = true, want false")
+	}
+}
+
+func TestIsSurnameFoldsSmallKe(t *testing.T) {
+	// 辞書は「ケ」で収録しているので、文書の「ヶ」も同じ姓として照合する。
+	for _, s := range []string{"松ケ崎", "松ヶ崎"} {
+		if !IsSurname(s) {
+			t.Errorf("IsSurname(%q) = false, want true", s)
+		}
 	}
 }
 

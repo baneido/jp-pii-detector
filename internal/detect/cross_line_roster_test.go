@@ -91,13 +91,18 @@ func TestCrossLineNameHeaderNotMatchedInsideMarkup(t *testing.T) {
 	}
 }
 
-// TestCrossLineNamePropagationRequiresHighRecall は、伝播・見出し行の両方が
-// person-name-structured（高再現率限定）に帰属し、既定では出ないことを
-// 確認する。
-func TestCrossLineNamePropagationRequiresHighRecall(t *testing.T) {
+// TestCrossLineNameDefaultReportsFirstLineOnly は、既定設定ではラベル行・見出し行の直後の
+// 1 行だけを person-name として検出し、続く行へは伝播しないことを確認する（名簿全体への
+// 伝播は高再現率モードの person-name-structured が担当する）。
+func TestCrossLineNameDefaultReportsFirstLineOnly(t *testing.T) {
 	d := newDetector(t, "")
-	assertRules(t, d.ScanContent("form.txt", "氏名:\n山田太郎\n佐藤花子\n"))
-	assertRules(t, d.ScanContent("roster.txt", "氏名\n山田太郎\n佐藤花子\n"))
+	for _, content := range []string{"氏名:\n山田太郎\n佐藤花子\n", "氏名\n山田太郎\n佐藤花子\n"} {
+		fs := d.ScanContent("form.txt", content)
+		assertRules(t, fs, "person-name")
+		if fs[0].Line != 2 {
+			t.Errorf("%q: line = %d, want 2", content, fs[0].Line)
+		}
+	}
 }
 
 // TestHonorificWithSpaceBeforeSuffix は、氏名と敬称の間に空白が入る形
@@ -111,7 +116,8 @@ func TestHonorificWithSpaceBeforeSuffix(t *testing.T) {
 		want       []string
 	}{
 		{"敬称前の空白", "鈴木一郎 様", []string{"person-name-high-recall"}},
-		{"姓名間の空白", "山田 太郎様", []string{"person-name-high-recall"}},
+		// 姓名間だけ空白の形は、既定の person-name-role-label（personNameSpacedHonorificRe）が拾う。
+		{"姓名間の空白", "山田 太郎様", []string{"person-name-role-label"}},
 		// 行全体が「<姓> <名> 様」の行は寄付者一覧の形として Medium の
 		// person-name-role-label が拾う（2026-10-31 08:00）。
 		{"両方の空白", "山田 太郎 様", []string{"person-name-role-label"}},

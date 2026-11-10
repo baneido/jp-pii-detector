@@ -3,8 +3,8 @@
 //
 // 出力する値はすべて checksum のチェックディジット算出ロジックや dict の実在辞書
 // から計算合成したもので、人物レコードから採取していない。ただし実在番号空間との
-// 偶然一致は保証できないため、値をログへ出さず、private corpusや公式F1へ混ぜない。
-// このCLIはGCSへ書き込まず、出力先はリポジトリ管理外を指定する。
+// 偶然一致は保証できないため、値をログへ出さず、評価コーパスや公式F1へ混ぜない。
+// 出力先はリポジトリ管理外を指定する。
 //
 //	go run ./cmd/pii-dataset-gen -output /path/outside/repo/synthetic-cases.json
 package main

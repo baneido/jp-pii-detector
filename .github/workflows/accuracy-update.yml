@@ -1,14 +1,13 @@
 name: accuracy-update
 
-# 非公開評価コーパスに対する実測値で、検出精度のゴールデンファイル
+# 評価コーパス（公開データセット Nemotron-PII-Japan の抽出）に対する実測値で、検出精度のゴールデンファイル
 # （docs/accuracy.json）・docs/accuracy.md・README.md / README.en.md の精度表記を
 # 再生成する。
 #
 # 背景: 検出挙動を変える PR（例: #148/#149）がマージされると実測値とゴールデンが
-# ずれ、ci.yml の private-eval ジョブ（main への push ごとに実測とゴールデンの
-# 完全一致を検証する）が落ち続ける。再生成には非公開コーパスへのアクセスが要るため、
-# 従来メンテナのローカル環境か手作業でしかできなかった。このワークフローで GitHub 上
-# から workflow_dispatch でワンクリック再生成し、差分があれば postal-update.yml /
+# ずれ、ci.yml の corpus-eval ジョブ（main への push ごとに実測とゴールデンの
+# 完全一致を検証する）が落ち続ける。手元でも `go run ./cmd/pii-fixture eval -update` で
+# 再生成できるが、このワークフローで GitHub 上から workflow_dispatch でワンクリック再生成し、差分があれば postal-update.yml /
 # tld-update.yml と同じ方式（作業ブランチへ force-push → PR 作成）で PR を自動作成する。
 #
 # ci.yml の test job（ゴールデン一致・README バッジ・ドッグフードのゲート）とは
@@ -32,15 +31,13 @@ env:
 jobs:
   update:
     name: update accuracy golden
-    # workflow_dispatch で任意ブランチの workflow を OIDC 付きで動かせないようにする
-    # （fp-corpus-report.yml と同じ方針）。
+    # workflow_dispatch で任意ブランチの workflow を書き込み権限付きで動かせないようにする。
     if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: write # 作業ブランチの push に必要
       pull-requests: write # PR の作成・更新に必要
-      id-token: write # GCP Workload Identity Federation（OIDC）に必要
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -50,48 +47,24 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # 以下、コーパス取得までは ci.yml の private-eval ジョブと同一の手順。
-      - name: Authenticate to Google Cloud (OIDC / Workload Identity)
-        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
-        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
-        with:
-          workload_identity_provider: ${{ vars.JP_PII_FIXTURES_PROVIDER }}
-          service_account: ${{ vars.JP_PII_FIXTURES_SA }}
-      - name: Set up gcloud
-        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
-        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
-      - name: Download PII fixtures from GCS
-        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
-        env:
-          FIXTURES_BUCKET: ${{ vars.JP_PII_FIXTURES_BUCKET }}
-          FIXTURES_GENERATION: ${{ vars.JP_PII_FIXTURES_GENERATION }}
+      # 以下、コーパス取得までは ci.yml の corpus-eval ジョブと同一の手順。
+      - name: Fetch evaluation corpus (Nemotron-PII-Japan)
+        # 公開データセットを fixtures.lock.json の revision と SHA-256 で固定して取得し、
+        # 評価ケースの JSON に変換する（cmd/pii-fixture、認証不要）。
         run: |
           set -eu
-          dest="$RUNNER_TEMP/pii-fixtures.json"
-          object=$(jq -r '.object' fixtures.lock.json)
-          lock_generation=$(jq -r '.generation' fixtures.lock.json)
-          source="gs://$FIXTURES_BUCKET/$object"
-          if [ -z "${FIXTURES_GENERATION:-}" ]; then
-            FIXTURES_GENERATION="$lock_generation"
-          fi
-          if [ -n "${FIXTURES_GENERATION:-}" ]; then
-            source="${source}#${FIXTURES_GENERATION}"
-          fi
-          gcloud storage cp "$source" "$dest"
-          chmod 600 "$dest"
+          dest="$RUNNER_TEMP/eval-corpus.json"
+          go run ./cmd/pii-fixture fetch -out "$dest"
           echo "JP_PII_FIXTURES=$dest" >> "$GITHUB_ENV"
-      - name: Remove Google Cloud credentials file
-        if: ${{ always() && vars.JP_PII_FIXTURES_PROVIDER != '' }}
-        run: rm -f "${GOOGLE_GHA_CREDS_PATH:-}"
 
       - name: Regenerate accuracy golden
         run: |
           set -eu
           test -f "$JP_PII_FIXTURES" || {
-            echo "::error::非公開評価コーパスを取得できませんでした。"
+            echo "::error::評価コーパスを取得できませんでした。"
             exit 1
           }
-          go test ./internal/eval -run 'TestGenerateDoc|TestReadmeBadges' -update
+          go test ./internal/eval -timeout 60m -run 'TestGenerateDoc|TestReadmeBadges' -update
 
       - name: Open PR if the golden changed
         env:
@@ -101,7 +74,7 @@ jobs:
           if git diff --quiet docs/accuracy.md docs/accuracy.json README.md README.en.md; then
             {
               echo "### golden は最新"
-              echo "非公開評価コーパスに対する実測値と \`docs/accuracy.json\` に差分はありませんでした。PR は作成しません。"
+              echo "評価コーパスに対する実測値と \`docs/accuracy.json\` に差分はありませんでした。PR は作成しません。"
             } >> "$GITHUB_STEP_SUMMARY"
             echo "golden は最新。PR は作成しない。"
             exit 0
@@ -150,6 +123,6 @@ jobs:
             echo "マージ前に \`docs/accuracy.md\` の差分を確認してください（実測値が想定外に悪化していないか）。"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Remove private corpus
+      - name: Remove evaluation corpus
         if: ${{ always() }}
         run: rm -f "${JP_PII_FIXTURES:-}"

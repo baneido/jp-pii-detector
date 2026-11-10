@@ -1462,8 +1462,8 @@ func TestPersonNameConfidencePromotion(t *testing.T) {
 		{"氏名 + 辞書一致（分割可）", "氏名: 山田太郎", rule.Medium},
 		// 強いラベル + 辞書外の実在人名 → 収録外なので Low のまま。
 		{"氏名 + 辞書外の実在人名", "氏名: " + testfixtures.MustGet(t, "detect.name_dict_external_full"), rule.Low},
-		// 強いラベル + 非人名の値（組織名等）→ Low のまま。
-		{"氏名 + 非人名の値", "氏名: 株式会社", rule.Low},
+		// 強いラベル + 辞書に無い非人名の値 → Low のまま（組織名は rejectOrgValueTail で報告しない）。
+		{"氏名 + 非人名の値", "氏名: 東京駅", rule.Low},
 		// 曖昧な name ラベル + 単独姓のみ（分割不可）→ Low のまま
 		// （地名・一般名詞と同形の単独姓による FP を Medium に上げない）。
 		{"name + 単独姓のみ", "name: 大和", rule.Low},
@@ -3208,10 +3208,12 @@ func TestCrossLineNameOnlyStrongLabels(t *testing.T) {
 	assertRules(t, d.ScanContent("f.txt", "姓:\n山田"))
 }
 
-func TestCrossLineNameDisabledByDefault(t *testing.T) {
+func TestCrossLineNameDefaultUsesPersonName(t *testing.T) {
 	d := newDetector(t, "")
-	// 高再現率モードでなければ構造化クロスライン検出は走らない（既定挙動を変えない）。
-	assertRules(t, d.ScanContent("f.txt", "氏名:\n山田太郎"))
+	// 既定設定では、値を伴わない氏名ラベル行の次行を person-name として検出する
+	// （person-name-structured は高再現率モード専用）。辞書を通らない値は拾わない。
+	assertRules(t, d.ScanContent("f.txt", "氏名:\n山田太郎"), "person-name")
+	assertRules(t, d.ScanContent("f.txt", "氏名:\n検査結果"))
 }
 
 func TestCrossLineNameSameLineUnaffected(t *testing.T) {
@@ -6004,7 +6006,8 @@ func TestParticleHonorificAndCommonNounGuards20261031(t *testing.T) {
 		{"ひらがなに地続きの姓名 + 氏", "ゆかりのある" + sur + given + "氏より寄贈", []string{"person-name-high-recall"}},
 		{"助詞の後の姓名 + さん", "研究科の" + sur + given + "さんが受賞", []string{"person-name-high-recall"}},
 		{"ひらがなの後の一般語 + 様（姓名に分割できない）", "これは見本品様式です", nil},
-		{"名の末字が文の 2 字 + 様", sur + "　美" + "文様", []string{"person-name-high-recall"}},
+		// 姓と名の間に空白がある形は、既定の person-name-role-label が拾う。
+		{"名の末字が文の 2 字 + 様", sur + "　美" + "文様", []string{"person-name-role-label"}},
 		{"姓名 + 文 + 様", sur + "博" + "文様", []string{"person-name-high-recall"}},
 		{"模様の文様", "鳳凰文様の大皿", nil},
 		{"檀信徒様", "檀信徒様へのお知らせ", nil},
@@ -6330,5 +6333,329 @@ func TestTitledNameList20261110(t *testing.T) {
 		"将来様々な分野で活躍する人材を育成します。",
 	} {
 		t.Run(line, func(t *testing.T) { assertRules(t, d.ScanLine("f.txt", 1, line)) })
+	}
+}
+
+// TestSectionHeadingNameDefault は、帳票の人物欄の見出し行（患者情報・【申込者情報】
+// 等）の次行にある氏名を、高再現率モードなしの既定設定で検出することを確認する。
+// 人物でない見出しや辞書を通らない値、見出しから離れた行は拾わない。
+func TestSectionHeadingNameDefault(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, content string
+		wantLine      int // 0 は検出なし
+	}{
+		{"患者情報", "処方箋\n\n患者情報\n山田 太郎\n生年月日: なし\n", 4},
+		{"隅付き括弧", "【申込者情報】\n佐藤 花子\n", 2},
+		{"お届け先", "お届け先情報\n\n鈴木 一郎\n電話番号: なし\n", 3},
+		{"記号付き", "■本人情報\n山田 太郎\n", 2},
+		{"の確認情報", "委任者の確認情報:\n佐藤 花子\n", 2},
+		{"人物でない見出し", "商品情報\n山田 太郎\n", 0},
+		{"辞書にない値", "患者情報\n検査結果\n", 0},
+		{"組織名", "依頼人情報\n株式会社サンプル\n", 0},
+		{"見出しが文中", "以下は患者情報です\n山田 太郎\n", 0},
+		{"ignore マーカー", "患者情報\n山田 太郎 jp-pii-detector:ignore\n", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanContent("form.txt", tt.content)
+			if tt.wantLine == 0 {
+				assertRules(t, fs)
+				return
+			}
+			assertRules(t, fs, "person-name")
+			if fs[0].Line != tt.wantLine || fs[0].Confidence != rule.Medium {
+				t.Errorf("finding = line %d %v, want line %d medium", fs[0].Line, fs[0].Confidence, tt.wantLine)
+			}
+		})
+	}
+}
+
+// TestCompoundPersonNameLabels は、「相談者氏名」「世帯主氏名」のような人物語＋氏名の
+// 複合ラベル、名義欄、「申立人姓」を氏名ラベルとして扱うことを確認する。
+func TestCompoundPersonNameLabels(t *testing.T) {
+	d := newDetector(t, "")
+	for _, line := range []string{
+		"相談者氏名: 山田 太郎",
+		"世帯主氏名：佐藤 花子",
+		"振込先名義: 鈴木 一郎",
+		"返金先名義: 山田 太郎",
+		"申立人姓: 佐藤",
+	} {
+		assertRules(t, d.ScanLine("a.txt", 1, line), "person-name")
+	}
+	for _, line := range []string{
+		"振込先名義: 株式会社サンプル",
+		"相談者氏名: 未定",
+		"会社氏名欄の説明",
+	} {
+		assertRules(t, d.ScanLine("a.txt", 1, line))
+	}
+}
+
+// TestBirthdateProseAndSuffix は、地の文の「生年月日は〜」と、日付の後置「生」を
+// 生年月日として扱い、「日生命」のような語の一部は拾わないことを確認する。
+func TestBirthdateProseAndSuffix(t *testing.T) {
+	d := newDetector(t, "")
+	for _, line := range []string{
+		"申込者の生年月日は1980年1月29日、年齢は44です。",
+		"申込者（昭和44年2月26日生、55歳）",
+		"受講者（1990年1月2日生）",
+	} {
+		assertRules(t, d.ScanLine("a.txt", 1, line), "jp-birthdate")
+	}
+	for _, line := range []string{
+		"2024年4月1日生命保険に加入した",
+		"2024年4月1日生産開始",
+		"生年月日は不明です",
+	} {
+		assertRules(t, d.ScanLine("a.txt", 1, line))
+	}
+}
+
+// TestHealthInsuranceSymbolNumber は、被保険者証の英数字の記号・番号を検出し、
+// 英数字 ID の末尾にある 8 桁を保険者番号として拾わないことを確認する。
+func TestHealthInsuranceSymbolNumber(t *testing.T) {
+	d := newDetector(t, "")
+	for _, line := range []string{
+		"被保険者証記号・番号: AB12-345678",
+		"被保険者証記号・番号は XY-1234、公費負担者番号は別紙",
+	} {
+		assertRules(t, d.ScanLine("a.txt", 1, line), "jp-health-insurance")
+	}
+	for _, line := range []string{
+		"被保険者証記号・番号: AB-CD",
+		"記号・番号: AB12-345678",
+		"患者ID: N9U23025380 の保険者番号は別紙",
+	} {
+		assertRules(t, d.ScanLine("a.txt", 1, line))
+	}
+}
+
+// TestBirthdateProseRangeRejected は、案内文で対象期間の端を述べる「生年月日は〜から」
+// 「〜以前の方」を生年月日として拾わないことを確認する。
+func TestBirthdateProseRangeRejected(t *testing.T) {
+	d := newDetector(t, "")
+	for _, line := range []string{
+		"対象者は生年月日は平成17年4月2日から平成18年4月1日までの方です。",
+		"生年月日は昭和30年4月1日以前の方が対象です。",
+		"平成2年4月2日生まれ以降の方",
+	} {
+		assertRules(t, d.ScanLine("a.txt", 1, line))
+	}
+}
+
+// TestSectionHeadingNameDiff は、diff 走査でも見出し行の次行の氏名を検出し、
+// 値が文脈行（変更なし）に乗るときは報告しないことを確認する。
+func TestSectionHeadingNameDiff(t *testing.T) {
+	d := newDetector(t, "")
+	added := d.ScanDiffHunk("form.txt", []DiffLine{
+		{Text: "患者情報", Added: false},
+		{Text: "山田 太郎", Added: true},
+	})
+	assertRules(t, added, "person-name")
+	context := d.ScanDiffHunk("form.txt", []DiffLine{
+		{Text: "患者情報", Added: true},
+		{Text: "山田 太郎", Added: false},
+	})
+	assertRules(t, context)
+}
+
+// TestContractPartyNames は契約書の当事者欄と前文の氏名（乙: / である / 以下「甲」 / との間）を
+// 検出し、法人名・一般語・単独の姓名辞書一致は拾わないことを確認する。
+func TestContractPartyNames(t *testing.T) {
+	d := newDetector(t, "")
+	for _, line := range []string{
+		"乙: 山田 太郎",
+		"受託者: 佐藤 花子",
+		"本契約は、雇用主である株式会社サンプル（以下「甲」という）と、従業員である鈴木 一郎（以下「乙」という）との間において",
+		"本契約は、委託者である山田 太郎と株式会社サンプルは",
+		"山田 太郎と有限会社サンプルとの間で、以下の通り契約する。",
+		"申請者である 佐藤 花子 様の口座へ振り込みます。",
+	} {
+		fs := d.ScanLine("a.txt", 1, line)
+		if len(fs) != 1 || fs[0].RuleID != "person-name-role-label" {
+			t.Errorf("%q: findings = %v, want one person-name-role-label", line, ruleIDs(fs))
+		}
+	}
+	for _, line := range []string{
+		"甲: 株式会社サンプル",
+		"乙: 別途協議",
+		"甲乙協議のうえ定める。",
+		"養子と養親及びその血族との間においては、",
+		"受託者: 有限会社サンプル",
+	} {
+		assertRules(t, d.ScanLine("a.txt", 1, line))
+	}
+}
+
+// TestStrongLabelSpacedOneSideDict は、強いラベルの直後で空白により 2 語に分かれた氏名を、
+// 姓か名の片側が辞書にあれば medium で検出し、辞書に無い一般語の 2 語は medium にしないことを確認する。
+func TestStrongLabelSpacedOneSideDict(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanLine("a.txt", 1, "お客様名: 架空 太郎")
+	if len(fs) != 1 || fs[0].RuleID != "person-name" || fs[0].Confidence != rule.Medium {
+		t.Fatalf("findings = %v, want one medium person-name", ruleIDs(fs))
+	}
+	for _, line := range []string{
+		"氏名: 担当医師 確認済み",
+		"氏名: 山田 様",
+		"氏名: 株式会社 サンプル",
+		"名前: 開発 環境",
+		"担当者名: 営業 一課",
+		"口座名義: 普通 預金",
+		"お名前: 記入 例",
+		"氏名: 本人 確認",
+		"会員名: 一般 会員",
+		"振込先名義: 当社 口座",
+		"利用者名: 管理 者",
+	} {
+		for _, f := range d.ScanLine("a.txt", 1, line) {
+			if f.Confidence >= rule.Medium {
+				t.Errorf("%q: %s を %v で検出した", line, f.RuleID, f.Confidence)
+			}
+		}
+	}
+}
+
+// TestSectionHeadingNameVariants は、見出しの後の項目行の読み飛ばし、当事者欄の見出し
+// （甲・乙）、「〜者」だけの見出し、姓か名の片側だけが辞書にある値を確認する。
+func TestSectionHeadingNameVariants(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, content string
+		wantLine      int
+	}{
+		{"項目行を挟む", "患者情報\n患者ID: A-0001\n山田 太郎\n", 3},
+		{"当事者欄の見出し", "甲\n住所: 東京都千代田区\n佐藤 花子\n", 3},
+		{"〜者だけの見出し", "給付対象者\n鈴木 一郎\n", 2},
+		{"名だけが辞書にある", "患者情報\n架空 太郎\n", 2},
+		{"人名と同形の見出し", "直人\n山田太郎\n", 0},
+		{"項目行は 2 行まで", "患者情報\n項目A: 1\n項目B: 2\n項目C: 3\n山田太郎\n", 0},
+		{"一般の項目行の次の「姓 名」", "審査受付日: 令和7年1月31日\n山田 太郎\n", 2},
+		{"一般の項目行の次の空白なしの値", "備考: なし\n山田太郎\n", 0},
+		{"見出しの 2 行先へは伝播しない", "患者情報\n山田 太郎\n佐藤 花子\n", 2},
+		{"都道府県名 + 市区町村名", "申立人情報\n山口県 光市\n", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := d.ScanContent("form.txt", tt.content)
+			if tt.wantLine == 0 {
+				assertRules(t, fs)
+				return
+			}
+			assertRules(t, fs, "person-name")
+			if fs[0].Line != tt.wantLine {
+				t.Errorf("line = %d, want %d", fs[0].Line, tt.wantLine)
+			}
+		})
+	}
+}
+
+// TestNameLabelOrgValueRejectedAtLow は、名義欄などの強いラベルに続く法人名を、low の候補
+// としても報告しないことを確認する（複数行の入力で隣接行の連結走査を通っても同じ）。
+func TestNameLabelOrgValueRejectedAtLow(t *testing.T) {
+	d := newDetector(t, "min_confidence = \"low\"\n")
+	content := "振込先名義: 架空法律事務所\n振込先名義: 架空流通サービス株式会社\n振込先名義: 架空合資会社\n"
+	assertRules(t, d.ScanContent("a.txt", content))
+}
+
+// TestFormNameEvidenceVariants は、見出しや項目行などの手がかりと組み合わせた氏名の検出
+// （項目行の前後・「姓 名。」の行・姓の欄と名の欄の組・同じ文書での再出現・手がかりが
+// 二重にそろう場合の辞書に無い氏名）と、その陰性を確認する。値はすべて架空。
+func TestFormNameEvidenceVariants(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, content string
+		want          int // 期待する氏名の検出数
+	}{
+		{"項目行の直前", "山田 太郎\n生年月日: なし\n", 1},
+		{"前置き付きの項目行", "相談者氏名: 架空 架瑠\n相談者連絡先メールアドレス: なし\n", 1},
+		{"氏名と句点だけの行", "前文。\n\n山田 太郎。\n\n本文。\n", 1},
+		{"姓の欄と名の欄の組", "申立人姓: 山田\n申立人名: 架子\n", 2},
+		{"同じ行の姓と名の欄", "患者情報として、姓: 山田、名: 架子、生年月日: なし\n", 2},
+		{"同じ文書での再出現", "氏名: 山田 太郎\n\nこのたび、山田 太郎さんは退職します。\n", 2},
+		{"見出しと項目行がそろう辞書外の氏名", "患者情報\n架空 架瑠\n生年月日: なし\n", 1},
+		{"見出しのみの辞書外の氏名", "患者情報\n架空 架瑠\n", 0},
+		{"様式の語の組", "姓: 会議\n名: 資料\n", 0},
+		{"様式の「姓 名」", "従業員である姓 名（以下「乙」という）\n", 0},
+		{"組織名の当事者", "雇用主である架空法人 事務局（以下「甲」という）と\n", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			n := 0
+			for _, f := range d.ScanContent("form.txt", tt.content) {
+				if strings.HasPrefix(f.RuleID, "person-name") {
+					n++
+				}
+			}
+			if n != tt.want {
+				t.Errorf("氏名の検出数 = %d, want %d", n, tt.want)
+			}
+		})
+	}
+}
+
+// TestProseNameWithRoleOrHonorific は本文の「受講者の<姓> <名>様」「<姓> <名> 様より」
+// 「従業員である<姓> <名>（以下「乙」という）」を検出することを確認する。
+func TestProseNameWithRoleOrHonorific(t *testing.T) {
+	d := newDetector(t, "")
+	for _, line := range []string{
+		"受講者の山田 太郎様は、全課程を修了しました。",
+		"申告者は、佐藤 花子様であり、",
+		"山田 太郎 様より提出された届出に基づき",
+		"従業員である架空 架瑠（以下「乙」という）との間で",
+		"架空市に居住する山田 太郎様であり、",
+		"申告者は架空市に居住する 山田 健一様（会員）",
+		"架空市に居住する佐藤 修平氏であり、",
+	} {
+		if fs := d.ScanLine("a.txt", 1, line); len(fs) != 1 {
+			t.Errorf("%q: findings = %v, want 1", line, ruleIDs(fs))
+		}
+	}
+	assertRules(t, d.ScanLine("a.txt", 1, "関係者の皆 様へのお知らせ"))
+	// 空白なしの敬称は、直前の字と合わせて一般語になる形（仕様・同様・彼氏）を氏名にしない。
+	for _, line := range []string{"新 現行仕様の説明", "東 同様に処理する", "林 彼氏と会う"} {
+		assertRules(t, d.ScanLine("a.txt", 1, line))
+	}
+}
+
+// TestNameWithIterationMark は繰り返し記号「ゞ」を含む名（すゞ子）を見出しの次の行で検出することを確認する。
+func TestNameWithIterationMark(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanContent("a.txt", "保護者情報\n山田 すゞ子\n")
+	if len(fs) != 1 || fs[0].RuleID != "person-name" || fs[0].Line != 2 {
+		t.Errorf("findings = %v, want person-name on line 2", fs)
+	}
+}
+
+// TestSectionNameWithConnectorSurname は辞書にない「ケ」「ノ」「ツ」入りの姓（架ノ関）と辞書にある名の
+// 組を見出しの次の行で検出し、名が辞書にない組（架ノ関 公園）は検出しないことを確認する。
+func TestSectionNameWithConnectorSurname(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanContent("a.txt", "申請者情報\n架ノ関 太郎\n")
+	if len(fs) != 1 || fs[0].RuleID != "person-name" || fs[0].Line != 2 {
+		t.Errorf("findings = %v, want person-name on line 2", fs)
+	}
+	if fs := d.ScanContent("a.txt", "申請者情報\n架ノ関 公園\n"); len(fs) != 0 {
+		t.Errorf("non-name: findings = %v, want none", fs)
+	}
+}
+
+// TestNameLineBeforeAccountOrIDField は氏名だけの行の次に「個人番号:」「金融機関名:」「住所:」の
+// 項目行が続く形を検出し、辞書に無い 2 語の行は検出しないことを確認する。
+func TestNameLineBeforeAccountOrIDField(t *testing.T) {
+	d := newDetector(t, "")
+	for _, next := range []string{"個人番号: 0000", "金融機関名: 架空銀行", "住所: 架空県架空市"} {
+		fs := d.ScanContent("a.txt", "返金先として、以下の通り申請いたします。\n\n山田 架瑠\n"+next+"\n")
+		if len(fs) != 1 || fs[0].Line != 3 || fs[0].RuleID != "person-name" {
+			t.Errorf("next=%q: findings = %v, want person-name on line 3", next, fs)
+		}
+	}
+	fs := d.ScanContent("a.txt", "以下の通り申請いたします。\n\n別紙 参照\n金融機関名: 架空銀行\n")
+	for _, f := range fs {
+		if strings.HasPrefix(f.RuleID, "person-name") {
+			t.Errorf("non-name line detected: %v", f)
+		}
 	}
 }

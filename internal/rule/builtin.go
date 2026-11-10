@@ -124,13 +124,15 @@ const (
 	// これらを含む氏名が値パターンの途中で切れ、全ルールモードが取りこぼす（長崎県の
 	// 特定商取引法の処分公表で実測）。辞書照合は dict 側で新字体へ畳む（foldNameVariants）。
 	kanji    = `\x{4E00}-\x{9FFF}\x{3005}\x{F900}-\x{FAFF}\x{20000}-\x{2FA1F}`
-	hiragana = `\x{3041}-\x{3096}`
+	// hiragana はひらがなに加え、繰り返し記号「ゝ」「ゞ」（\x{309D}\x{309E}）を含む（「すゞ子」「みすゞ」）。
+	// katakana の「ヽ」「ヾ」（\x{30FD}\x{30FE}）も同じ理由で含める。
+	hiragana = `\x{3041}-\x{3096}\x{309D}\x{309E}`
 	// katakana はカタカナ + ー に加え、結合濁点・半濁点（\x{3099}\x{309A}）を含む。
 	// normalize.Line は半角カナの濁点・半濁点（ﾞﾟ）を 1 ルーン = 1 ルーンの不変条件を
 	// 保つため未合成の結合文字のまま全角カナへ畳む（例: ｶﾞ → カ + \x{3099}）ため、
 	// この文字クラスに含めないと半角カナ由来の濁音・半濁音を含む値
 	// （フリガナ: ﾔﾏﾀﾞ 等）が氏名・住所の値パターンから漏れる。jp-pii-detector:ignore
-	katakana = `\x{30A1}-\x{30FA}\x{30FC}\x{3099}\x{309A}`
+	katakana = `\x{30A1}-\x{30FA}\x{30FC}\x{30FD}\x{30FE}\x{3099}\x{309A}`
 
 	// hiraganaNoParticle は hiragana から助詞「で・に・は・を」を除いた文字クラス
 	// （\x{3067}=で \x{306B}=に \x{306F}=は \x{3092}=を を穴あきで除外）。市区町村と
@@ -336,9 +338,16 @@ var (
 	// 「フリガナ」は濁点未合成形（フリ(?:ガ|カ\x{3099})ナ）も許す。半角カナ由来の
 	// 「ﾌﾘｶﾞﾅ」は normalize.Line で「フリカ」+ 結合濁点 + 「ナ」（ガではなくカ+結合濁点）
 	// に畳まれるため、これがないと半角カナ表記のラベル行を取りこぼす。
+	//
+	// 「相談者氏名」「世帯主氏名」「購入者氏名」のように人物を表す語（〜者・〜人・
+	// 〜主）に「氏名」が続く複合語は、前方境界 personNameBoundary が漢字直後の
+	// 「氏名」を拒むため、複合語ごとラベルとして受ける。「振込先名義」「返金先名義」
+	// 「口座名義」は値が法人名のこともあるが、姓名辞書を通らない値は twin の
+	// Low 側（既定では非表示）に落ちる。
 	personNameLabelJP = `(?:氏名|お名前|ご氏名|名前|姓名|フリ(?:ガ|カ\x{3099})ナ|ふりがな|フルネーム|` +
 		`患者名|契約者名|利用者名|顧客名|会員名|申込者名|請求先名|受取人|担当者名|` +
-		`お客様(?:氏名|名)|申請者(?:氏名|名)|申込者氏名)(?:漢字|カナ|かな)?`
+		`お客様(?:氏名|名)|申請者(?:氏名|名)|申込者氏名|` +
+		`[` + kanji + `]{1,6}?(?:者|人|主)氏名|(?:口座|振込先|振込|返金先|送金先|受取人?|預金)名義人?)(?:漢字|カナ|かな)?`
 	// personNameLabelASCIIStrong は語そのものが「人」を表す ASCII キー。
 	// 辞書照合なしで検出する（収録外の人名も拾う）。user_name / account_name /
 	// contact_name はハンドル名・システム名でありうるため強ラベルには入れず、
@@ -585,6 +594,51 @@ var (
 	personNamePartyLabelRe = regexp.MustCompile(
 		`(?:(?:審査申立人|異議申立人|申立人|審査請求人|請求人|原告|被告|控訴人|上告人)[ ]+(?:[(（]総代[)）][ ]*)?|[(（]総代[)）][ ]*)` +
 			personNameSpacedValue,
+	)
+	// personNameContractValue は契約書の当事者欄の氏名（「<姓> <名>」「<姓><名>」、名はかなも可）。
+	personNameContractValue = `([` + kanji + `]{1,4}[ ]?[` + kanji + hiragana + katakana + `]{1,4})`
+	// personNameContractPartyLabelRe は契約書の署名欄・当事者欄「乙: <姓> <名>」の氏名を拾う
+	// （person-name-role-label）。甲・乙は法人のこともあるため、値は姓名辞書の完全分割か
+	// 「<辞書の姓> <名>」（validPersonOrSpacedSurnameGiven）のときだけ報告する。
+	// Nemotron-PII-Japan の雇用契約書・業務委託契約書で、既定ルールが取りこぼした氏名の
+	// 1 割弱がこの形と、次の 3 つの形だった（1 万件抽出での計測）。
+	personNameContractPartyLabelRe = regexp.MustCompile(
+		`(?:^|[^` + kanji + `])(?:甲|乙|丙|丁|[` + kanji + `]{1,5}(?:者|人)|借主|貸主|買主|売主|雇用主|従業員)` +
+			`(?:[(（](?:甲|乙|丙|丁)[)）])?[ ]*[:=][ ]*` + personNameContractValue + `[ ]*(?:[、,。(（]|$)`,
+	)
+	// personNameContractRoleRe は契約書の前文「従業員である<姓> <名>（以下「乙」という）」
+	// 「委託者である<姓> <名>と」のように、当事者の立場を表す語 +「である」の直後の氏名を拾う。
+	personNameContractRoleRe = regexp.MustCompile(
+		`(?:従業員|雇用主|借主|貸主|買主|売主|[` + kanji + `]{1,6}(?:者|人)(?:本人)?)である[ ]?` +
+			personNameContractValue + `[ ]*(?:[(（]以下|[、,。と様がはの]|$)`,
+	)
+	// personNameProseRoleHonorificRe は本文の「受講者の<姓> <名>様は」「申告者は、<姓> <名>様であり」
+	// 「年齢58歳の<姓> <名>氏です」のように、人物を表す語（〜者・〜人）または年齢の「歳」に
+	// 「の」「は」で続き、敬称で終わる氏名を拾う（person-name-role-label）。敬称だけを手がかりに
+	// する person-name-high-recall と違い、直前の人物語と空白区切りの 2 語を要求する。
+	// personNameSpacedHonorificRe は本文の「<姓> <名> 様より」「居住する<姓> <名>様であり」のように、
+	// 空白で区切った「<姓> <名>」に敬称が続く形を拾う。値は片側が辞書にあることを必須にし、
+	// 敬称が空白なしで続く場合は、直前の字と敬称が一般語になる形（「現行仕様」「源氏」）を
+	// rejectHonorificWordTail で除く。
+	personNameSpacedHonorificRe = regexp.MustCompile(
+		`(?:^|[^` + kanji + katakana + `])([` + kanji + `]{1,4}[ ][` + kanji + hiragana + katakana + `]{1,4})[ ]?(?:様|氏)(?:[はのよりがとにで、,。（(]|$)`,
+	)
+	personNameProseRoleHonorificRe = regexp.MustCompile(
+		`(?:[` + kanji + `]{1,6}(?:者|人)|歳)(?:の|は、?)[ ]?` +
+			`([` + kanji + `]{1,4}[ ][` + kanji + hiragana + katakana + `]{1,4})[ ]?(?:様|氏|さん)`,
+	)
+	// personNameContractDefinedRe は「<姓> <名>（以下「甲」という）」の氏名を拾う。
+	personNameContractDefinedRe = regexp.MustCompile(
+		`(?:^|[^` + kanji + hiragana + katakana + `])` + personNameContractValue + `[ ]*[(（]以下[ ]?[「『](?:甲|乙|丙|丁)[」』]`,
+	)
+	// personNameContractRoleDefinedRe は「従業員である<姓> <名>（以下「乙」という）」のように、立場の語 +
+	// 「である」と「（以下「乙」という）」の定義が両方そろった値を拾う（辞書に無い氏名も形で採る）。
+	personNameContractRoleDefinedRe = regexp.MustCompile(
+		`である[ ]?` + personNameContractValue + `[ ]*[(（]以下[ ]?[「『](?:甲|乙|丙|丁)[」』]`,
+	)
+	// personNameContractBetweenRe は前文の「<姓> <名>と<相手方>との間で」の、行頭の氏名を拾う。
+	personNameContractBetweenRe = regexp.MustCompile(
+		`^[ ]*` + personNameContractValue + `と[^、。]{2,40}?との間`,
 	)
 	// personNameYagoKotoRe は個人事業主の「<屋号>こと<姓><名>」表記（特定商取引法に基づく
 	// 行政処分の公表文書・執行事例一覧で事業者名として頻出）の氏名を拾う
@@ -1131,6 +1185,50 @@ func validKessanSpacedPair(v string) bool {
 	return true
 }
 
+// validPersonOrSpacedOneSideDict は姓名辞書に一致する値（dict.IsPersonName）か、
+// validSpacedNameOneSideDict を許可する。氏名を表す強いラベルの直後の値専用。
+func validPersonOrSpacedOneSideDict(v string) bool {
+	return dict.IsPersonName(v) || validSpacedNameOneSideDict(v)
+}
+
+// spacedNameSurnameRe は辞書にない姓の形（漢字 1〜3 文字か、漢字の間に「ケ」「ヶ」「ノ」「ツ」を
+// 1 つ挟む形。「一ノ関」「八ツ木」「海老ケ瀬」）。漢字だけの 4 文字の語は「担当医師」のような
+// 職名が多いため受けない（4 文字の姓は辞書照合で拾う）。
+var (
+	spacedNameSurnameRe = regexp.MustCompile(`^(?:[` + kanji + `]{1,3}|[` + kanji + `]{1,2}[ケヶノツ][` + kanji + `]{1,2})$`)
+	spacedNameGivenRe   = regexp.MustCompile(`^[` + kanji + hiragana + katakana + `]{1,3}$`)
+	// prefectureWordRe は「山口県 光市」のような住所の先頭の都道府県名。「<姓> <名>」の形の
+	// 判定で、都道府県名 + 市区町村名を氏名とみなさないために使う。
+	prefectureWordRe = regexp.MustCompile(`^(?:北海道|東京都|京都府|大阪府|[` + kanji + `]{2,3}県)$`)
+)
+
+// validSpacedNameOneSideDict は空白で 2 語に分かれた「<姓> <名>」のうち、姓か名の
+// どちらか一方が辞書にあり、もう一方が氏名の形（validSpacedNameShape と同じ文字数・文字種）
+// のものを許可する。見出し行・契約書の当事者欄のように、氏名ラベルより弱い手がかりの後の
+// 値に使う（形だけの validSpacedNameShape は強いラベル専用）。
+func validSpacedNameOneSideDict(v string) bool {
+	if validSpacedSurnameGiven(v) {
+		return true
+	}
+	v = strings.TrimSpace(v)
+	f := strings.Fields(v)
+	return len(f) == 2 && notOrgName(v) && notPlaceholderName(v) && !prefectureWordRe.MatchString(f[0]) &&
+		spacedNameSurnameRe.MatchString(f[0]) && dict.IsGivenName(f[1])
+}
+
+// validFullSplitOrSpacedOneSideDict は姓+名の完全分割（validPersonNameFullSplit）か、
+// validSpacedNameOneSideDict を許可する。姓・名の単独一致（「養子」が名辞書にある 等）は
+// 一般語と区別できないため受けない。
+func validFullSplitOrSpacedOneSideDict(v string) bool {
+	return validPersonNameFullSplit(v) || validSpacedNameOneSideDict(v)
+}
+
+// validPersonOrSpacedSurnameGiven は姓名辞書に一致する値（dict.IsPersonName）か、
+// 「<辞書の姓> <名>」（validSpacedSurnameGiven）を許可する。強いラベル直後の値用。
+func validPersonOrSpacedSurnameGiven(v string) bool {
+	return dict.IsPersonName(v) || validSpacedSurnameGiven(v)
+}
+
 func validFullSplitOrSpacedSurnameGiven(v string) bool {
 	return validPersonNameFullSplit(v) || validSpacedSurnameGiven(v)
 }
@@ -1449,6 +1547,9 @@ var personNameOrgSuffixes = []string{
 	// リース会社の自治体・取引先の実績一覧で実測した高再現率モードの偽陽性。官公庁・保険会社・
 	// 報道機関の名称で、個人を識別しない）。
 	"庁", "税関", "保険", "生命", "新聞", "通信社",
+	// 契約書の当事者欄「<寺院名> 事務局（以下「甲」という）」（Nemotron-PII-Japan の評価で実測）
+	// のように、団体の部局・合議体を表す語尾。名の末尾には来ない。
+	"事務局", "委員会", "協議会", "連合会", "事業団", "機構", "センター", "本部", "診療所",
 }
 
 // notOrgName は氏名候補 v が組織名の語尾で終わらないことを返す。敬称（様/さん）は
@@ -1625,6 +1726,8 @@ var spacedGivenStopwords = map[string]bool{
 	// 担当欄の「<姓>   主査」のように姓の後に職名だけが続く形（2026-10-30 10:00 の担当欄パターン追加時）。
 	"係長": true, "主査": true, "主事": true, "主任": true, "主幹": true, "部長": true, "室長": true,
 	"班長": true, "補佐": true, "係": true, "課": true, "班": true, "室": true,
+	// 様式・説明文の「姓 名」「氏 名」という欄名そのもの。
+	"名": true, "姓": true,
 }
 
 // validTitledSpacedName は職名つきの「<姓> <名>」を検証する。validSpacedSurnameGiven に加えて
@@ -2419,7 +2522,7 @@ func Builtin() []Rule {
 			// birthday / date_of_birth / date of birth / dob で、英語側はすべて
 			// "birth" か "dob" を部分文字列として含む（大小文字は containsAnyLiteral が
 			// 行側を小文字化して吸収する）。後置ラベルのパターンは「生まれ」を必須とする。
-			PrefilterLiterals: []string{"生年月日", "誕生日", "生まれ", "birth", "dob"},
+			PrefilterLiterals: []string{"生年月日", "誕生日", "生まれ", "日生", "birth", "dob"},
 			// 形式（西暦・和暦・区切りなし8桁）だけでなく、実在する暦日かを検証する。
 			// 2023-99-99 や 2023-02-29（閏年でない）などを棄却する。
 			Validate: validBirthdate,
@@ -2447,6 +2550,19 @@ func Builtin() []Rule {
 				{Re: regexp.MustCompile(
 					`(?:^|[^0-9])((?:(?:19|20)\d{2}|(?:明治|大正|昭和|平成|令和|[MTSHRmtshr])(?:元|\d{1,2}))[年/.-]\d{1,2}[月/.-]\d{1,2}日?)生まれ`,
 				), Base: Medium, ValidateLine: rejectBirthdateRangeOrExample},
+				// 地の文で区切りが助詞「は」の形（「生年月日は1980年1月29日、」）。 jp-pii-detector:ignore
+				// 案内文の「生年月日は平成17年4月2日から」「〜以前の方」のような対象期間の
+				// 端も同じ形になるため、後置ラベルのパターンと同じ範囲・記入例の棄却を掛ける。
+				{Re: regexp.MustCompile(
+					birthdateLabel + `\s*は\s*` +
+						`((?:(?:19|20)\d{2}|(?:明治|大正|昭和|平成|令和|[MTSHRmtshr])(?:元|\d{1,2}))[年/.-]\d{1,2}[月/.-]\d{1,2}日?)`,
+				), Base: Medium, ValidateLine: rejectBirthdateRangeOrExample},
+				// 後置ラベル「生」（「泉 悠晴氏（昭和44年2月26日生、55歳）」の略記）。 jp-pii-detector:ignore
+				// 「日生命」「日生産」のような語の一部を拾わないよう、「生」の直後は
+				// 読点・括弧・空白・行末に限り、日付は「日」で終わる形だけを受ける。
+				{Re: regexp.MustCompile(
+					`(?:^|[^0-9])((?:(?:19|20)\d{2}|(?:明治|大正|昭和|平成|令和|[MTSHRmtshr])(?:元|\d{1,2}))[年/.-]\d{1,2}[月/.-]\d{1,2}日)生(?:[、,)）\s]|$)`,
+				), Base: Medium, ValidateLine: rejectBirthdateRangeOrExample},
 			},
 		},
 		{
@@ -2460,8 +2576,16 @@ func Builtin() []Rule {
 			Patterns: []Pattern{
 				// 英字で始まるハイフン区切りコード（「出荷番号 A-20261105-0042」）の
 				// 一部は、隣の行に被保険者番号があっても拾わない。
-				{Re: dg(`\d{8}`), Base: Medium, RequireContext: true,
+				// 「患者ID: N9U23025380」のような英数字 ID の末尾 8 桁も拾わないよう、
+				// 左側は ASCII 英字の連結も除外する。
+				{Re: regexp.MustCompile(`(?:^|[^0-9A-Za-z])(\d{8})(?:[^0-9]|$)`), Base: Medium, RequireContext: true,
 					ValidateLine: rejectLetterLedCodePart},
+				// 被保険者証の記号・番号（「被保険者証記号・番号: AB12-345678」）。記号は jp-pii-detector:ignore
+				// 保険者ごとに英数字・桁数が異なるため、強ラベルへの直結を必須にし、
+				// 英数字の記号と数字を含む番号をハイフンで結んだ形だけを受ける。
+				{Re: regexp.MustCompile(
+					`被保険者証?の?記号[・･]?番号\s*(?:[:=]|は)?\s*([0-9A-Za-z]{1,8}-[0-9A-Za-z]*[0-9][0-9A-Za-z]*)(?:[^0-9A-Za-z-]|$)`,
+				), Base: Medium, RequireContext: true},
 				// 空白区切り8桁（4+4）。8桁連結時と同じ RequireContext・窓
 				// （ルール既定の 40 ルーン）を使う。validHealthInsurance は区切り
 				// 文字を含む生のマッチ文字列に対して AllSame を判定するため、
@@ -2595,8 +2719,12 @@ func Builtin() []Rule {
 				// （既定 min_confidence=medium で報告）、一致しない収録外の実在
 				// 人名は Low のまま拾う。resolveOverlaps が同一スパンで信頼度の
 				// 高い Medium を残す。
-				{Re: personNameStrongLabelRe, Base: Medium, Validate: dict.IsPersonName, ValidateLine: rejectBracketedFormHint},
-				{Re: personNameStrongLabelRe, Base: Low, Validate: notFormWordValue, ValidateLine: rejectBracketedFormHint},
+				// 辞書に完全には一致しない「<姓> <名>」も、空白で 2 語に分かれ姓か名の片側が辞書にあれば
+				// Medium にする（validSpacedNameOneSideDict。姓名辞書は収録外の姓名が多く、Nemotron-PII-Japan の
+				// 1 万件抽出では正解の姓の約 1 割、名の約 2 割が辞書になかった）。形だけの判定は
+				// 「名前: 開発 環境」「口座名義: 普通 預金」のような一般語を拾うため使わない。
+				{Re: personNameStrongLabelRe, Base: Medium, Validate: validPersonOrSpacedOneSideDict, ValidateLine: rejectBracketedFormHint},
+				{Re: personNameStrongLabelRe, Base: Low, Validate: notFormWordValue, ValidateLine: allValidateLine(rejectBracketedFormHint, rejectOrgValueTail)},
 				// 書類の「申請者 <姓> <名>」のように、氏名を付けない申請者・届出人
 				// ラベルの後にコロンまたは空白だけを挟んで氏名が続く形。ラベルが
 				// 一般語でもあるため、姓＋名に分割できる値（dict.SplitsAsFullName）
@@ -2609,7 +2737,7 @@ func Builtin() []Rule {
 				// 分割できる氏名のみ許可）のため、Base は Medium。
 				{Re: regexp.MustCompile(
 					personNameBoundary +
-						`(?:姓|名字|苗字|(?i:last_?name))` +
+						`(?:(?:[` + kanji + `]{1,6}?(?:者|人|主))?姓|名字|苗字|(?i:last_?name))` +
 						personNameSep +
 						`(` + personNameValueShort + `)`,
 				), Base: Medium, Validate: validSurnameField},
@@ -2620,7 +2748,7 @@ func Builtin() []Rule {
 				// 同じ validSurnameField で検証されるため Base も同じ Medium。
 				{Re: regexp.MustCompile(
 					personNameBoundary +
-						`(?:姓|名字|苗字|(?i:last_?name))` +
+						`(?:(?:[` + kanji + `]{1,6}?(?:者|人|主))?姓|名字|苗字|(?i:last_?name))` +
 						personNameSep +
 						personNameValueShortFallback,
 				), Base: Medium, Validate: validSurnameField},
@@ -2679,7 +2807,7 @@ func Builtin() []Rule {
 			ID:                "person-name-role-label",
 			Description:       "氏名（担当者・宛名ラベル付き）",
 			Prefilter:         PrefilterCJK,
-			PrefilterLiterals: []string{"会長", "委員", "議長", "担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "知 事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届", "監督", "先生", "講 師", "ゲスト", "登壇", "聞き手", "進行役", "さん×", "さん ×", "選手", "議員", "理事", "監事", "幹事", "様", "館長", "顧問", "［", "[", "】", "年 ", "会社：", "会社:", "事務所：", "事務所:", "教諭", "助教", "候補", "学長", "市長", "町長", "村長", "施設長", "所長", "院長", "園長", "校長", "社長", "センター長", "教育長", "補佐", "大臣", "総長", "研究員", "助教"},
+			PrefilterLiterals: []string{"会長", "委員", "議長", "担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "知 事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届", "監督", "先生", "講 師", "ゲスト", "登壇", "聞き手", "進行役", "さん×", "さん ×", "選手", "議員", "理事", "監事", "幹事", "様", "館長", "顧問", "［", "[", "】", "年 ", "会社：", "会社:", "事務所：", "事務所:", "教諭", "助教", "候補", "学長", "市長", "町長", "村長", "施設長", "所長", "院長", "園長", "校長", "社長", "センター長", "教育長", "補佐", "大臣", "総長", "研究員", "助教", "甲", "乙", "丙", "丁", "である", "との間", "託者", "任者", "借主", "貸主", "買主", "売主", "賃借人", "賃貸人", "雇用主", "従業員", "労働者", "者の", "者は", "人の", "人は", "歳の", "者:", "者：", "人:", "人：", "者 :", "人 :", " 様", " 氏"},
 			Validate:          notPlaceholderName,
 			Patterns: []Pattern{
 				// 担当者・宛名・連絡先ラベル。敬称のような強い人物シグナルが無いため、
@@ -2760,6 +2888,19 @@ func Builtin() []Rule {
 				// 当事者ラベル（審査申立人・原告 等）+ 空白 + 氏名と「（総代）氏名」。
 				// 「原告 主張」「被告 会社」等の一般語は姓名辞書ゲートで落ちる。
 				{Re: personNamePartyLabelRe, Base: Medium, Validate: validPersonNameFullSplit},
+				// 契約書の当事者欄「乙: <姓> <名>」、前文の「従業員である<姓> <名>」「<姓> <名>（以下「甲」
+				// という）」「<姓> <名>と<相手方>との間で」。
+				{Re: personNameContractPartyLabelRe, Base: Medium, Validate: validFullSplitOrSpacedOneSideDict},
+				{Re: personNameContractRoleRe, Base: Medium, Validate: validFullSplitOrSpacedOneSideDict},
+				// 「（以下「乙」という）」で当事者と定義される値は、その定義自体が手がかりのため、辞書に
+				// 無い「<姓> <名>」も形で採る（ValidSectionNameShape）。
+				{Re: personNameContractDefinedRe, Base: Medium, Validate: func(v string) bool {
+					return validFullSplitOrSpacedOneSideDict(v) || ValidSectionNameShape(v)
+				}},
+				{Re: personNameContractBetweenRe, Base: Medium, Validate: validFullSplitOrSpacedOneSideDict},
+				{Re: personNameContractRoleDefinedRe, Base: Medium, Validate: ValidSectionNameShape},
+				{Re: personNameProseRoleHonorificRe, Base: Medium, Validate: validSpacedNameOneSideDict},
+				{Re: personNameSpacedHonorificRe, Base: Medium, Validate: validSpacedNameOneSideDict, ValidateLine: rejectHonorificWordTail},
 				// 個人事業主の「<屋号>こと<姓><名>」と、「<姓><名>（個人）」の括弧書き。
 				{Re: personNameYagoKotoRe, Base: Medium, Validate: validPersonNameFullSplit},
 				{Re: personNameKojinSuffixRe, Base: Medium, Validate: validPersonNameFullSplit},
@@ -2778,7 +2919,7 @@ func Builtin() []Rule {
 				{Re: personNameLecturerLabelRe, Base: Medium, Validate: validPersonNameFullSplit},
 				{Re: personNameLecturerTitleRe, Base: Medium, Validate: validPersonNameFullSplit},
 				{Re: personNameLecturerLabel2Re, Base: Medium, Validate: validPersonNameFullSplit},
-				{Re: personNameShiAffiliationRe, Base: Medium, Validate: validFullSplitOrSpacedSurnameGiven},
+				{Re: personNameShiAffiliationRe, Base: Medium, Validate: validFullSplitOrSpacedSurnameGiven, ValidateLine: rejectShiInsideGivenName},
 				{Re: personNameKosekiTodokeRe, Base: Medium, Validate: validSpacedSurnameGiven},
 				{Re: personNameKosekiTodoke2Re, Base: Medium, Validate: validSpacedSurnameGiven},
 				{Re: personNameTitleHonorificWideRe, Base: Medium, Validate: validSpacedSurnameGiven},
@@ -2808,10 +2949,10 @@ func Builtin() []Rule {
 				{Re: personNameTalkPairRe, Base: Medium, Validate: validPersonNameFullSplit},
 				{Re: personNameTalkPair2Re, Base: Medium, Validate: validPersonNameFullSplit},
 				// IR 資料の「取締役 <姓><名>氏、<姓><名>氏および<姓><名>氏」（2026-10-31 02:00 に実測した見逃し）。
-				{Re: personNameOfficerShiRe, Base: Medium, Validate: validPersonNameFullSplit},
-				{Re: personNameOfficerShi2Re, Base: Medium, Validate: validPersonNameFullSplit},
-				{Re: personNameOfficerShi3Re, Base: Medium, Validate: validPersonNameFullSplit},
-				{Re: personNameOfficerShi4Re, Base: Medium, Validate: validPersonNameFullSplit},
+				{Re: personNameOfficerShiRe, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: rejectShiInsideGivenName},
+				{Re: personNameOfficerShi2Re, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: rejectShiInsideGivenName},
+				{Re: personNameOfficerShi3Re, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: rejectShiInsideGivenName},
+				{Re: personNameOfficerShi4Re, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: rejectShiInsideGivenName},
 			},
 		},
 		{
@@ -3622,6 +3763,50 @@ func containsASCIIAlnum(s string) bool {
 	return false
 }
 
+// rejectOrgValueTail は、値から次の区切り（空白・読点・句点）までの語が組織名（法人格・
+// 組織語尾）なら棄却する。値の正規表現は長さで切れるため（「ヤマタ流通サービス株式会」）、
+// 値そのものではなく行の続きまで見る。名義欄（「振込先名義: 大和屋建設株式会社」）の法人名を
+// 氏名の low 候補にしないため（Nemotron-PII-Japan の 1 万件抽出で 259 件）。
+// honorificWordHeads は、直後に空白なしで「様」「氏」が続くと一般語になる字（仕様・模様・
+// 同様・皆様・源氏・彼氏・同氏 等）。名の末尾によく使う字（健一様・修平氏・直貴様・美華氏の
+// 「一」「平」「貴」「華」）は、氏名を落とすため入れない。
+var honorificWordHeads = map[string]string{
+	"様": "仕模同多異王神皆各両殿奥今",
+	"氏": "源彼同両各諸某摂姓",
+}
+
+// rejectHonorificWordTail は、値の直後に空白なしで敬称が続き、値の最後の字と敬称が
+// 一般語（honorificWordHeads）になる場合に false を返す。
+func rejectHonorificWordTail(line string, start, end int) bool {
+	last, _ := utf8.DecodeLastRuneInString(line[start:end])
+	for h, heads := range honorificWordHeads {
+		if strings.HasPrefix(line[end:], h) && strings.ContainsRune(heads, last) {
+			return false
+		}
+	}
+	return true
+}
+
+func rejectOrgValueTail(line string, start, end int) bool {
+	tail := line[start:]
+	if i := strings.IndexAny(tail, " \t\n、,。"); i >= 0 {
+		tail = tail[:i]
+	}
+	return notOrgName(tail)
+}
+
+// rejectShiInsideGivenName は、値の直後の「氏」が敬称ではなく名の一部である場合
+// （「足利尊氏」の「尊氏」）を棄却する。「<姓><名>氏」の形を敬称付きの氏名として
+// 拾うパターンは、名の部分に「氏」を足した語が名辞書にあれば、氏族名・歴史上の人物の
+// 表記（姓 + 「〜氏」で終わる名）とみなして報告しない。
+func rejectShiInsideGivenName(line string, start, end int) bool {
+	if !strings.HasPrefix(strings.TrimLeft(line[end:], " "), "氏") {
+		return true
+	}
+	_, given, ok := dict.SplitFullName(line[start:end])
+	return !ok || !dict.IsGivenName(given+"氏")
+}
+
 // rejectBirthdateRangeOrExample は後置ラベル「生まれ」の値のうち、入園・入学・受験資格の
 // 「<日付>～<日付>生まれ」「<日付>生まれ～<日付>生まれ」のような対象期間の端と、記入例の
 // 「例：<日付>生まれの場合」を棄却する（2026-10-30 22:00 に幼稚園・学習塾・自動車教習所の
@@ -3637,7 +3822,8 @@ func rejectBirthdateRangeOrExample(line string, start, end int) bool {
 		}
 	}
 	after := strings.TrimLeft(strings.TrimPrefix(line[end:], "生まれ"), " \t　")
-	for _, s := range []string{"~", "〜", "～", "から"} {
+	// 「<日付>以前の方」「<日付>生まれ以降」のような期間の端も同様に棄却する。
+	for _, s := range []string{"~", "〜", "～", "から", "以前", "以降", "以後", "まで", "より"} {
 		if strings.HasPrefix(after, s) {
 			return false
 		}

@@ -26,9 +26,9 @@ $ go vet ./...                   # 静的解析
 ```
 
 通常の単体・結合テストは `internal/testfixtures` の公開合成値だけで完結します。
-実在しうる値を含む非公開評価コーパスは `$JP_PII_FIXTURES` で明示的に渡し、
-precision / recall / F1 の計測にだけ使います。取得・一時実行・明示キャッシュの手順は
-[docs/development.md](docs/development.md) を参照してください。
+precision / recall / F1 の計測には、公開データセット Nemotron-PII-Japan から生成した評価コーパスを
+`$JP_PII_FIXTURES` で明示的に渡します。`go run ./cmd/pii-fixture eval` が取得から評価までを行います
+（詳細は [docs/development.md](docs/development.md)）。
 
 ## 検出ルールの追加・変更
 
@@ -36,7 +36,7 @@ precision / recall / F1 の計測にだけ使います。取得・一時実行�
 
 精度の回帰を防ぐため、CI には **`docs/accuracy.json` とのゼロ許容の差分ゲート** があります。
 ルール・辞書・正規化を変更すると精度の実測値が動くため、その場合は
-`JP_PII_FIXTURES=<path> go test ./internal/eval -run 'TestGenerateDoc|TestReadmeBadges' -update`
+`go run ./cmd/pii-fixture eval -update`
 で `docs/accuracy.md` / `docs/accuracy.json` / README バッジを再生成し、まとめてコミットして
 ください（CI が同じコマンドを実行して差分がないか検証します）。
 

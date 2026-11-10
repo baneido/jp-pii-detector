@@ -8,13 +8,12 @@ import (
 	"testing"
 )
 
-// TestPrivateCorpusImportBoundary は非公開平文のloaderが通常の単体テストへ
-// 再び広がらないことを、import境界として固定する。
+// TestPrivateCorpusImportBoundary は評価コーパスの loader が通常の単体テストへ
+// 広がらないことを、import 境界として固定する。
 func TestPrivateCorpusImportBoundary(t *testing.T) {
 	allowed := []string{
 		"cmd/pii-fixture/",
 		"internal/eval/",
-		"internal/piifixtures/", // 旧API互換層
 		"internal/privatecorpus/",
 	}
 	err := filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error {
@@ -22,7 +21,9 @@ func TestPrivateCorpusImportBoundary(t *testing.T) {
 			return err
 		}
 		if d.IsDir() {
-			if d.Name() == ".git" {
+			// .claude/ はエージェントのローカル worktree（リポジトリの複製）を置く場所で、
+			// 走査するとリポジトリ外の古いコピーまで検査してしまう。
+			if d.Name() == ".git" || d.Name() == ".claude" {
 				return filepath.SkipDir
 			}
 			return nil

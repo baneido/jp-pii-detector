@@ -16,7 +16,7 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# workflow 全体では読み取りのみ。OIDC は必要な job だけに付与する。
+# workflow 全体では読み取りのみ。
 permissions:
   contents: read
 
@@ -80,7 +80,7 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # 公開テストレーンは認証・非公開コーパスに依存せず、fork PR でも同じ範囲を実行する。
+      # 公開テストレーンは認証・評価コーパスに依存せず、fork PR でも同じ範囲を実行する。
       - run: go vet ./...
       # --model-dir 用の ORT 推論コード（internal/model の `cgo && ort` タグ付きファイル）は
       # 既定のビルドと配布バイナリ（CGO_ENABLED=0）に含まれず、上の vet でも型検査されない。
@@ -118,7 +118,7 @@ jobs:
 
   public-eval:
     name: public-eval
-    # PR 時の精度ゲート。非公開コーパスを使う private-eval は PR では走らないため、
+    # PR 時の精度ゲート。評価コーパスを使う corpus-eval は PR では走らないため、
     # ソースに PII を持たない決定的な合成コーパス（internal/fixturegen と
     # internal/corpusv2.PublicSynthetic）をルール × プロファイルで評価し、
     # コミット済みゴールデン（internal/publiceval/testdata/golden.json）に対する
@@ -140,14 +140,15 @@ jobs:
           # ルール × プロファイルの表と回帰一覧をジョブサマリへ出す（本文は含まない）。
           PUBLIC_EVAL_SUMMARY: ${{ github.step_summary }}
 
-  private-eval:
-    name: private-eval
-    # 非公開平文をPRコードへ自動配布しない。mainへのpush、または保守者の明示実行だけで評価する。
+  corpus-eval:
+    name: corpus-eval
+    # 公開データセット Nemotron-PII-Japan（CC BY 4.0）の抽出 1 万件で、3 プロファイルの実測値が
+    # docs/accuracy.json・README の精度表記と完全一致するかを検証する。数分かかるため
+    # main への push と保守者の明示実行だけで走らせ、PR 時は public-eval が回帰を見る。
     if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
     steps:
       - name: Validate explicitly selected commit
         if: ${{ github.event_name == 'workflow_dispatch' }}
@@ -165,49 +166,25 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
-      - name: Authenticate to Google Cloud (OIDC / Workload Identity)
-        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
-        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
-        with:
-          workload_identity_provider: ${{ vars.JP_PII_FIXTURES_PROVIDER }}
-          service_account: ${{ vars.JP_PII_FIXTURES_SA }}
-      - name: Set up gcloud
-        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
-        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
-      - name: Download PII fixtures from GCS
-        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
-        env:
-          FIXTURES_BUCKET: ${{ vars.JP_PII_FIXTURES_BUCKET }}
-          FIXTURES_GENERATION: ${{ vars.JP_PII_FIXTURES_GENERATION }}
+      - name: Fetch evaluation corpus (Nemotron-PII-Japan)
+        # 公開データセットを fixtures.lock.json の revision と SHA-256 で固定して取得し、
+        # 評価ケースの JSON に変換する（cmd/pii-fixture、認証不要）。
         run: |
           set -eu
-          dest="$RUNNER_TEMP/pii-fixtures.json"
-          object=$(jq -r '.object' fixtures.lock.json)
-          lock_generation=$(jq -r '.generation' fixtures.lock.json)
-          source="gs://$FIXTURES_BUCKET/$object"
-          if [ -z "${FIXTURES_GENERATION:-}" ]; then
-            FIXTURES_GENERATION="$lock_generation"
-          fi
-          if [ -n "${FIXTURES_GENERATION:-}" ]; then
-            source="${source}#${FIXTURES_GENERATION}"
-          fi
-          gcloud storage cp "$source" "$dest"
-          chmod 600 "$dest"
+          dest="$RUNNER_TEMP/eval-corpus.json"
+          go run ./cmd/pii-fixture fetch -out "$dest"
           echo "JP_PII_FIXTURES=$dest" >> "$GITHUB_ENV"
-      - name: Remove Google Cloud credentials file
-        if: ${{ always() && vars.JP_PII_FIXTURES_PROVIDER != '' }}
-        run: rm -f "${GOOGLE_GHA_CREDS_PATH:-}"
 
-      - name: Require and validate private corpus
+      - name: Require and validate evaluation corpus
         run: |
           test -f "$JP_PII_FIXTURES" || {
-            echo "::error::非公開評価コーパスを取得できませんでした。"
+            echo "::error::評価コーパスを取得できませんでした。"
             exit 1
           }
-          go test ./internal/privatecorpus ./internal/eval
+          go test -timeout 60m ./internal/privatecorpus ./internal/eval
       - run: |
-          go test ./internal/eval -run 'TestGenerateDoc|TestReadmeBadges' -update
+          go test ./internal/eval -timeout 60m -run 'TestGenerateDoc|TestReadmeBadges' -update
           git diff --exit-code docs/accuracy.md docs/accuracy.json README.md README.en.md
-      - name: Remove private corpus
+      - name: Remove evaluation corpus
         if: ${{ always() }}
         run: rm -f "${JP_PII_FIXTURES:-}"

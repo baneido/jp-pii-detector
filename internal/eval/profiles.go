@@ -47,11 +47,14 @@ func EvaluatePublishedProfiles() ([]ProfileEvaluation, error) {
 	return EvaluatePublishedProfileCases(corpus.Dataset)
 }
 
-// EvaluatePublishedProfileCases は指定ケースを3プロファイルで評価する。
+// EvaluatePublishedProfileCases は評価コーパスのケースを3プロファイルで評価する。
+// 正解が系統単位のため、検出のルール ID は RuleFamily で畳む（Options.FoldRuleFamilies）。
 func EvaluatePublishedProfileCases(cases []Case) ([]ProfileEvaluation, error) {
 	out := make([]ProfileEvaluation, 0, len(PublishedProfiles))
 	for _, spec := range PublishedProfiles {
-		stratified, err := EvaluateCasesStratifiedWithOptions(cases, spec.Options)
+		opts := spec.Options
+		opts.FoldRuleFamilies = true
+		stratified, err := EvaluateCasesStratifiedWithOptions(cases, opts)
 		if err != nil {
 			return nil, err
 		}

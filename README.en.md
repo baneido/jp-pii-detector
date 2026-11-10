@@ -2,7 +2,7 @@
 
 English | [日本語](README.md)
 
-![PII detection F1](https://img.shields.io/badge/PII%20detection%20F1%20(eval%20dataset)-0.98-brightgreen)
+![PII detection F1](https://img.shields.io/badge/PII%20detection%20F1%20(eval%20dataset)-1.00-brightgreen)
 
 A Japan-specific **static PII detector**. It finds Japanese personal data — My Number,
 Japanese phone numbers, addresses, names, and more — that has leaked into a repository,
@@ -47,7 +47,7 @@ Run with `--explain` to see why a value matched.
 
 - **19+ built-in rules** with checksum validation (My Number check digit, Luhn and brand detection for cards, known sandbox PAN exclusion)
 - **Japanese normalization**: folds full-width alphanumerics, hyphen variants, and digit-adjacent long-vowel marks to half-width; handles Japanese-era (和暦) dates
-- **F1 0.98** under the default medium profile on a labeled evaluation dataset, gated in CI so accuracy can't silently drift
+- **F1 1.00** under the default medium profile on the public Nemotron-PII-Japan dataset, gated in CI so accuracy can't silently drift
 - **Masked output by default** (`--unmask` for local use only)
 - **Baseline support** to freeze existing findings and fail only on newly added PII
 - **SARIF / JSON / GitHub annotations** output for CI integration
@@ -55,9 +55,13 @@ Run with `--explain` to see why a value matched.
 
 ## Supported PII
 
-Examples below are all fictitious dummy values. Measured F1 is the per-rule F1 score on the
-labeled evaluation dataset, under the default profile (`min_confidence=medium`, high-recall
-rules disabled).
+Examples below are all fictitious dummy values. Measured F1 is the per-rule F1 score on about
+10,000 synthetic documents sampled from the public
+[Nemotron-PII-Japan](https://huggingface.co/datasets/nvidia/Nemotron-PII-Japan) dataset
+(NVIDIA, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)), under the default profile
+(`min_confidence=medium`, high-recall rules disabled). Types the dataset does not label are shown
+as "not measured"; CI covers their regressions with public synthetic cases. The person-name row
+counts detections from every person-name rule, including the contact/addressee label rule.
 
 | Type | Measured F1 | How it is detected |
 |---|:---:|---|
@@ -66,21 +70,21 @@ rules disabled).
 | Email address | **1.00** | Pattern + IANA TLD existence check + reserved-domain exclusion; Japanese EAI and limited confusables in high-recall mode |
 | Phone number | **1.00** | Mobile / IP / landline / +81 + digit-count validation |
 | Postal code | **1.00** | Exact 7-digit match against real Japan-Post codes |
-| Address | **0.98** | Prefecture-to-street-number pattern |
-| Driver's license number | **1.00** | 12 digits + nearby context keyword required |
-| Passport number | **0.96** | 2 letters + 7 digits + nearby context keyword required |
-| Basic pension number | **1.00** | 4-digit + 6-digit + nearby context keyword required |
-| Residence card number | **1.00** | 2 letters + 8 digits + 2 letters + context required |
-| Bank account number | **0.97** | 7 digits + context keyword required |
-| Japan Post Bank symbol/number | **0.64** | Official symbol check digit + correlated number + Japan Post Bank context required |
+| Address | **0.99** | Prefecture-to-street-number pattern |
+| Driver's license number | not measured | 12 digits + nearby context keyword required |
+| Passport number | not measured | 2 letters + 7 digits + nearby context keyword required |
+| Basic pension number | not measured | 4-digit + 6-digit + nearby context keyword required |
+| Residence card number | not measured | 2 letters + 8 digits + 2 letters + context required |
+| Bank account number | **0.99** | 7 digits + context keyword required |
+| Japan Post Bank symbol/number | not measured | Official symbol check digit + correlated number + Japan Post Bank context required |
 | Health insurance number | **1.00** | 8 digits + context keyword required |
-| Employment insurance number | **1.00** | 4-6-1 digit structure + context keyword required |
-| Long-term care insurance number | **1.00** | 10 digits + context keyword required |
-| Resident record code | **1.00** | 11 digits + context keyword required |
-| Qualified invoice issuer number | **1.00** | `T` + 13 digits + corporate-number checksum |
+| Employment insurance number | not measured | 4-6-1 digit structure + context keyword required |
+| Long-term care insurance number | not measured | 10 digits + context keyword required |
+| Resident record code | not measured | 11 digits + context keyword required |
+| Qualified invoice issuer number | not measured | `T` + 13 digits + corporate-number checksum |
 | Date of birth | **1.00** | Labeled; supports Western and Japanese-era dates |
-| Person name | **1.00** | Label (e.g. `氏名:`) + surname/given-name dictionary match |
-| Person name (contact/addressee label) | **1.00** | Contact/addressee/representative label (`担当:` / `宛名:` / `連絡先:` / `代表者:`) + surname/given-name dictionary match (`person-name-role-label`) |
+| Person name | **1.00** | Label (e.g. `氏名:`), the line after a person-section heading in forms (e.g. `患者情報`), or a contract party field (e.g. `乙:`) + surname/given-name dictionary match; a space-separated "surname given-name" with one side in the dictionary also counts |
+| Person name (contact/addressee label) | not measured | Contact/addressee/representative label (`担当:` / `宛名:` / `連絡先:` / `代表者:`) + surname/given-name dictionary match (`person-name-role-label`) |
 
 Run `jp-pii-detect rules` to list all rules. See [docs/detection-methods.md](docs/detection-methods.md)
 (Japanese) for details on accuracy and methodology.
