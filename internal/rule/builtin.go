@@ -769,6 +769,16 @@ var (
 			// ように「さん」で終わる形も拾う。
 			`([` + kanji + `]{1,4}[ ]{1,4}[` + kanji + `]{1,4}?)[ ]*(?:氏|様|先生|さん)?[ ]*$`,
 	)
+	// personNameTitleListRe は「課長補佐 <姓> <名>、」「（薬学研究院 教授 <姓> <名>）」「防災大臣 <姓> <名>」の
+	// ように、職名の直後に空白区切りの姓名が来て、読点・閉じ括弧・敬称・行末のいずれかで終わる表記を
+	// 拾う（person-name-role-label）。2026-11-10 に公開文書 1,927 件の人手確認で、職名つきの氏名のうち
+	// 行末以外で終わる形（担当者の読点区切り列挙・括弧書きの所属職名・大臣/総長）を全ルールモードが
+	// 取りこぼす見逃しを実測した（personNameTitleLineEndRe は行末で終わる形だけが対象）。
+	// 姓は姓辞書、名は名辞書に一致することを要求する（validTitledSpacedName）。
+	personNameTitleListRe = regexp.MustCompile(
+		`(?:課長補佐|課長|係長|部長|室長|局長|次長|専門官|管理官|調整官|企画官|調査官|政務官|副大臣|大臣|総長|学長|副学長|理事長|副理事長|会長|社長|教授|准教授|助教|講師|研究員)[ ]*[：:]?[ ]*` +
+			`([` + kanji + `]{1,4}[ ]{1,4}[` + kanji + `]{1,4}?)[ ]*(?:氏|様|先生|さん|[、,，)）]|$)`,
+	)
 	// personNameTalkPairRe / personNameTalkPair2Re は書店・映画館の催し案内の
 	// 「【<日付>開催】<姓><名>さん×<姓><名>さん トークイベント」のように、2 人の登壇者を「×」で
 	// つないだ氏名を拾う（person-name-role-label）。書店のイベント一覧で、高再現率モードでしか
@@ -1615,6 +1625,16 @@ var spacedGivenStopwords = map[string]bool{
 	// 担当欄の「<姓>   主査」のように姓の後に職名だけが続く形（2026-10-30 10:00 の担当欄パターン追加時）。
 	"係長": true, "主査": true, "主事": true, "主任": true, "主幹": true, "部長": true, "室長": true,
 	"班長": true, "補佐": true, "係": true, "課": true, "班": true, "室": true,
+}
+
+// validTitledSpacedName は職名つきの「<姓> <名>」を検証する。validSpacedSurnameGiven に加えて
+// 名が名辞書に一致することを要求し、「教授 山田 研究室、」のような職名・組織語の誤検出を避ける。
+func validTitledSpacedName(v string) bool {
+	if !validSpacedSurnameGiven(v) {
+		return false
+	}
+	f := strings.Fields(strings.TrimSpace(v))
+	return dict.IsGivenNameExtended(f[1])
 }
 
 // validSpacedSurnameGiven は空白で 2 語に分かれた「<姓> <名>」を検証する。先頭語が
@@ -2659,7 +2679,7 @@ func Builtin() []Rule {
 			ID:                "person-name-role-label",
 			Description:       "氏名（担当者・宛名ラベル付き）",
 			Prefilter:         PrefilterCJK,
-			PrefilterLiterals: []string{"会長", "委員", "議長", "担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "知 事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届", "監督", "先生", "講 師", "ゲスト", "登壇", "聞き手", "進行役", "さん×", "さん ×", "選手", "議員", "理事", "監事", "幹事", "様", "館長", "顧問", "［", "[", "】", "年 ", "会社：", "会社:", "事務所：", "事務所:", "教諭", "助教", "候補", "学長", "市長", "町長", "村長", "施設長", "所長", "院長", "園長", "校長", "社長", "センター長", "教育長"},
+			PrefilterLiterals: []string{"会長", "委員", "議長", "担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "知 事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届", "監督", "先生", "講 師", "ゲスト", "登壇", "聞き手", "進行役", "さん×", "さん ×", "選手", "議員", "理事", "監事", "幹事", "様", "館長", "顧問", "［", "[", "】", "年 ", "会社：", "会社:", "事務所：", "事務所:", "教諭", "助教", "候補", "学長", "市長", "町長", "村長", "施設長", "所長", "院長", "園長", "校長", "社長", "センター長", "教育長", "補佐", "大臣", "総長", "研究員", "助教"},
 			Validate:          notPlaceholderName,
 			Patterns: []Pattern{
 				// 担当者・宛名・連絡先ラベル。敬称のような強い人物シグナルが無いため、
@@ -2714,6 +2734,7 @@ func Builtin() []Rule {
 				{Re: personNameSpacedSamaLineRe, Base: Medium, Validate: validSpacedSurnameGiven},
 				{Re: personNameParenRoleLineRe, Base: Medium, Validate: validFullSplitOrSpacedSurnameGiven},
 				{Re: personNameTitleLineEndRe, Base: Medium, Validate: validSpacedSurnameGiven},
+				{Re: personNameTitleListRe, Base: Medium, Validate: validTitledSpacedName},
 				// 字間を空けた役員名簿の氏名、所属括弧が続く委員名簿の氏名、読み括弧付きの担当欄の
 				// 姓（2026-11-01 08:00 に実測した見逃し）。
 				{Re: personNameLetterSpacedTitleRe, Base: Medium, Validate: validLetterSpacedName},
