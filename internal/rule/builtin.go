@@ -1039,6 +1039,12 @@ var (
 	// コロン・山括弧・空白のいずれかで、直後の役職のあとに読点か行末が来ること
 	// （rejectCommitteeListTail）と、姓名辞書の完全分割（姓+名）を要求する。姓だけの
 	// 「<姓>委員、」や「人権擁護委員、」「民生委員、」のような制度名は完全分割を通らない。
+	personNameSpeakerLabelBracketRe = regexp.MustCompile(
+		`【([` + kanji + `]{2,3}?)(?:副委員長|委員長|副部会長|部会長|副会長|会長|副座長|座長|副議長|議長|構成員|委員)】`,
+	)
+	personNameSpeakerLabelColonRe = regexp.MustCompile(
+		`(?:^|[ 　])([` + kanji + `]{2,3}?)(?:構成員|委員|座長|部会長)[：:]`,
+	)
 	personNameCommitteeListRe = regexp.MustCompile(
 		`(?:^|[、,，：:＞>]|[ ])[ ]*([` + kanji + `]{3,8}?)(?:副委員長|委員長|副会長|会長|副議長|議長|委員)`,
 	)
@@ -2818,9 +2824,16 @@ func Builtin() []Rule {
 			ID:                "person-name-high-recall",
 			Description:       "氏名（敬称アンカー付き・高再現率）",
 			Prefilter:         PrefilterCJK,
-			PrefilterLiterals: []string{"様", "さん", "氏", "殿"},
+			PrefilterLiterals: []string{"様", "さん", "氏", "殿", "委員", "構成員", "会長", "座長", "議長"},
 			Validate:          notPlaceholderName,
 			Patterns: []Pattern{
+				// 会議録の発言者ラベル「【<姓>会長】」「<姓>構成員：」のように、姓だけに会議内の役職が続く形
+				// （2026-11-10 の実測: 官公庁の会議録で Sumi が拾い OSS が全モードで取りこぼす最大の見逃し群）。
+				// 姓だけでは日常語と衝突しうるため、発言者ラベルの形（山括弧で閉じる／直後がコロン）に限り、
+				// 値は姓辞書一致（dict.IsSurname）を必須にする。「委員会」「専門委員」「事務局長」は
+				// 山括弧・コロンの条件と姓辞書で落ちる。
+				{Re: personNameSpeakerLabelBracketRe, Base: Medium, Validate: dict.IsSurname},
+				{Re: personNameSpeakerLabelColonRe, Base: Medium, Validate: dict.IsSurname},
 				// 敬称アンカー（氏名の漢字表記 + 様/さん/氏/殿）。組織語尾
 				// （notOrgName）は常に棄却し、辞書一致（dict.IsPersonName）を
 				// 優先しつつ、辞書に無い値は職業・役割・部署の語尾 denylist
