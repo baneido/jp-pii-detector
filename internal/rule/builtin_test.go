@@ -379,6 +379,7 @@ func TestValidHealthInsurance(t *testing.T) {
 		{"6桁の検証番号不一致", "123456", false},
 		{"6桁の全桁同一は棄却", "111111", false},
 		{"6桁の先頭ゼロ埋めも許容", "000190", true},
+		{"6文字の記号・番号には検証番号を適用しない", "AB-123", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -386,6 +387,27 @@ func TestValidHealthInsurance(t *testing.T) {
 				t.Errorf("validHealthInsurance(%q) = %v, want %v", tt.in, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestValidHealthInsuranceSymbolNumber(t *testing.T) {
+	tests := []struct {
+		in   string
+		want bool
+	}{
+		{"AB-1234", true},
+		{"AB-0000", false},
+		{"12 9999", false},
+		{"7Q-48213-00", true}, // 枝番の「00」は判定に使わない
+		{"4521 番号: 37", true},
+		{"ABC12、番号 3481", true},
+		{"AB-1", true},
+		{"AB", false},
+	}
+	for _, tt := range tests {
+		if got := validHealthInsuranceSymbolNumber(tt.in); got != tt.want {
+			t.Errorf("validHealthInsuranceSymbolNumber(%q) = %v, want %v", tt.in, got, tt.want)
+		}
 	}
 }
 
