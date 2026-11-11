@@ -35,3 +35,21 @@ func TestCommonWordShape(t *testing.T) {
 		}
 	}
 }
+
+func TestPlaceStemsAndWithoutCommon(t *testing.T) {
+	stems := PlaceStems(map[string]bool{"横浜市神奈川区": true, "八王子市": true, "石狩郡当別町": true, "北区": true})
+	for _, w := range []string{"横浜", "神奈川", "八王子", "石狩", "当別", "東京", "北海"} {
+		if !stems[w] {
+			t.Errorf("PlaceStems に %q が無い", w)
+		}
+	}
+	if stems["北"] {
+		t.Error("1 文字の語幹は含めない")
+	}
+	stems["別紙"] = true
+	// 千葉は「千葉県」として都道府県名に当たるので、語幹の一覧に無くても除く。
+	got := withoutCommon([]string{"上増田", "八王子", "千葉", "別紙", "伊佐山"}, stems)
+	if want := []string{"上増田", "伊佐山"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("withoutCommon = %q, want %q", got, want)
+	}
+}

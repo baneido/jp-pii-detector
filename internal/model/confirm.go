@@ -401,6 +401,103 @@ func confidence(ruleID, value string, prob float64) string {
 	return c.String()
 }
 
+// candidateConfidence は confidence に、行に単独で置かれた 1 語の扱いを加える。
+// 行（箇条書きの記号を除く）が空白も句読点も含まない 1 語（6 文字以下か、スパンが行の全体）で、氏名のスパンがその中にあり、
+// その語を姓名辞書で姓と名に分けられないとき（「内野」「野口」のような姓だけの語、
+// 町名、名だけの語）は low にする。町字辞書・姓名辞書のような語の一覧で、姓や名と同形の
+// 語やその一部が大量に報告されるのを防ぐ。姓や名の一方だけでは個人を特定しないので、
+// 一覧の行を氏名として報告するのは、姓と名に分けられる場合に限る。
+func candidateConfidence(ruleID, value string, prob float64, runes []rune, lineStart, ps, pe int) string {
+	c := confidence(ruleID, value, prob)
+	if ruleID == "jp-birthdate" && !birthKeywordNear(runes, lineStart) {
+		return rule.Low.String()
+	}
+	if ruleID != "person-name" {
+		return c
+	}
+	word, ok := loneWord(runes, lineStart, ps, pe)
+	if !ok {
+		return c
+	}
+	if _, _, ok := dict.SplitFullName(normalize.Line(word)); ok {
+		return c
+	}
+	return rule.Low.String()
+}
+
+// birthKeywordNear は、行・その前の行・テキストの 1 行目（CSV のヘッダ）のいずれかに
+// 生年月日のラベル語（jp-birthdate ルールの PrefilterLiterals）があるかを返す。
+// ラベルのない日付は、モデルが生年月日としても入社日や注文日と区別できないため、
+// 呼び出し側はこのとき low にする。runes は Recognize に渡したテキスト（2 段階方式では
+// 候補行だけを連結したもの）なので、「1 行目」はファイルの 1 行目とは限らない。CSV の
+// ヘッダは最初のデータ行の前の行として候補に含まれるが、diff 走査ではハンクの先頭行になる
+// ため、ヘッダが離れたハンクではヘッダのラベルを見られない。
+func birthKeywordNear(runes []rune, lineStart int) bool {
+	lineAt := func(start int) string {
+		end := start
+		for end < len(runes) && runes[end] != '\n' {
+			end++
+		}
+		return strings.ToLower(string(runes[start:end]))
+	}
+	lines := []string{lineAt(lineStart), lineAt(0)}
+	if lineStart > 0 {
+		p := lineStart - 1
+		for p > 0 && runes[p-1] != '\n' {
+			p--
+		}
+		lines = append(lines, lineAt(p))
+	}
+	for _, r := range builtinByID["jp-birthdate"] {
+		for _, kw := range r.PrefilterLiterals {
+			for _, l := range lines {
+				if strings.Contains(l, kw) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// loneWord は、runes[ps:pe] を含む行が、先頭の空白と箇条書きの記号（- * ・ や「1.」）、
+// 末尾の空白を除くと空白も句読点も含まない 1 語であるとき、その語を返す。
+func loneWord(runes []rune, lineStart, ps, pe int) (string, bool) {
+	i := lineStart
+	for i < ps && (unicode.IsSpace(runes[i]) || strings.ContainsRune("-*・•", runes[i])) {
+		i++
+	}
+	if j := i; j < ps && unicode.IsDigit(runes[j]) {
+		for j < ps && unicode.IsDigit(runes[j]) {
+			j++
+		}
+		if j < ps && runes[j] == '.' {
+			i = j + 1
+			for i < ps && unicode.IsSpace(runes[i]) {
+				i++
+			}
+		}
+	}
+	end := pe
+	for end < len(runes) && runes[end] != '\n' {
+		end++
+	}
+	for end > pe && unicode.IsSpace(runes[end-1]) {
+		end--
+	}
+	for _, r := range runes[i:end] {
+		if unicode.IsSpace(r) || unicode.IsPunct(r) || unicode.IsSymbol(r) {
+			return "", false
+		}
+	}
+	// 句点のない文の行（「会議には山田太郎も出席した」）を 1 語と見なさないよう、語の一覧の
+	// 行として扱うのは、スパンが行の全体か、6 文字以下の語に限る。
+	if i >= end || (end-i > 6 && (i != ps || end != pe)) {
+		return "", false
+	}
+	return string(runes[i:end]), true
+}
+
 // toCandidates はスパンを行ごとに切り、前後の空白を除いて確認器に通し、候補へ変換する。
 func toCandidates(runes []rune, spans []span) []external.Candidate {
 	lineStart := []int{0}
@@ -449,7 +546,7 @@ func toCandidates(runes []rune, spans []span) []external.Candidate {
 						Line:       line + 1,
 						Column:     ps - lineStart[line] + 1,
 						Length:     pe - ps,
-						Confidence: confidence(id, value, sp.prob),
+						Confidence: candidateConfidence(id, value, sp.prob, runes, lineStart[line], ps, pe),
 					})
 				}
 			}

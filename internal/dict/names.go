@@ -7,7 +7,7 @@ import (
 	"sync"
 )
 
-//go:embed surnames.txt given_names.txt given_names_katakana_org.txt name_homographs.txt surnames_ipadic.txt given_names_ipadic.txt
+//go:embed surnames.txt given_names.txt given_names_katakana_org.txt name_homographs.txt surnames_ipadic.txt given_names_ipadic.txt surnames_sudachi.txt given_names_sudachi.txt
 var namesFS embed.FS
 
 // 各辞書は sync.OnceValue による遅延ロード。パッケージ変数の初期化でマップ化
@@ -17,10 +17,14 @@ var namesFS embed.FS
 // （例: extendedGivenNameSet は high-recall 経路だけ）。sync.OnceValue は
 // 並行安全なので、並列走査の複数ワーカーから同時に呼んでも構築は一度で済む。
 var (
-	// surnameSet / givenNameSet は照合に使う集合で、既定辞書に IPADIC 由来の追加分
-	// （*_ipadic.txt、internal/dict/gen-ipadic-names が生成）を合わせたもの。
-	surnameSet   = sync.OnceValue(func() map[string]bool { return loadNameSets(namesFS, "surnames.txt", "surnames_ipadic.txt") })
-	givenNameSet = sync.OnceValue(func() map[string]bool { return loadNameSets(namesFS, "given_names.txt", "given_names_ipadic.txt") })
+	// surnameSet / givenNameSet は照合に使う集合で、既定辞書に IPADIC と SudachiDict 由来の追加分
+	// （*_ipadic.txt / *_sudachi.txt、internal/dict/gen-ipadic-names が生成）を合わせたもの。
+	surnameSet = sync.OnceValue(func() map[string]bool {
+		return loadNameSets(namesFS, "surnames.txt", "surnames_ipadic.txt", "surnames_sudachi.txt")
+	})
+	givenNameSet = sync.OnceValue(func() map[string]bool {
+		return loadNameSets(namesFS, "given_names.txt", "given_names_ipadic.txt", "given_names_sudachi.txt")
+	})
 	// extendedGivenNameSet は org 版の読みから既定（opti）との差分だけを収録した
 	// 高再現率用カタカナ名。既定 person-name の精度を変えず、明示的な
 	// high-recall 経路だけで使う。
@@ -30,7 +34,7 @@ var (
 	// sortedSurnames / sortedGivenNames は SurnameSample / GivenNameSample 用に、
 	// 辞書を決定的な（バイト列順にソート済みの）スライスへ複製したもの。
 	// map のイテレーション順は不定なため、合成ケース生成のような再現性が
-	// 必要な用途向けに別途保持する。IPADIC 由来の追加分は含めない（辞書を拡張する
+	// 必要な用途向けに別途保持する。IPADIC と SudachiDict 由来の追加分は含めない（辞書を拡張する
 	// たびにテスト用の合成値が入れ替わらないようにするため）。
 	sortedSurnames   = sync.OnceValue(func() []string { return sortedKeys(loadNameSet(namesFS, "surnames.txt")) })
 	sortedGivenNames = sync.OnceValue(func() []string { return sortedKeys(loadNameSet(namesFS, "given_names.txt")) })

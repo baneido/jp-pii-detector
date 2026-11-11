@@ -187,3 +187,56 @@ func TestRecognizeDropsFoundingDatesOnPreviousLineAndRanges(t *testing.T) {
 		}
 	}
 }
+
+func TestRecognizeLoneSurnameOnLineIsLow(t *testing.T) {
+	// 語の一覧（町字辞書など）の、姓と同形の 1 語だけの行は low にする。姓と名に分けられる
+	// 語や、空白で区切った姓名、文中の語は確信度を下げない。
+	for _, tc := range []struct {
+		name, text, span, want string
+	}{
+		{"姓だけの行", "内野\n野口\n", "内野", "low"},
+		{"箇条書きの姓だけの行", "- 内野\n", "内野", "low"},
+		{"辞書で分けられる姓名", "山田太郎\n", "山田太郎", "high"},
+		{"空白で区切った姓名", "- 内野 道宏\n", "内野 道宏", "high"},
+		{"文中の姓", "内野から連絡があった。\n", "内野", "high"},
+		{"1 語の行の一部", "亜伊朗\n", "伊朗", "low"},
+		{"番号付きの箇条書き", "12. 野口\n", "野口", "low"},
+		{"句点のない文の行", "会議には山田太郎も出席した\n", "山田太郎", "high"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := fakeRecognizer(t, tc.text, []fakeSpan{{tc.span, "NAME", 10}})
+			got, err := r.Recognize(tc.text)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 1 || got[0].Confidence != tc.want {
+				t.Fatalf("got %+v, want confidence %s", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRecognizeBirthdateNeedsLabelNearby(t *testing.T) {
+	// ラベルのない日付は、モデルが生年月日としても low にする。同じ行・前の行・
+	// 1 行目（CSV のヘッダ）に生年月日のラベル語があれば確信度を下げない。
+	for _, tc := range []struct {
+		name, text, span, want string
+	}{
+		{"ラベルのない CSV の行", "架空商事株式会社,1985-04-01,東京都\n", "1985-04-01", "low"},
+		{"同じ行のラベル", "生年月日 1985-04-01\n", "1985-04-01", "high"}, // jp-pii-detector:ignore
+		{"前の行のラベル", "生年月日\n1985-04-01\n", "1985-04-01", "high"},
+		{"CSV のヘッダ", "name,birthday\n架空 太郎,1985-04-01\n", "1985-04-01", "high"},
+		{"離れた CSV のヘッダ", "name,birthday\n架空 一郎,1970-01-02\n架空 二郎,1971-01-02\n架空 三郎,1972-01-02\n架空 四郎,1985-04-01\n", "1985-04-01", "high"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := fakeRecognizer(t, tc.text, []fakeSpan{{tc.span, "DOB", 10}})
+			got, err := r.Recognize(tc.text)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 1 || got[0].RuleID != "jp-birthdate" || got[0].Confidence != tc.want {
+				t.Fatalf("got %+v, want confidence %s", got, tc.want)
+			}
+		})
+	}
+}
