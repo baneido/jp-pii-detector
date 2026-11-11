@@ -26,3 +26,12 @@ func TestSelectAcceptsConnectorSurnames(t *testing.T) {
 		t.Errorf("surnames = %q, want %q", surnames, want)
 	}
 }
+
+func TestCommonWordShape(t *testing.T) {
+	for w, want := range map[string]bool{"別紙": true, "参照": true, "です": true, "カナ": true, "未入力": true,
+		"あいうえお": false, "AB": false, "東京都庁舎": false, "": false, "一ノ関": true} {
+		if got := CommonWordShape(w); got != want {
+			t.Errorf("CommonWordShape(%q) = %v, want %v", w, got, want)
+		}
+	}
+}

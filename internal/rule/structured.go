@@ -228,7 +228,19 @@ func IsRoleHeadingWord(w string) bool {
 // 空白区切りで置かれた行は、姓の辞書照合だけで氏名とみなせるため。
 func ValidSectionName(v string) bool {
 	v = strings.TrimSpace(v)
-	return ValidCrossLineName(v) || validSpacedNameOneSideDict(v)
+	return ValidCrossLineName(v) || validSpacedNameOneSideDict(v) || ValidUncommonSpacedName(v)
+}
+
+// ValidUncommonSpacedName は、姓名辞書に無い「<姓> <名>」を、形（ValidSectionNameShape）に加えて
+// 2 語のどちらも一般語（dict.IsCommonWord）でないことを条件に受ける。辞書にない姓（一ノ関・八ツ木）は
+// 一般語でもないのに対し、帳票の欄に書かれる非人名の値（別紙 参照・同上 同上・本人 確認）は一般語の
+// 組になるため。
+func ValidUncommonSpacedName(v string) bool {
+	if !ValidSectionNameShape(v) {
+		return false
+	}
+	f := strings.Fields(strings.TrimSpace(v))
+	return !dict.IsCommonWord(f[0]) && !dict.IsCommonWord(f[1])
 }
 
 // ValidRosterName は、ラベルも敬称も無い羅列（名簿ファイル判定、

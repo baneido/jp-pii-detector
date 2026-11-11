@@ -1191,6 +1191,16 @@ func validKessanSpacedPair(v string) bool {
 	return true
 }
 
+// validUncommonNotFormWord は ValidUncommonSpacedName を満たし、様式の語でない値を許可する。
+func validUncommonNotFormWord(v string) bool {
+	return ValidUncommonSpacedName(v) && notFormWordValue(v)
+}
+
+// afterShimeiLabel は値の直前のラベルが「氏名」で終わるか（区切り・引用符・括弧を除いて）を返す。
+func afterShimeiLabel(line string, start, _ int) bool {
+	return strings.HasSuffix(strings.TrimRight(line[:start], " 　:：=\"'「『(（"), "氏名")
+}
+
 // validPersonOrSpacedOneSideDict は姓名辞書に一致する値（dict.IsPersonName）か、
 // validSpacedNameOneSideDict を許可する。氏名を表す強いラベルの直後の値専用。
 func validPersonOrSpacedOneSideDict(v string) bool {
@@ -1219,7 +1229,7 @@ func validSpacedNameOneSideDict(v string) bool {
 	v = strings.TrimSpace(v)
 	f := strings.Fields(v)
 	return len(f) == 2 && notOrgName(v) && notPlaceholderName(v) && !prefectureWordRe.MatchString(f[0]) &&
-		spacedNameSurnameRe.MatchString(f[0]) && dict.IsGivenName(f[1])
+		spacedNameSurnameRe.MatchString(f[0]) && dict.IsGivenName(f[1]) && !spacedGivenStopwords[f[1]]
 }
 
 // validFullSplitOrSpacedOneSideDict は姓+名の完全分割（validPersonNameFullSplit）か、
@@ -1734,6 +1744,8 @@ var spacedGivenStopwords = map[string]bool{
 	"班長": true, "補佐": true, "係": true, "課": true, "班": true, "室": true,
 	// 様式・説明文の「姓 名」「氏 名」という欄名そのもの。
 	"名": true, "姓": true,
+	// 記入欄の表記の指定（「全角 カナ」「漢字 かな」）。「カナ」は名の辞書にもある。
+	"カナ": true, "かな": true, "カタカナ": true, "ひらがな": true, "漢字": true, "英字": true,
 }
 
 // validTitledSpacedName は職名つきの「<姓> <名>」を検証する。validSpacedSurnameGiven に加えて
@@ -2737,6 +2749,9 @@ func Builtin() []Rule {
 				// 「名前: 開発 環境」「口座名義: 普通 預金」のような一般語を拾うため使わない。
 				{Re: personNameStrongLabelRe, Base: Medium, Validate: validPersonOrSpacedOneSideDict, ValidateLine: rejectBracketedFormHint},
 				{Re: personNameStrongLabelRe, Base: Low, Validate: notFormWordValue, ValidateLine: allValidateLine(rejectBracketedFormHint, rejectOrgValueTail)},
+				// ラベルが「氏名」で終わる場合（氏名・申請者氏名・世帯主氏名 等）に限り、姓名辞書に無い
+				// 「<姓> <名>」も、2 語のどちらも一般語でなければ Medium にする（ValidUncommonSpacedName）。
+				{Re: personNameStrongLabelRe, Base: Medium, Validate: validUncommonNotFormWord, ValidateLine: allValidateLine(rejectBracketedFormHint, rejectOrgValueTail, afterShimeiLabel)},
 				// 書類の「申請者 <姓> <名>」のように、氏名を付けない申請者・届出人
 				// ラベルの後にコロンまたは空白だけを挟んで氏名が続く形。ラベルが
 				// 一般語でもあるため、姓＋名に分割できる値（dict.SplitsAsFullName）

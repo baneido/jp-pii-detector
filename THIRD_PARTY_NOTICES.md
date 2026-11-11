@@ -42,6 +42,8 @@ This repository includes surname and given-name entries derived from
 four-kanji surnames and their readings in `internal/dict/surnames.txt`, and the
 surnames and given names missing from the default dictionaries in
 `internal/dict/surnames_ipadic.txt` and `internal/dict/given_names_ipadic.txt`.
+The common-word list `internal/dict/common_words.txt` is derived from the other
+(non-proper-noun) IPADIC 2.7.0-20070801 CSV files.
 The generators and exact source digest are documented in `docs/development.md`.
 
 Copyright 2000, 2001, 2002, 2003 Nara Institute of Science

@@ -6642,6 +6642,27 @@ func TestSectionNameWithConnectorSurname(t *testing.T) {
 	}
 }
 
+// TestUncommonSpacedNameAfterShimeiOrHeading は、姓名辞書に無い「<姓> <名>」を、氏名ラベルの後と
+// 見出しの次の行では 2 語とも一般語でなければ検出し、一般語の組（別紙 参照・同上 同上）や
+// 「名前:」の後の値は検出しないことを確認する。
+func TestUncommonSpacedNameAfterShimeiOrHeading(t *testing.T) {
+	d := newDetector(t, "")
+	for _, c := range []string{"氏名: 八ツ木 直吉\n", "申請者氏名: 八ツ木 直吉\n", "申請者情報\n八ツ木 直吉\n"} {
+		fs := d.ScanContent("a.txt", c)
+		if len(fs) != 1 || fs[0].RuleID != "person-name" || fs[0].Match != "八ツ木 直吉" {
+			t.Errorf("%q: findings = %v, want one person-name", c, fs)
+		}
+	}
+	for _, c := range []string{"氏名: 別紙 参照\n", "氏名: 同上 同上\n", "氏名: 本人 確認\n", "氏名: 全角 カナ\n",
+		"申請者情報\n下記 参照\n", "名前: 開発 環境\n"} {
+		for _, f := range d.ScanContent("a.txt", c) {
+			if strings.HasPrefix(f.RuleID, "person-name") && f.Confidence >= rule.Medium {
+				t.Errorf("%q: unexpected %v", c, f)
+			}
+		}
+	}
+}
+
 // TestNameLineBeforeAccountOrIDField は氏名だけの行の次に「個人番号:」「金融機関名:」「住所:」の
 // 項目行が続く形を検出し、辞書に無い 2 語の行は検出しないことを確認する。
 func TestNameLineBeforeAccountOrIDField(t *testing.T) {

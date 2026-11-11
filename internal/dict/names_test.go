@@ -84,6 +84,20 @@ func TestIsSurnameFoldsSmallKe(t *testing.T) {
 	}
 }
 
+func TestIsCommonWord(t *testing.T) {
+	for _, w := range []string{"別紙", "参照", "同上", "本人", "確認", "未定"} {
+		if !IsCommonWord(w) {
+			t.Errorf("IsCommonWord(%q) = false, want true", w)
+		}
+	}
+	// 姓名辞書と同形の語と、地名に由来する姓は一般語に入れない。
+	for _, w := range []string{"山田", "太郎", "一ノ関", "海老ケ瀬"} {
+		if IsCommonWord(w) {
+			t.Errorf("IsCommonWord(%q) = true, want false", w)
+		}
+	}
+}
+
 func TestIsPersonName(t *testing.T) {
 	tests := []struct {
 		in   string

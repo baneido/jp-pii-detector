@@ -18,6 +18,11 @@
 //     姓（既定・追加分とも）と同形のものは除く（既定辞書と同じ方針）。
 //
 // 1 文字の姓名（「上」「尊」等）と、かなだけの名は一般語と衝突しやすいため取り込まない。
+//
+// -ipadic-dir（IPADIC の CSV を置いたディレクトリ）と -common-words-out を指定すると、
+// 一般語の一覧 common_words.txt も作り直す。人名・地名・組織名・固有名詞の CSV を除く全品詞の
+// 1〜4 文字の漢字・かなの語のうち、姓名辞書（既定・IPADIC 追加分）と同形でないもの。
+// 辞書にない「<姓> <名>」を形で受けるとき、一般語の組（別紙 参照）を除くために使う。
 package main
 
 import (
@@ -27,6 +32,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"unicode"
@@ -41,6 +47,8 @@ func main() {
 	givenNames := flag.String("given-names", "", "既定の given_names.txt")
 	surnamesOut := flag.String("surnames-out", "", "書き出す surnames_ipadic.txt")
 	givenNamesOut := flag.String("given-names-out", "", "書き出す given_names_ipadic.txt")
+	ipadicDir := flag.String("ipadic-dir", "", "IPADIC 2.7.0 の CSV（EUC-JP）を置いたディレクトリ（-common-words-out と併用）")
+	commonOut := flag.String("common-words-out", "", "書き出す common_words.txt")
 	flag.Parse()
 	if *ipadic == "" || *surnames == "" || *givenNames == "" || *surnamesOut == "" || *givenNamesOut == "" || flag.NArg() != 0 {
 		flag.Usage()
@@ -49,6 +57,100 @@ func main() {
 	if err := run(*ipadic, *surnames, *givenNames, *surnamesOut, *givenNamesOut); err != nil {
 		fmt.Fprintln(os.Stderr, "gen-ipadic-names:", err)
 		os.Exit(1)
+	}
+	if (*ipadicDir == "") != (*commonOut == "") {
+		fmt.Fprintln(os.Stderr, "gen-ipadic-names: -ipadic-dir と -common-words-out は両方指定する")
+		os.Exit(2)
+	}
+	if *commonOut != "" {
+		if err := runCommonWords(*ipadicDir, []string{*surnames, *givenNames, *surnamesOut, *givenNamesOut}, *commonOut); err != nil {
+			fmt.Fprintln(os.Stderr, "gen-ipadic-names:", err)
+			os.Exit(1)
+		}
+	}
+}
+
+// properNounFiles は一般語の一覧から除く IPADIC の CSV（人名・地名・組織名・固有名詞）。
+// 日本の姓は地名に由来するものが多く、地名を一般語に含めると辞書にない姓を落とすため。
+var properNounFiles = map[string]bool{
+	"Noun.name.csv": true, "Noun.place.csv": true, "Noun.org.csv": true, "Noun.proper.csv": true,
+}
+
+func runCommonWords(dir string, namePaths []string, out string) error {
+	names := map[string]bool{}
+	for _, p := range namePaths {
+		m, err := readLines(p)
+		if err != nil {
+			return err
+		}
+		for k := range m {
+			names[k] = true
+		}
+	}
+	paths, err := filepath.Glob(filepath.Join(dir, "*.csv"))
+	if err != nil {
+		return err
+	}
+	seen := map[string]bool{}
+	var words []string
+	for _, p := range paths {
+		if properNounFiles[filepath.Base(p)] {
+			continue
+		}
+		surfaces, err := readSurfaces(p)
+		if err != nil {
+			return err
+		}
+		for _, w := range surfaces {
+			if CommonWordShape(w) && !names[w] && !seen[w] {
+				seen[w] = true
+				words = append(words, w)
+			}
+		}
+	}
+	sort.Strings(words)
+	return writeLines(out, "# IPADIC 2.7.0 の一般語（人名・地名・組織名・固有名詞を除く全品詞）のうち、1〜4 文字の漢字・かなの語で姓名辞書と同形でないもの。\n"+
+		"# 辞書にない「<姓> <名>」を形で受けるとき、一般語の組（別紙 参照・同上 同上）を除くために使う。\n"+
+		"# 出典は THIRD_PARTY_NOTICES.md の IPADIC。internal/dict/gen-ipadic-names で再生成する（手で編集しない）。\n", words)
+}
+
+// CommonWordShape は w が 1〜4 文字で、漢字・々・ひらがな（ゝゞを含む）・カタカナ・ー だけからなるかを返す。
+func CommonWordShape(w string) bool {
+	n := 0
+	for _, r := range w {
+		n++
+		switch {
+		case r >= 0x4E00 && r <= 0x9FFF, r == '々', r >= 0x3041 && r <= 0x3096, r == 0x309D, r == 0x309E,
+			r >= 0x30A1 && r <= 0x30FA, r == 0x30FC:
+		default:
+			return false
+		}
+	}
+	return n >= 1 && n <= 4
+}
+
+// readSurfaces は IPADIC の CSV（EUC-JP）の表層形（1 列目）を返す。
+func readSurfaces(path string) ([]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	r := csv.NewReader(transform.NewReader(f, japanese.EUCJP.NewDecoder()))
+	r.FieldsPerRecord = -1
+	r.LazyQuotes = true
+	var out []string
+	for {
+		rec, err := r.Read()
+		if err == io.EOF {
+			return out, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		if len(rec) > 0 {
+			out = append(out, strings.TrimSpace(rec[0]))
+		}
 	}
 }
 
