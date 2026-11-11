@@ -237,6 +237,10 @@ func rejectHonorificWordCompound(line string, start, end int) bool {
 	case strings.HasSuffix(val, "多") && (strings.HasPrefix(rest, "様性") || strings.HasPrefix(rest, "様化") || strings.HasPrefix(rest, "様な")):
 		// 「本多様」「喜多様」のような姓 + 様は残し、多様性・多様化・多様な だけを棄却する。
 		return false
+	case strings.HasSuffix(val, "多") && strings.HasPrefix(rest, "様") && !dict.IsPersonName(val) && !dict.SplitsAsFullName(val):
+		// 催し名の「～超多様～」のように、人名でない語 + 多様（2026-11-11 に大学の催し案内で実測した
+		// 高再現率モードの偽陽性。「超多」を氏名として報告していた）。「本多様」のような姓 + 様は残す。
+		return false
 	case (strings.HasSuffix(val, "編") || strings.HasSuffix(val, "炊")) && strings.HasPrefix(rest, "さん"):
 		return false
 	case strings.HasPrefix(rest, "殿下") && (strings.HasSuffix(val, "両") || strings.HasSuffix(val, "各") ||

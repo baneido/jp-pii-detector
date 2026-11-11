@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/baneido/jp-pii-detector/internal/checksum"
 	"github.com/baneido/jp-pii-detector/internal/evalcase"
 )
 
@@ -87,6 +88,8 @@ var notationCategories = []string{
 	"title-credit-form",          // 氏名の直後・直前の肩書き、出演者の［楽器］・【役割】、名簿行・社名：氏名、和文が直後に続くメール（陽性）と、肩書きだけ・長谷川の「長」、書式欄の括弧書き、神仏・役名 + 敬称（陰性）
 	"org-honorific-rare-officer", // 役員の役職名の後の辞書にない姓 + 名、姓 + 様/さん（陽性）と、団体名・報道機関の略称・書式語 + 様/さん、康熙部首入りの団体名 + 様、さんご・さん + カタカナ語、カード名義、例）の生年月日（陰性）
 	"tanto-list-multi",           // 担当欄・委員欄の 2 人目以降と「兼」でつないだ役職名の後の氏名（陽性）、部署名・業務名・年度語の列挙・役職以外の語（陰性）
+	"kun-minutes",                // 会議録の「<氏名>君」（発言者ラベル・登壇・指名・提出者・名簿）（陽性）と、諸君・光る君へ・姓だけ + 君（陰性）
+	"address-phone-run",          // 協賛店一覧の「<番地> <電話番号>」がカード・口座番号に見える並び、伏せ字のメール、「～超多様～」（陰性）と、正しい区切りのカード・口座番号（陽性）
 	"titled-name-list",           // 職名の後の姓名が読点・閉じ括弧・敬称で終わる表記（課長補佐 氏名、/（研究院 教授 氏名）/ 大臣 氏名 / 講師：氏名 氏）（陽性）、職名 + 部署・研究室・業務語、「様々」（陰性）
 }
 
@@ -856,7 +859,45 @@ func notationSpecs() []notationCase {
 	neg("titled-name-list", "大臣 官房 総務課、")
 	neg("titled-name-list", "社長 就任 のお知らせ、")
 	neg("titled-name-list", "将来様々な分野で活躍する人材を育成します。")
+	// 2026-11-11 のサイクルで実測した見逃し: 国会・議会の会議録の「<氏名>君」の定型。値は架空の定番名の
+	// 部品の組み立てで、会議録の値ではない。陰性は「君」を含む一般語と姓だけの呼びかけ。
+	pos("kun-minutes", role, "○議長（"+full(0, "")+"君）　ただいまから会議を開きます。")
+	pos("kun-minutes", role, "○副議長（"+full(1, "")+"君）　"+full(2, "")+"君。")
+	pos("kun-minutes", role, "○"+full(3, "")+"君　ただいま議題となりました法律案について御説明します。")
+	pos("kun-minutes", role, "　　〔国務大臣"+full(4, "")+"君登壇、拍手〕")
+	pos("kun-minutes", role, "　　〔"+full(5, "")+"君登壇〕")
+	pos("kun-minutes", role, "　　〔"+full(1, "")+"君起立〕")
+	pos("kun-minutes", role, "日程第一　架空法案（"+full(0, "")+"君外二名提出）")
+	pos("kun-minutes", role, full(1, "　")+"君　　　"+full(2, "　　")+"君　　　"+full(3, "　")+"君")
+	pos("kun-minutes", role, "総務大臣　　　"+full(4, "　　")+"君")
+	neg("kun-minutes", "次の諸君を任命することについて同意を求めます。")
+	neg("kun-minutes", "大河ドラマ「光る君へ」の放送にあわせた催し")
+	neg("kun-minutes", n(0).sur+"君、それは違う。")
+	neg("kun-minutes", "○議長（"+n(1).sur+"君）　ただいまから会議を開きます。")
+	neg("kun-minutes", "暴君 として知られる王")
+	// 同じ回に実測した誤検出: 協賛店一覧で番地と電話番号が並んだ数字列をカード番号（Luhn を偶然通る）・
+	// 口座番号（3+4）とみなす形、様式の伏せ字のメール、催し名の「～超多様～」（高再現率）。陽性は正しい
+	// 区切りのカード番号・口座番号。数字はすべて架空（Luhn の検査数字は実行時に計算する）。
+	cardLike := luhnDigits("361201234567")
+	neg("address-phone-run", "協賛店 架空町"+cardLike[0:1]+"-"+cardLike[1:2]+"-"+cardLike[2:4]+" "+cardLike[4:7]+"-"+cardLike[7:10]+"-"+cardLike[10:]+" 割引あり")
+	// 電話番号は正しく拾い、番地 + 市外局番を口座番号として拾わないこと（陽性は電話番号だけ）。
+	pos("address-phone-run", "jp-phone-number", "架空銀行 架空支店    架空町大字架空456 "+"0270-"+"00-0000  金利優遇")
+	neg("address-phone-run", "メール：xxxxx@yyyyy.jp")
+	neg("address-phone-run", "「架空の催し～超多様～」内の展示")
+	card := luhnDigits("453201234567890")
+	pos("address-phone-run", "credit-card", "カード番号 "+card[0:4]+"-"+card[4:8]+"-"+card[8:12]+"-"+card[12:])
+	pos("address-phone-run", "jp-bank-account", "架空銀行 架空支店 口座番号 "+"123 "+"4567")
 	return out
+}
+
+// luhnDigits は数字列 body の末尾に Luhn の検査数字を付けた架空の番号を返す。
+func luhnDigits(body string) string {
+	for c := '0'; c <= '9'; c++ {
+		if checksum.Luhn(body + string(c)) {
+			return body + string(c)
+		}
+	}
+	panic("luhnDigits: no check digit")
 }
 
 // NotationCases は notationSpecs を評価ケースへ変換する。同じコードからは

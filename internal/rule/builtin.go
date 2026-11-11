@@ -98,6 +98,39 @@ func rejectSeparatedDigitGroup(separators string, widths ...int) func(string, in
 	}
 }
 
+// validCardGrouping は区切り（- か空白）を含むカード番号の桁の区切り方が、カードの券面・入力欄の
+// 書式（先頭 4 桁、続く組が 4〜6 桁、最後の組が 2〜6 桁。4-4-4-4・4-6-5・4-6-4・4-4-4-4-3 など）に
+// 合うかを返す。区切りのない値は常に true。協賛店一覧の「<町名><番地> <市外局番>-<局番>-<番号>」のように、
+// 番地と電話番号が並んで偶然 Luhn を通る数字列（2026-11-11 に県の公開 PDF で 3 件実測した High の
+// 偽陽性）を棄却する。
+func validCardGrouping(m string) bool {
+	groups := strings.FieldsFunc(m, func(r rune) bool { return r == '-' || r == ' ' })
+	if len(groups) <= 1 {
+		return true
+	}
+	if len(groups[0]) != 4 {
+		return false
+	}
+	for i, g := range groups[1:] {
+		n := len(g)
+		if i == len(groups)-2 {
+			if n < 2 || n > 6 {
+				return false
+			}
+		} else if n < 4 || n > 6 {
+			return false
+		}
+	}
+	return true
+}
+
+// rejectPhoneContinuation は値の直後に「-<数字>」が続く（電話番号・番地の一部である）場合に棄却する。
+// 協賛店一覧の「<町名><3 桁の番地> <4 桁の市外局番>-<局番>-<番号>」で、番地と市外局番を口座番号（3+4）として拾う偽陽性を
+// 2026-11-11 に実測した（口座番号の 3+4 表記の後にハイフンで数字が続くことはない）。
+func rejectPhoneContinuation(line string, start, end int) bool {
+	return !(end+1 < len(line) && line[end] == '-' && line[end+1] >= '0' && line[end+1] <= '9')
+}
+
 // stripSeparators は番号表記の区切り文字（ハイフン・半角スペース・ドット・
 // 丸括弧・スラッシュ）を除去する。マイナンバー・クレジットカードの呼び出しは
 // これらの区切り文字を元々捕捉しない（正規表現側にハイフン・空白しか
@@ -1099,6 +1132,33 @@ var (
 	personNameSpeakerLabelColonRe = regexp.MustCompile(
 		`(?:^|[ 　])([` + kanji + `]{2,3}?)(?:構成員|委員|座長|部会長)[：:]`,
 	)
+	// 国会・地方議会の会議録の「<氏名>君」（2026-11-11 に公開文書 2,307 件で実測。会議録・議事速報で
+	// 「君」付きの氏名を含む行が 5,897 行あり、全モードで 24 行しか検出できていなかった）。会議録では
+	// 議員・国務大臣・参考人を「君」で呼ぶ書式が定型で、次の形に限って拾う。いずれも値は「君」を
+	// 含めない氏名だけで、姓名辞書の完全分割か「<辞書の姓> <名>」（validKunName）を要求するため、
+	// 「諸君」「光る君へ」「<姓>君、」（姓だけ）のような一般語・姓だけの呼びかけは通らない。
+	//  - 発言者ラベル「○議長（<氏名>君）」「○<氏名>君　…」（行頭の○）
+	//  - 登壇・起立の注記「〔国務大臣<氏名>君登壇〕」「〔<氏名>君起立〕」
+	//  - 議長の指名「…君）　<氏名>君。」と、議案の提出者「（<氏名>君外二名提出）」
+	//  - 出席者・投票者の名簿「<姓>　<名>君　　　<姓>　<名>君」（前後が空白か行頭・行末）
+	personNameKunSpeakerParenRe = regexp.MustCompile(
+		`^[ ]*[○〇◯](?:[` + kanji + `]{1,15})?[（(]([` + kanji + hiragana + `][` + kanji + hiragana + ` ]{1,11}?)君[）)]`,
+	)
+	personNameKunSpeakerRe = regexp.MustCompile(
+		`^[ ]*[○〇◯]([` + kanji + `][` + kanji + hiragana + ` ]{1,11}?)君(?:[ ]|$)`,
+	)
+	personNameKunTodanRe = regexp.MustCompile(
+		`〔(?:[` + kanji + `]{0,12}?(?:大臣|長官|副長官|政務官|委員長|議長|参考人|総裁|局長|理事長))?([` + kanji + `][` + kanji + hiragana + ` ]{1,11}?)君(?:登壇|起立)`,
+	)
+	personNameKunCallRe = regexp.MustCompile(
+		`君[）)][ ]*([` + kanji + hiragana + `][` + kanji + hiragana + ` ]{1,11}?)君。`,
+	)
+	personNameKunBillRe = regexp.MustCompile(
+		`[（(]([` + kanji + `][` + kanji + hiragana + ` ]{1,11}?)君外[一二三四五六七八九十0-9]+名`,
+	)
+	personNameKunRosterRe = regexp.MustCompile(
+		`(?:^|[ ])[ ]*([` + kanji + `]{1,4}[ ]+[` + kanji + hiragana + `]{1,4}|[` + kanji + `]{2,6})君(?:[ ]|$)`,
+	)
 	personNameCommitteeListRe = regexp.MustCompile(
 		`(?:^|[、,，：:＞>]|[ ])[ ]*([` + kanji + `]{3,8}?)(?:副委員長|委員長|副会長|会長|副議長|議長|委員)`,
 	)
@@ -1243,6 +1303,19 @@ func validFullSplitOrSpacedOneSideDict(v string) bool {
 // 「<辞書の姓> <名>」（validSpacedSurnameGiven）を許可する。強いラベル直後の値用。
 func validPersonOrSpacedSurnameGiven(v string) bool {
 	return dict.IsPersonName(v) || validSpacedSurnameGiven(v)
+}
+
+// validKunName は会議録の「<氏名>君」の値を検証する。姓名辞書の完全分割（空白を除いて判定）か、
+// 空白で 2 語に分かれた「<辞書の姓> <名>」を要求する。姓だけ（「<姓>君」）や一般語（諸君・暴君）は通らない。
+func validKunName(v string) bool {
+	t := strings.TrimSpace(v)
+	if t == "" || !notPlaceholderName(t) {
+		return false
+	}
+	if validPersonNameFullSplit(strings.Join(strings.Fields(t), "")) {
+		return true
+	}
+	return validSpacedSurnameGiven(t)
 }
 
 func validFullSplitOrSpacedSurnameGiven(v string) bool {
@@ -2325,7 +2398,7 @@ func Builtin() []Rule {
 			Context:         []string{"クレジット", "カード番号", "credit", "card"},
 			NegativeContext: digitRuleUnitAdjacentNegativeContext,
 			Validate: func(m string) bool {
-				return checksum.CreditCard(stripSeparators(m))
+				return validCardGrouping(m) && checksum.CreditCard(stripSeparators(m))
 			},
 			// パターンを 2 つに分ける理由:
 			//  1) 区切りなし・区切りあり両方を拾うが、直前がスラッシュの
@@ -2456,7 +2529,7 @@ func Builtin() []Rule {
 				// （validPensionNumber 等と同じ手法）。
 				{Re: dg(`\d{3}[ /]\d{4}`), Base: Medium, RequireContext: true,
 					Validate:     func(m string) bool { return !checksum.AllSame(stripSeparators(m)) },
-					ValidateLine: rejectSeparatedDigitGroup(" /", 3, 4)},
+					ValidateLine: allValidateLine(rejectSeparatedDigitGroup(" /", 3, 4), rejectPhoneContinuation)},
 			},
 		},
 		{
@@ -2834,7 +2907,7 @@ func Builtin() []Rule {
 			ID:                "person-name-role-label",
 			Description:       "氏名（担当者・宛名ラベル付き）",
 			Prefilter:         PrefilterCJK,
-			PrefilterLiterals: []string{"会長", "委員", "議長", "担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "知 事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届", "監督", "先生", "講 師", "ゲスト", "登壇", "聞き手", "進行役", "さん×", "さん ×", "選手", "議員", "理事", "監事", "幹事", "様", "館長", "顧問", "［", "[", "】", "年 ", "会社：", "会社:", "事務所：", "事務所:", "教諭", "助教", "候補", "学長", "市長", "町長", "村長", "施設長", "所長", "院長", "園長", "校長", "社長", "センター長", "教育長", "補佐", "大臣", "総長", "研究員", "助教", "甲", "乙", "丙", "丁", "である", "との間", "託者", "任者", "借主", "貸主", "買主", "売主", "賃借人", "賃貸人", "雇用主", "従業員", "労働者", "者の", "者は", "人の", "人は", "歳の", "者:", "者：", "人:", "人：", "者 :", "人 :", " 様", " 氏"},
+			PrefilterLiterals: []string{"会長", "委員", "議長", "君", "担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "知 事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届", "監督", "先生", "講 師", "ゲスト", "登壇", "聞き手", "進行役", "さん×", "さん ×", "選手", "議員", "理事", "監事", "幹事", "様", "館長", "顧問", "［", "[", "】", "年 ", "会社：", "会社:", "事務所：", "事務所:", "教諭", "助教", "候補", "学長", "市長", "町長", "村長", "施設長", "所長", "院長", "園長", "校長", "社長", "センター長", "教育長", "補佐", "大臣", "総長", "研究員", "助教", "甲", "乙", "丙", "丁", "である", "との間", "託者", "任者", "借主", "貸主", "買主", "売主", "賃借人", "賃貸人", "雇用主", "従業員", "労働者", "者の", "者は", "人の", "人は", "歳の", "者:", "者：", "人:", "人：", "者 :", "人 :", " 様", " 氏"},
 			Validate:          notPlaceholderName,
 			Patterns: []Pattern{
 				// 担当者・宛名・連絡先ラベル。敬称のような強い人物シグナルが無いため、
@@ -2962,6 +3035,13 @@ func Builtin() []Rule {
 				{Re: personNameStudentRowRe, Base: Medium, Validate: validFullSplitOrSpacedSurnameGiven},
 				{Re: personNameCompanyCreditRe, Base: Medium, Validate: validFullSplitOrSpacedSurnameGiven},
 				{Re: personNameCommitteeListRe, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: rejectCommitteeListTail},
+				// 会議録の「<氏名>君」（personNameKun* のコメント参照。2026-11-11 に実測した見逃し）。
+				{Re: personNameKunSpeakerParenRe, Base: Medium, Validate: validKunName},
+				{Re: personNameKunSpeakerRe, Base: Medium, Validate: validKunName},
+				{Re: personNameKunTodanRe, Base: Medium, Validate: validKunName},
+				{Re: personNameKunCallRe, Base: Medium, Validate: validKunName},
+				{Re: personNameKunBillRe, Base: Medium, Validate: validKunName},
+				{Re: personNameKunRosterRe, Base: Medium, Validate: validKunName},
 				{Re: personNameLecturerSpaceRe, Base: Medium, Validate: validPersonNameFullSplit},
 				{Re: personNameTantoSpaceRe, Base: Medium, Validate: validPersonNameFullSplit},
 				// 担当欄・代表者欄で姓と名の間が広く空いた表記（2026-10-30 10:00 に実測した見逃し）。
@@ -3834,6 +3914,11 @@ func validEmail(m string) bool {
 	if len(labels) == 2 && slices.Contains(emailPlaceholderDomainLabels, labels[0]) {
 		return false
 	}
+	// 様式・記入例の「xxxxx@yyyyy.jp」のように、ローカル部とドメインの先頭ラベルがそれぞれ同じ英字の
+	// 繰り返しだけでできた伏せ字（2026-11-11 に市の申請様式で実測した偽陽性。実在の宛先ではない）。
+	if repeatedSingleLetter(local) && repeatedSingleLetter(labels[0]) {
+		return false
+	}
 	if nonPersonalEmail(local, domain) {
 		return false
 	}
@@ -3843,6 +3928,23 @@ func validEmail(m string) bool {
 		return false
 	}
 	return !slices.Contains(labels, "example") && dict.ValidTLD(tld)
+}
+
+// repeatedSingleLetter は s が同じ英字 1 種類の 3 文字以上の繰り返しかを返す（大文字小文字は区別しない）。
+func repeatedSingleLetter(s string) bool {
+	if len(s) < 3 {
+		return false
+	}
+	c := s[0] | 0x20
+	if c < 'a' || c > 'z' {
+		return false
+	}
+	for i := 1; i < len(s); i++ {
+		if s[i]|0x20 != c {
+			return false
+		}
+	}
+	return true
 }
 
 // containsASCIIAlnum はローカル部に英数字が 1 文字以上あるかを返す。
