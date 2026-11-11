@@ -1,4 +1,4 @@
-非公開評価コーパスに対する実測値で、検出精度のゴールデンファイル（`docs/accuracy.json`）と
+評価コーパス（Nemotron-PII-Japan の抽出）に対する実測値で、検出精度のゴールデンファイル（`docs/accuracy.json`）と
 `docs/accuracy.md`、README.md / README.en.md の精度表記を再生成しました（`.github/workflows/accuracy-update.yml`）。
 
 - 実行日時: __GENERATED_AT__
@@ -7,7 +7,7 @@
 - 変更対象: `docs/accuracy.md`、`docs/accuracy.json`、`README.md`、`README.en.md`
 - 再生成コマンド: `go test ./internal/eval -run 'TestGenerateDoc|TestReadmeBadges' -update`
 
-このPRをマージすると、main への push で実行される `ci.yml` の `private-eval` ジョブ
+このPRをマージすると、main への push で実行される `ci.yml` の `corpus-eval` ジョブ
 （実測値とゴールデンの完全一致を検証するジョブ）が green に戻ります。
 
 > **マージ前に確認してください**: 実測値が想定外に悪化している場合（例: 特定ルールの
@@ -16,5 +16,5 @@
 > 目視で確認してからマージしてください。
 
 > 注: この PR は `GITHUB_TOKEN` で作成されるため、通常の CI は自動起動しません。
-> マージ前に CI（特に本PRが解消するはずの `private-eval`）を回すには、ブランチへ
+> マージ前に CI（特に本PRが解消するはずの `corpus-eval`）を回すには、ブランチへ
 > 空コミットを push するか PR を close→reopen してください。

@@ -14,9 +14,8 @@ import (
 // 具体的な行データ）はこのリポジトリにもセッションにも存在せず、issue 本文には
 // 代表例（空白区切りマイナンバー・0312345678・CSV 2 行目以降・12桁ジョブID・
 // JAN・テストカード・型番 TK1234567・スコア「3-2」の住所化 等）が挙げられて
-// いるのみで、75 件の網羅列挙は含まれていない。加えて評価データセット本体
-// （pii-fixtures.json）は GCS 管理でリポジトリ外・本セッションでは
-// $JP_PII_FIXTURES 未設定のため参照・更新できない。
+// いるのみで、75 件の網羅列挙は含まれていない。加えて当時の評価データセット本体
+// （pii-fixtures.json）はリポジトリ外で管理され、本セッションでは参照・更新できなかった。
 //
 // そのため本ファイルは、issue が名指しした代表パターンおよびそれと同系統の
 // 表記ゆれ・文脈誤認識を、実際に go test で個別に発火/非発火を再確認した
@@ -26,12 +25,9 @@ import (
 // （issue の対応方針どおり）。
 //
 // 残作業（このファイルでは完結しない）:
-//   - pii-fixtures.json 側に、ここで確認した行を Case（Tags 付き）として追加し
-//     GCS へ再アップロードする（internal/evalcase.Case.Tags は
-//     済み。"probe-fn:*" / "probe-fp:*" / "known-limitation" のタグ命名は
+//   - 公開合成コーパス（internal/corpusv2）側に、ここで確認した行を Case（Tags 付き）
+//     として追加する（"probe-fn:*" / "probe-fp:*" / "known-limitation" のタグ命名は
 //     下記サブテスト名の "probe-fn:" / "probe-fp:" 接頭辞に合わせてある）。
-//   - internal/eval/eval_test.go の wantF1 と README バッジ・docs/accuracy.md の
-//     3 点更新（データセット反映後、JP_PII_FIXTURES を設定できる環境で実施）。
 //   - 元の実験プローブの残り系統（本ファイル未収録分）の洗い出し。
 
 // TestProbeRegressionKnownFalseNegatives は、実験プローブで確認された偽陰性の

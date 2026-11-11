@@ -691,7 +691,8 @@ func notationSpecs() []notationCase {
 	pos("particle-honorific", "person-name-high-recall", "ゆかりのある"+full(29, "")+"氏より寄贈されました")
 	pos("particle-honorific", "person-name-high-recall", "架空研究科の"+full(30, "")+"さんが受賞")
 	pos("particle-honorific", "person-name-high-recall", "撮影は"+full(31, "")+"氏")
-	pos("particle-honorific", "person-name-high-recall", "寄付者　"+n(32).sur+"　美文様")
+	// 姓と名の間に空白がある形は、既定の person-name-role-label（personNameSpacedHonorificRe）が拾う。
+	pos("particle-honorific", "person-name-role-label", "寄付者　"+n(32).sur+"　美文様")
 	neg("particle-honorific", "鳳凰文様の大皿")
 	neg("particle-honorific", "木造彩色・切金文様 像高31.4cm")
 	neg("particle-honorific", "檀信徒様へのお知らせ")

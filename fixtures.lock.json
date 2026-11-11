@@ -1,6 +1,9 @@
 {
-  "schema_version": 1,
-  "dataset_id": "private-eval-v2",
-  "object": "private-corpus/private-eval-v2-20260724-r5.json",
-  "generation": "1784931234467912"
+  "schema_version": 2,
+  "dataset_id": "nemotron-pii-japan-a074898c-s10",
+  "repo": "nvidia/Nemotron-PII-Japan",
+  "revision": "a074898c902870f2830b521cfac8a1482515374f",
+  "file": "data.parquet",
+  "sha256": "127c49c2f12ed73f5bc89303dc538989550cf916190b436ce95afc202f4427ec",
+  "sample_modulus": 10
 }

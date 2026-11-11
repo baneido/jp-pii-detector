@@ -18,7 +18,11 @@ paths = [
   "^internal/config/config_test\\.go$",
   "^internal/detect/path_profile_test\\.go$",
   "^internal/dict/(municipalities|postal)_test\\.go$",
+  # IPADIC の一般語の一覧（「天竺浪人」の次行の「天竺牡丹」が見出し + 氏名の並びに見える）
+  "^internal/dict/common_words\\.txt$",
   "^internal/eval/.*_test\\.go$",
+  # Nemotron-PII-Japan 変換器のテスト（架空の氏名・電話番号を含む）
+  "^internal/nemotron/.*_test\\.go$",
   "^internal/normalize/normalize_test\\.go$",
   "^internal/report/report_test\\.go$",
   "^internal/rule/structured_test\\.go$",

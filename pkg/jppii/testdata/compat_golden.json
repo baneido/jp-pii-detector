@@ -1,14 +1,14 @@
 {
   "default": {
-    "findings": 6,
-    "sha256": "117b81702868b6e735dcb714fc60ddb8d3feda1243acf12caa3eb9b8fc8453ef"
+    "findings": 7,
+    "sha256": "08ab976c4fcfaf72a82f259df0ff97841c3a7866a344668ebd31300cb39308d3"
   },
   "high-recall": {
-    "findings": 6,
-    "sha256": "848ac691752087ce31389a3593c08d01cb76c4e6efcb25b23567df9e6d4d383f"
+    "findings": 7,
+    "sha256": "ccb6c8f7102896212477d6786494b3275ca2923546115b73a0978474b5c2d563"
   },
   "low": {
-    "findings": 6,
-    "sha256": "7d69caf1c188afe0ecc38c8ff0cb0c03ed8d6cd136e68d20b54a33fb85135d00"
+    "findings": 7,
+    "sha256": "8e5141e683db79203e3a0935071b222002da0132025fcddf05e08b91dc5d915f"
   }
 }

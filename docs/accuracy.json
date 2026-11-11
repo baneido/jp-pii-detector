@@ -1,5 +1,5 @@
 {
-  "dataset_id": "private-eval-v2",
+  "dataset_id": "nemotron-pii-japan-a074898c-s10",
   "profiles": [
     {
       "id": "low",
@@ -10,7 +10,7 @@
         {
           "rule_id": "credit-card",
           "row": {
-            "tp": 10,
+            "tp": 239,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -18,7 +18,7 @@
             "f1": 1
           },
           "span_exact": {
-            "tp": 10,
+            "tp": 239,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -26,7 +26,7 @@
             "f1": 1
           },
           "span_containment": {
-            "tp": 10,
+            "tp": 239,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -34,7 +34,7 @@
             "f1": 1
           },
           "span_relaxed": {
-            "tp": 10,
+            "tp": 239,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -42,7 +42,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 139,
+            "negatives": 431,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -50,7 +50,7 @@
         {
           "rule_id": "email-address",
           "row": {
-            "tp": 10,
+            "tp": 1532,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -58,7 +58,7 @@
             "f1": 1
           },
           "span_exact": {
-            "tp": 10,
+            "tp": 1532,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -66,7 +66,7 @@
             "f1": 1
           },
           "span_containment": {
-            "tp": 10,
+            "tp": 1532,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -74,7 +74,7 @@
             "f1": 1
           },
           "span_relaxed": {
-            "tp": 10,
+            "tp": 1532,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -82,7 +82,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 139,
+            "negatives": 431,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -90,39 +90,39 @@
         {
           "rule_id": "jp-address",
           "row": {
-            "tp": 23,
+            "tp": 1881,
             "fp": 0,
-            "fn": 1,
+            "fn": 31,
             "precision": 1,
-            "recall": 0.9583333333333334,
-            "f1": 0.9787234042553191
+            "recall": 0.983786610878661,
+            "f1": 0.9918270498286317
           },
           "span_exact": {
-            "tp": 23,
-            "fp": 0,
-            "fn": 1,
-            "precision": 1,
-            "recall": 0.9583333333333334,
-            "f1": 0.9787234042553191
+            "tp": 115,
+            "fp": 1767,
+            "fn": 1799,
+            "precision": 0.06110520722635494,
+            "recall": 0.060083594566353184,
+            "f1": 0.060590094836670175
           },
           "span_containment": {
-            "tp": 23,
-            "fp": 0,
-            "fn": 1,
-            "precision": 1,
-            "recall": 0.9583333333333334,
-            "f1": 0.9787234042553191
+            "tp": 258,
+            "fp": 1624,
+            "fn": 1656,
+            "precision": 0.13708820403825717,
+            "recall": 0.13479623824451412,
+            "f1": 0.13593256059009481
           },
           "span_relaxed": {
-            "tp": 23,
+            "tp": 1882,
             "fp": 0,
-            "fn": 1,
+            "fn": 32,
             "precision": 1,
-            "recall": 0.9583333333333334,
-            "f1": 0.9787234042553191
+            "recall": 0.9832810867293625,
+            "f1": 0.9915700737618545
           },
           "auxiliary": {
-            "negatives": 139,
+            "negatives": 431,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -130,39 +130,39 @@
         {
           "rule_id": "jp-bank-account",
           "row": {
-            "tp": 17,
+            "tp": 2024,
             "fp": 0,
-            "fn": 1,
+            "fn": 29,
             "precision": 1,
-            "recall": 0.9444444444444444,
-            "f1": 0.9714285714285714
+            "recall": 0.985874330248417,
+            "f1": 0.9928869266617611
           },
           "span_exact": {
-            "tp": 17,
-            "fp": 0,
-            "fn": 1,
-            "precision": 1,
-            "recall": 0.9444444444444444,
-            "f1": 0.9714285714285714
+            "tp": 2024,
+            "fp": 2,
+            "fn": 29,
+            "precision": 0.9990128331688055,
+            "recall": 0.985874330248417,
+            "f1": 0.9924000980632508
           },
           "span_containment": {
-            "tp": 17,
-            "fp": 0,
-            "fn": 1,
-            "precision": 1,
-            "recall": 0.9444444444444444,
-            "f1": 0.9714285714285714
+            "tp": 2024,
+            "fp": 2,
+            "fn": 29,
+            "precision": 0.9990128331688055,
+            "recall": 0.985874330248417,
+            "f1": 0.9924000980632508
           },
           "span_relaxed": {
-            "tp": 17,
-            "fp": 0,
-            "fn": 1,
-            "precision": 1,
-            "recall": 0.9444444444444444,
-            "f1": 0.9714285714285714
+            "tp": 2024,
+            "fp": 2,
+            "fn": 29,
+            "precision": 0.9990128331688055,
+            "recall": 0.985874330248417,
+            "f1": 0.9924000980632508
           },
           "auxiliary": {
-            "negatives": 139,
+            "negatives": 431,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -170,7 +170,7 @@
         {
           "rule_id": "jp-birthdate",
           "row": {
-            "tp": 13,
+            "tp": 3062,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -178,7 +178,7 @@
             "f1": 1
           },
           "span_exact": {
-            "tp": 13,
+            "tp": 3069,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -186,7 +186,7 @@
             "f1": 1
           },
           "span_containment": {
-            "tp": 13,
+            "tp": 3069,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -194,7 +194,7 @@
             "f1": 1
           },
           "span_relaxed": {
-            "tp": 13,
+            "tp": 3069,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -202,87 +202,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "jp-drivers-license",
-          "row": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_exact": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_containment": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_relaxed": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "jp-employment-insurance",
-          "row": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_exact": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_containment": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_relaxed": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "auxiliary": {
-            "negatives": 139,
+            "negatives": 431,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -290,7 +210,7 @@
         {
           "rule_id": "jp-health-insurance",
           "row": {
-            "tp": 14,
+            "tp": 290,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -298,7 +218,7 @@
             "f1": 1
           },
           "span_exact": {
-            "tp": 14,
+            "tp": 580,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -306,7 +226,7 @@
             "f1": 1
           },
           "span_containment": {
-            "tp": 14,
+            "tp": 580,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -314,7 +234,7 @@
             "f1": 1
           },
           "span_relaxed": {
-            "tp": 14,
+            "tp": 580,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -322,127 +242,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "jp-invoice-number",
-          "row": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_exact": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_containment": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_relaxed": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "jp-juminhyo-code",
-          "row": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_exact": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_containment": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_relaxed": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "jp-kaigo-insurance",
-          "row": {
-            "tp": 14,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_exact": {
-            "tp": 14,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_containment": {
-            "tp": 14,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_relaxed": {
-            "tp": 14,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "auxiliary": {
-            "negatives": 139,
+            "negatives": 431,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -450,119 +250,39 @@
         {
           "rule_id": "jp-my-number",
           "row": {
-            "tp": 15,
+            "tp": 315,
             "fp": 0,
-            "fn": 0,
+            "fn": 1,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9968354430379747,
+            "f1": 0.9984152139461173
           },
           "span_exact": {
-            "tp": 15,
+            "tp": 315,
             "fp": 0,
-            "fn": 0,
+            "fn": 1,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9968354430379747,
+            "f1": 0.9984152139461173
           },
           "span_containment": {
-            "tp": 15,
+            "tp": 315,
             "fp": 0,
-            "fn": 0,
+            "fn": 1,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9968354430379747,
+            "f1": 0.9984152139461173
           },
           "span_relaxed": {
-            "tp": 15,
+            "tp": 315,
             "fp": 0,
-            "fn": 0,
+            "fn": 1,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9968354430379747,
+            "f1": 0.9984152139461173
           },
           "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "jp-passport",
-          "row": {
-            "tp": 12,
-            "fp": 1,
-            "fn": 0,
-            "precision": 0.9230769230769231,
-            "recall": 1,
-            "f1": 0.9600000000000001
-          },
-          "span_exact": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_containment": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_relaxed": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 1,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "jp-pension-number",
-          "row": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_exact": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_containment": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_relaxed": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "auxiliary": {
-            "negatives": 139,
+            "negatives": 431,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -570,39 +290,39 @@
         {
           "rule_id": "jp-phone-number",
           "row": {
-            "tp": 18,
+            "tp": 2319,
             "fp": 0,
-            "fn": 0,
+            "fn": 12,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9948519948519948,
+            "f1": 0.9974193548387097
           },
           "span_exact": {
-            "tp": 19,
+            "tp": 2645,
             "fp": 0,
-            "fn": 0,
+            "fn": 12,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9954836281520512,
+            "f1": 0.997736703130894
           },
           "span_containment": {
-            "tp": 19,
+            "tp": 2645,
             "fp": 0,
-            "fn": 0,
+            "fn": 12,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9954836281520512,
+            "f1": 0.997736703130894
           },
           "span_relaxed": {
-            "tp": 19,
+            "tp": 2645,
             "fp": 0,
-            "fn": 0,
+            "fn": 12,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9954836281520512,
+            "f1": 0.997736703130894
           },
           "auxiliary": {
-            "negatives": 139,
+            "negatives": 431,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -610,119 +330,39 @@
         {
           "rule_id": "jp-postal-code",
           "row": {
-            "tp": 15,
+            "tp": 1152,
             "fp": 0,
-            "fn": 0,
+            "fn": 1,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9991326973113617,
+            "f1": 0.9995661605206074
           },
           "span_exact": {
-            "tp": 15,
+            "tp": 1152,
             "fp": 0,
-            "fn": 0,
+            "fn": 1,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9991326973113617,
+            "f1": 0.9995661605206074
           },
           "span_containment": {
-            "tp": 15,
+            "tp": 1152,
             "fp": 0,
-            "fn": 0,
+            "fn": 1,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9991326973113617,
+            "f1": 0.9995661605206074
           },
           "span_relaxed": {
-            "tp": 15,
+            "tp": 1152,
             "fp": 0,
-            "fn": 0,
+            "fn": 1,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9991326973113617,
+            "f1": 0.9995661605206074
           },
           "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "jp-residence-card",
-          "row": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_exact": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_containment": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_relaxed": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "jp-yucho-account",
-          "row": {
-            "tp": 9,
-            "fp": 0,
-            "fn": 10,
-            "precision": 1,
-            "recall": 0.47368421052631576,
-            "f1": 0.6428571428571429
-          },
-          "span_exact": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 10,
-            "precision": 1,
-            "recall": 0.5454545454545454,
-            "f1": 0.7058823529411764
-          },
-          "span_containment": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 10,
-            "precision": 1,
-            "recall": 0.5454545454545454,
-            "f1": 0.7058823529411764
-          },
-          "span_relaxed": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 10,
-            "precision": 1,
-            "recall": 0.5454545454545454,
-            "f1": 0.7058823529411764
-          },
-          "auxiliary": {
-            "negatives": 139,
+            "negatives": 431,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -730,143 +370,103 @@
         {
           "rule_id": "person-name",
           "row": {
-            "tp": 19,
+            "tp": 8254,
             "fp": 0,
-            "fn": 0,
+            "fn": 17,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9979446258009914,
+            "f1": 0.9989712556732224
           },
           "span_exact": {
-            "tp": 19,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "tp": 9484,
+            "fp": 7,
+            "fn": 59,
+            "precision": 0.999262459171847,
+            "recall": 0.9938174578224876,
+            "f1": 0.9965325207523379
           },
           "span_containment": {
-            "tp": 19,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "tp": 9486,
+            "fp": 5,
+            "fn": 57,
+            "precision": 0.9994731851227479,
+            "recall": 0.9940270355234203,
+            "f1": 0.996742671009772
           },
           "span_relaxed": {
-            "tp": 19,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "tp": 9486,
+            "fp": 5,
+            "fn": 57,
+            "precision": 0.9994731851227479,
+            "recall": 0.9940270355234203,
+            "f1": 0.996742671009772
           },
           "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "person-name-role-label",
-          "row": {
-            "tp": 10,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_exact": {
-            "tp": 10,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_containment": {
-            "tp": 10,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_relaxed": {
-            "tp": 10,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "auxiliary": {
-            "negatives": 139,
+            "negatives": 431,
             "finding_fp": 0,
             "confidence_miss": 0
           }
         }
       ],
       "micro": {
-        "tp": 271,
-        "fp": 1,
-        "fn": 12,
-        "precision": 0.9963235294117647,
-        "recall": 0.9575971731448764,
-        "f1": 0.9765765765765766
+        "tp": 21068,
+        "fp": 0,
+        "fn": 91,
+        "precision": 1,
+        "recall": 0.9956992296422327,
+        "f1": 0.9978449806995524
       },
       "micro_span_exact": {
-        "tp": 275,
-        "fp": 0,
-        "fn": 12,
-        "precision": 1,
-        "recall": 0.9581881533101045,
-        "f1": 0.9786476868327403
+        "tp": 21155,
+        "fp": 1776,
+        "fn": 1901,
+        "precision": 0.9225502594740744,
+        "recall": 0.9175485773768216,
+        "f1": 0.9200426207406441
       },
       "micro_span_containment": {
-        "tp": 275,
-        "fp": 0,
-        "fn": 12,
-        "precision": 1,
-        "recall": 0.9581881533101045,
-        "f1": 0.9786476868327403
+        "tp": 21300,
+        "fp": 1631,
+        "fn": 1756,
+        "precision": 0.9288735772534996,
+        "recall": 0.9238376127689105,
+        "f1": 0.9263487507339032
       },
       "micro_span_relaxed": {
-        "tp": 275,
-        "fp": 0,
-        "fn": 12,
-        "precision": 1,
-        "recall": 0.9581881533101045,
-        "f1": 0.9786476868327403
+        "tp": 22924,
+        "fp": 7,
+        "fn": 132,
+        "precision": 0.9996947363830623,
+        "recall": 0.9942748091603053,
+        "f1": 0.9969774066584034
       },
       "macro_span_exact": {
         "tp": 0,
         "fp": 0,
         "fn": 0,
-        "precision": 1,
-        "recall": 0.9724116161616163,
-        "f1": 0.9828017164312535
+        "precision": 0.9059380499567007,
+        "recall": 0.9031227151138645,
+        "f1": 0.9045240791249878
       },
       "macro_span_containment": {
         "tp": 0,
         "fp": 0,
         "fn": 0,
-        "precision": 1,
-        "recall": 0.9724116161616163,
-        "f1": 0.9828017164312535
+        "precision": 0.913557422232981,
+        "recall": 0.910614937251774,
+        "f1": 0.9120793407260737
       },
       "macro_span_relaxed": {
         "tp": 0,
         "fp": 0,
         "fn": 0,
-        "precision": 1,
-        "recall": 0.9724116161616163,
-        "f1": 0.9828017164312535
+        "precision": 0.9998486018291552,
+        "recall": 0.9954634221002587,
+        "f1": 0.9976430920432495
       },
       "auxiliary": {
-        "negatives": 139,
-        "finding_fp": 1,
+        "negatives": 431,
+        "finding_fp": 0,
         "confidence_miss": 0
       }
     },
@@ -879,7 +479,7 @@
         {
           "rule_id": "credit-card",
           "row": {
-            "tp": 10,
+            "tp": 239,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -887,7 +487,7 @@
             "f1": 1
           },
           "span_exact": {
-            "tp": 10,
+            "tp": 239,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -895,7 +495,7 @@
             "f1": 1
           },
           "span_containment": {
-            "tp": 10,
+            "tp": 239,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -903,7 +503,7 @@
             "f1": 1
           },
           "span_relaxed": {
-            "tp": 10,
+            "tp": 239,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -911,7 +511,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 139,
+            "negatives": 431,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -919,7 +519,7 @@
         {
           "rule_id": "email-address",
           "row": {
-            "tp": 10,
+            "tp": 1532,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -927,7 +527,7 @@
             "f1": 1
           },
           "span_exact": {
-            "tp": 10,
+            "tp": 1532,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -935,7 +535,7 @@
             "f1": 1
           },
           "span_containment": {
-            "tp": 10,
+            "tp": 1532,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -943,7 +543,7 @@
             "f1": 1
           },
           "span_relaxed": {
-            "tp": 10,
+            "tp": 1532,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -951,7 +551,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 139,
+            "negatives": 431,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -959,39 +559,39 @@
         {
           "rule_id": "jp-address",
           "row": {
-            "tp": 23,
+            "tp": 1881,
             "fp": 0,
-            "fn": 1,
+            "fn": 31,
             "precision": 1,
-            "recall": 0.9583333333333334,
-            "f1": 0.9787234042553191
+            "recall": 0.983786610878661,
+            "f1": 0.9918270498286317
           },
           "span_exact": {
-            "tp": 23,
-            "fp": 0,
-            "fn": 1,
-            "precision": 1,
-            "recall": 0.9583333333333334,
-            "f1": 0.9787234042553191
+            "tp": 115,
+            "fp": 1767,
+            "fn": 1799,
+            "precision": 0.06110520722635494,
+            "recall": 0.060083594566353184,
+            "f1": 0.060590094836670175
           },
           "span_containment": {
-            "tp": 23,
-            "fp": 0,
-            "fn": 1,
-            "precision": 1,
-            "recall": 0.9583333333333334,
-            "f1": 0.9787234042553191
+            "tp": 258,
+            "fp": 1624,
+            "fn": 1656,
+            "precision": 0.13708820403825717,
+            "recall": 0.13479623824451412,
+            "f1": 0.13593256059009481
           },
           "span_relaxed": {
-            "tp": 23,
+            "tp": 1882,
             "fp": 0,
-            "fn": 1,
+            "fn": 32,
             "precision": 1,
-            "recall": 0.9583333333333334,
-            "f1": 0.9787234042553191
+            "recall": 0.9832810867293625,
+            "f1": 0.9915700737618545
           },
           "auxiliary": {
-            "negatives": 139,
+            "negatives": 431,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -999,39 +599,39 @@
         {
           "rule_id": "jp-bank-account",
           "row": {
-            "tp": 17,
+            "tp": 2024,
             "fp": 0,
-            "fn": 1,
+            "fn": 29,
             "precision": 1,
-            "recall": 0.9444444444444444,
-            "f1": 0.9714285714285714
+            "recall": 0.985874330248417,
+            "f1": 0.9928869266617611
           },
           "span_exact": {
-            "tp": 17,
-            "fp": 0,
-            "fn": 1,
-            "precision": 1,
-            "recall": 0.9444444444444444,
-            "f1": 0.9714285714285714
+            "tp": 2024,
+            "fp": 2,
+            "fn": 29,
+            "precision": 0.9990128331688055,
+            "recall": 0.985874330248417,
+            "f1": 0.9924000980632508
           },
           "span_containment": {
-            "tp": 17,
-            "fp": 0,
-            "fn": 1,
-            "precision": 1,
-            "recall": 0.9444444444444444,
-            "f1": 0.9714285714285714
+            "tp": 2024,
+            "fp": 2,
+            "fn": 29,
+            "precision": 0.9990128331688055,
+            "recall": 0.985874330248417,
+            "f1": 0.9924000980632508
           },
           "span_relaxed": {
-            "tp": 17,
-            "fp": 0,
-            "fn": 1,
-            "precision": 1,
-            "recall": 0.9444444444444444,
-            "f1": 0.9714285714285714
+            "tp": 2024,
+            "fp": 2,
+            "fn": 29,
+            "precision": 0.9990128331688055,
+            "recall": 0.985874330248417,
+            "f1": 0.9924000980632508
           },
           "auxiliary": {
-            "negatives": 139,
+            "negatives": 431,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1039,7 +639,7 @@
         {
           "rule_id": "jp-birthdate",
           "row": {
-            "tp": 13,
+            "tp": 3062,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -1047,7 +647,7 @@
             "f1": 1
           },
           "span_exact": {
-            "tp": 13,
+            "tp": 3069,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -1055,7 +655,7 @@
             "f1": 1
           },
           "span_containment": {
-            "tp": 13,
+            "tp": 3069,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -1063,7 +663,7 @@
             "f1": 1
           },
           "span_relaxed": {
-            "tp": 13,
+            "tp": 3069,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -1071,87 +671,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "jp-drivers-license",
-          "row": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_exact": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_containment": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_relaxed": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "jp-employment-insurance",
-          "row": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_exact": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_containment": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_relaxed": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "auxiliary": {
-            "negatives": 139,
+            "negatives": 431,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1159,7 +679,7 @@
         {
           "rule_id": "jp-health-insurance",
           "row": {
-            "tp": 14,
+            "tp": 290,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -1167,7 +687,7 @@
             "f1": 1
           },
           "span_exact": {
-            "tp": 14,
+            "tp": 580,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -1175,7 +695,7 @@
             "f1": 1
           },
           "span_containment": {
-            "tp": 14,
+            "tp": 580,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -1183,7 +703,7 @@
             "f1": 1
           },
           "span_relaxed": {
-            "tp": 14,
+            "tp": 580,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -1191,127 +711,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "jp-invoice-number",
-          "row": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_exact": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_containment": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_relaxed": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "jp-juminhyo-code",
-          "row": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_exact": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_containment": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_relaxed": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "jp-kaigo-insurance",
-          "row": {
-            "tp": 14,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_exact": {
-            "tp": 14,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_containment": {
-            "tp": 14,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_relaxed": {
-            "tp": 14,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "auxiliary": {
-            "negatives": 139,
+            "negatives": 431,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1319,119 +719,39 @@
         {
           "rule_id": "jp-my-number",
           "row": {
-            "tp": 15,
+            "tp": 315,
             "fp": 0,
-            "fn": 0,
+            "fn": 1,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9968354430379747,
+            "f1": 0.9984152139461173
           },
           "span_exact": {
-            "tp": 15,
+            "tp": 315,
             "fp": 0,
-            "fn": 0,
+            "fn": 1,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9968354430379747,
+            "f1": 0.9984152139461173
           },
           "span_containment": {
-            "tp": 15,
+            "tp": 315,
             "fp": 0,
-            "fn": 0,
+            "fn": 1,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9968354430379747,
+            "f1": 0.9984152139461173
           },
           "span_relaxed": {
-            "tp": 15,
+            "tp": 315,
             "fp": 0,
-            "fn": 0,
+            "fn": 1,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9968354430379747,
+            "f1": 0.9984152139461173
           },
           "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "jp-passport",
-          "row": {
-            "tp": 12,
-            "fp": 1,
-            "fn": 0,
-            "precision": 0.9230769230769231,
-            "recall": 1,
-            "f1": 0.9600000000000001
-          },
-          "span_exact": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_containment": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_relaxed": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 1,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "jp-pension-number",
-          "row": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_exact": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_containment": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_relaxed": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "auxiliary": {
-            "negatives": 139,
+            "negatives": 431,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1439,39 +759,39 @@
         {
           "rule_id": "jp-phone-number",
           "row": {
-            "tp": 18,
+            "tp": 2319,
             "fp": 0,
-            "fn": 0,
+            "fn": 12,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9948519948519948,
+            "f1": 0.9974193548387097
           },
           "span_exact": {
-            "tp": 19,
+            "tp": 2645,
             "fp": 0,
-            "fn": 0,
+            "fn": 12,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9954836281520512,
+            "f1": 0.997736703130894
           },
           "span_containment": {
-            "tp": 19,
+            "tp": 2645,
             "fp": 0,
-            "fn": 0,
+            "fn": 12,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9954836281520512,
+            "f1": 0.997736703130894
           },
           "span_relaxed": {
-            "tp": 19,
+            "tp": 2645,
             "fp": 0,
-            "fn": 0,
+            "fn": 12,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9954836281520512,
+            "f1": 0.997736703130894
           },
           "auxiliary": {
-            "negatives": 139,
+            "negatives": 431,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1479,119 +799,39 @@
         {
           "rule_id": "jp-postal-code",
           "row": {
-            "tp": 15,
+            "tp": 1152,
             "fp": 0,
-            "fn": 0,
+            "fn": 1,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9991326973113617,
+            "f1": 0.9995661605206074
           },
           "span_exact": {
-            "tp": 15,
+            "tp": 1152,
             "fp": 0,
-            "fn": 0,
+            "fn": 1,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9991326973113617,
+            "f1": 0.9995661605206074
           },
           "span_containment": {
-            "tp": 15,
+            "tp": 1152,
             "fp": 0,
-            "fn": 0,
+            "fn": 1,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9991326973113617,
+            "f1": 0.9995661605206074
           },
           "span_relaxed": {
-            "tp": 15,
+            "tp": 1152,
             "fp": 0,
-            "fn": 0,
+            "fn": 1,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9991326973113617,
+            "f1": 0.9995661605206074
           },
           "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "jp-residence-card",
-          "row": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_exact": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_containment": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_relaxed": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "jp-yucho-account",
-          "row": {
-            "tp": 9,
-            "fp": 0,
-            "fn": 10,
-            "precision": 1,
-            "recall": 0.47368421052631576,
-            "f1": 0.6428571428571429
-          },
-          "span_exact": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 10,
-            "precision": 1,
-            "recall": 0.5454545454545454,
-            "f1": 0.7058823529411764
-          },
-          "span_containment": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 10,
-            "precision": 1,
-            "recall": 0.5454545454545454,
-            "f1": 0.7058823529411764
-          },
-          "span_relaxed": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 10,
-            "precision": 1,
-            "recall": 0.5454545454545454,
-            "f1": 0.7058823529411764
-          },
-          "auxiliary": {
-            "negatives": 139,
+            "negatives": 431,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1599,143 +839,103 @@
         {
           "rule_id": "person-name",
           "row": {
-            "tp": 19,
+            "tp": 8238,
             "fp": 0,
-            "fn": 0,
+            "fn": 33,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9960101559666305,
+            "f1": 0.998001090314374
           },
           "span_exact": {
-            "tp": 19,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "tp": 9468,
+            "fp": 2,
+            "fn": 75,
+            "precision": 0.9997888067581837,
+            "recall": 0.9921408362150267,
+            "f1": 0.99595013937832
           },
           "span_containment": {
-            "tp": 19,
+            "tp": 9470,
             "fp": 0,
-            "fn": 0,
+            "fn": 73,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9923504139159594,
+            "f1": 0.9961605217482775
           },
           "span_relaxed": {
-            "tp": 19,
+            "tp": 9470,
             "fp": 0,
-            "fn": 0,
+            "fn": 73,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9923504139159594,
+            "f1": 0.9961605217482775
           },
           "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "person-name-role-label",
-          "row": {
-            "tp": 10,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_exact": {
-            "tp": 10,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_containment": {
-            "tp": 10,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_relaxed": {
-            "tp": 10,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "auxiliary": {
-            "negatives": 139,
+            "negatives": 431,
             "finding_fp": 0,
             "confidence_miss": 0
           }
         }
       ],
       "micro": {
-        "tp": 271,
-        "fp": 1,
-        "fn": 12,
-        "precision": 0.9963235294117647,
-        "recall": 0.9575971731448764,
-        "f1": 0.9765765765765766
+        "tp": 21052,
+        "fp": 0,
+        "fn": 107,
+        "precision": 1,
+        "recall": 0.9949430502386691,
+        "f1": 0.9974651157281278
       },
       "micro_span_exact": {
-        "tp": 275,
-        "fp": 0,
-        "fn": 12,
-        "precision": 1,
-        "recall": 0.9581881533101045,
-        "f1": 0.9786476868327403
+        "tp": 21139,
+        "fp": 1771,
+        "fn": 1917,
+        "precision": 0.9226975120034919,
+        "recall": 0.9168546148507981,
+        "f1": 0.9197667841448027
       },
       "micro_span_containment": {
-        "tp": 275,
-        "fp": 0,
-        "fn": 12,
-        "precision": 1,
-        "recall": 0.9581881533101045,
-        "f1": 0.9786476868327403
+        "tp": 21284,
+        "fp": 1626,
+        "fn": 1772,
+        "precision": 0.9290266259275426,
+        "recall": 0.9231436502428869,
+        "f1": 0.9260757951529391
       },
       "micro_span_relaxed": {
-        "tp": 275,
-        "fp": 0,
-        "fn": 12,
-        "precision": 1,
-        "recall": 0.9581881533101045,
-        "f1": 0.9786476868327403
+        "tp": 22908,
+        "fp": 2,
+        "fn": 148,
+        "precision": 0.9999127018769096,
+        "recall": 0.9935808466342817,
+        "f1": 0.9967367184440674
       },
       "macro_span_exact": {
         "tp": 0,
         "fp": 0,
         "fn": 0,
-        "precision": 1,
-        "recall": 0.9724116161616163,
-        "f1": 0.9828017164312535
+        "precision": 0.9059906847153345,
+        "recall": 0.9029550529531185,
+        "f1": 0.904465840987586
       },
       "macro_span_containment": {
         "tp": 0,
         "fp": 0,
         "fn": 0,
-        "precision": 1,
-        "recall": 0.9724116161616163,
-        "f1": 0.9828017164312535
+        "precision": 0.9136101037207063,
+        "recall": 0.910447275091028,
+        "f1": 0.9120211257999242
       },
       "macro_span_relaxed": {
         "tp": 0,
         "fp": 0,
         "fn": 0,
-        "precision": 1,
-        "recall": 0.9724116161616163,
-        "f1": 0.9828017164312535
+        "precision": 0.9999012833168806,
+        "recall": 0.9952957599395127,
+        "f1": 0.9975848771171002
       },
       "auxiliary": {
-        "negatives": 139,
-        "finding_fp": 1,
+        "negatives": 431,
+        "finding_fp": 0,
         "confidence_miss": 0
       }
     },
@@ -1748,7 +948,7 @@
         {
           "rule_id": "credit-card",
           "row": {
-            "tp": 10,
+            "tp": 239,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -1756,7 +956,7 @@
             "f1": 1
           },
           "span_exact": {
-            "tp": 10,
+            "tp": 239,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -1764,7 +964,7 @@
             "f1": 1
           },
           "span_containment": {
-            "tp": 10,
+            "tp": 239,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -1772,7 +972,7 @@
             "f1": 1
           },
           "span_relaxed": {
-            "tp": 10,
+            "tp": 239,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -1780,7 +980,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 139,
+            "negatives": 431,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1788,7 +988,7 @@
         {
           "rule_id": "email-address",
           "row": {
-            "tp": 10,
+            "tp": 1532,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -1796,7 +996,7 @@
             "f1": 1
           },
           "span_exact": {
-            "tp": 10,
+            "tp": 1532,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -1804,7 +1004,7 @@
             "f1": 1
           },
           "span_containment": {
-            "tp": 10,
+            "tp": 1532,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -1812,7 +1012,7 @@
             "f1": 1
           },
           "span_relaxed": {
-            "tp": 10,
+            "tp": 1532,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -1820,87 +1020,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "email-address-confusable",
-          "row": {
-            "tp": 10,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_exact": {
-            "tp": 10,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_containment": {
-            "tp": 10,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_relaxed": {
-            "tp": 10,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "email-address-eai",
-          "row": {
-            "tp": 10,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_exact": {
-            "tp": 10,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_containment": {
-            "tp": 10,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_relaxed": {
-            "tp": 10,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "auxiliary": {
-            "negatives": 139,
+            "negatives": 431,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1908,119 +1028,79 @@
         {
           "rule_id": "jp-address",
           "row": {
-            "tp": 23,
+            "tp": 1881,
             "fp": 0,
-            "fn": 1,
+            "fn": 31,
             "precision": 1,
-            "recall": 0.9583333333333334,
-            "f1": 0.9787234042553191
+            "recall": 0.983786610878661,
+            "f1": 0.9918270498286317
           },
           "span_exact": {
-            "tp": 23,
-            "fp": 0,
-            "fn": 1,
-            "precision": 1,
-            "recall": 0.9583333333333334,
-            "f1": 0.9787234042553191
+            "tp": 115,
+            "fp": 1773,
+            "fn": 1799,
+            "precision": 0.06091101694915254,
+            "recall": 0.060083594566353184,
+            "f1": 0.06049447659126775
           },
           "span_containment": {
-            "tp": 23,
-            "fp": 0,
-            "fn": 1,
-            "precision": 1,
-            "recall": 0.9583333333333334,
-            "f1": 0.9787234042553191
+            "tp": 258,
+            "fp": 1630,
+            "fn": 1656,
+            "precision": 0.13665254237288135,
+            "recall": 0.13479623824451412,
+            "f1": 0.135718043135192
           },
           "span_relaxed": {
-            "tp": 23,
-            "fp": 0,
-            "fn": 1,
-            "precision": 1,
-            "recall": 0.9583333333333334,
-            "f1": 0.9787234042553191
+            "tp": 1882,
+            "fp": 6,
+            "fn": 32,
+            "precision": 0.996822033898305,
+            "recall": 0.9832810867293625,
+            "f1": 0.9900052603892688
           },
           "auxiliary": {
-            "negatives": 139,
+            "negatives": 431,
             "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "jp-address-high-recall",
-          "row": {
-            "tp": 10,
-            "fp": 1,
-            "fn": 0,
-            "precision": 0.9090909090909091,
-            "recall": 1,
-            "f1": 0.9523809523809523
-          },
-          "span_exact": {
-            "tp": 10,
-            "fp": 1,
-            "fn": 0,
-            "precision": 0.9090909090909091,
-            "recall": 1,
-            "f1": 0.9523809523809523
-          },
-          "span_containment": {
-            "tp": 10,
-            "fp": 1,
-            "fn": 0,
-            "precision": 0.9090909090909091,
-            "recall": 1,
-            "f1": 0.9523809523809523
-          },
-          "span_relaxed": {
-            "tp": 10,
-            "fp": 1,
-            "fn": 0,
-            "precision": 0.9090909090909091,
-            "recall": 1,
-            "f1": 0.9523809523809523
-          },
-          "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 1,
             "confidence_miss": 0
           }
         },
         {
           "rule_id": "jp-bank-account",
           "row": {
-            "tp": 17,
+            "tp": 2024,
             "fp": 0,
-            "fn": 1,
+            "fn": 29,
             "precision": 1,
-            "recall": 0.9444444444444444,
-            "f1": 0.9714285714285714
+            "recall": 0.985874330248417,
+            "f1": 0.9928869266617611
           },
           "span_exact": {
-            "tp": 17,
-            "fp": 0,
-            "fn": 1,
-            "precision": 1,
-            "recall": 0.9444444444444444,
-            "f1": 0.9714285714285714
+            "tp": 2024,
+            "fp": 2,
+            "fn": 29,
+            "precision": 0.9990128331688055,
+            "recall": 0.985874330248417,
+            "f1": 0.9924000980632508
           },
           "span_containment": {
-            "tp": 17,
-            "fp": 0,
-            "fn": 1,
-            "precision": 1,
-            "recall": 0.9444444444444444,
-            "f1": 0.9714285714285714
+            "tp": 2024,
+            "fp": 2,
+            "fn": 29,
+            "precision": 0.9990128331688055,
+            "recall": 0.985874330248417,
+            "f1": 0.9924000980632508
           },
           "span_relaxed": {
-            "tp": 17,
-            "fp": 0,
-            "fn": 1,
-            "precision": 1,
-            "recall": 0.9444444444444444,
-            "f1": 0.9714285714285714
+            "tp": 2024,
+            "fp": 2,
+            "fn": 29,
+            "precision": 0.9990128331688055,
+            "recall": 0.985874330248417,
+            "f1": 0.9924000980632508
           },
           "auxiliary": {
-            "negatives": 139,
+            "negatives": 431,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2028,7 +1108,7 @@
         {
           "rule_id": "jp-birthdate",
           "row": {
-            "tp": 13,
+            "tp": 3062,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -2036,7 +1116,7 @@
             "f1": 1
           },
           "span_exact": {
-            "tp": 13,
+            "tp": 3069,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -2044,7 +1124,7 @@
             "f1": 1
           },
           "span_containment": {
-            "tp": 13,
+            "tp": 3069,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -2052,7 +1132,7 @@
             "f1": 1
           },
           "span_relaxed": {
-            "tp": 13,
+            "tp": 3069,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -2060,87 +1140,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "jp-drivers-license",
-          "row": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_exact": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_containment": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_relaxed": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "jp-employment-insurance",
-          "row": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_exact": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_containment": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_relaxed": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "auxiliary": {
-            "negatives": 139,
+            "negatives": 431,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2148,7 +1148,7 @@
         {
           "rule_id": "jp-health-insurance",
           "row": {
-            "tp": 14,
+            "tp": 290,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -2156,7 +1156,7 @@
             "f1": 1
           },
           "span_exact": {
-            "tp": 14,
+            "tp": 580,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -2164,7 +1164,7 @@
             "f1": 1
           },
           "span_containment": {
-            "tp": 14,
+            "tp": 580,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -2172,7 +1172,7 @@
             "f1": 1
           },
           "span_relaxed": {
-            "tp": 14,
+            "tp": 580,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -2180,127 +1180,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "jp-invoice-number",
-          "row": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_exact": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_containment": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_relaxed": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "jp-juminhyo-code",
-          "row": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_exact": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_containment": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_relaxed": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "jp-kaigo-insurance",
-          "row": {
-            "tp": 14,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_exact": {
-            "tp": 14,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_containment": {
-            "tp": 14,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_relaxed": {
-            "tp": 14,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "auxiliary": {
-            "negatives": 139,
+            "negatives": 431,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2308,119 +1188,39 @@
         {
           "rule_id": "jp-my-number",
           "row": {
-            "tp": 15,
+            "tp": 315,
             "fp": 0,
-            "fn": 0,
+            "fn": 1,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9968354430379747,
+            "f1": 0.9984152139461173
           },
           "span_exact": {
-            "tp": 15,
+            "tp": 315,
             "fp": 0,
-            "fn": 0,
+            "fn": 1,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9968354430379747,
+            "f1": 0.9984152139461173
           },
           "span_containment": {
-            "tp": 15,
+            "tp": 315,
             "fp": 0,
-            "fn": 0,
+            "fn": 1,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9968354430379747,
+            "f1": 0.9984152139461173
           },
           "span_relaxed": {
-            "tp": 15,
+            "tp": 315,
             "fp": 0,
-            "fn": 0,
+            "fn": 1,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9968354430379747,
+            "f1": 0.9984152139461173
           },
           "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "jp-passport",
-          "row": {
-            "tp": 12,
-            "fp": 1,
-            "fn": 0,
-            "precision": 0.9230769230769231,
-            "recall": 1,
-            "f1": 0.9600000000000001
-          },
-          "span_exact": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_containment": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_relaxed": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 1,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "jp-pension-number",
-          "row": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_exact": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_containment": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_relaxed": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "auxiliary": {
-            "negatives": 139,
+            "negatives": 431,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2428,39 +1228,39 @@
         {
           "rule_id": "jp-phone-number",
           "row": {
-            "tp": 18,
+            "tp": 2319,
             "fp": 0,
-            "fn": 0,
+            "fn": 12,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9948519948519948,
+            "f1": 0.9974193548387097
           },
           "span_exact": {
-            "tp": 19,
+            "tp": 2645,
             "fp": 0,
-            "fn": 0,
+            "fn": 12,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9954836281520512,
+            "f1": 0.997736703130894
           },
           "span_containment": {
-            "tp": 19,
+            "tp": 2645,
             "fp": 0,
-            "fn": 0,
+            "fn": 12,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9954836281520512,
+            "f1": 0.997736703130894
           },
           "span_relaxed": {
-            "tp": 19,
+            "tp": 2645,
             "fp": 0,
-            "fn": 0,
+            "fn": 12,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9954836281520512,
+            "f1": 0.997736703130894
           },
           "auxiliary": {
-            "negatives": 139,
+            "negatives": 431,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2468,119 +1268,39 @@
         {
           "rule_id": "jp-postal-code",
           "row": {
-            "tp": 15,
+            "tp": 1152,
             "fp": 0,
-            "fn": 0,
+            "fn": 1,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9991326973113617,
+            "f1": 0.9995661605206074
           },
           "span_exact": {
-            "tp": 15,
+            "tp": 1152,
             "fp": 0,
-            "fn": 0,
+            "fn": 1,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9991326973113617,
+            "f1": 0.9995661605206074
           },
           "span_containment": {
-            "tp": 15,
+            "tp": 1152,
             "fp": 0,
-            "fn": 0,
+            "fn": 1,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9991326973113617,
+            "f1": 0.9995661605206074
           },
           "span_relaxed": {
-            "tp": 15,
+            "tp": 1152,
             "fp": 0,
-            "fn": 0,
+            "fn": 1,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9991326973113617,
+            "f1": 0.9995661605206074
           },
           "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "jp-residence-card",
-          "row": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_exact": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_containment": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_relaxed": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "jp-yucho-account",
-          "row": {
-            "tp": 9,
-            "fp": 0,
-            "fn": 10,
-            "precision": 1,
-            "recall": 0.47368421052631576,
-            "f1": 0.6428571428571429
-          },
-          "span_exact": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 10,
-            "precision": 1,
-            "recall": 0.5454545454545454,
-            "f1": 0.7058823529411764
-          },
-          "span_containment": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 10,
-            "precision": 1,
-            "recall": 0.5454545454545454,
-            "f1": 0.7058823529411764
-          },
-          "span_relaxed": {
-            "tp": 12,
-            "fp": 0,
-            "fn": 10,
-            "precision": 1,
-            "recall": 0.5454545454545454,
-            "f1": 0.7058823529411764
-          },
-          "auxiliary": {
-            "negatives": 139,
+            "negatives": 431,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2588,430 +1308,170 @@
         {
           "rule_id": "person-name",
           "row": {
-            "tp": 19,
+            "tp": 8239,
             "fp": 0,
-            "fn": 0,
+            "fn": 32,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.996131060331278,
+            "f1": 0.9980617807389461
           },
           "span_exact": {
-            "tp": 19,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "tp": 9469,
+            "fp": 5,
+            "fn": 74,
+            "precision": 0.9994722398142284,
+            "recall": 0.9922456250654931,
+            "f1": 0.9958458221591207
           },
           "span_containment": {
-            "tp": 19,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "tp": 9471,
+            "fp": 3,
+            "fn": 72,
+            "precision": 0.9996833438885371,
+            "recall": 0.9924552027664256,
+            "f1": 0.9960561602776463
           },
           "span_relaxed": {
-            "tp": 19,
+            "tp": 9474,
             "fp": 0,
-            "fn": 0,
+            "fn": 69,
             "precision": 1,
-            "recall": 1,
-            "f1": 1
+            "recall": 0.9927695693178246,
+            "f1": 0.9963716674554347
           },
           "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "person-name-high-recall",
-          "row": {
-            "tp": 10,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_exact": {
-            "tp": 10,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_containment": {
-            "tp": 10,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_relaxed": {
-            "tp": 10,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "person-name-role-label",
-          "row": {
-            "tp": 10,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_exact": {
-            "tp": 10,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_containment": {
-            "tp": 10,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_relaxed": {
-            "tp": 10,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "person-name-romaji",
-          "row": {
-            "tp": 10,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_exact": {
-            "tp": 10,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_containment": {
-            "tp": 10,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_relaxed": {
-            "tp": 10,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "auxiliary": {
-            "negatives": 139,
-            "finding_fp": 0,
-            "confidence_miss": 0
-          }
-        },
-        {
-          "rule_id": "person-name-structured",
-          "row": {
-            "tp": 15,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_exact": {
-            "tp": 15,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_containment": {
-            "tp": 15,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "span_relaxed": {
-            "tp": 15,
-            "fp": 0,
-            "fn": 0,
-            "precision": 1,
-            "recall": 1,
-            "f1": 1
-          },
-          "auxiliary": {
-            "negatives": 139,
+            "negatives": 431,
             "finding_fp": 0,
             "confidence_miss": 0
           }
         }
       ],
       "micro": {
-        "tp": 336,
-        "fp": 2,
-        "fn": 12,
-        "precision": 0.9940828402366864,
-        "recall": 0.9655172413793104,
-        "f1": 0.979591836734694
+        "tp": 21053,
+        "fp": 0,
+        "fn": 106,
+        "precision": 1,
+        "recall": 0.9949903114513918,
+        "f1": 0.9974888657253861
       },
       "micro_span_exact": {
-        "tp": 340,
-        "fp": 1,
-        "fn": 12,
-        "precision": 0.9970674486803519,
-        "recall": 0.9659090909090909,
-        "f1": 0.9812409812409814
+        "tp": 21140,
+        "fp": 1780,
+        "fn": 1916,
+        "precision": 0.9223385689354275,
+        "recall": 0.9168979875086746,
+        "f1": 0.9196102314250914
       },
       "micro_span_containment": {
-        "tp": 340,
-        "fp": 1,
-        "fn": 12,
-        "precision": 0.9970674486803519,
-        "recall": 0.9659090909090909,
-        "f1": 0.9812409812409814
+        "tp": 21285,
+        "fp": 1635,
+        "fn": 1771,
+        "precision": 0.9286649214659686,
+        "recall": 0.9231870229007634,
+        "f1": 0.9259178701931443
       },
       "micro_span_relaxed": {
-        "tp": 340,
-        "fp": 1,
-        "fn": 12,
-        "precision": 0.9970674486803519,
-        "recall": 0.9659090909090909,
-        "f1": 0.9812409812409814
+        "tp": 22912,
+        "fp": 8,
+        "fn": 144,
+        "precision": 0.999650959860384,
+        "recall": 0.9937543372657877,
+        "f1": 0.9966939272663998
       },
       "macro_span_exact": {
         "tp": 0,
         "fp": 0,
         "fn": 0,
-        "precision": 0.9965034965034966,
-        "recall": 0.9787781662781664,
-        "f1": 0.9849390492694623
+        "precision": 0.9059396089932186,
+        "recall": 0.9029655318381652,
+        "f1": 0.9044458474411258
       },
       "macro_span_containment": {
         "tp": 0,
         "fp": 0,
         "fn": 0,
-        "precision": 0.9965034965034966,
-        "recall": 0.9787781662781664,
-        "f1": 0.9849390492694623
+        "precision": 0.9135348719430224,
+        "recall": 0.9104577539760745,
+        "f1": 0.9119892379073707
       },
       "macro_span_relaxed": {
         "tp": 0,
         "fp": 0,
         "fn": 0,
-        "precision": 0.9965034965034966,
-        "recall": 0.9787781662781664,
-        "f1": 0.9849390492694623
+        "precision": 0.999583486706711,
+        "recall": 0.9953376754796992,
+        "f1": 0.9974495103505573
       },
       "auxiliary": {
-        "negatives": 139,
-        "finding_fp": 2,
+        "negatives": 431,
+        "finding_fp": 0,
         "confidence_miss": 0
       }
     }
   ],
   "dataset": {
-    "total_cases": 481,
-    "positive_cases": 342,
-    "negative_cases": 139,
-    "span_annotated_cases": 342,
+    "total_cases": 9851,
+    "positive_cases": 9420,
+    "negative_cases": 431,
+    "span_annotated_cases": 9420,
     "per_rule": [
       {
         "rule_id": "credit-card",
-        "positive_cases": 10
+        "positive_cases": 239
       },
       {
         "rule_id": "email-address",
-        "positive_cases": 10
-      },
-      {
-        "rule_id": "email-address-confusable",
-        "positive_cases": 10
-      },
-      {
-        "rule_id": "email-address-eai",
-        "positive_cases": 10
+        "positive_cases": 1532
       },
       {
         "rule_id": "jp-address",
-        "positive_cases": 24
-      },
-      {
-        "rule_id": "jp-address-high-recall",
-        "positive_cases": 10
+        "positive_cases": 1912
       },
       {
         "rule_id": "jp-bank-account",
-        "positive_cases": 18
+        "positive_cases": 2053
       },
       {
         "rule_id": "jp-birthdate",
-        "positive_cases": 13
-      },
-      {
-        "rule_id": "jp-drivers-license",
-        "positive_cases": 12
-      },
-      {
-        "rule_id": "jp-employment-insurance",
-        "positive_cases": 12
+        "positive_cases": 3062
       },
       {
         "rule_id": "jp-health-insurance",
-        "positive_cases": 14
-      },
-      {
-        "rule_id": "jp-invoice-number",
-        "positive_cases": 12
-      },
-      {
-        "rule_id": "jp-juminhyo-code",
-        "positive_cases": 12
-      },
-      {
-        "rule_id": "jp-kaigo-insurance",
-        "positive_cases": 14
+        "positive_cases": 290
       },
       {
         "rule_id": "jp-my-number",
-        "positive_cases": 15
-      },
-      {
-        "rule_id": "jp-passport",
-        "positive_cases": 12
-      },
-      {
-        "rule_id": "jp-pension-number",
-        "positive_cases": 12
+        "positive_cases": 316
       },
       {
         "rule_id": "jp-phone-number",
-        "positive_cases": 18
+        "positive_cases": 2331
       },
       {
         "rule_id": "jp-postal-code",
-        "positive_cases": 15
-      },
-      {
-        "rule_id": "jp-residence-card",
-        "positive_cases": 12
-      },
-      {
-        "rule_id": "jp-yucho-account",
-        "positive_cases": 19
+        "positive_cases": 1153
       },
       {
         "rule_id": "person-name",
-        "positive_cases": 19
-      },
-      {
-        "rule_id": "person-name-high-recall",
-        "positive_cases": 10
-      },
-      {
-        "rule_id": "person-name-role-label",
-        "positive_cases": 10
-      },
-      {
-        "rule_id": "person-name-romaji",
-        "positive_cases": 10
-      },
-      {
-        "rule_id": "person-name-structured",
-        "positive_cases": 15
+        "positive_cases": 8271
       }
     ],
     "per_kind": [
       {
         "name": "content",
-        "cases": 46
-      },
-      {
-        "name": "diff",
-        "cases": 11
-      },
-      {
-        "name": "line",
-        "cases": 424
+        "cases": 9851
       }
     ],
     "per_format": [
       {
-        "name": "csv",
-        "cases": 11
-      },
-      {
-        "name": "json",
-        "cases": 9
-      },
-      {
-        "name": "sql",
-        "cases": 8
-      },
-      {
         "name": "txt",
-        "cases": 15
-      },
-      {
-        "name": "unspecified",
-        "cases": 433
-      },
-      {
-        "name": "yaml",
-        "cases": 5
+        "cases": 9851
       }
     ],
     "per_source_class": [
       {
-        "name": "curated-v2",
-        "cases": 284
-      },
-      {
-        "name": "hard-negative",
-        "cases": 65
-      },
-      {
-        "name": "legacy-curated",
-        "cases": 132
+        "name": "nemotron-pii-japan",
+        "cases": 9851
       }
     ]
   },

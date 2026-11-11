@@ -770,7 +770,7 @@
         {
           "rule_id": "person-name-role-label",
           "row": {
-            "tp": 219,
+            "tp": 220,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -809,12 +809,12 @@
         }
       ],
       "micro": {
-        "tp": 967,
+        "tp": 968,
         "fp": 1,
         "fn": 0,
-        "precision": 0.9989669421487604,
+        "precision": 0.9989680082559339,
         "recall": 1,
-        "f1": 0.999483204134367
+        "f1": 0.9994837377387713
       },
       "micro_span_exact": {
         "tp": 149,
@@ -1639,7 +1639,7 @@
         {
           "rule_id": "person-name-role-label",
           "row": {
-            "tp": 219,
+            "tp": 220,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -1678,12 +1678,12 @@
         }
       ],
       "micro": {
-        "tp": 965,
+        "tp": 966,
         "fp": 1,
         "fn": 2,
-        "precision": 0.9989648033126294,
-        "recall": 0.9979317476732161,
-        "f1": 0.9984480082772893
+        "precision": 0.9989658738366081,
+        "recall": 0.9979338842975206,
+        "f1": 0.9984496124031006
       },
       "micro_span_exact": {
         "tp": 149,
@@ -2628,7 +2628,7 @@
         {
           "rule_id": "person-name-high-recall",
           "row": {
-            "tp": 56,
+            "tp": 55,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -2668,7 +2668,7 @@
         {
           "rule_id": "person-name-role-label",
           "row": {
-            "tp": 219,
+            "tp": 220,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -3737,7 +3737,7 @@
         {
           "rule_id": "person-name-high-recall",
           "row": {
-            "tp": 56,
+            "tp": 55,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -3777,7 +3777,7 @@
         {
           "rule_id": "person-name-role-label",
           "row": {
-            "tp": 219,
+            "tp": 220,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -4094,11 +4094,11 @@
       },
       {
         "rule_id": "person-name-high-recall",
-        "positive_cases": 56
+        "positive_cases": 55
       },
       {
         "rule_id": "person-name-role-label",
-        "positive_cases": 219
+        "positive_cases": 220
       },
       {
         "rule_id": "person-name-romaji",
@@ -4141,8 +4141,12 @@
         "cases": 10
       },
       {
+        "name": "tsv",
+        "cases": 10
+      },
+      {
         "name": "txt",
-        "cases": 41
+        "cases": 31
       },
       {
         "name": "unspecified",

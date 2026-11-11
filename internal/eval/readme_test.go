@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/baneido/jp-pii-detector/internal/nemotron"
 	"github.com/baneido/jp-pii-detector/internal/privatecorpus"
 )
 
@@ -71,7 +72,7 @@ var (
 	// 表の行に限って行うので、表外の太字数値を誤って書き換えることはない。
 	// 英語版本文の総合 F1 表記 `**F1 x.xx**` は太字が `F1 ` で始まるため
 	// このパターンには一致しない。
-	ruleF1Re = regexp.MustCompile(`\*\*[0-9]+\.[0-9]{2}\*\*`)
+	ruleF1Re = regexp.MustCompile(`\*\*[0-9]+\.[0-9]{2}\*\*|` + notMeasuredJA + `|` + notMeasuredEN)
 
 	// 先頭の総合バッジ（マイクロ平均 F1）。
 	//
@@ -108,6 +109,29 @@ var (
 	plainF1Re = regexp.MustCompile(`\*\*F1 ([0-9.]+)\*\*`)
 )
 
+// 評価コーパス（Nemotron-PII-Japan）に正解ラベルがないルールの行に書く表記。
+const (
+	notMeasuredJA = "未計測"
+	notMeasuredEN = "not measured"
+)
+
+// coveredRules は評価コーパスに正解ラベルがあるルール ID の集合。
+func coveredRules() map[string]bool {
+	m := map[string]bool{}
+	for _, id := range nemotron.CoveredRuleIDs() {
+		m[id] = true
+	}
+	return m
+}
+
+// ruleCell は表の実測 F1 列に書く値。正解がないルールは未計測と書く。
+func ruleCell(spec readmeSpec, id string, f1 map[string]float64) string {
+	if !coveredRules()[id] {
+		return spec.notMeasured
+	}
+	return F1Markdown(f1[id])
+}
+
 // readmeSpec は精度表記の同期対象となる README 1 ファイル分の定義。
 // 日本語版と英語版では表の列構成も文面も異なるため、「そのファイルのどこを
 // 見る/書き換えるか」をここで宣言し、検証と -update の双方が同じ定義を使う。
@@ -121,15 +145,16 @@ var (
 // ただし「宣言したのに見つからない」は失敗させる（文面の書き換えでゲートが
 // 素通りするのを防ぐため、各パターンはちょうど 1 件一致することを要求する）。
 type readmeSpec struct {
-	path      string
-	ruleRows  map[string]string // nil ならルール別バッジ列を持たない
-	plainF1Re *regexp.Regexp    // nil なら本文中の素の総合 F1 表記を持たない
+	path        string
+	ruleRows    map[string]string // nil ならルール別バッジ列を持たない
+	plainF1Re   *regexp.Regexp    // nil なら本文中の素の総合 F1 表記を持たない
+	notMeasured string            // 正解ラベルのないルールの行に書く表記
 }
 
 func readmeSpecs() []readmeSpec {
 	return []readmeSpec{
-		{path: readmePath, ruleRows: readmeRow},
-		{path: readmeENPath, ruleRows: readmeRowEN, plainF1Re: plainF1Re},
+		{path: readmePath, ruleRows: readmeRow, notMeasured: notMeasuredJA},
+		{path: readmeENPath, ruleRows: readmeRowEN, plainF1Re: plainF1Re, notMeasured: notMeasuredEN},
 	}
 }
 
@@ -143,11 +168,7 @@ func overallBadgeValue(results []Result) string {
 // 対応する medium プロファイルの実測値と一致することを検証する。
 // -update 指定時は両ファイルの表記を実測値で書き換えてから検証する。
 func TestReadmeBadges(t *testing.T) {
-	privatecorpus.Require(t)
-	profiles, err := EvaluatePublishedProfiles()
-	if err != nil {
-		t.Fatal(err)
-	}
+	profiles := cachedPublishedProfiles(t, privatecorpus.Require(t))
 	profile, ok := FindProfile(profiles, "medium")
 	if !ok {
 		t.Fatal("medium profile not found")
@@ -237,23 +258,25 @@ func checkReadme(t *testing.T, spec readmeSpec, readme string, results []Result)
 	t.Helper()
 
 	// ルール別 F1 列を持つファイルのみ、行ごとの表記を検証する。
-	for _, r := range results {
-		if spec.ruleRows == nil {
-			break
+	if spec.ruleRows != nil {
+		f1 := map[string]float64{}
+		for _, r := range results {
+			f1[r.RuleID] = r.F1
+			if _, ok := spec.ruleRows[r.RuleID]; !ok {
+				t.Errorf("%s: ルール %q の行ラベルが未登録（readmeRow / readmeRowEN に追加してください）", spec.path, r.RuleID)
+			}
 		}
-		label, ok := spec.ruleRows[r.RuleID]
-		if !ok {
-			t.Errorf("%s: ルール %q の行ラベルが未登録（readmeRow / readmeRowEN に追加してください）", spec.path, r.RuleID)
-			continue
-		}
-		row := findRow(readme, label)
-		if row == "" {
-			t.Errorf("%s: 精度表に行 %q が見つからない", spec.path, label)
-			continue
-		}
-		if want := F1Markdown(r.F1); !strings.Contains(row, want) {
-			t.Errorf("%s: %q 行の実測 F1 が実測値と不一致: want %s（-update で更新できます）",
-				spec.path, label, want)
+		for id, label := range spec.ruleRows {
+			row := findRow(readme, label)
+			if row == "" {
+				t.Errorf("%s: 精度表に行 %q が見つからない", spec.path, label)
+				continue
+			}
+			want := ruleCell(spec, id, f1)
+			if cells := ruleF1Re.FindAllString(row, -1); len(cells) != 1 || cells[0] != want {
+				t.Errorf("%s: %q 行の実測 F1 列が %q、want %q（-update で更新できます）",
+					spec.path, label, cells, want)
+			}
 		}
 	}
 
@@ -330,7 +353,7 @@ func rewriteBadges(readme string, spec readmeSpec, results []Result) string {
 		for i, line := range lines {
 			for id, label := range spec.ruleRows {
 				if strings.HasPrefix(line, "| "+label+" |") {
-					lines[i] = ruleF1Re.ReplaceAllString(line, F1Markdown(f1[id]))
+					lines[i] = ruleF1Re.ReplaceAllString(line, ruleCell(spec, id, f1))
 					break
 				}
 			}

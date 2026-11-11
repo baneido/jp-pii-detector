@@ -7,7 +7,7 @@ import (
 	"sync"
 )
 
-//go:embed surnames.txt given_names.txt given_names_katakana_org.txt name_homographs.txt
+//go:embed surnames.txt given_names.txt given_names_katakana_org.txt name_homographs.txt surnames_ipadic.txt given_names_ipadic.txt
 var namesFS embed.FS
 
 // 各辞書は sync.OnceValue による遅延ロード。パッケージ変数の初期化でマップ化
@@ -17,8 +17,10 @@ var namesFS embed.FS
 // （例: extendedGivenNameSet は high-recall 経路だけ）。sync.OnceValue は
 // 並行安全なので、並列走査の複数ワーカーから同時に呼んでも構築は一度で済む。
 var (
-	surnameSet   = sync.OnceValue(func() map[string]bool { return loadNameSet(namesFS, "surnames.txt") })
-	givenNameSet = sync.OnceValue(func() map[string]bool { return loadNameSet(namesFS, "given_names.txt") })
+	// surnameSet / givenNameSet は照合に使う集合で、既定辞書に IPADIC 由来の追加分
+	// （*_ipadic.txt、internal/dict/gen-ipadic-names が生成）を合わせたもの。
+	surnameSet   = sync.OnceValue(func() map[string]bool { return loadNameSets(namesFS, "surnames.txt", "surnames_ipadic.txt") })
+	givenNameSet = sync.OnceValue(func() map[string]bool { return loadNameSets(namesFS, "given_names.txt", "given_names_ipadic.txt") })
 	// extendedGivenNameSet は org 版の読みから既定（opti）との差分だけを収録した
 	// 高再現率用カタカナ名。既定 person-name の精度を変えず、明示的な
 	// high-recall 経路だけで使う。
@@ -28,9 +30,10 @@ var (
 	// sortedSurnames / sortedGivenNames は SurnameSample / GivenNameSample 用に、
 	// 辞書を決定的な（バイト列順にソート済みの）スライスへ複製したもの。
 	// map のイテレーション順は不定なため、合成ケース生成のような再現性が
-	// 必要な用途向けに別途保持する。
-	sortedSurnames   = sync.OnceValue(func() []string { return sortedKeys(surnameSet()) })
-	sortedGivenNames = sync.OnceValue(func() []string { return sortedKeys(givenNameSet()) })
+	// 必要な用途向けに別途保持する。IPADIC 由来の追加分は含めない（辞書を拡張する
+	// たびにテスト用の合成値が入れ替わらないようにするため）。
+	sortedSurnames   = sync.OnceValue(func() []string { return sortedKeys(loadNameSet(namesFS, "surnames.txt")) })
+	sortedGivenNames = sync.OnceValue(func() []string { return sortedKeys(loadNameSet(namesFS, "given_names.txt")) })
 )
 
 // loadNameSet は fsys に go:embed された name（改行区切り、# 始まりはコメント）を
@@ -47,6 +50,17 @@ func loadNameSet(fsys embed.FS, name string) map[string]bool {
 			continue
 		}
 		out[line] = true
+	}
+	return out
+}
+
+// loadNameSets は複数の辞書ファイルを 1 つの集合へ読み込む。
+func loadNameSets(fsys embed.FS, names ...string) map[string]bool {
+	out := map[string]bool{}
+	for _, name := range names {
+		for k := range loadNameSet(fsys, name) {
+			out[k] = true
+		}
 	}
 	return out
 }
@@ -72,12 +86,13 @@ var nameVariants = strings.NewReplacer(
 	"髙", "高",
 	"𠮷", "吉",
 	"\uFA10", "塚", // U+FA10 塚（NFKC 互換分解を持つが、照合キーは NFKC を通らないため明示）
+	"ヶ", "ケ", // 辞書は「松ケ崎」のように「ケ」で収録している
 )
 
 // foldNameVariants は s に nameVariants の異体字が含まれる場合だけ置換する
 // （大半の入力は異体字を含まないため割り当てなしで返す）。
 func foldNameVariants(s string) string {
-	if !strings.ContainsAny(s, "﨑髙𠮷\uFA10") {
+	if !strings.ContainsAny(s, "﨑髙𠮷\uFA10ヶ") {
 		return s
 	}
 	return nameVariants.Replace(s)

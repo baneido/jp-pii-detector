@@ -36,10 +36,15 @@ SOFTWARE.
 
 ## IPADIC 2.7.0
 
-This repository includes four-kanji surname entries and their readings derived
-from `Noun.name.csv` in
-[IPADIC 2.7.0-20070801](https://sources.debian.org/src/mecab-ipadic/2.7.0-20070801%2Bmain-2.1/).
-The generator and exact source digest are documented in `docs/development.md`.
+This repository includes surname and given-name entries derived from
+`Noun.name.csv` in
+[IPADIC 2.7.0-20070801](https://sources.debian.org/src/mecab-ipadic/2.7.0-20070801%2Bmain-2.1/):
+four-kanji surnames and their readings in `internal/dict/surnames.txt`, and the
+surnames and given names missing from the default dictionaries in
+`internal/dict/surnames_ipadic.txt` and `internal/dict/given_names_ipadic.txt`.
+The common-word list `internal/dict/common_words.txt` is derived from the other
+(non-proper-noun) IPADIC 2.7.0-20070801 CSV files.
+The generators and exact source digest are documented in `docs/development.md`.
 
 Copyright 2000, 2001, 2002, 2003 Nara Institute of Science
 and Technology.  All Rights Reserved.

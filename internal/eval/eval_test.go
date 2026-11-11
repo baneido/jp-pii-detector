@@ -6,6 +6,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/baneido/jp-pii-detector/internal/privatecorpus"
@@ -30,10 +31,7 @@ const (
 // コミットする。
 func TestAccuracy(t *testing.T) {
 	corpus := privatecorpus.Require(t)
-	profiles, err := EvaluatePublishedProfileCases(corpus.Dataset)
-	if err != nil {
-		t.Fatal(err)
-	}
+	profiles := cachedPublishedProfiles(t, corpus)
 	got := BuildGolden(profiles, corpus.Dataset, corpus.DatasetID)
 
 	want, err := LoadGolden(accuracyJSONPath)
@@ -45,6 +43,25 @@ func TestAccuracy(t *testing.T) {
 	for _, msg := range DiffGolden(got, want) {
 		t.Error(msg)
 	}
+}
+
+// publishedProfilesOnce は評価コーパスの 3 プロファイル評価を 1 回だけ行い、TestAccuracy・
+// TestGenerateDoc・TestReadmeBadges で使い回す（1 万件の評価は 1 回で数分かかる）。
+var publishedProfilesOnce struct {
+	sync.Once
+	profiles []ProfileEvaluation
+	err      error
+}
+
+func cachedPublishedProfiles(t *testing.T, corpus *privatecorpus.Corpus) []ProfileEvaluation {
+	t.Helper()
+	publishedProfilesOnce.Do(func() {
+		publishedProfilesOnce.profiles, publishedProfilesOnce.err = EvaluatePublishedProfileCases(corpus.Dataset)
+	})
+	if publishedProfilesOnce.err != nil {
+		t.Fatal(publishedProfilesOnce.err)
+	}
+	return publishedProfilesOnce.profiles
 }
 
 func TestEvaluateCasesKeepsRowMetricsForCasesWithoutSpans(t *testing.T) {
@@ -651,7 +668,7 @@ func TestEvaluateCasesWithOptionsMatchesStratifiedResults(t *testing.T) {
 // knownCaseTagPrefixes は Case.Tags の既知の語彙プレフィックス
 // （docs/development.md にドキュメント化）。
 var knownCaseTagPrefixes = []string{
-	"notation:", "sep:", "format:", "file-format:", "label:", "layout:", "source:", "polarity:", "rule:", "scenario:",
+	"notation:", "sep:", "format:", "file-format:", "label:", "layout:", "source:", "polarity:", "rule:", "scenario:", "domain:",
 }
 
 // knownCaseTag は tag が既知のケースタグ語彙に従っているかを返す。
@@ -735,27 +752,29 @@ func TestGenerateDoc(t *testing.T) {
 		t.Skip("-update 指定時のみ docs/accuracy.md・docs/accuracy.json を再生成する")
 	}
 	corpus := privatecorpus.Require(t)
-	profiles, err := EvaluatePublishedProfileCases(corpus.Dataset)
-	if err != nil {
-		t.Fatal(err)
-	}
+	profiles := cachedPublishedProfiles(t, corpus)
 	cases := corpus.Dataset
 
 	var b strings.Builder
 	b.WriteString("# 検出精度（評価データセットに対する実測値）\n\n")
-	b.WriteString("`internal/eval` のラベル付き評価データセットに対して計測した、検出ルールごとの\n")
-	b.WriteString("適合率（precision）、再現率（recall）、F1 スコアです。`JP_PII_FIXTURES` を設定して\n")
-	b.WriteString("`go test ./internal/eval` で検証され（[eval_test.go](../internal/eval/eval_test.go)）、\n")
-	b.WriteString("`-update` で本ファイルを再生成します。\n\n")
-	fmt.Fprintf(&b, "評価コーパスID: `%s`（生データのハッシュや本文は公開しません）。\n\n", corpus.DatasetID)
+	b.WriteString("公開データセット [Nemotron-PII-Japan](https://huggingface.co/datasets/nvidia/Nemotron-PII-Japan)\n")
+	b.WriteString("（NVIDIA、[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)）から抽出した評価ケースに対して計測した、\n")
+	b.WriteString("検出ルールごとの適合率（precision）、再現率（recall）、F1 スコアです。\n")
+	b.WriteString("`go run ./cmd/pii-fixture eval` で検証され（[eval_test.go](../internal/eval/eval_test.go)）、\n")
+	b.WriteString("`-update` を付けると本ファイルを再生成します。\n\n")
+	fmt.Fprintf(&b, "評価コーパスID: `%s`（`fixtures.lock.json` で revision・SHA-256・抽出率を固定）。\n\n", corpus.DatasetID)
+	b.WriteString("データセットは完全合成の日本語文書 10 万件で、uid のハッシュで決定的に抽出した約 1 割を使います。\n")
+	b.WriteString("正解ラベルを本検出器のルールへ対応づけ（`internal/nemotron`）、対応するルールのないラベル\n")
+	b.WriteString("（運転免許証番号・旅券番号など 9 ルール分）は計測しません。氏名・住所・メールアドレスは、\n")
+	b.WriteString("派生ルール（`person-name-role-label` など）の検出も系統（`person-name` など）の検出として数えます。\n")
+	b.WriteString("データセットの注釈は網羅的ではないと公表されているため、適合率は下限の目安です。\n\n")
 	b.WriteString("設定の異なるF1を混同しないよう、rule capability（low）、default operational（medium）、\n")
 	b.WriteString("high recall operationalの3プロファイルを別々に計測・CIゲートします。READMEバッジは\n")
 	b.WriteString("利用者の既定運用に対応するmediumプロファイルです。評価ケースは単一行（`line`）に加え、\n")
 	b.WriteString("複数行入力（`content`）と diff hunk（`diff`: 追加行のみを報告）も表現できます。\n\n")
-	b.WriteString("> この数値は、実在しうる PII を含むためリポジトリ外で管理する評価データセット\n")
-	b.WriteString("> （陽性と陰性の代表例と、実運用での限界を表す難ケース）に対する値であり、あらゆる\n")
-	b.WriteString("> 入力での精度を保証するものではありません。データセットの取得方法は\n")
-	b.WriteString("> [docs/development.md](../docs/development.md) を参照してください。\n\n")
+	b.WriteString("> この数値は合成の業務文書（医療・金融・行政など 8 分野）に対する値であり、あらゆる\n")
+	b.WriteString("> 入力での精度を保証するものではありません。陰性ケース・diff・CSV などの回帰は、\n")
+	b.WriteString("> 公開合成コーパス（`internal/publiceval`）が PR ごとに確認します。\n\n")
 	b.WriteString("## Confidence スコアの校正\n\n")
 	b.WriteString("内部スコアは `low=0-39`、`medium=40-74`、`high=75-100` へ固定写像します。")
 	b.WriteString("段階導入では既存 Confidence の帯域を越えないため、公開 JSON/SARIF と ")
@@ -778,8 +797,7 @@ func TestGenerateDoc(t *testing.T) {
 
 	stats := ComputeDatasetStats(cases)
 	b.WriteString("\n## データセットの統計（匿名）\n\n")
-	b.WriteString("評価データセットはリポジトリ外（GCS）で管理され、レビュー時に中身が見えないため、\n")
-	b.WriteString("PII やケース本文を含まない件数だけの統計をここに記録します。\n\n")
+	b.WriteString("評価コーパスはリポジトリに含めず実行時に取得するため、件数だけの統計をここに記録します。\n\n")
 	fmt.Fprintf(&b, "- 総ケース数: %d\n", stats.TotalCases)
 	fmt.Fprintf(&b, "- 陽性ケース数: %d（うちスパン付与 %d 件、付与率 %s）\n",
 		stats.PositiveCases, stats.SpanAnnotatedCases, spanCoverageText(stats))

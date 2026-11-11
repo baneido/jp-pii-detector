@@ -476,60 +476,33 @@ func TestCIWorkflowRunsZizmor(t *testing.T) {
 	}
 }
 
-func TestCIWorkflowPinsGoogleActionsAndAvoidsFixtureTemplateInjection(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
+// TestWorkflowsDoNotDependOnGoogleCloud は、評価コーパスを公開データセットから
+// 取得し、どのワークフローも GCS・Workload Identity に依存しないことを固定する。
+func TestWorkflowsDoNotDependOnGoogleCloud(t *testing.T) {
+	dir := filepath.Join(repoRoot(t), ".github", "workflows")
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := string(data)
-	for _, forbidden := range []string{
-		"google-github-actions/auth@v2",
-		"google-github-actions/setup-gcloud@v2",
-		`gs://${{ vars.JP_PII_FIXTURES_BUCKET }}/pii-fixtures.json`,
-	} {
-		if strings.Contains(text, forbidden) {
-			t.Fatalf("ci workflow should not contain %q:\n%s", forbidden, text)
+	for _, e := range entries {
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, forbidden := range []string{"google-github-actions", "gcloud", "gs://", "id-token: write", "GOOGLE_GHA_CREDS_PATH"} {
+			if strings.Contains(string(data), forbidden) {
+				t.Errorf("%s に %q が残っています", e.Name(), forbidden)
+			}
 		}
 	}
-	for _, want := range []string{
-		"google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2",
-		"google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2",
-		"FIXTURES_BUCKET: ${{ vars.JP_PII_FIXTURES_BUCKET }}",
-		`object=$(jq -r '.object' fixtures.lock.json)`,
-		`source="gs://$FIXTURES_BUCKET/$object"`,
-		`FIXTURES_GENERATION: ${{ vars.JP_PII_FIXTURES_GENERATION }}`,
-	} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("ci workflow missing %q:\n%s", want, text)
+	for _, name := range []string{"ci.yml", "accuracy-update.yml"} {
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-}
-
-func TestCIWorkflowScopesOIDCPermissionToPrivateEvalJob(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(data)
-	topPermissions := strings.Split(text, "jobs:")[0]
-	if strings.Contains(topPermissions, "id-token: write") {
-		t.Fatalf("ci workflow should not grant id-token at workflow scope:\n%s", text)
-	}
-	testJobStart := strings.Index(text, "  test:")
-	if testJobStart == -1 {
-		t.Fatalf("ci workflow missing test job:\n%s", text)
-	}
-	privateStart := strings.Index(text, "  private-eval:")
-	if privateStart == -1 {
-		t.Fatalf("ci workflow missing private-eval job:\n%s", text)
-	}
-	testJob := text[testJobStart:privateStart]
-	if strings.Contains(testJob, "id-token: write") {
-		t.Fatalf("public test job must not grant id-token:\n%s", testJob)
-	}
-	privateJob := text[privateStart:]
-	if !strings.Contains(privateJob, "id-token: write") {
-		t.Fatalf("private-eval job should grant id-token for GCP Workload Identity:\n%s", text)
+		if !strings.Contains(string(data), `go run ./cmd/pii-fixture fetch -out "$dest"`) {
+			t.Errorf("%s は評価コーパスを cmd/pii-fixture fetch で取得すべきです", name)
+		}
 	}
 }
 
@@ -663,7 +636,7 @@ func TestCIWorkflowDoesNotUseRunnerContextInJobEnv(t *testing.T) {
 		t.Fatalf("ci workflow should not use runner context in workflow expressions; set runtime paths via $RUNNER_TEMP and $GITHUB_ENV")
 	}
 	for _, want := range []string{
-		`dest="$RUNNER_TEMP/pii-fixtures.json"`,
+		`dest="$RUNNER_TEMP/eval-corpus.json"`,
 		`echo "JP_PII_FIXTURES=$dest" >> "$GITHUB_ENV"`,
 	} {
 		if !strings.Contains(text, want) {
@@ -672,27 +645,27 @@ func TestCIWorkflowDoesNotUseRunnerContextInJobEnv(t *testing.T) {
 	}
 }
 
-func TestCIWorkflowSeparatesPublicDogfoodingAndPrivateCleanup(t *testing.T) {
+func TestCIWorkflowSeparatesPublicDogfoodingAndCorpusCleanup(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(data)
 	for _, want := range []string{
-		"name: Remove Google Cloud credentials file",
-		`rm -f "${GOOGLE_GHA_CREDS_PATH:-}"`,
 		"./jp-pii-detect scan --format github .",
-		"name: Remove private corpus",
+		"name: Remove evaluation corpus",
 		`rm -f "${JP_PII_FIXTURES:-}"`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("ci workflow missing %q", want)
 		}
 	}
-	privateStart := strings.Index(text, "  private-eval:")
-	publicJob := text[:privateStart]
-	if strings.Contains(publicJob, "JP_PII_FIXTURES") || strings.Contains(publicJob, "id-token: write") {
-		t.Fatalf("public test/dogfooding boundary must not receive private fixture authority")
+	corpusStart := strings.Index(text, "  corpus-eval:")
+	if corpusStart == -1 {
+		t.Fatalf("ci workflow missing corpus-eval job")
+	}
+	if strings.Contains(text[:corpusStart], "JP_PII_FIXTURES") {
+		t.Fatalf("public test/dogfooding jobs must not receive the evaluation corpus")
 	}
 }
 

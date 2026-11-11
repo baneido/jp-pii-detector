@@ -13,7 +13,7 @@ jp-pii-detect のビルド、テスト、内部構成と、検出ルールの追
   - [検出精度の計測](#検出精度の計測)
     - [プロファイル別評価（low / medium / high-recall）](#プロファイル別評価low--medium--high-recall)
     - [陰性母数・検出単位 FP・want_confidence](#陰性母数検出単位-fpwant_confidence)
-  - [非公開評価コーパスの取得](#非公開評価コーパスの取得)
+  - [評価コーパスの取得](#評価コーパスの取得)
     - [ケースのタグ（表記ゆれ等の層化評価）](#ケースのタグ表記ゆれ等の層化評価)
   - [合成評価ケースジェネレータ（fixturegen）](#合成評価ケースジェネレータfixturegen)
   - [OSS コーパスでの偽陽性率計測（fp-corpus-report）](#oss-コーパスでの偽陽性率計測fp-corpus-report)
@@ -62,13 +62,15 @@ $ go test -bench . -benchmem ./internal/normalize/ ./internal/detect/
 
 ### 検出精度の計測
 
-`internal/eval` にルールごとの陽性と陰性のケースを集めたラベル付き評価データセットと、
-適合率、再現率、F1 を計測するハーネスがあります。
+`internal/eval` に、ラベル付き評価データセットに対する適合率、再現率、F1 を計測する
+ハーネスがあります。
 
-データセットは実在しうる PII を含むためリポジトリにはコミットせず、外部ストレージ
-（GCS）で管理して `JP_PII_FIXTURES` 経由で読み込みます（取得手順は
-「[非公開評価コーパスの取得](#非公開評価コーパスの取得)」
-を参照してください）。
+評価データセットは公開データセット
+[Nemotron-PII-Japan](https://huggingface.co/datasets/nvidia/Nemotron-PII-Japan)（NVIDIA、CC BY 4.0）
+から作ります。`cmd/pii-fixture` が `fixtures.lock.json` で固定した revision の parquet を取得して
+SHA-256 を照合し、評価ケースの JSON に変換して `JP_PII_FIXTURES` 経由で渡します（手順は
+「[評価コーパスの取得](#評価コーパスの取得)」を参照してください）。
+合成とはいえ PII の形をした値を大量に含むため、変換結果はリポジトリにコミットしません。
 
 [accuracy.md](accuracy.md) と `docs/accuracy.json`（ゴールデンファイル）は、low / medium /
 high-recall の3プロファイルを設定別に保持します。README のバッジは利用者の既定運用に対応する
@@ -79,9 +81,8 @@ medium（`min_confidence=medium`、高再現率ルール無効）の実測値で
 `go test ./...` は緑のままになります。
 
 ```console
-$ export JP_PII_FIXTURES=$PWD/pii-fixtures.json   # GCS から取得（取得手順は後述）
-$ go test ./internal/eval                                      # 実測値と docs/accuracy.json・README（日本語版/英語版）の精度表記の一致を検証
-$ go test ./internal/eval -run 'TestGenerateDoc|TestReadmeBadges' -update  # docs/accuracy.md・docs/accuracy.json・README.md/README.en.md を実測値で再生成
+$ go run ./cmd/pii-fixture eval            # 実測値と docs/accuracy.json・README（日本語版/英語版）の精度表記の一致を検証
+$ go run ./cmd/pii-fixture eval -update    # docs/accuracy.md・docs/accuracy.json・README.md/README.en.md を実測値で再生成してから検証
 ```
 
 `internal/eval/golden.go` が定義する `docs/accuracy.json` が、検出精度に関する
@@ -93,15 +94,15 @@ $ go test ./internal/eval -run 'TestGenerateDoc|TestReadmeBadges' -update  # doc
 英訳ラベルを壊さないよう、数値と色の部分だけを書き換えます）。`dataset_quality_test.go` の
 `TestDatasetQuality` は、F1 の一致だけでは検出できないデータセット自体の劣化
 （`want`/`spans` の未知のルール ID・完全重複・ID/source class欠落・span未付与・
-ルール別陽性不足・入力形式やhard negativeの不足）を検証します。
-ルールやデータセットを変えて精度が動くと CI が落ちるので、**`go test ./internal/eval -run
-'TestGenerateDoc|TestReadmeBadges' -update` で `docs/accuracy.md`・`docs/accuracy.json`・
-README.md / README.en.md の精度表記をまとめて再生成してコミット**してください（手動での数値編集は不要です）。
+正解ラベルのあるルールの陽性不足）を検証します。
+ルールやデータセットを変えて精度が動くと CI が落ちるので、**`go run ./cmd/pii-fixture eval -update`
+で `docs/accuracy.md`・`docs/accuracy.json`・README.md / README.en.md の精度表記をまとめて
+再生成してコミット**してください（手動での数値編集は不要です）。
 
-非公開コーパスへのアクセスがない環境（GitHub 上のブラウザのみ等）からでも、
+手元で実行できない環境（GitHub 上のブラウザのみ等）からでも、
 [`.github/workflows/accuracy-update.yml`](../.github/workflows/accuracy-update.yml) が
 上記の再生成を代行します。GitHub の Actions タブから「accuracy-update」→
-「Run workflow」で実行すると、ci.yml の private-eval ジョブと同じ手順で非公開コーパスを
+「Run workflow」で実行すると、ci.yml の corpus-eval ジョブと同じ手順で評価コーパスを
 取得し、`-update` を実行して差分があれば `automated/accuracy-golden` ブランチへ
 PR を自動作成します（postal-update.yml / tld-update.yml と同じ、force-push +
 `gh pr create`/`gh pr edit` の方式）。差分がなければ PR を作らず正常終了します。
@@ -111,8 +112,8 @@ PR を自動作成します（postal-update.yml / tld-update.yml と同じ、for
 
 #### PR 時の精度ゲート（公開合成コーパス）
 
-非公開コーパスを使う private-eval は平文を PR のコードへ渡さないため、main への push と
-保守者の明示実行でしか走りません。ルールの劣化や「ルールを改名・分割したのに評価ラベルが
+評価コーパスを使う corpus-eval は数分かかるため、main への push と保守者の明示実行でしか
+走りません。ルールの劣化や「ルールを改名・分割したのに評価ラベルが
 追従していない」不整合をマージ前に検出するため、ci.yml の **public-eval** ジョブが
 PR ごとに `go test ./internal/publiceval` を実行します（認証不要・数秒。fork PR でも同じ）。
 
@@ -138,7 +139,7 @@ PR ごとに `go test ./internal/publiceval` を実行します（認証不要�
 - 改善や許容内の変化は失敗にせず、ジョブサマリと警告で再生成を促します。
 
 意図した精度変化は、次のコマンドでゴールデンを再生成して差分をレビューに出してください
-（非公開コーパスの `docs/accuracy.json` とは別物で、どの環境でも実行できます）。
+（評価コーパスの `docs/accuracy.json` とは別物で、ネットワークなしで実行できます）。
 
 ```console
 $ go test ./internal/publiceval -update
@@ -179,8 +180,7 @@ relaxedの各spanスコア、`FindingFP` / `Negatives` / `ConfidenceMiss`をす�
   を指定したケースで、検出が期待span全体を包含したものの実際の最終信頼度が
   期待未満だった件数。既定設定で黙って埋もれる「実質検出漏れ」を表します。
 
-`want_confidence` は `evalcase.Span` の任意項目（`omitempty`）ですが、`build-v2` は
-補完したspanと値未指定の既存spanへ `medium` を設定します。`Negatives` / `FindingFP` /
+`want_confidence` は `evalcase.Span` の任意項目（`omitempty`）です。`Negatives` / `FindingFP` /
 `ConfidenceMiss` は各ルールと各プロファイルの補助指標として `docs/accuracy.json` に永続化し、
 `DiffGolden` が許容誤差なしで比較します。`docs/accuracy.md` にもprofile別で公開します。
 
@@ -222,81 +222,49 @@ Medium で検出される一方、同じ 7 桁は `jp-postal-code` の裸 7 桁�
 候補にもなりますが、郵便番号のコンテキスト語（「郵便」「〒」等）が無いため
 `require-context-missing` として `dropped` に記録されます。
 
-### 非公開評価コーパスの取得
+### 評価コーパスの取得
 
 通常の単体・結合テストは [`internal/testfixtures`](../internal/testfixtures/testfixtures.go) の
-公開合成値で完結します。採取由来または実在空間と衝突しうる値を含む評価コーパスだけを
-非公開GCSで管理し、[`internal/privatecorpus`](../internal/privatecorpus/privatecorpus.go) が読み込みます。
+公開合成値で完結します。精度評価だけが、Nemotron-PII-Japan から生成した評価コーパスを
+[`internal/privatecorpus`](../internal/privatecorpus/privatecorpus.go) 経由で読み込みます。
 
-未設定ならprivate evalだけが `t.Skip` されます。環境変数を設定したのに、ファイルが読めない、
+未設定なら精度評価だけが `t.Skip` されます。環境変数を設定したのに、ファイルが読めない、
 JSON・schema・dataset IDが不正、datasetが空の場合はSkipせず失敗します。
 
-日常開発は認証不要です:
+日常開発はネットワーク不要です:
 
 ```console
 $ go test -race ./...
 ```
 
-非公開精度評価（GCSへの閲覧権限と `gcloud auth login` が必要）:
+精度評価（初回だけ Hugging Face から約 75 MB の parquet を取得します。認証は不要です）:
 
 ```console
-$ gcloud auth login
-$ export JP_PII_FIXTURES_BUCKET=jp-pii-detector
-$ export JP_PII_FIXTURES_PROJECT=jp-pii-detector
-$ export JP_PII_FIXTURES_GCLOUD_ACCOUNT=<gcloud-account>
-$ go run ./cmd/pii-fixture eval          # 一時取得し、終了後に削除
-$ go run ./cmd/pii-fixture eval -cache   # 明示した場合だけユーザーキャッシュへ保存
-$ go run ./cmd/pii-fixture status
-$ go run ./cmd/pii-fixture purge
+$ go run ./cmd/pii-fixture eval                       # 一時ディレクトリへ変換し、終了後に削除
+$ go run ./cmd/pii-fixture fetch -out corpus.json     # 変換結果を保存（既存ファイルは上書きしない）
+$ JP_PII_FIXTURES=$PWD/corpus.json go test ./internal/eval
+$ go run ./cmd/pii-fixture purge                      # parquet のキャッシュを削除
 ```
 
-既に安全なローカルコピーがある場合は、従来どおり `JP_PII_FIXTURES=<path>` を設定できます。
-キャッシュは `os.UserCacheDir()` 配下、ディレクトリ0700・ファイル0600で管理します。
+parquet は `os.UserCacheDir()` 配下に SHA-256 名で保存し、SHA-256 が `fixtures.lock.json` と
+一致したものだけを使います。`fixtures.lock.json` は次の項目を固定します。
 
-旧形式を更新するときは、既存GCS objectを上書きせずにversion付きコーパスを作ります:
+- **repo / revision / file**：取得元（Hugging Face のデータセット、40 桁の commit、ファイル名）
+- **sha256**：parquet の SHA-256
+- **sample_modulus**：抽出率。uid の FNV-1a ハッシュをこの値で割った余りが 0 の文書だけを使う
+  （10 なら約 1 割。全 10 万件では 1 プロファイルに数分かかるため）
+- **dataset_id**：上の組を表す ID。`docs/accuracy.json` に記録され、取り違えを検出する
 
-```console
-$ go run ./cmd/pii-fixture migrate \
-    -input <legacy.json> \
-    -output <private-eval-v1.json> \
-    -dataset-id private-eval-v1
-```
+ラベルからルール ID への対応は [`internal/nemotron`](../internal/nemotron/nemotron.go) が持ちます。
+対応するルールのないラベル（日付・会社名・IP アドレスなど）は正解に含めず、その上で検出器が
+何かを報告すれば誤検出として数えます。隣接する姓（`last_name`）と名（`first_name`）は
+1 つの `person-name` スパンへ結合します。正解は系統単位なので、精度評価では
+`person-name-role-label` などの派生ルールの検出を `person-name` の検出として数えます
+（`eval.RuleFamily`）。データセットにラベルがないルール（運転免許証番号・旅券番号など）は
+README で「未計測」と表示し、回帰は公開合成コーパス（public-eval）が確認します。
 
-この処理は旧`strings`プールを引き継がず、ケースへ匿名IDと`source_class=legacy-curated`を
-付与し、既存出力ファイルを上書きしません。生成物を新しいGCS objectへpublishしてから、
-`fixtures.lock.json`のobject・generationを更新します。旧generationはrollback用に保持します。
-
-v1からIssue #128の品質契約を満たすv2を再現するときは、次の決定的な変換を使います:
-
-```console
-$ go run ./cmd/pii-fixture build-v2 \
-    -input <private-eval-v1.json> \
-    -output <private-eval-v2.json> \
-    -dataset-id private-eval-v2
-```
-
-`build-v2` は既存ケースをコピーし、公知sandbox PANと一致する既存`credit-card`正例だけを
-陰性へ再分類してから、検出結果による不足span補完を行います。そのうえで全builtinルール
-（高再現率6ルールを含む）を陽性10件以上まで計算合成ケースで補い、40件のhard negativeと
-line / content / diff / CSV / SQL / JSONケースを追加します。出力は既存ファイルを上書きせず、
-全陽性へのspan付与、重複、ID、source class、ルール網羅性を検証してから0600で作成します。
-実在空間と衝突しうる数値系の合成値は固定v1本文から内部で導いたseedに依存し、seed・元本文・
-本文ハッシュを表示または保存しません（公知の決済sandbox用PANだけは、任意のLuhn妥当値を
-陰性へ誤ラベルしないため明示集合を使います）。同じ固定v1からは同じv2を再現できますが、
-公開コードだけからv2本文は導出できません。
-v2は合成ケースだけでなく`legacy-curated`を含み、計算合成値も実在空間との偶然衝突を完全には
-否定できないため、本文は引き続き認証付きGCSにだけ保存します。公開リポジトリへは構築ロジック、
-匿名件数、固定dataset ID / object generationだけをコミットします。
-
-初期の固定`private-eval-v2` generationを読む場合も、同じ決定的な互換migrationをloaderで
-適用します。これによりGCS本文やgenerationを上書きせず、公知PANの再分類と、
-後から追加したEAI/confusableメールルールを含む不足した合成正例の
-補完を再現できます。公知PANの再分類は期待spanが明示集合に完全一致する場合だけを対象とし、非公開本文や
-ケースIDを公開成果物へ書き出しません。
-
-新しいJSONスキーマは
-`{ "schema_version": 1, "dataset_id": "<opaque-id>", "dataset": [ { "id", "source_class", "file", "line", "content", "diff", "want", "spans", "tags" } ] }` です。
-旧 `strings` は移行中だけ読み取り互換を残し、新しい単体テストからは参照しません。
+評価コーパスの JSON スキーマは
+`{ "schema_version": 1, "dataset_id": "<id>", "dataset": [ { "id", "source_class", "file", "line", "content", "diff", "want", "spans", "tags" } ] }` です。
 `id` は失敗時に生値を出さずケースを特定する安定識別子です。
 `line` / `content` / `diff` のいずれか 1 つを入力として指定します。`want` または `spans` が
 あるケースでは入力指定漏れをエラーにします。`line` は単一行の `ScanLine`、`content` は複数行の `ScanContent`、`diff` は `{ "text", "added" }` の配列で
@@ -315,19 +283,11 @@ v2は合成ケースだけでなく`legacy-curated`を含み、計算合成値�
 
 詳細は `internal/evalcase` と `internal/privatecorpus` のコメントに定義されています。
 
-CIは公開 `test` jobと、main pushまたは保守者の明示実行専用の `private-eval` jobを分離します。private jobだけが
-GitHub OIDC → GCP Workload Identity Federationで認証します。リポジトリ変数
-`JP_PII_FIXTURES_PROVIDER`・`JP_PII_FIXTURES_SA`・`JP_PII_FIXTURES_BUCKET`に加え、
-GCS object generationは `fixtures.lock.json` で固定します。緊急時にrepository variable
-`JP_PII_FIXTURES_GENERATION`で上書きできますが、その場合はlockのobjectに属するgenerationを
-指定してください。
-WIF側もrepository ID・workflow・`refs/heads/main`へattribute conditionを絞り、SAには対象objectの
-readだけを許可します。PRのマージ前評価が必要な場合は、main上のworkflowを
-`workflow_dispatch`し、レビュー済みcommitの40桁SHAを`eval_ref`へ指定します。可変なbranch名は
-受け付けないため、レビュー後の差し替えを評価対象へ紛れ込ませません。
-
-未設定・取得失敗・parse失敗ならprivate-evalはfail-closedします。PRコードへ非公開平文と
-OIDC権限が自動で渡ることはなく、明示実行時だけ指定したレビュー済みcommitを評価します。
+CIは公開 `test` jobと、main pushまたは保守者の明示実行専用の `corpus-eval` jobを分離します。
+`corpus-eval` は `go run ./cmd/pii-fixture fetch` で評価コーパスを取得します（認証不要）。
+PRのマージ前評価が必要な場合は、main上のworkflowを`workflow_dispatch`し、レビュー済みcommitの
+40桁SHAを`eval_ref`へ指定します。可変なbranch名は受け付けないため、レビュー後の差し替えを
+評価対象へ紛れ込ませません。取得失敗・SHA-256 不一致・parse失敗なら corpus-eval は失敗します。
 
 #### ケースのタグ（表記ゆれ等の層化評価）
 
@@ -386,7 +346,7 @@ OIDC権限が自動で渡ることはなく、明示実行時だけ指定した�
 $ go run ./cmd/pii-dataset-gen -output /path/outside/repo/synthetic-cases.json
 ```
 
-出力先はリポジトリ管理外にしてください。合成契約は仕様回帰のpass/fail用であり、非公開コーパスへ
+出力先はリポジトリ管理外にしてください。合成契約は仕様回帰のpass/fail用であり、評価コーパスへ
 マージせず、README F1・`docs/accuracy.json`の分母にも含めません。合成ケースを増やして実採取
 コーパスの見かけの精度が上がることを防ぐためです。
 生成件数はルールあたり数十件規模に抑えています
@@ -446,26 +406,11 @@ attribution を含めたままにしています。
 3. 問題がなければ `.github/workflows/fp-corpus-report.yml` のコーパス一覧
    （`name|git-url|commit-sha` 形式）にコミット SHA を固定して登録します。
 
-**結果の保存先と前回比較**: 集計結果はリポジトリの公開 `docs/` には置かず、評価コーパスとは分離した
-GCSバケットへ保存します。`JP_PII_REPORTS_PROVIDER`・`JP_PII_REPORTS_SA`・
-`JP_PII_REPORTS_BUCKET`を設定し、report writerに評価コーパスのread権限を与えないでください。
-`fp-corpus-report/` プレフィックスで JSON/Markdown
-スナップショットを保存します。コーパス名付きの内訳（`detail.json`）は非公開バケットにのみ
-保存し、ワークフローのログや `GITHUB_STEP_SUMMARY`、および公開する場合はコーパス名を伏せた
-ルール別合計のみの `summary.json`/`summary.md` に限定します
+**結果の扱い**: 集計結果はリポジトリの公開 `docs/` には置きません。コーパス名を伏せたルール別合計
+（`summary.json`/`summary.md`）だけをワークフローのログと `GITHUB_STEP_SUMMARY` に出し、
+コーパス名付きの内訳（`detail.json`）はランナーの外へ出しません
 （実リポジトリ名と findings 内訳の組を公開の場に出さないための責任ある開示上の配慮）。
-
-週次 run は保存済みの `latest-summary.json` と今回の匿名集計を比較し、全体またはルール別の
-findings/MLoC が前回比 20% を超えて増加した場合に Actions の warning と step summary を
-出します。これは**非ゲート**であり、閾値超過だけでは job を失敗させず、Issue の自動作成・
-コメントも行いません。run ID ごとのスナップショットは作成時条件付きで上書き不可とし、
-`latest-summary.json` は読み込んだ GCS generation に対する compare-and-swap で更新します。
-ワークフローの `concurrency` と合わせ、再実行や外部 writer との競合で履歴を巻き戻さない設計です。
-
-成功した過去 run がなく `latest-summary.json` も存在しない場合は、比較を行わず、その run の
-結果を初回 baseline として保存する明示的な bootstrap 動作になります。オブジェクト不存在以外の
-取得エラーは bootstrap と解釈せず、baseline を上書きせずに job を失敗させます。REPORTS 系の
-3変数がすべて未設定なら履歴保存・比較を明示的にスキップし、部分設定は設定ミスとして失敗します。
+前回比較の仕組みは持たないため、トレンドは過去の run のジョブサマリを見比べて確認します。
 
 **運用フェーズ**: 固定した go・curl・TypeScript コーパスの取得と現行検出器での走査を確認し、
 毎週月曜 03:00 UTC の cron に昇格済みです。その後、言語・種別の偏りを減らすため、Python
@@ -483,7 +428,7 @@ PR 由来のコードへ report writer 権限を渡しません。閾値が安�
 ```
 cmd/jp-pii-detect/   CLI エントリポイント（引数解析・出力フォーマットの振り分け・終了コード）
 cmd/pii-dataset-gen/ fixturegen の合成契約ケースを書き出す CLI
-cmd/pii-fixture/     非公開コーパスの一時取得・評価・明示キャッシュ管理
+cmd/pii-fixture/     評価コーパス（Nemotron-PII-Japan）の取得・変換・評価
 internal/
   config/    .jp-pii.toml の読み込み（リポジトリルートまでの上方探索）
   source/    走査対象の列挙: ファイルツリー（並列）/ git diff の追加行
@@ -495,8 +440,8 @@ internal/
   report/    出力フォーマット（text/json/sarif/github）とマスキング
   evalcase/   評価ケースの中立データモデル・構造検証
   testfixtures/ 公開テスト専用の決定的な合成値
-  privatecorpus/ 非公開コーパスの厳密なローダ
-  piifixtures/ 旧APIの互換層（新規利用禁止）
+  privatecorpus/ 評価コーパスの厳密なローダ
+  nemotron/  Nemotron-PII-Japan の parquet を評価ケースへ変換（ラベル→ルール ID の対応）
   eval/      ラベル付き評価データセットと検出精度（適合率・再現率・F1・タグ/ケース種別の層別）の計測。
              golden.go は docs/accuracy.json（ゴールデンファイル）の生成・比較・
              データセット品質統計（匿名の件数）を担う
@@ -931,17 +876,30 @@ precision/recall を独立に測定できる。3 つの org 用フラグは全�
 SHA-256 は `792040c47410b60235af15ba84eb2771f035434e18bd3e22e84fa0968fbf2084`。
 ライセンス全文は [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) に収録する。
 
-姓名分割と同形の一般名詞・地名候補は、R01 の非公開コーパスを設定して次の probe で陰性ケース
-だけから頻度順に抽出する。出力を自動採用せず、実在人名を抑制しないことを確認した語だけを
-[`name_homographs.txt`](../internal/dict/name_homographs.txt) へ追加する。
+既定の姓名辞書に無い姓名は、同じ `Noun.name.csv` から別の生成器で
+[`surnames_ipadic.txt`](../internal/dict/surnames_ipadic.txt) と
+[`given_names_ipadic.txt`](../internal/dict/given_names_ipadic.txt) に作り直す（手で編集しない）。
 
 ```console
-$ JP_PII_FIXTURES=/path/to/private-corpus.json \
-    go run ./cmd/pii-fixture name-homographs -min-count 2
+$ go run ./internal/dict/gen-ipadic-names \
+    -ipadic-names Noun.name.csv \
+    -surnames internal/dict/surnames.txt \
+    -given-names internal/dict/given_names.txt \
+    -surnames-out internal/dict/surnames_ipadic.txt \
+    -given-names-out internal/dict/given_names_ipadic.txt
 ```
 
-辞書を拡張したら 3 プロファイルの eval を含む `go test ./...` で検証し、精度が動く場合は
-`docs/accuracy.json` / バッジを正式な非公開コーパスで再生成すること。
+取り込むのは、漢字 2〜4 文字の姓（既定の名辞書と同形のものを除く）と、漢字を 1 文字以上含み
+残りがひらがなだけの 2〜4 文字の名（姓と同形のものを除く）に限る。1 文字の姓名（「上」「尊」等）と
+かなだけの名（「みな」等）は一般語と衝突するため取り込まない。2 つのファイルは照合（`dict.IsSurname` /
+`dict.IsGivenName` など）にだけ使い、テスト用の合成値を作る `dict.SurnameSample` /
+`dict.GivenNameSample` には含めない（辞書を拡張するたびにテストの合成値が入れ替わらないようにするため）。
+
+姓名分割と同形の一般名詞・地名候補は、実在人名を抑制しないことを確認した語だけを
+[`name_homographs.txt`](../internal/dict/name_homographs.txt) へ追加する。
+
+辞書を拡張したら `go test ./...` と `go run ./cmd/pii-fixture eval` で検証し、精度が動く場合は
+`go run ./cmd/pii-fixture eval -update` で `docs/accuracy.json` / バッジを再生成すること。
 
 固定電話の市外局番は総務省の電気通信番号指定状況（「市外局番の一覧」）由来の実在集合を
 [`internal/dict/area_codes.txt`](../internal/dict/area_codes.txt) にテキストで保存して
@@ -1006,7 +964,7 @@ zengin-code 等が公開する公式マスタ（約 1,100 件）そのもので�
 `set_checkdigit`）を一次資料として `checksum.YuchoAccount` で検証します。式・URL・
 文書番号が付されていない Web 仕様である旨は同関数のコメントに記録しています。
 同一行ハイフン形式、同一行の記号/番号ラベル形式、別行ペアの全経路で同じ検証器を
-通してください。非公開評価コーパスv2の合成値も、検査数字を計算して生成します。
+通してください。公開合成コーパスの合成値も、検査数字を計算して生成します。
 
 新ルールは `jp-pii-detect rules` に自動で表示されます。
 
