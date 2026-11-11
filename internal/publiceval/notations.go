@@ -54,6 +54,7 @@ var notationCategories = []string{
 	"koseki-todoke",              // 広報紙の戸籍の届出欄（出生届・死亡届・婚姻届）
 	"title-honorific-wide",       // 宛名欄の均等割付「<村>長 <姓>      <名>   様」
 	"committee-list",             // 会議録の出席者欄「<姓><名>会長、<姓><名>委員、」
+	"speaker-label",              // 会議録の発言者ラベル「【<姓>会長】」「<姓>構成員：」（姓のみ・high-recall）
 	"lecturer-space",             // 空白区切りの「講師 <姓> <名>さん」
 	"tanto-space",                // 様式の「担当者 (<職>) <姓> <名>」
 	"grade-prefix",               // 学年の直後の氏名「6年生<姓><名>さん」
@@ -64,6 +65,7 @@ var notationCategories = []string{
 	"seat-roster",                // 会議録の議席番号「1番     <姓>    <名>」
 	"reading-after-no",           // 助詞「の」に続く「<姓> <名>（<せい> <めい>）」
 	"tanshin-header",             // 決算短信の表紙「(役職名) <役職> (氏名) <姓> <名>」と「代表取締役社長 ＣＯＯ <姓> <名>」
+	"health-ins-symbol",          // 被保険者証の記号・番号「被保険者証記号・番号: <記号>-<番号>」（ラベル直結のみ）
 	"permit-number",              // 許可・登録番号「第<12 桁>号」・介護保険の事業所番号（陰性）と、囲まれていない個人番号（陽性）
 	"lecturer-space-paren",       // 敬称のない講座案内「・講師 <姓> <名>（<所属><職名>）」
 	"director-credit",            // 出演作品一覧「「<作品名>」監督：<姓><名>」
@@ -308,6 +310,16 @@ func notationSpecs() []notationCase {
 	pos("committee-list", role, "＜委員＞ "+full(2, "")+"副会長、"+full(3, "")+"委員")
 	neg("committee-list", "人権擁護委員、民生委員、主任児童委員、社会教育委員、")
 	neg("committee-list", full(4, "")+"委員会の開催について")
+
+	// 会議録の発言者ラベル（姓だけ + 会議内の役職。姓辞書一致・山括弧／コロン必須の high-recall）
+	pos("speaker-label", "person-name-high-recall", "【"+n(0).sur+"会長】 ありがとうございます。")
+	pos("speaker-label", "person-name-high-recall", "【"+n(1).sur+"部会長】 それでは次に進みます。")
+	pos("speaker-label", "person-name-high-recall", n(2).sur+"構成員： 資料について質問があります。")
+	pos("speaker-label", "person-name-high-recall", "　"+n(3).sur+"委員： 御意見を申し上げます。")
+	neg("speaker-label", "【専門委員】 ありがとうございます。")
+	neg("speaker-label", "【事務局長】 説明いたします。")
+	neg("speaker-label", "選挙管理委員会の開催について")
+	neg("speaker-label", "教育委員： 担当課の配置について")
 
 	// 空白区切りの講師欄（敬称必須）
 	pos("lecturer-space", role, "（１）講師 "+full(4, " ")+"さん")
@@ -660,6 +672,16 @@ func notationSpecs() []notationCase {
 	pos("id-label-guard", "jp-drivers-license", "免許証番号 "+"5649 0078 30"+"71")
 	pos("id-label-guard", "jp-drivers-license", "運転免許証の番号 "+"3071 5649 00"+"78")
 	neg("id-label-guard", "出荷番号 A-"+"2026"+"1105-0042 被保険者証を同封")
+	// 被保険者証の記号・番号（処方箋・診療の記録の様式）。ラベルが値に直結する形だけを拾い、
+	// 記号・番号だけのラベル、型番、記入例（番号が全桁同一）は拾わない。番号はすべて架空。
+	pos("health-ins-symbol", "jp-health-insurance", "被保険者証記号・番号: QX7RZ-"+"4821"+"3906")
+	pos("health-ins-symbol", "jp-health-insurance", "保険者番号は"+"3123"+"4567、被保険者証記号・番号は MK-"+"58"+"21、公費負担者番号は別紙です。")
+	pos("health-ins-symbol", "jp-health-insurance", "被保険者証の記号・番号 7Q-"+"482"+"13-00")
+	pos("health-ins-symbol", "jp-health-insurance", "保険証 記号: "+"45"+"21 番号: 37")
+	neg("health-ins-symbol", "記号・番号: QX7RZ-"+"4821"+"3906")
+	neg("health-ins-symbol", "型番 QX7RZ-"+"4821"+"3906")
+	neg("health-ins-symbol", "被保険者証記号・番号: AB-"+"00"+"00")
+	neg("health-ins-symbol", "被保険者証の記号・番号 2024 年度から変更")
 	neg("id-label-guard", "免許の更新 2023 2024 2025 年度")
 	neg("id-label-guard", "注文番号 "+"7034-30"+"4059"+" 年金")
 	// 寺院・大学のサイトの「ゆかりのある<姓><名>氏より寄贈」「研究科の<姓><名>さんが受賞」

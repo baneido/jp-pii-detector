@@ -56,7 +56,7 @@ jp-pii-detect scan .
 | 在留カード番号 | `在留カード AB12345678CD` | ○ | 未計測 | 英2+数8+英2 + 周辺の語が必要 |
 | 銀行口座番号 | `口座番号: 1234567` | △ | **0.99** | 7 桁 + 周辺の語が必要 |
 | ゆうちょ銀行 記号番号 | `記号 1XX?0 / 番号 XXXXXX1` | ○ | 未計測 | 記号4桁目の検査数字 + 番号との相関 + ゆうちょ固有の周辺語が必要 |
-| 健康保険 保険者番号等 | `保険者番号: 12345678` | △ | **1.00** | 8 桁 + 周辺の語、または強ラベル直結の国保6桁保険者番号 |
+| 健康保険 保険者番号等 | `保険者番号: 12345678` | △ | **1.00** | 8 桁 + 周辺の語、強ラベル直結の国保6桁保険者番号、またはラベル直結の被保険者証記号・番号 |
 | 雇用保険被保険者番号 | `XXXX-XXXXXX-X` | ○ | 未計測 | 4桁-6桁-1桁 + 周辺の語が必要 |
 | 介護保険被保険者番号 | `XXXXXXXXXX` | △ | 未計測 | 10 桁 + 周辺の語が必要 |
 | 住民票コード | `XXXXXXXXXXX` | ○ | 未計測 | 11 桁 + 周辺の語が必要（全桁同一は除外） |
@@ -109,14 +109,14 @@ brew install baneido/tap/jp-pii-detect
 利用側の環境に Go は不要です。
 
 ```sh
-mise use -g github:baneido/jp-pii-detector@v0.9.2
+mise use -g github:baneido/jp-pii-detector@v0.9.3
 ```
 
 プロジェクトローカルでバージョンを固定したい場合は `mise.toml` に以下を追加して `mise install` を実行します。
 
 ```toml
 [tools]
-"github:baneido/jp-pii-detector" = "v0.9.2"
+"github:baneido/jp-pii-detector" = "v0.9.3"
 ```
 
 ### Option 3. バイナリをインストール
@@ -125,7 +125,7 @@ GitHub Releases のビルド済みバイナリを取得してインストール�
 インストール先は既定で `$HOME/.local/bin` です。変更する場合は `JP_PII_DETECT_INSTALL_DIR=/path/to/bin` を指定してください。
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detector/v0.9.2/scripts/install.sh | JP_PII_DETECT_VERSION=v0.9.2 sh
+curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detector/v0.9.3/scripts/install.sh | JP_PII_DETECT_VERSION=v0.9.3 sh
 ```
 
 ### Option 4. Go install
@@ -141,7 +141,7 @@ curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detector/v0.9.2/scri
 GitLab CI などのジョブイメージとしてそのまま使えます（[docs/integrations.md](docs/integrations.md)）。
 
 ```sh
-docker run --rm -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.9.2
+docker run --rm -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.9.3
 ```
 
 ### Option 6. Sumi モデル同梱ビルド（試験的）
@@ -212,7 +212,7 @@ users.csv:4:6   [high]  jp-phone-number 電話番号（携帯・固定・IP・�
 ```yaml
 repos:
   - repo: https://github.com/baneido/jp-pii-detector
-    rev: v0.9.2
+    rev: v0.9.3
     hooks:
       - id: jp-pii-detect
 ```
@@ -253,10 +253,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: baneido/jp-pii-detector@v0.9.2
+      - uses: baneido/jp-pii-detector@v0.9.3
         with:
           # jp-pii-detect のバイナリ版を固定
-          version: v0.9.2
+          version: v0.9.3
           args: scan --diff origin/${{ github.base_ref }}...HEAD --format github
 ```
 
@@ -270,10 +270,10 @@ Action の参照とダウンロードするバイナリ版は独立していま�
 Medium 以上を表示しつつ High の検出だけで CI を失敗させるには、次のように指定します。
 
 ```yaml
-      - uses: baneido/jp-pii-detector@v0.9.2
+      - uses: baneido/jp-pii-detector@v0.9.3
         with:
           # jp-pii-detect のバイナリ版を固定
-          version: v0.9.2
+          version: v0.9.3
           args: scan --diff origin/${{ github.base_ref }}...HEAD --format github --min-confidence medium --fail-on high
 ```
 

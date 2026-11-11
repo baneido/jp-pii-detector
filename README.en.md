@@ -77,7 +77,7 @@ counts detections from every person-name rule, including the contact/addressee l
 | Residence card number | not measured | 2 letters + 8 digits + 2 letters + context required |
 | Bank account number | **0.99** | 7 digits + context keyword required |
 | Japan Post Bank symbol/number | not measured | Official symbol check digit + correlated number + Japan Post Bank context required |
-| Health insurance number | **1.00** | 8 digits + context keyword required |
+| Health insurance number | **1.00** | 8 digits + context keyword required; also the insured card symbol/number when directly labeled (被保険者証記号・番号) |
 | Employment insurance number | not measured | 4-6-1 digit structure + context keyword required |
 | Long-term care insurance number | not measured | 10 digits + context keyword required |
 | Resident record code | not measured | 11 digits + context keyword required |
@@ -101,13 +101,13 @@ brew install baneido/tap/jp-pii-detect
 ### mise (macOS / Linux)
 
 ```sh
-mise use -g github:baneido/jp-pii-detector@v0.9.2
+mise use -g github:baneido/jp-pii-detector@v0.9.3
 ```
 
 ### Binary (install.sh)
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detector/v0.9.2/scripts/install.sh | JP_PII_DETECT_VERSION=v0.9.2 sh
+curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detector/v0.9.3/scripts/install.sh | JP_PII_DETECT_VERSION=v0.9.3 sh
 ```
 
 ### Go install
@@ -119,7 +119,7 @@ go install github.com/baneido/jp-pii-detector/cmd/jp-pii-detect@latest
 ### Docker
 
 ```sh
-docker run --rm -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.9.2
+docker run --rm -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.9.3
 ```
 
 ### Sumi model bundle (experimental)
@@ -153,7 +153,7 @@ jp-pii-detect rules                            # list detection rules
 ```yaml
 repos:
   - repo: https://github.com/baneido/jp-pii-detector
-    rev: v0.9.2
+    rev: v0.9.3
     hooks:
       - id: jp-pii-detect
 ```
@@ -180,10 +180,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: baneido/jp-pii-detector@v0.9.2
+      - uses: baneido/jp-pii-detector@v0.9.3
         with:
           # Pin the jp-pii-detect binary version too
-          version: v0.9.2
+          version: v0.9.3
           args: scan --diff origin/${{ github.base_ref }}...HEAD --format github
 ```
 
