@@ -321,6 +321,13 @@ func rejectHonorificWordCompound(line string, start, end int) bool {
 			if allKanji(v) && !dict.IsPersonName(v) && !dict.SplitsAsFullName(v) && !startsWithSurnameName(v) {
 				return false
 			}
+			// 「一乗寺払殿町」「大聖寺殿町」「東新殿」のように、値から「殿」の先までが実在の町字名
+			// である場合。姓名辞書に SudachiDict の姓（一乗寺、大聖寺、東新）を加えたことで、値が
+			// 姓 1 語に一致するか startsWithSurnameName を通るようになった町名を落とす（2026-11-11 に
+			// towns.txt の走査で実測）。姓と名に分けられる値（<姓><名>殿）は宛名として残す。
+			if n, ok := dict.TownPrefixMatch(val + rest); ok && n > len(val) && !dict.SplitsAsFullName(v) {
+				return false
+			}
 		}
 	}
 	// 文書館の目録の「<院号>院様御法事」「<戒名>院殿<道号>居士」（2026-10-31 00:00 に文書館の

@@ -38,4 +38,6 @@ paths = [
   "^integrations/",
   # モデル同梱ビルドのスモークテスト（架空の PII を含む）
   "^scripts/smoke-model-bundle\\.sh$",
+  # 第三者のライセンス表示（原文のまま引用する著作者の実名を含む）
+  "^THIRD_PARTY_NOTICES\\.md$",
 ]

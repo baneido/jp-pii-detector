@@ -49,8 +49,10 @@ func TestNameDictIntegrity(t *testing.T) {
 	dupCheck("given_names_katakana_org.txt", mustRead("given_names_katakana_org.txt"))
 	dupCheck("name_homographs.txt", mustRead("name_homographs.txt"))
 	// IPADIC 由来の追加分は、既定辞書と重複しないことも検査する（重複は生成器の不具合）。
-	dupCheck("surnames.txt+surnames_ipadic.txt", mustRead("surnames.txt")+"\n"+mustRead("surnames_ipadic.txt"))
-	dupCheck("given_names.txt+given_names_ipadic.txt", mustRead("given_names.txt")+"\n"+mustRead("given_names_ipadic.txt"))
+	dupCheck("surnames.txt+surnames_ipadic.txt+surnames_sudachi.txt",
+		mustRead("surnames.txt")+"\n"+mustRead("surnames_ipadic.txt")+"\n"+mustRead("surnames_sudachi.txt"))
+	dupCheck("given_names.txt+given_names_ipadic.txt+given_names_sudachi.txt",
+		mustRead("given_names.txt")+"\n"+mustRead("given_names_ipadic.txt")+"\n"+mustRead("given_names_sudachi.txt"))
 
 	givenNames := givenNameSet()
 	for s := range surnameSet() {

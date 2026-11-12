@@ -895,6 +895,34 @@ $ go run ./internal/dict/gen-ipadic-names \
 `dict.IsGivenName` など）にだけ使い、テスト用の合成値を作る `dict.SurnameSample` /
 `dict.GivenNameSample` には含めない（辞書を拡張するたびにテストの合成値が入れ替わらないようにするため）。
 
+既定の辞書と IPADIC 追加分のどちらにも無い姓名は、同じ生成器で
+[SudachiDict](https://github.com/WorksApplications/SudachiDict)（Apache-2.0）の語彙 CSV から
+[`surnames_sudachi.txt`](../internal/dict/surnames_sudachi.txt) と
+[`given_names_sudachi.txt`](../internal/dict/given_names_sudachi.txt) に作り直す。
+語彙 CSV は `http://sudachi.s3-website-ap-northeast-1.amazonaws.com/sudachidict-raw/20261015/` の
+`small_lex.zip`（SHA-256 `e14eb78decd7b059218735738a626c618388da3f1faedb62e5509a1ca1657041`）、
+`core_lex.zip`（`32c1dc51db66218fdd68975ec3ecbd806628bc1f027ba4834baabd548fae2bae`）、
+`notcore_lex.zip`（`b9e980a75a7d6500782bddd5ed661c389ed9ac165c582fb16d1b0bafcae0d53b`）を展開して使う。
+
+```console
+$ go run ./internal/dict/gen-ipadic-names \
+    -ipadic-names Noun.name.csv \
+    -surnames internal/dict/surnames.txt \
+    -given-names internal/dict/given_names.txt \
+    -surnames-out internal/dict/surnames_ipadic.txt \
+    -given-names-out internal/dict/given_names_ipadic.txt \
+    -sudachi-lex small_lex.csv,core_lex.csv,notcore_lex.csv \
+    -common-words internal/dict/common_words.txt \
+    -municipalities internal/dict/municipalities.txt \
+    -sudachi-surnames-out internal/dict/surnames_sudachi.txt \
+    -sudachi-given-names-out internal/dict/given_names_sudachi.txt
+```
+
+取り込み条件は IPADIC と同じで、さらに一般語の一覧（`common_words.txt`）と同じ書き方の語と、
+都道府県名・市区町村名（政令市の区を含む）の語幹（東京、仙台、八王子）を除く。SudachiDict は
+収録数が多く、こうした語を含めると「東京　都庁」を氏名と判定してしまうため。
+「上増田」「伊佐山」のような小さな地名は実在の姓でもあるので除かない。
+
 姓名分割と同形の一般名詞・地名候補は、実在人名を抑制しないことを確認した語だけを
 [`name_homographs.txt`](../internal/dict/name_homographs.txt) へ追加する。
 
