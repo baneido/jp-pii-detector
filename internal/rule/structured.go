@@ -240,6 +240,9 @@ func ValidUncommonSpacedName(v string) bool {
 		return false
 	}
 	f := strings.Fields(strings.TrimSpace(v))
+	if hasOrgUnitSuffix(f[0]) || hasOrgUnitSuffix(f[1]) {
+		return false
+	}
 	return !dict.IsCommonWord(f[0]) && !dict.IsCommonWord(f[1])
 }
 

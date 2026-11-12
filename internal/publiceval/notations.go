@@ -91,6 +91,7 @@ var notationCategories = []string{
 	"kun-minutes",                // 会議録の「<氏名>君」（発言者ラベル・登壇・指名・提出者・名簿）（陽性）と、諸君・光る君へ・姓だけ + 君（陰性）
 	"address-phone-run",          // 協賛店一覧の「<番地> <電話番号>」がカード・口座番号に見える並び、伏せ字のメール、「～超多様～」（陰性）と、正しい区切りのカード・口座番号（陽性）
 	"titled-name-list",           // 職名の後の姓名が読点・閉じ括弧・敬称で終わる表記（課長補佐 氏名、/（研究院 教授 氏名）/ 大臣 氏名 / 講師：氏名 氏）（陽性）、職名 + 部署・研究室・業務語、「様々」（陰性）
+	"title-context",              // 本文で職名・敬称・就任が氏名に直結する表記（<氏名>・<学部>教授、<氏名> <所属> <職名>、<氏名>（<担当>大臣）、<氏名>が社長に就任、<氏名>氏、/<氏名>さんが、<氏名>総長、で<氏名>選手、<氏名>（Taro Yamada））（陽性）と、<姓>大臣・組織の英語名・部署名・一般語 + 敬称・故人（陰性）
 }
 
 type notationCase struct {
@@ -510,7 +511,10 @@ func notationSpecs() []notationCase {
 	neg("shrine-deity", "檀家さんはもちろんのこと")
 	neg("shrine-deity", "氏神様にお参りします")
 	pos("shrine-deity", "person-name-high-recall", full(1, "")+"殿へ")
-	pos("shrine-deity", "person-name-high-recall", full(2, "")+"さんが来場")
+	// 「<姓><名>さんが」は 2026-11-12 から既定の person-name-role-label（personNameStrictHonorificRe）が
+	// 拾うため、高再現率の敬称ルールの陽性は助詞の続かない「さん来場」にする（「さんが」の形は
+	// title-context の陽性）。
+	pos("shrine-deity", "person-name-high-recall", full(2, "")+"さん来場")
 	pos("shrine-deity", "person-name-high-recall", full(3, "")+"様のご来店")
 	pos("honorific-compound", "person-name-high-recall", n(0).sur+"源氏の新しい作品集")
 
@@ -692,7 +696,9 @@ func notationSpecs() []notationCase {
 	// 「<模様>文様」「檀信徒様」「水神様」「分析さん」「氏名（英語表記で入力）」「氏名(学年)」
 	// （同じ回に実測した高再現率・Low の偽陽性）
 	pos("particle-honorific", "person-name-high-recall", "ゆかりのある"+full(29, "")+"氏より寄贈されました")
-	pos("particle-honorific", "person-name-high-recall", "架空研究科の"+full(30, "")+"さんが受賞")
+	// 「の<姓><名>さんが受賞」は既定の person-name-role-label が拾う（2026-11-12）ため、高再現率の陽性は
+	// 見出しの「さん受賞」にする。
+	pos("particle-honorific", "person-name-high-recall", "架空研究科の"+full(30, "")+"さん受賞")
 	pos("particle-honorific", "person-name-high-recall", "撮影は"+full(31, "")+"氏")
 	// 姓と名の間に空白がある形は、既定の person-name-role-label（personNameSpacedHonorificRe）が拾う。
 	pos("particle-honorific", "person-name-role-label", "寄付者　"+n(32).sur+"　美文様")
@@ -887,6 +893,24 @@ func notationSpecs() []notationCase {
 	card := luhnDigits("453201234567890")
 	pos("address-phone-run", "credit-card", "カード番号 "+card[0:4]+"-"+card[4:8]+"-"+card[8:12]+"-"+card[12:])
 	pos("address-phone-run", "jp-bank-account", "架空銀行 架空支店 口座番号 "+"123 "+"4567")
+	// 2026-11-12 の回に実測した見逃し: 大学・官公庁・企業の広報の本文で、職名・敬称・就任が氏名に直結する
+	// 表記。陰性は同じ部品を含むが個人を指さない形（姓 + 職名、組織の英語名、部署名、一般語 + 敬称、故人）。
+	pos("title-context", role, full(0, "")+"・架空学部教授が架空賞を受賞")
+	pos("title-context", role, full(1, "　")+" 架空府大臣政務官")
+	pos("title-context", role, full(2, "")+" 架空研究院 准教授 / "+full(3, "")+" 架空学院 大学院生")
+	pos("title-context", role, "架空の研究成果を発表（架空学部・"+full(4, "")+" 特任助教）")
+	pos("title-context", role, full(5, " ")+"（架空戦略担当大臣）")
+	pos("title-context", role, "架空株式会社を設立。"+full(0, "")+"が代表取締役社長に就任")
+	pos("title-context", role, "芸人の"+full(1, "")+"氏に架空大使を委嘱しました")
+	pos("title-context", role, "架空研究科修士2年の"+full(2, "")+"さんがグランプリを受賞")
+	pos("title-context", role, full(3, "")+"総長からのメッセージ")
+	pos("title-context", role, full(2, "")+"さんが来場")
+	pos("title-context", role, "架空大会で"+full(4, "")+"選手が優勝")
+	pos("title-context", role, full(0, " ")+"（Taro Yamada）")
+	neg("title-context", n(0).sur+"大臣・"+n(1).sur+"大臣の定例記者会見")
+	neg("title-context", "架空大学（KAKUU UNIVERSITY）")
+	neg("title-context", "高知さんさんテレビにて放送")
+	neg("title-context", "故・"+full(3, "")+"氏をしのぶ会")
 	return out
 }
 

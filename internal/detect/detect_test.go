@@ -5119,10 +5119,12 @@ func TestHonorificCommonNounHighRecall(t *testing.T) {
 			}
 		}
 	}
+	// 「<姓><名>さんへ」は 2026-11-12 から既定の person-name-role-label（敬称の後に助詞が続く形）でも拾い、
+	// 重なりの解消でどちらかの ID になるため、どちらでもよい。
 	for _, line := range []string{"山田太郎さんへ", "佐藤さん", "初見太郎さん", "山田氏名義の口座", "山田氏は"} {
 		found := false
 		for _, f := range d.ScanLine("f.txt", 1, line) {
-			found = found || f.RuleID == "person-name-high-recall"
+			found = found || f.RuleID == "person-name-high-recall" || f.RuleID == "person-name-role-label"
 		}
 		if !found {
 			t.Errorf("%q: person-name-high-recall を検出しなかった", line)
@@ -6008,7 +6010,9 @@ func TestParticleHonorificAndCommonNounGuards20261031(t *testing.T) {
 		want          []string
 	}{
 		{"ひらがなに地続きの姓名 + 氏", "ゆかりのある" + sur + given + "氏より寄贈", []string{"person-name-high-recall"}},
-		{"助詞の後の姓名 + さん", "研究科の" + sur + given + "さんが受賞", []string{"person-name-high-recall"}},
+		// 「の<姓><名>さんが」は 2026-11-12 から既定の person-name-role-label が拾う（重なりの解消で既定ルールが残る）。
+		{"助詞の後の姓名 + さん", "研究科の" + sur + given + "さんが受賞", []string{"person-name-role-label"}},
+		{"助詞の後の姓名 + さん（見出し）", "研究科の" + sur + given + "さん受賞", []string{"person-name-high-recall"}},
 		{"ひらがなの後の一般語 + 様（姓名に分割できない）", "これは見本品様式です", nil},
 		// 姓と名の間に空白がある形は、既定の person-name-role-label が拾う。
 		{"名の末字が文の 2 字 + 様", sur + "　美" + "文様", []string{"person-name-role-label"}},
