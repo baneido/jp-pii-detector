@@ -156,7 +156,7 @@ const (
 	// 拡張 B 以降（U+20000–U+2FA1F。「𠮷田」の 𠮷 U+20BB7 等）を含む。統合漢字の範囲だけだと
 	// これらを含む氏名が値パターンの途中で切れ、全ルールモードが取りこぼす（長崎県の
 	// 特定商取引法の処分公表で実測）。辞書照合は dict 側で新字体へ畳む（foldNameVariants）。
-	kanji    = `\x{4E00}-\x{9FFF}\x{3005}\x{F900}-\x{FAFF}\x{20000}-\x{2FA1F}`
+	kanji = `\x{4E00}-\x{9FFF}\x{3005}\x{F900}-\x{FAFF}\x{20000}-\x{2FA1F}`
 	// hiragana はひらがなに加え、繰り返し記号「ゝ」「ゞ」（\x{309D}\x{309E}）を含む（「すゞ子」「みすゞ」）。
 	// katakana の「ヽ」「ヾ」（\x{30FD}\x{30FE}）も同じ理由で含める。
 	hiragana = `\x{3041}-\x{3096}\x{309D}\x{309E}`
@@ -763,7 +763,8 @@ var (
 	// 「選手権」「選手会」を除くため直後の文字を区切り・助詞に限り、値は姓名辞書の完全分割で
 	// 検証する（「代表選手」「外国人選手」のような一般語は分割できず報告しない）。
 	personNameSenshuRe = regexp.MustCompile(
-		`(?:^|[^` + kanji + hiragana + katakana + `])` +
+		// 「ロンドン五輪で<姓><名>選手が」のように助詞の直後の形も拾う（2026-11-12 に実測した見逃し）。
+		`(?:^|[^` + kanji + hiragana + katakana + `]|[でがはにとものを])` +
 			`([` + kanji + `]{2,6})選手(?:[ 　、。・！!（(がはのをにともへ]|$)`,
 	)
 	// personNameMemberColonRe / personNameMemberColon2Re は、大学・研究所の年報の学外活動一覧
@@ -1080,8 +1081,10 @@ var (
 	personNamePostTitleRe = regexp.MustCompile(
 		`(?:^|[^` + kanji + hiragana + katakana + `]|の)([` + kanji + `]{3,6}?)` +
 			`(?:特任准教授|特任教授|特任講師|特任助教|名誉教授|准教授|教授|講師|助教|弁護士|副理事長|理事長|副学長|学長|` +
-			`副市長|市長|町長|村長|教育長|副会長|会長|教諭|センター長|候補)` +
-			`(?:[ 、。・，,！!）)（(」がはのをにともへやら]|$)`,
+			`副市長|市長|町長|村長|教育長|副会長|会長|教諭|センター長|候補|` +
+			// 2026-11-12 に大学・県のニュースで「<姓><名>総長からのメッセージ」「<姓><名>医学部長から」を実測。
+			`副総長|総長|副知事|知事|医学部長|看護部長|研究科長|学部長|病院長)` +
+			`(?:[ 、。・，,！!）)（(」がはのをにともへやらか]|$)`,
 	)
 	// personNameTitleNameLineEndRe / personNameTitleNameParticleRe は「会長 <姓><名>」で行が終わる形と、
 	// 「施設長<姓><名>へ」「プロジェクト代表<姓><名>とともに」のように、前に付く職名と氏名の間に
@@ -1089,8 +1092,10 @@ var (
 	// ニュースで全モードが取りこぼす見逃しを実測した。値は姓名辞書の完全分割（姓+名）を要求し、
 	// 「施設長谷川<名>」のように職名の「長」が姓の一部になりうる形は rejectChoTaniPrefix で除く。
 	personNameTitleNameLineEndRe = regexp.MustCompile(
-		`(?:会長|副会長|理事長|代表理事|施設長|所長|館長|学長|院長|園長|校長|社長|代表|委員長|センター長)[ ]+` +
-			`([` + kanji + `]{3,6})[ ]*$`,
+		// 2026-11-12 に大学のニュースで「副学長・<学部>教授 <姓><名>」「（<所属>　教授　<姓><名>）」の
+		// 見逃しを実測し、教員の職名と括弧閉じを加えた。
+		`(?:会長|副会長|理事長|代表理事|施設長|所長|館長|学長|院長|園長|校長|社長|代表|委員長|センター長|教授|准教授|助教|講師)[ ]+` +
+			`([` + kanji + `]{3,6})[ ]*[)）]?[ ]*$`,
 	)
 	personNameTitleNameParticleRe = regexp.MustCompile(
 		`(?:会長|理事長|代表理事|施設長|所長|館長|学長|院長|園長|校長|社長|代表|委員長|センター長)` +
@@ -2907,7 +2912,7 @@ func Builtin() []Rule {
 			ID:                "person-name-role-label",
 			Description:       "氏名（担当者・宛名ラベル付き）",
 			Prefilter:         PrefilterCJK,
-			PrefilterLiterals: []string{"会長", "委員", "議長", "君", "担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "知 事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届", "監督", "先生", "講 師", "ゲスト", "登壇", "聞き手", "進行役", "さん×", "さん ×", "選手", "議員", "理事", "監事", "幹事", "様", "館長", "顧問", "［", "[", "】", "年 ", "会社：", "会社:", "事務所：", "事務所:", "教諭", "助教", "候補", "学長", "市長", "町長", "村長", "施設長", "所長", "院長", "園長", "校長", "社長", "センター長", "教育長", "補佐", "大臣", "総長", "研究員", "助教", "甲", "乙", "丙", "丁", "である", "との間", "託者", "任者", "借主", "貸主", "買主", "売主", "賃借人", "賃貸人", "雇用主", "従業員", "労働者", "者の", "者は", "人の", "人は", "歳の", "者:", "者：", "人:", "人：", "者 :", "人 :", " 様", " 氏"},
+			PrefilterLiterals: []string{"会長", "委員", "議長", "君", "担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "知 事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届", "監督", "先生", "講 師", "ゲスト", "登壇", "聞き手", "進行役", "さん×", "さん ×", "選手", "議員", "理事", "監事", "幹事", "様", "館長", "顧問", "［", "[", "】", "年 ", "会社：", "会社:", "事務所：", "事務所:", "教諭", "助教", "候補", "学長", "市長", "町長", "村長", "施設長", "所長", "院長", "園長", "校長", "社長", "センター長", "教育長", "補佐", "大臣", "総長", "研究員", "助教", "甲", "乙", "丙", "丁", "である", "との間", "さん", "部長", "科長", "長官", "頭取", "院生", "就任", "選任", "再任", "託者", "任者", "借主", "貸主", "買主", "売主", "賃借人", "賃貸人", "雇用主", "従業員", "労働者", "者の", "者は", "人の", "人は", "歳の", "者:", "者：", "人:", "人：", "者 :", "人 :", " 様", " 氏"},
 			Validate:          notPlaceholderName,
 			Patterns: []Pattern{
 				// 担当者・宛名・連絡先ラベル。敬称のような強い人物シグナルが無いため、
@@ -2952,8 +2957,11 @@ func Builtin() []Rule {
 				{Re: personNameTantoReadingRe, Base: Medium, Validate: validPersonNameSurnameOrFull},
 				// カタカナ読み・ローマ字の括弧が続く姓名と、「<姓><名>選手」（2026-10-31 04:00 に実測した見逃し）。
 				{Re: personNameWithKanaReadingRe, Base: Medium, Validate: validSpacedSurnameGiven},
-				{Re: personNameRomajiParenRe, Base: Medium, Validate: validPersonNameFullSplit},
-				{Re: personNameRomajiParenSpacedRe, Base: Medium, Validate: validSpacedSurnameGiven},
+				// 「福岡大学（FUKUOKA UNIVERSITY）」のような組織名の英語表記は notOrgName で棄却する
+				// （2026-11-12 に大学のトップページで実測した偽陽性）。
+				{Re: personNameRomajiParenRe, Base: Medium, Validate: func(v string) bool { return notOrgName(v) && validPersonNameFullSplit(v) }},
+				{Re: personNameRomajiParenSpacedRe, Base: Medium, Validate: func(v string) bool { return notOrgName(v) && validSpacedSurnameGiven(v) }},
+				{Re: personNameRomajiParenTitleCaseRe, Base: Medium, Validate: validTitleContextName, ValidateLine: rejectRomajiParenNonName},
 				{Re: personNameSenshuRe, Base: Medium, Validate: validPersonNameFullSplit},
 				{Re: personNameMemberColonRe, Base: Medium, Validate: validFullSplitOrSpacedSurnameGiven},
 				{Re: personNameMemberColon2Re, Base: Medium, Validate: validFullSplitOrSpacedSurnameGiven},
@@ -2981,8 +2989,11 @@ func Builtin() []Rule {
 				// 代表権のある役職名 + 空白/「である」/括弧 + 氏名（行政処分の公表文書の本文）。
 				// 「代表者：」ラベルを伴わないため、姓+名の完全分割のみ Medium で報告する。
 				// 姓が辞書にない役員（「取締役 <珍しい姓> <名>」）は validExecRareSurnameGiven で拾う。
+				// 姓も名も辞書にない空白区切りの役員名（「代表取締役社長　<姓>　<名>」）は、2 語とも一般語・
+				// 部署名でないこと（ValidUncommonSpacedName）で採る（2026-11-12 に会社概要で実測した見逃し）。
 				{Re: personNameExecTitleRe, Base: Medium, Validate: func(v string) bool {
-					return validPersonNameFullSplit(v) || validExecRareSurnameGiven(v)
+					return validPersonNameFullSplit(v) || validExecRareSurnameGiven(v) ||
+						(strings.Contains(strings.TrimSpace(v), " ") && ValidUncommonSpacedName(v))
 				}},
 				{Re: personNameExecTitleAndRe, Base: Medium, Validate: validPersonNameFullSplit},
 				// 当事者ラベル（審査申立人・原告 等）+ 空白 + 氏名と「（総代）氏名」。
@@ -3028,6 +3039,13 @@ func Builtin() []Rule {
 				// 氏名の直後の職名、職名に直結する氏名、出演者表記、学生名簿の行、受賞クレジット
 				// （2026-11-01 20:00 に実測した見逃し）。
 				{Re: personNamePostTitleRe, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: rejectPostTitleFragment},
+				// 職名・敬称・就任が氏名に直結する本文の表記（name_title_context.go。2026-11-12 に実測した見逃し）。
+				{Re: personNameDotAffiliationTitleRe, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: rejectDotAffiliationFragment},
+				{Re: personNameAffiliationTitleRe, Base: Medium, Validate: validTitleContextName},
+				{Re: personNameAffiliationTitleUnspacedRe, Base: Medium, Validate: validTitleContextName},
+				{Re: personNameParenOfficeLineRe, Base: Medium, Validate: validTitleContextName},
+				{Re: personNameAppointedRe, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: rejectPostTitleFragment},
+				{Re: personNameStrictHonorificRe, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: allValidateLine(rejectStrictHonorificFragment, rejectShiInsideGivenName)},
 				{Re: personNameTitleNameLineEndRe, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: rejectChoTaniPrefix},
 				{Re: personNameTitleNameParticleRe, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: rejectChoTaniPrefix},
 				{Re: personNameCreditBracketRe, Base: Medium, Validate: validFullSplitOrSpacedSurnameGiven},
@@ -3089,7 +3107,7 @@ func Builtin() []Rule {
 				), Base: Medium, Validate: honorificPersonNameValid,
 					// 「新品同様」「構文仕様」のような一般語の「様」と、
 					// 「初見さん」「常連さん」「社員皆さん」のような一般語 + 敬称を棄却する。
-					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound, rejectHistoricalUjiName, rejectGradePrefix, rejectShrineHall, rejectHonorificTitlePrefix)},
+					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound, rejectHistoricalUjiName, rejectGradePrefix, rejectShrineHall, rejectHonorificTitlePrefix, rejectSansanHonorific)},
 				// 「<町名>町長<姓><名>様」のように職名に地続きの氏名。上の無空白パターンは職名まで値に
 				// 含めるため rejectHonorificTitlePrefix で棄却し、ここで職名を除いた範囲を拾い直す
 				// （2026-10-30 10:00 に実測した範囲の誤り）。
