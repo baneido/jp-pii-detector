@@ -228,6 +228,10 @@ func IsRoleHeadingWord(w string) bool {
 // 空白区切りで置かれた行は、姓の辞書照合だけで氏名とみなせるため。
 func ValidSectionName(v string) bool {
 	v = strings.TrimSpace(v)
+	// 字間を空けた見出し語（主 催・概 要）と文の断片（整 備する）は氏名ではない。
+	if f := strings.Fields(v); len(f) == 2 && isLetterSpacedWord(f[0], f[1]) {
+		return false
+	}
 	return ValidCrossLineName(v) || validSpacedNameOneSideDict(v) || ValidUncommonSpacedName(v)
 }
 

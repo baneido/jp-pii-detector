@@ -1078,8 +1078,10 @@ var (
 	// 1 文書 30 人以上を Medium・Low が取りこぼす見逃しを実測した。値の直前は漢字・かなでない
 	// 文字か助詞「の」、職名の直後は区切り・助詞・行末に限り、値は姓名辞書の完全分割（姓+名）を
 	// 要求する（「客員教授」「顧問弁護士」のような一般語は分割できず報告しない）。
+	// 2026-11-13 に「…に<姓><名>准教授・<姓><名>教授が登壇」の 1 人目の見逃しを実測し、値の直前の
+	// 助詞を「の」から「に・で・と・は・が・を・も・へ・や」に広げた。
 	personNamePostTitleRe = regexp.MustCompile(
-		`(?:^|[^` + kanji + hiragana + katakana + `]|の)([` + kanji + `]{3,6}?)` +
+		`(?:^|[^` + kanji + hiragana + katakana + `]|[のにでとはがをもへや])([` + kanji + `]{3,6}?)` +
 			`(?:特任准教授|特任教授|特任講師|特任助教|名誉教授|准教授|教授|講師|助教|弁護士|副理事長|理事長|副学長|学長|` +
 			`副市長|市長|町長|村長|教育長|副会長|会長|教諭|センター長|候補|` +
 			// 2026-11-12 に大学・県のニュースで「<姓><名>総長からのメッセージ」「<姓><名>医学部長から」を実測。
@@ -1094,8 +1096,10 @@ var (
 	personNameTitleNameLineEndRe = regexp.MustCompile(
 		// 2026-11-12 に大学のニュースで「副学長・<学部>教授 <姓><名>」「（<所属>　教授　<姓><名>）」の
 		// 見逃しを実測し、教員の職名と括弧閉じを加えた。
-		`(?:会長|副会長|理事長|代表理事|施設長|所長|館長|学長|院長|園長|校長|社長|代表|委員長|センター長|教授|准教授|助教|講師)[ ]+` +
-			`([` + kanji + `]{3,6})[ ]*[)）]?[ ]*$`,
+		// 2026-11-13 に団体の役員紹介「専務理事 <姓><名>／<団体名>」の見逃しを実測し、理事・監事と
+		// スラッシュ区切りを加えた。
+		`(?:会長|副会長|理事長|代表理事|専務理事|常務理事|理事|監事|施設長|所長|館長|学長|院長|園長|校長|社長|代表|委員長|センター長|教授|准教授|助教|講師)[ ]+` +
+			`([` + kanji + `]{3,6})[ ]*(?:[)）]?[ ]*$|[／/])`,
 	)
 	personNameTitleNameParticleRe = regexp.MustCompile(
 		`(?:会長|理事長|代表理事|施設長|所長|館長|学長|院長|園長|校長|社長|代表|委員長|センター長)` +
@@ -2150,7 +2154,7 @@ func Builtin() []Rule {
 				// rejectDaiGoNumber は古物商許可番号「第<12 桁>号」等の許可・登録番号の棄却
 				// （2026-10-30 14:00 に企業サイトの古物商許可番号で偽陽性を実測した）。
 				{Re: dgNoAlnumHyphen(`\d{12}`), Base: Medium,
-					ValidateLine: allValidateLine(rejectNumericTokenPart, rejectHexDumpGroup, rejectDaiGoNumber)},
+					ValidateLine: allValidateLine(rejectNumericTokenPart, rejectHexDumpGroup, rejectDaiGoNumber, rejectHandleDigits)},
 				// 前後にハイフンが続く場合はクレジットカード等の
 				// 4-4-4-4 グループの一部とみなして除外する。
 				{Re: dgNoAlnumHyphen(`\d{4}-\d{4}-\d{4}`), Base: Medium},
@@ -2982,7 +2986,11 @@ func Builtin() []Rule {
 				{Re: personNameTantoListRe[1], Base: Medium, Validate: validPersonNameSurnameOrFull},
 				{Re: personNameTantoListRe[2], Base: Medium, Validate: validPersonNameSurnameOrFull},
 				{Re: personNameTantoListRe[3], Base: Medium, Validate: validPersonNameSurnameOrFull},
-				{Re: personNameOrgHeadColonRe, Base: Medium, Validate: validFullSplitOrSpacedSurnameGiven},
+				// 2026-11-13 に「代表取締役社長：<辞書にない姓> <辞書の名>、」の見逃しを実測し、空白区切りの値は
+				// 姓か名の片側が辞書にあればよいことにした（validFullSplitOrSpacedOneSideDict）。
+				{Re: personNameOrgHeadColonRe, Base: Medium, Validate: func(v string) bool {
+					return validFullSplitOrSpacedSurnameGiven(v) || validFullSplitOrSpacedOneSideDict(v)
+				}},
 				{Re: personNameOrgHeadColonIkaRe, Base: Medium, Validate: validPersonNameFullSplit},
 				// 会議録の出席者表の議席番号 + 姓名（2026-10-30 12:00 に実測した見逃し）。
 				{Re: personNameSeatNumberRe, Base: Medium, Validate: validSpacedSurnameGiven},
@@ -3046,6 +3054,14 @@ func Builtin() []Rule {
 				{Re: personNameParenOfficeLineRe, Base: Medium, Validate: validTitleContextName},
 				{Re: personNameAppointedRe, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: rejectPostTitleFragment},
 				{Re: personNameStrictHonorificRe, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: allValidateLine(rejectStrictHonorificFragment, rejectShiInsideGivenName)},
+				// 会議録の指名・当選・発言者ラベル・名乗り、「<氏名>先生に」、「<職名>の<氏名>が、」、
+				// 「<姓> <名> 議員」の行（name_minutes_context.go。2026-11-13 に実測した見逃し）。
+				{Re: personNameKunNominateRe, Base: Medium, Validate: validKunName},
+				{Re: personNameSenseiParticleRe, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: rejectSenseiFragment},
+				{Re: personNameSpeakerParenRe, Base: Medium, Validate: validSpeakerParenName},
+				{Re: personNameTitleNoNameRe, Base: Medium, Validate: validSelfIntroName, ValidateLine: rejectPostTitleFragment},
+				{Re: personNameGiinLineRe, Base: Medium, Validate: validSpeakerParenName},
+				{Re: personNameSelfIntroRe, Base: Medium, Validate: validSelfIntroName},
 				{Re: personNameTitleNameLineEndRe, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: rejectChoTaniPrefix},
 				{Re: personNameTitleNameParticleRe, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: rejectChoTaniPrefix},
 				{Re: personNameCreditBracketRe, Base: Medium, Validate: validFullSplitOrSpacedSurnameGiven},
@@ -3107,7 +3123,7 @@ func Builtin() []Rule {
 				), Base: Medium, Validate: honorificPersonNameValid,
 					// 「新品同様」「構文仕様」のような一般語の「様」と、
 					// 「初見さん」「常連さん」「社員皆さん」のような一般語 + 敬称を棄却する。
-					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound, rejectHistoricalUjiName, rejectGradePrefix, rejectShrineHall, rejectHonorificTitlePrefix, rejectSansanHonorific)},
+					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound, rejectHistoricalUjiName, rejectUjiReadingName, rejectGradePrefix, rejectShrineHall, rejectHonorificTitlePrefix, rejectSansanHonorific)},
 				// 「<町名>町長<姓><名>様」のように職名に地続きの氏名。上の無空白パターンは職名まで値に
 				// 含めるため rejectHonorificTitlePrefix で棄却し、ここで職名を除いた範囲を拾い直す
 				// （2026-10-30 10:00 に実測した範囲の誤り）。
