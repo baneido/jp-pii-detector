@@ -42,7 +42,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -50,7 +50,7 @@
         {
           "rule_id": "email-address",
           "row": {
-            "tp": 40,
+            "tp": 41,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -82,7 +82,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -122,7 +122,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -162,7 +162,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -202,7 +202,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -242,7 +242,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -282,7 +282,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -322,7 +322,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -362,7 +362,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -402,7 +402,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -442,7 +442,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -482,7 +482,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -522,7 +522,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 1,
             "confidence_miss": 0
           }
@@ -562,7 +562,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -602,7 +602,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -642,7 +642,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -682,7 +682,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -722,7 +722,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -762,7 +762,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -770,7 +770,7 @@
         {
           "rule_id": "person-name-role-label",
           "row": {
-            "tp": 261,
+            "tp": 282,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -802,19 +802,19 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
         }
       ],
       "micro": {
-        "tp": 1012,
+        "tp": 1034,
         "fp": 1,
         "fn": 0,
-        "precision": 0.9990128331688055,
+        "precision": 0.9990338164251208,
         "recall": 1,
-        "f1": 0.9995061728395062
+        "f1": 0.999516674722088
       },
       "micro_span_exact": {
         "tp": 149,
@@ -865,7 +865,7 @@
         "f1": 1
       },
       "auxiliary": {
-        "negatives": 431,
+        "negatives": 449,
         "finding_fp": 1,
         "confidence_miss": 0
       }
@@ -911,7 +911,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -919,7 +919,7 @@
         {
           "rule_id": "email-address",
           "row": {
-            "tp": 40,
+            "tp": 41,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -951,7 +951,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -991,7 +991,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1031,7 +1031,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1071,7 +1071,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1111,7 +1111,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1151,7 +1151,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1191,7 +1191,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1231,7 +1231,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1271,7 +1271,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1311,7 +1311,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1351,7 +1351,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1391,7 +1391,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 1,
             "confidence_miss": 0
           }
@@ -1431,7 +1431,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1471,7 +1471,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1511,7 +1511,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1551,7 +1551,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1591,7 +1591,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1631,7 +1631,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1639,7 +1639,7 @@
         {
           "rule_id": "person-name-role-label",
           "row": {
-            "tp": 261,
+            "tp": 282,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -1671,19 +1671,19 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
         }
       ],
       "micro": {
-        "tp": 1010,
+        "tp": 1032,
         "fp": 1,
         "fn": 2,
-        "precision": 0.9990108803165183,
-        "recall": 0.9980237154150198,
-        "f1": 0.9985170538803757
+        "precision": 0.9990319457889641,
+        "recall": 0.9980657640232108,
+        "f1": 0.9985486211901307
       },
       "micro_span_exact": {
         "tp": 149,
@@ -1734,7 +1734,7 @@
         "f1": 1
       },
       "auxiliary": {
-        "negatives": 431,
+        "negatives": 449,
         "finding_fp": 1,
         "confidence_miss": 0
       }
@@ -1780,7 +1780,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1788,7 +1788,7 @@
         {
           "rule_id": "email-address",
           "row": {
-            "tp": 40,
+            "tp": 41,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -1820,7 +1820,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1860,7 +1860,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1900,7 +1900,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1940,7 +1940,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1980,7 +1980,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2020,7 +2020,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2060,7 +2060,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2100,7 +2100,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2140,7 +2140,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2180,7 +2180,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2220,7 +2220,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2260,7 +2260,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2300,7 +2300,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2340,7 +2340,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2380,7 +2380,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 1,
             "confidence_miss": 0
           }
@@ -2420,7 +2420,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2460,7 +2460,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2500,7 +2500,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2540,7 +2540,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2580,7 +2580,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2620,7 +2620,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2660,7 +2660,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2668,7 +2668,7 @@
         {
           "rule_id": "person-name-role-label",
           "row": {
-            "tp": 261,
+            "tp": 282,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -2700,7 +2700,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2740,7 +2740,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2780,19 +2780,19 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
         }
       ],
       "micro": {
-        "tp": 1211,
+        "tp": 1233,
         "fp": 1,
         "fn": 6,
-        "precision": 0.9991749174917491,
-        "recall": 0.9950698438783895,
-        "f1": 0.9971181556195966
+        "precision": 0.9991896272285251,
+        "recall": 0.9951573849878934,
+        "f1": 0.9971694298422968
       },
       "micro_span_exact": {
         "tp": 149,
@@ -2843,7 +2843,7 @@
         "f1": 1
       },
       "auxiliary": {
-        "negatives": 431,
+        "negatives": 449,
         "finding_fp": 1,
         "confidence_miss": 0
       }
@@ -2889,7 +2889,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2897,7 +2897,7 @@
         {
           "rule_id": "email-address",
           "row": {
-            "tp": 40,
+            "tp": 41,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -2929,7 +2929,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2969,7 +2969,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3009,7 +3009,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3049,7 +3049,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3089,7 +3089,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3129,7 +3129,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3169,7 +3169,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3209,7 +3209,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3249,7 +3249,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3289,7 +3289,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3329,7 +3329,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3369,7 +3369,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3409,7 +3409,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3449,7 +3449,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3489,7 +3489,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 1,
             "confidence_miss": 0
           }
@@ -3529,7 +3529,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3569,7 +3569,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3609,7 +3609,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3649,7 +3649,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3689,7 +3689,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3729,7 +3729,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3769,7 +3769,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3777,7 +3777,7 @@
         {
           "rule_id": "person-name-role-label",
           "row": {
-            "tp": 261,
+            "tp": 282,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -3809,7 +3809,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3849,7 +3849,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3889,7 +3889,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3929,19 +3929,19 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 431,
+            "negatives": 449,
             "finding_fp": 0,
             "confidence_miss": 0
           }
         }
       ],
       "micro": {
-        "tp": 1243,
+        "tp": 1265,
         "fp": 1,
         "fn": 4,
-        "precision": 0.9991961414790996,
-        "recall": 0.9967923015236567,
-        "f1": 0.9979927739863508
+        "precision": 0.9992101105845181,
+        "recall": 0.9968479117415288,
+        "f1": 0.9980276134122288
       },
       "micro_span_exact": {
         "tp": 149,
@@ -3992,16 +3992,16 @@
         "f1": 1
       },
       "auxiliary": {
-        "negatives": 431,
+        "negatives": 449,
         "finding_fp": 1,
         "confidence_miss": 0
       }
     }
   ],
   "dataset": {
-    "total_cases": 1677,
-    "positive_cases": 1246,
-    "negative_cases": 431,
+    "total_cases": 1717,
+    "positive_cases": 1268,
+    "negative_cases": 449,
     "span_annotated_cases": 147,
     "per_rule": [
       {
@@ -4010,7 +4010,7 @@
       },
       {
         "rule_id": "email-address",
-        "positive_cases": 40
+        "positive_cases": 41
       },
       {
         "rule_id": "email-address-confusable",
@@ -4098,7 +4098,7 @@
       },
       {
         "rule_id": "person-name-role-label",
-        "positive_cases": 261
+        "positive_cases": 282
       },
       {
         "rule_id": "person-name-romaji",
@@ -4124,7 +4124,7 @@
       },
       {
         "name": "line",
-        "cases": 1595
+        "cases": 1635
       }
     ],
     "per_format": [
@@ -4150,7 +4150,7 @@
       },
       {
         "name": "unspecified",
-        "cases": 1603
+        "cases": 1643
       }
     ],
     "per_source_class": [
@@ -4160,15 +4160,15 @@
       },
       {
         "name": "hard-negative",
-        "cases": 422
+        "cases": 440
       },
       {
         "name": "public-synthetic",
-        "cases": 1099
+        "cases": 1121
       }
     ]
   },
   "dataset_quality": {
-    "spanless_positive_count": 1100
+    "spanless_positive_count": 1122
   }
 }

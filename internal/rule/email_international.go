@@ -19,7 +19,10 @@ var (
 	// 「<アドレス>までご連絡ください」のように和文が空白なしで直後に続く形を全モードで取りこぼす
 	// 見逃しを 2026-11-01 20:00 に実測したため。日本語のドメインラベルの途中（EAI の
 	// 「user@abc.co例.jp」の ASCII 部分）は rejectEAIDomainContinuation で棄却する。
-	emailASCIIRe = regexp.MustCompile(`(?:^|[^\p{L}\p{N}._%+-])([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})(?:[^\p{L}\p{N}_%+:-]|[\p{Han}\p{Hiragana}\p{Katakana}]|$)`)
+	// 左側は、「電子メール<アドレス>」「各施設とも<アドレス>」のように、ラベルの語（メール・アドレス・
+	// 宛先・連絡先）かひらがなが空白なしで直前に付く形だけを拾う（2026-11-14 に市の催し案内で実測した
+	// 全モードの見逃し）。漢字・カタカナの直後は EAI のローカル部（<姓>taro@…）の途中でありうるので拾わない。
+	emailASCIIRe = regexp.MustCompile(`(?:^|[^\p{L}\p{N}._%+-]|\p{Hiragana}|メール|アドレス|宛先|連絡先)([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})(?:[^\p{L}\p{N}_%+:-]|[\p{Han}\p{Hiragana}\p{Katakana}]|$)`)
 	// EAI はローカル部・ドメインとも Unicode Letter/Number を許す。左境界を
 	// 空白・引用符・構造区切りへ限定し、日本語本文がローカル部へ吸着するのを防ぐ。
 	emailEAIRe = regexp.MustCompile(`(?:^|[\s"'(<\[{=:,;|、])([\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+)(?:[^\p{L}\p{N}_%+:-]|$)`)
@@ -94,7 +97,47 @@ func hasEAILabelPrefix(local string) bool {
 			return true
 		}
 	}
-	return false
+	return hasEAIAbsorbedText(local)
+}
+
+// eaiPlaceholderTails は、アドレスの例示でローカル部の位置に置かれる語（「学籍番号@<ドメイン>」
+// 「Mail用アカウント＠<ドメイン>」）。実在のアドレスではない。
+var eaiPlaceholderTails = []string{"番号", "アカウント", "ユーザー名", "ユーザ名", "氏名", "ID", "ＩＤ"}
+
+// hasEAIAbsorbedText は、和文の本文やラベルがローカル部に吸着した候補を返す（2026-11-14 に
+// 公開文書で実測した高再現率モードの偽陽性）。次の 3 つの形を棄却する。
+//   - 「電子メール<ASCII のローカル部>」「E-mailの場合は各施設とも<ASCII のローカル部>」のように、
+//     和文の後ろに 2 字以上の ASCII が続き、和文が「メール」「アドレス」を含むか、ひらがなで終わる形
+//     （ASCII の部分は email-address が単独で検出する）
+//   - 「学籍番号」「Mail用アカウント」のような例示の語で終わる形
+//   - 「本システムにおいてご登録いただいた」のように、漢字とひらがなが混じる 10 字以上の文の断片
+func hasEAIAbsorbedText(local string) bool {
+	for _, t := range eaiPlaceholderTails {
+		if strings.HasSuffix(local, t) {
+			return true
+		}
+	}
+	// 末尾の ASCII の並びと、その前の部分に分ける。
+	i := len(local)
+	for i > 0 && local[i-1] < 0x80 {
+		i--
+	}
+	head, tail := local[:i], local[i:]
+	if head == "" {
+		return false
+	}
+	lastHead, _ := utf8.DecodeLastRuneInString(head)
+	if len(tail) >= 2 && containsJapanese(head) &&
+		(strings.Contains(head, "メール") || strings.Contains(head, "アドレス") || unicode.In(lastHead, unicode.Hiragana)) {
+		return true
+	}
+	hasHan, hasHira, n := false, false, 0
+	for _, r := range local {
+		n++
+		hasHan = hasHan || unicode.In(r, unicode.Han)
+		hasHira = hasHira || unicode.In(r, unicode.Hiragana)
+	}
+	return n >= 10 && hasHan && hasHira
 }
 
 func validEAILocal(local string) bool {
