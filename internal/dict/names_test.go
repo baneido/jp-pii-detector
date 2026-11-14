@@ -115,7 +115,7 @@ func TestIsPersonName(t *testing.T) {
 		{"高橋健太", true},
 		{"佐藤花子", true},
 		// 姓 + 名（空白区切り）
-		{"山田 太郎", true},
+		{"山田 太郎", true}, // jp-pii-detector:ignore
 		{"佐藤　花子", true}, // 全角スペース
 		// 非人名（組織・一般名詞）
 		{"田中商事", false},
@@ -124,7 +124,7 @@ func TestIsPersonName(t *testing.T) {
 		{"重要", false},
 		{"", false},
 		// 3 要素以上の空白区切りは不可
-		{"山田 太郎 様", false},
+		{"山田 太郎 様", false}, // jp-pii-detector:ignore
 		// 名 + 姓 の順は不可（姓 + 名のみ）
 		{"太郎山田", false},
 	}
@@ -397,7 +397,7 @@ func TestIsPersonNameComposesHalfwidthOriginKana(t *testing.T) {
 // FullNameSplit と判定されることを確認する（SurnameOnly/GivenOnly との判定
 // 根拠の違いを固定する回帰テスト）。
 func TestMatchPersonNameFullNameSplit(t *testing.T) {
-	for _, in := range []string{"山田太郎", "山田 太郎", "越智凪沙"} {
+	for _, in := range []string{"山田太郎", "山田 太郎", "越智凪沙"} { // jp-pii-detector:ignore
 		t.Run(in, func(t *testing.T) {
 			if got := MatchPersonName(in); got != FullNameSplit {
 				t.Errorf("MatchPersonName(%q) = %v, want FullNameSplit", in, got)

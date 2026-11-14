@@ -68,7 +68,9 @@ var (
 		`^\s*(?:` + personNameLabelJP + `)\s*[:=]\s*([` + kanji + `]{1,4} [` + kanji + hiragana + katakana + `]{1,4})\s*$`,
 	)
 	// FieldLineRe は「<ラベル>: <値>」の項目行（ラベルは漢字・かな 2〜12 文字）。
-	FieldLineRe     = regexp.MustCompile(`^\s*[` + kanji + hiragana + katakana + `A-Za-z・()（）]{2,12}\s*[:：]\s*\S`)
+	// 値の先頭が「/」の行は項目行にしない（「https://<ホスト>/」の URL だけの行を「https」欄と読むと、次の行の
+	// 「<社名のカタカナ> <国名>」を氏名にしてしまう。2026-11-14 に企業の海外拠点一覧で実測した偽陽性）。
+	FieldLineRe     = regexp.MustCompile(`^\s*[` + kanji + hiragana + katakana + `A-Za-z・()（）]{2,12}\s*[:：]\s*[^\s/]`)
 	PersonIDFieldRe = regexp.MustCompile(
 		`^\s*(?:患者|顧客|従業員|会員|利用者|受講者|購入者)?(?:ID|ユーザー名)\s*[:：]\s*\S`,
 	)

@@ -765,7 +765,7 @@ var (
 	personNameSenshuRe = regexp.MustCompile(
 		// 「ロンドン五輪で<姓><名>選手が」のように助詞の直後の形も拾う（2026-11-12 に実測した見逃し）。
 		`(?:^|[^` + kanji + hiragana + katakana + `]|[でがはにとものを])` +
-			`([` + kanji + `]{2,6})選手(?:[ 　、。・！!（(がはのをにともへ]|$)`,
+			`([` + kanji + `]{2,6})選手(?:[ 　、。・！!（(/／がはのをにともへ]|$)`,
 	)
 	// personNameMemberColonRe / personNameMemberColon2Re は、大学・研究所の年報の学外活動一覧
 	// 「・ <学会名> 編集委員会編集委員：<姓><名>」「<学会名> 代議員： <姓><名>、<姓><名>」のように、
@@ -1828,6 +1828,8 @@ var spacedGivenStopwords = map[string]bool{
 	"名": true, "姓": true,
 	// 記入欄の表記の指定（「全角 カナ」「漢字 かな」）。「カナ」は名の辞書にもある。
 	"カナ": true, "かな": true, "カタカナ": true, "ひらがな": true, "漢字": true, "英字": true,
+	// 海外拠点一覧の「<社名> 英国」「<社名> 米国」（2026-11-14 に実測した偽陽性）。国名は名ではない。
+	"英国": true, "米国": true, "中国": true, "韓国": true, "独国": true, "仏国": true, "日本": true, "台湾": true, "香港": true,
 }
 
 // validTitledSpacedName は職名つきの「<姓> <名>」を検証する。validSpacedSurnameGiven に加えて
@@ -2528,7 +2530,7 @@ func Builtin() []Rule {
 			RequireContextWindow: digitRuleRequireContextWindow,
 			Validate:             validBankAccount,
 			Patterns: []Pattern{
-				{Re: dg(`\d{7}`), Base: Medium, RequireContext: true, ValidateLine: rejectYuchoAccountSuffix},
+				{Re: dg(`\d{7}`), Base: Medium, RequireContext: true, ValidateLine: allValidateLine(rejectYuchoAccountSuffix, rejectPagerDigits)},
 				// 空白・スラッシュ区切り（3+4）。normalize.Line が全角スラッシュ
 				// 「／」を半角へ畳むため、この 1 パターンで両表記に対応する。
 				// validBankAccount は区切り文字を含む生のマッチ文字列に対して
@@ -2916,7 +2918,7 @@ func Builtin() []Rule {
 			ID:                "person-name-role-label",
 			Description:       "氏名（担当者・宛名ラベル付き）",
 			Prefilter:         PrefilterCJK,
-			PrefilterLiterals: []string{"会長", "委員", "議長", "君", "担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "知 事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届", "監督", "先生", "講 師", "ゲスト", "登壇", "聞き手", "進行役", "さん×", "さん ×", "選手", "議員", "理事", "監事", "幹事", "様", "館長", "顧問", "［", "[", "】", "年 ", "会社：", "会社:", "事務所：", "事務所:", "教諭", "助教", "候補", "学長", "市長", "町長", "村長", "施設長", "所長", "院長", "園長", "校長", "社長", "センター長", "教育長", "補佐", "大臣", "総長", "研究員", "助教", "甲", "乙", "丙", "丁", "である", "との間", "さん", "部長", "科長", "長官", "頭取", "院生", "就任", "選任", "再任", "託者", "任者", "借主", "貸主", "買主", "売主", "賃借人", "賃貸人", "雇用主", "従業員", "労働者", "者の", "者は", "人の", "人は", "歳の", "者:", "者：", "人:", "人：", "者 :", "人 :", " 様", " 氏"},
+			PrefilterLiterals: []string{"会長", "委員", "議長", "君", "担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "知 事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届", "監督", "先生", "講 師", "ゲスト", "登壇", "聞き手", "進行役", "さん×", "さん ×", "選手", "議員", "理事", "監事", "幹事", "様", "館長", "顧問", "［", "[", "】", "年 ", "会社：", "会社:", "事務所：", "事務所:", "教諭", "助教", "候補", "学長", "市長", "町長", "村長", "施設長", "所長", "院長", "園長", "校長", "社長", "センター長", "教育長", "補佐", "大臣", "総長", "研究員", "助教", "甲", "乙", "丙", "丁", "である", "との間", "さん", "部長", "科長", "長官", "頭取", "院生", "就任", "選任", "再任", "託者", "任者", "借主", "貸主", "買主", "売主", "賃借人", "賃貸人", "雇用主", "従業員", "労働者", "者の", "者は", "人の", "人は", "歳の", "者:", "者：", "人:", "人：", "者 :", "人 :", " 様", " 氏", "次長", "局長", "室長", "審議官", "統括官", "参事官", "代理", "代行", "相談役", "課長", "作者", "著者", "撮影", "司会", "モデレーター", "文責", "演者", "発表者", "受賞者", "報告者", "執筆者"},
 			Validate:          notPlaceholderName,
 			Patterns: []Pattern{
 				// 担当者・宛名・連絡先ラベル。敬称のような強い人物シグナルが無いため、
@@ -3094,6 +3096,15 @@ func Builtin() []Rule {
 				{Re: personNameOfficerShi2Re, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: rejectShiInsideGivenName},
 				{Re: personNameOfficerShi3Re, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: rejectShiInsideGivenName},
 				{Re: personNameOfficerShi4Re, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: rejectShiInsideGivenName},
+				// 空白区切りの姓名 + 敬称・職名・所属、決算短信の欄がつながった表紙、構成員名簿の行、
+				// 役割のラベル + コロン（name_spaced_honorific.go。2026-11-14 に実測した見逃し）。
+				{Re: personNameSpacedHonorificAnyRe, Base: Medium, Validate: validSpacedHonorificName, ValidateLine: rejectSpacedHonorificTail},
+				{Re: personNameSpacedTitleLineRe, Base: Medium, Validate: validSpacedHonorificName},
+				{Re: personNameKessanGluedRe, Base: Medium, Validate: validFullSplitOrSpacedSurnameGiven},
+				{Re: personNameRosterOrgTitleRe, Base: Medium, Validate: validSpacedHonorificName},
+				{Re: personNameSpacedParenOrgRe, Base: Medium, Validate: validSpacedHonorificName},
+				{Re: personNameColonCreditRe, Base: Medium, Validate: validColonCreditName},
+				{Re: personNameDietMemberRe, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: rejectPostTitleFragment},
 			},
 		},
 		{
@@ -3148,7 +3159,7 @@ func Builtin() []Rule {
 				), Base: Medium, Validate: validPersonNameFullSplit,
 					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound, rejectHistoricalUjiName, rejectShrineHall, rejectHonorificTitlePrefix)},
 				// 敬称の直前に空白が入る形（「鈴木一郎 様」）と、姓名の間に空白が
-				// 入る形（「山田 太郎様」）。上の無空白パターンは値と敬称が地続きの
+				// 入る形（「山田 太郎様」）。上の無空白パターンは値と敬称が地続きの jp-pii-detector:ignore
 				// ときしか一致しないため、フォーム・宛名書きで一般的なこの表記を
 				// 取りこぼしていた。
 				//
