@@ -2377,7 +2377,7 @@ func Builtin() []Rule {
 				// ValidateLine は URL のユーザー情報（"http://gopher@test.com"、
 				// "ssh://git@github.com/user/repo"）を棄却する（OSS コーパスでの実測。
 				// digit_token_guard.go の rejectURLUserinfo 参照）。
-				{Re: emailASCIIRe, Base: High, ValidateLine: allValidateLine(rejectURLUserinfo, rejectEAIDomainContinuation)},
+				{Re: emailASCIIRe, Base: High, ValidateLine: allValidateLine(rejectURLUserinfo, rejectEAIDomainContinuation, rejectEmailFormExample)},
 			},
 		},
 		{
@@ -3105,6 +3105,18 @@ func Builtin() []Rule {
 				{Re: personNameSpacedParenOrgRe, Base: Medium, Validate: validSpacedHonorificName},
 				{Re: personNameColonCreditRe, Base: Medium, Validate: validColonCreditName},
 				{Re: personNameDietMemberRe, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: rejectPostTitleFragment},
+				// 活用語尾・接続の語・カタカナ語に直結する氏名、氏名と職名の間に空白が入る形、名がひらがなの
+				// 氏名 + さん、委員長 + 氏名 + 君（name_prefix_context.go。2026-11-15 に実測した見逃し）。
+				{Re: personNameLoosePrefixTitleRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectLoosePrefixFragment},
+				{Re: personNameTitleConjRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectPostTitleFragment},
+				{Re: personNameAthleteRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectAthleteTail},
+				{Re: personNameAthleteSpacedRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectAthleteTail},
+				{Re: personNameSpaceTitleRe, Base: Medium, Validate: validLooseTitleName},
+				{Re: personNameSpaceTitleSpacedRe, Base: Medium, Validate: validLooseTitleName},
+				{Re: personNameTitleSpaceParticleRe, Base: Medium, Validate: validLooseTitleName},
+				{Re: personNameKanaGivenSanRe, Base: Medium, Validate: validKanaGivenName},
+				{Re: personNameChairKunRe, Base: Medium, Validate: validKunName},
+				{Re: personNameColonOrgTitleRe, Base: Medium, Validate: validSpacedHonorificName},
 			},
 		},
 		{
