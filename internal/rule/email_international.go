@@ -10,6 +10,10 @@ import (
 	"github.com/baneido/jp-pii-detector/internal/dict"
 )
 
+// emailGluedOrgLabels は、アドレスの直前に空白なしで付く窓口の名前の語尾（「<村名>役場<アドレス>」
+// 「<課名>課<アドレス>」）。人名の末尾には来ない語に限る（漢字の直後は EAI のローカル部の途中でありうる）。
+const emailGluedOrgLabels = `役場|役所|事務局|事務所|窓口|担当|センター|課|係`
+
 var (
 	// ASCII メールの境界には全Unicode Letter/Numberを含める。高再現率モードが
 	// 無効でも、EAI/confusable候補のASCII接尾部だけを通常メールとして
@@ -22,7 +26,9 @@ var (
 	// 左側は、「電子メール<アドレス>」「各施設とも<アドレス>」のように、ラベルの語（メール・アドレス・
 	// 宛先・連絡先）かひらがなが空白なしで直前に付く形だけを拾う（2026-11-14 に市の催し案内で実測した
 	// 全モードの見逃し）。漢字・カタカナの直後は EAI のローカル部（<姓>taro@…）の途中でありうるので拾わない。
-	emailASCIIRe = regexp.MustCompile(`(?:^|[^\p{L}\p{N}._%+-]|\p{Hiragana}|メール|アドレス|宛先|連絡先)([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})(?:[^\p{L}\p{N}_%+:-]|[\p{Han}\p{Hiragana}\p{Katakana}]|$)`)
+	// 2026-11-15 に村役場の問い合わせ先で「<村名>役場<アドレス>」の全モードの見逃し（高再現率では
+	// 組織名ごとローカル部に取り込む範囲のずれ）を実測し、窓口を指す組織の語尾（emailGluedOrgLabels）を加えた。
+	emailASCIIRe = regexp.MustCompile(`(?:^|[^\p{L}\p{N}._%+-]|\p{Hiragana}|メール|アドレス|宛先|連絡先|` + emailGluedOrgLabels + `)([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})(?:[^\p{L}\p{N}_%+:-]|[\p{Han}\p{Hiragana}\p{Katakana}]|$)`)
 	// EAI はローカル部・ドメインとも Unicode Letter/Number を許す。左境界を
 	// 空白・引用符・構造区切りへ限定し、日本語本文がローカル部へ吸着するのを防ぐ。
 	emailEAIRe = regexp.MustCompile(`(?:^|[\s"'(<\[{=:,;|、])([\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+)(?:[^\p{L}\p{N}_%+:-]|$)`)
@@ -125,6 +131,14 @@ func hasEAIAbsorbedText(local string) bool {
 	head, tail := local[:i], local[i:]
 	if head == "" {
 		return false
+	}
+	// 「<村名>役場<ASCII のローカル部>」のように窓口の名前が吸着した形（ASCII の部分は email-address が検出する）。
+	if len(tail) >= 2 {
+		for _, l := range strings.Split(emailGluedOrgLabels, "|") {
+			if strings.HasSuffix(head, l) {
+				return true
+			}
+		}
 	}
 	lastHead, _ := utf8.DecodeLastRuneInString(head)
 	if len(tail) >= 2 && containsJapanese(head) &&
@@ -388,6 +402,21 @@ func rejectEAIDomainContinuation(line string, start, end int) bool {
 	if i < len(rest) && rest[i] == '.' {
 		next, _ := utf8.DecodeRuneInString(rest[i+1:])
 		if unicode.IsLetter(next) || unicode.IsNumber(next) {
+			return false
+		}
+	}
+	return true
+}
+
+// rejectEmailFormExample は、入力欄の説明の「入力例：<アドレス>」「記入例:<アドレス>」のように、
+// 例示のラベルに直結するアドレスを棄却する（2026-11-15 に市のメール配信の登録案内で実測した偽陽性。
+// 入力の形を示す例で、特定の個人の連絡先ではない）。「例：」だけの形は、本文の実例にも使われるので棄却しない。
+func rejectEmailFormExample(line string, start, end int) bool {
+	before := strings.TrimRight(line[:start], " \t　")
+	before = strings.TrimRight(before, ":：")
+	before = strings.TrimRight(before, " ")
+	for _, l := range []string{"入力例", "記入例", "記載例"} {
+		if strings.HasSuffix(before, l) {
 			return false
 		}
 	}

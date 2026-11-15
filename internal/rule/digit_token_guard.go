@@ -199,6 +199,11 @@ func rejectYouCompound(line string, start, end int) bool {
 	if v := line[start:end]; utf8.RuneCountInString(v) >= 3 && strings.HasSuffix(v, "文") && !dict.SplitsAsFullName(v) && !dict.IsPersonName(v) {
 		return false
 	}
+	// 「この絵柄は「菊文様」と」のように、かぎ括弧で囲んだ 2 字 + 「文様」は模様の名前
+	// （2026-11-15 に記念品の案内で実測した高再現率モードの偽陽性）。
+	if strings.HasSuffix(line[start:end], "文") && strings.HasSuffix(line[:start], "「") && strings.HasPrefix(line[end+len("様"):], "」") {
+		return false
+	}
 	after := line[end+len("様"):]
 	for _, t := range youCompoundTails {
 		if strings.HasPrefix(after, t) {
@@ -481,6 +486,8 @@ var honorificCommonNounSuffixes = []string{
 	// 「指導主事さん」「知事さん」「<政党名>党さん」「<組合名>支所様」「恐竜さんと行く」（2026-11-14 に国会の
 	// 会議録・生協の一覧・市の動画案内で実測した偽陽性。職名・政党・拠点・生き物で、特定の個人を指さない）。
 	"主事", "知事", "党", "支所", "恐竜",
+	// 「日銀さんの意見は」（2026-11-15 に国会の会議録で実測した偽陽性。中央銀行の略称）。
+	"日銀",
 	"皆", "客", "農家", "花嫁", "宮司", "妊婦", "産婦", "協力会", "自治会", "町内会", "生徒会", "児童会", "保護者会", "組合", "印刷", "株主", "工場", "販売店", "事業主", "連合会", "企業", "団体", "放送局",
 	// 「<諡号>天皇様」「秘仏毘沙門天様」「不動明王様」「<地名>大明神様」（2026-10-30 18:00 に神社・寺院の
 	// 由緒の案内で実測した偽陽性。神仏と歴史上の天皇の尊称）。
@@ -768,7 +775,8 @@ func rejectChoTaniPrefix(line string, start, end int) bool {
 // 分割を通らないため、正規表現の最短一致が肩書きの頭の 1〜2 字を名として取り込んでしまう。
 func rejectPostTitleFragment(line string, start, end int) bool {
 	v := line[start:end]
-	for _, s := range []string{"准", "副", "特任", "名誉", "客員", "元", "前"} {
+	// 「栄誉」「特別」「主任」「上席」は 2026-11-15 に「<姓>栄誉教授」「<姓>主任研究員」の形で実測した。
+	for _, s := range []string{"准", "副", "特任", "名誉", "客員", "元", "前", "栄誉", "特別", "主任", "上席"} {
 		if strings.HasSuffix(v, s) {
 			return false
 		}
