@@ -2159,7 +2159,7 @@ func Builtin() []Rule {
 					ValidateLine: allValidateLine(rejectNumericTokenPart, rejectHexDumpGroup, rejectDaiGoNumber, rejectHandleDigits)},
 				// 前後にハイフンが続く場合はクレジットカード等の
 				// 4-4-4-4 グループの一部とみなして除外する。
-				{Re: dgNoAlnumHyphen(`\d{4}-\d{4}-\d{4}`), Base: Medium},
+				{Re: dgNoAlnumHyphen(`\d{4}-\d{4}-\d{4}`), Base: Medium, ValidateLine: rejectTimestampFileName},
 				// 空白区切り（4-4-4 / 6-6）。stripSeparators は元々半角スペースを
 				// 除去するため Validate 側の変更は不要。
 				// rejectNumericTokenPart・rejectHexDumpGroup・rejectLogTimestamp66 は
@@ -2918,7 +2918,7 @@ func Builtin() []Rule {
 			ID:                "person-name-role-label",
 			Description:       "氏名（担当者・宛名ラベル付き）",
 			Prefilter:         PrefilterCJK,
-			PrefilterLiterals: []string{"会長", "委員", "議長", "君", "担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "知 事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届", "監督", "先生", "講 師", "ゲスト", "登壇", "聞き手", "進行役", "さん×", "さん ×", "選手", "議員", "理事", "監事", "幹事", "様", "館長", "顧問", "［", "[", "】", "年 ", "会社：", "会社:", "事務所：", "事務所:", "教諭", "助教", "候補", "学長", "市長", "町長", "村長", "施設長", "所長", "院長", "園長", "校長", "社長", "センター長", "教育長", "補佐", "大臣", "総長", "研究員", "助教", "甲", "乙", "丙", "丁", "である", "との間", "さん", "部長", "科長", "長官", "頭取", "院生", "就任", "選任", "再任", "託者", "任者", "借主", "貸主", "買主", "売主", "賃借人", "賃貸人", "雇用主", "従業員", "労働者", "者の", "者は", "人の", "人は", "歳の", "者:", "者：", "人:", "人：", "者 :", "人 :", " 様", " 氏", "次長", "局長", "室長", "審議官", "統括官", "参事官", "代理", "代行", "相談役", "課長", "作者", "著者", "撮影", "司会", "モデレーター", "文責", "演者", "発表者", "受賞者", "報告者", "執筆者"},
+			PrefilterLiterals: []string{"会長", "委員", "議長", "君", "担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "知 事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届", "監督", "先生", "講 師", "ゲスト", "登壇", "聞き手", "進行役", "さん×", "さん ×", "選手", "議員", "理事", "監事", "幹事", "様", "館長", "顧問", "［", "[", "】", "年 ", "会社：", "会社:", "事務所：", "事務所:", "教諭", "助教", "候補", "学長", "市長", "町長", "村長", "施設長", "所長", "院長", "園長", "校長", "社長", "センター長", "教育長", "補佐", "大臣", "総長", "研究員", "助教", "甲", "乙", "丙", "丁", "である", "との間", "さん", "部長", "科長", "長官", "頭取", "院生", "就任", "選任", "再任", "託者", "任者", "借主", "貸主", "買主", "売主", "賃借人", "賃貸人", "雇用主", "従業員", "労働者", "者の", "者は", "人の", "人は", "歳の", "者:", "者：", "人:", "人：", "者 :", "人 :", " 様", " 氏", "次長", "局長", "室長", "審議官", "統括官", "参事官", "代理", "代行", "相談役", "課長", "作者", "著者", "撮影", "司会", "モデレーター", "文責", "演者", "発表者", "受賞者", "報告者", "執筆者", "会員"},
 			Validate:          notPlaceholderName,
 			Patterns: []Pattern{
 				// 担当者・宛名・連絡先ラベル。敬称のような強い人物シグナルが無いため、
@@ -3072,12 +3072,12 @@ func Builtin() []Rule {
 				{Re: personNameCompanyCreditRe, Base: Medium, Validate: validFullSplitOrSpacedSurnameGiven},
 				{Re: personNameCommitteeListRe, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: rejectCommitteeListTail},
 				// 会議録の「<氏名>君」（personNameKun* のコメント参照。2026-11-11 に実測した見逃し）。
-				{Re: personNameKunSpeakerParenRe, Base: Medium, Validate: validKunName},
+				{Re: personNameKunSpeakerParenRe, Base: Medium, Validate: validKunStructuredName(true)},
 				{Re: personNameKunSpeakerRe, Base: Medium, Validate: validKunName},
 				{Re: personNameKunTodanRe, Base: Medium, Validate: validKunName},
 				{Re: personNameKunCallRe, Base: Medium, Validate: validKunName},
 				{Re: personNameKunBillRe, Base: Medium, Validate: validKunName},
-				{Re: personNameKunRosterRe, Base: Medium, Validate: validKunName},
+				{Re: personNameKunRosterRe, Base: Medium, Validate: validKunStructuredName(false)},
 				{Re: personNameLecturerSpaceRe, Base: Medium, Validate: validPersonNameFullSplit},
 				{Re: personNameTantoSpaceRe, Base: Medium, Validate: validPersonNameFullSplit},
 				// 担当欄・代表者欄で姓と名の間が広く空いた表記（2026-10-30 10:00 に実測した見逃し）。
@@ -3117,6 +3117,12 @@ func Builtin() []Rule {
 				{Re: personNameKanaGivenSanRe, Base: Medium, Validate: validKanaGivenName},
 				{Re: personNameChairKunRe, Base: Medium, Validate: validKunName},
 				{Re: personNameColonOrgTitleRe, Base: Medium, Validate: validSpacedHonorificName},
+				// 会議録の指名「次に、<氏名>君。」、括弧の中の「（<氏名>社長）」、活用語尾に続く
+				// 「<氏名>町長」（name_call_context.go。2026-11-16 に実測した見逃し）。
+				{Re: personNameKunCallPunctRe, Base: Medium, Validate: validKunName},
+				{Re: personNameParenTitleRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectParenTitleFragment},
+				{Re: personNameParenTitleSpacedRe, Base: Medium, Validate: validLooseTitleName},
+				{Re: personNameLoosePrefixLocalTitleRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: allValidateLine(rejectLoosePrefixFragment, rejectLocalTitleFragment)},
 			},
 		},
 		{
@@ -3146,7 +3152,7 @@ func Builtin() []Rule {
 				), Base: Medium, Validate: honorificPersonNameValid,
 					// 「新品同様」「構文仕様」のような一般語の「様」と、
 					// 「初見さん」「常連さん」「社員皆さん」のような一般語 + 敬称を棄却する。
-					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound, rejectHistoricalUjiName, rejectUjiReadingName, rejectGradePrefix, rejectShrineHall, rejectHonorificTitlePrefix, rejectSansanHonorific)},
+					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound, rejectHistoricalUjiName, rejectUjiReadingName, rejectGradePrefix, rejectShrineHall, rejectHonorificTitlePrefix, rejectSansanHonorific, rejectHonorificOrgOrPlace)},
 				// 「<町名>町長<姓><名>様」のように職名に地続きの氏名。上の無空白パターンは職名まで値に
 				// 含めるため rejectHonorificTitlePrefix で棄却し、ここで職名を除いた範囲を拾い直す
 				// （2026-10-30 10:00 に実測した範囲の誤り）。
@@ -3772,7 +3778,7 @@ func validBirthdate(m string) bool {
 		year, _ := strconv.Atoi(sub[1])
 		month, _ := strconv.Atoi(sub[2])
 		day, _ := strconv.Atoi(sub[3])
-		return validCalendarDate(year, month, day)
+		return year >= birthdateOldestYear && validCalendarDate(year, month, day)
 	}
 	sub := birthdateRe.FindStringSubmatch(m)
 	if sub == nil {
@@ -3782,7 +3788,7 @@ func validBirthdate(m string) bool {
 	day, _ := strconv.Atoi(sub[5])
 	if sub[1] != "" {
 		year, _ := strconv.Atoi(sub[1])
-		return validCalendarDate(year, month, day)
+		return year >= birthdateOldestYear && validCalendarDate(year, month, day)
 	}
 	// 単字アルファベット略記は大小文字を問わない（正規表現側が両方許容する）。
 	// 漢字の元号名は ToUpper で変化しないため、同じ経路を通してよい。
@@ -3799,7 +3805,7 @@ func validBirthdate(m string) bool {
 		return false
 	}
 	year := info.startYear + eraYear - 1
-	if !validCalendarDate(year, month, day) {
+	if year < birthdateOldestYear || !validCalendarDate(year, month, day) {
 		return false
 	}
 	return info.contains(gregorianDate(year, month, day))
@@ -4076,7 +4082,8 @@ func rejectBirthdateRangeOrExample(line string, start, end int) bool {
 	}
 	after := strings.TrimLeft(strings.TrimPrefix(line[end:], "生まれ"), " \t　")
 	// 「<日付>以前の方」「<日付>生まれ以降」のような期間の端も同様に棄却する。
-	for _, s := range []string{"~", "〜", "～", "から", "以前", "以降", "以後", "まで", "より"} {
+	// 「パスワード（<日付>生まれの場合）」は初期パスワードの作り方の例示（2026-11-16 に実測した偽陽性）。
+	for _, s := range []string{"~", "〜", "～", "から", "以前", "以降", "以後", "まで", "より", "の場合"} {
 		if strings.HasPrefix(after, s) {
 			return false
 		}

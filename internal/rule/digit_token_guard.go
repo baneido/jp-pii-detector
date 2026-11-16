@@ -273,7 +273,7 @@ func rejectHonorificWordCompound(line string, start, end int) bool {
 		// 不動産広告の「取引態様」の「態様」（2026-10-31 08:00 に賃貸住宅のサイトで実測した偽陽性）。
 		return false
 	}
-	for _, w := range []string{"氏遺跡", "氏庭園", "氏館跡", "氏城跡"} {
+	for _, w := range []string{"氏遺跡", "氏庭園", "氏館跡", "氏城跡", "氏城館"} {
 		if strings.HasPrefix(rest, w) {
 			return false
 		}
