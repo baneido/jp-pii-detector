@@ -1086,7 +1086,7 @@ func notationSpecs() []notationCase {
 	pos(pc2, role, "　質疑を続けます。"+n(2).sur+"ただし君。")
 	pos(pc2, role, "○国務大臣（伊吹淳君）　お答えいたします。")
 	pos(pc2, "person-name", "氏名: "+full(1, " "))
-	pos(pc2, "jp-kaigo-insurance", "介護保険被保険者番号 0000123456") // jp-pii-detector:ignore（合成ケース。架空の値）
+	pos(pc2, "jp-kaigo-insurance", "介護保険被保険者番号 0000123456")                              // jp-pii-detector:ignore（合成ケース。架空の値）
 	pos(pc2, "jp-my-number", "個人番号　123456789018　555012345676　777000111222　888000999114") // jp-pii-detector:ignore（合成ケース。検査用数字が合う架空の値）
 	neg(pc2, "これを許します。内閣総理大臣"+n(0).sur+"君。")
 	neg(pc2, "会長の出身地です。")
