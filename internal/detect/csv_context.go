@@ -192,6 +192,9 @@ func isNumericMajorityText(s string) bool {
 var csvNegativeContextWordsJP = []string{
 	"金額", "合計", "小計", "件数", "数量", "個数", "単価", "価格",
 	"注文番号", "伝票番号", "受注番号", "管理番号", "通し番号", "連番", "行番号",
+	// 「介護保険事業所番号」の列は事業所の識別子で、個人の被保険者番号ではない（2026-11-17 に市の
+	// オープンデータ CSV で、列見出しの「介護保険」を文脈に jp-kaigo-insurance が 92 件誤検出されたのを実測）。
+	"事業所番号", "事業者番号", "指定番号",
 }
 
 // csvColumnSignal はヘッダの 1 フィールド本文からその列の PositiveText /

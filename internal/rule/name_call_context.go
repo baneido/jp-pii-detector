@@ -72,6 +72,10 @@ func validKunStructuredName(allowUnspaced bool) func(string) bool {
 					return true
 				}
 			}
+			// 1 字の名（2026-11-17 に実測した見逃し。looseKunSingleGiven）。
+			if len(r) >= 3 && looseKunSingleGiven(string(r[:len(r)-1]), string(r[len(r)-1:])) {
+				return true
+			}
 		}
 		return false
 	}
@@ -123,10 +127,12 @@ func rejectHonorificOrgOrPlace(line string, start, end int) bool {
 		return true
 	}
 	v := line[start:end]
-	if v == "荷主" {
+	if v == "荷主" || v == "事業所" {
 		return false
 	}
-	for _, s := range []string{"省", "機関", "家電店", "量販店", "代理店", "加盟店"} {
+	for _, s := range []string{"省", "機関", "家電店", "量販店", "代理店", "加盟店",
+		// 「<地名>保育園様」「<姓>農園さん」は施設・事業者の名前（2026-11-17 に企業の導入事例と市の給食だよりで実測）。
+		"保育園", "幼稚園", "こども園", "保育所", "農園", "牧場", "事業所", "工房", "酒造", "薬局"} {
 		if strings.HasSuffix(v, s) && utf8.RuneCountInString(v) > utf8.RuneCountInString(s) && !dict.IsPersonName(v) {
 			return false
 		}
