@@ -2156,7 +2156,7 @@ func Builtin() []Rule {
 				// rejectDaiGoNumber は古物商許可番号「第<12 桁>号」等の許可・登録番号の棄却
 				// （2026-10-30 14:00 に企業サイトの古物商許可番号で偽陽性を実測した）。
 				{Re: dgNoAlnumHyphen(`\d{12}`), Base: Medium,
-					ValidateLine: allValidateLine(rejectNumericTokenPart, rejectHexDumpGroup, rejectDaiGoNumber, rejectHandleDigits)},
+					ValidateLine: allValidateLine(rejectNumericTokenPart, rejectHexDumpGroup, rejectDaiGoNumber, rejectHandleDigits, rejectSerialIDList)},
 				// 前後にハイフンが続く場合はクレジットカード等の
 				// 4-4-4-4 グループの一部とみなして除外する。
 				{Re: dgNoAlnumHyphen(`\d{4}-\d{4}-\d{4}`), Base: Medium, ValidateLine: rejectTimestampFileName},
@@ -2483,7 +2483,7 @@ func Builtin() []Rule {
 				// ハイフン・半角スペースいずれの区切りも許容する（Validate は
 				// stripSeparators で区切り文字を除いた上で判定する）。
 				{Re: dg(`\d{4}[- ]?\d{6}`), Base: High, RequireContext: true,
-					ValidateLine: rejectSeparatedDigitGroup(" ", 1)},
+					ValidateLine: allValidateLine(rejectSeparatedDigitGroup(" ", 1), rejectTollNumber)},
 				// ドット区切り（4-6）。既存のハイフン・空白区切りは書式自体の
 				// 情報量が高く Base High だが、ドット区切りは小数点のようにも
 				// 見えるため新表記ゆれとして Base Medium に据え置く。
@@ -2742,11 +2742,13 @@ func Builtin() []Rule {
 			},
 		},
 		{
-			ID:                   "jp-kaigo-insurance",
-			Description:          "介護保険被保険者番号",
-			Prefilter:            PrefilterDigit,
-			Context:              []string{"介護保険", "要介護", "被保険者証", "kaigo hoken"},
-			NegativeContext:      digitRuleNegativeContext,
+			ID:          "jp-kaigo-insurance",
+			Description: "介護保険被保険者番号",
+			Prefilter:   PrefilterDigit,
+			Context:     []string{"介護保険", "要介護", "被保険者証", "kaigo hoken"},
+			// 「介護保険事業所番号」「介護保険事業者 <県>指定№」は事業所の番号で、個人の被保険者番号ではない
+			// （2026-11-17 に市のオープンデータ CSV と企業サイトで実測した偽陽性）。
+			NegativeContext:      append(append([]string{}, digitRuleNegativeContext...), "介護保険事業者", "指定№", "指定No"),
 			RequireContextWindow: digitRuleRequireContextWindow,
 			Validate:             validKaigoInsurance,
 			Patterns: []Pattern{
@@ -2815,7 +2817,7 @@ func Builtin() []Rule {
 			},
 			// プレースホルダ（未定・該当なし・テスト等）の値はすべてのパターンで
 			// 棄却する。非人物キー（project_name 等）はラベルの前方境界で除外する。
-			Validate: notPlaceholderName,
+			Validate: notPlaceholderOrSampleName,
 			Patterns: []Pattern{
 				// 強いラベル: 氏名系の日本語ラベルと、語そのものが「人」を表す
 				// 複合 ASCII キー（full_name / customer_name 等）。前方境界
@@ -2918,7 +2920,7 @@ func Builtin() []Rule {
 			ID:                "person-name-role-label",
 			Description:       "氏名（担当者・宛名ラベル付き）",
 			Prefilter:         PrefilterCJK,
-			PrefilterLiterals: []string{"会長", "委員", "議長", "君", "担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "知 事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届", "監督", "先生", "講 師", "ゲスト", "登壇", "聞き手", "進行役", "さん×", "さん ×", "選手", "議員", "理事", "監事", "幹事", "様", "館長", "顧問", "［", "[", "】", "年 ", "会社：", "会社:", "事務所：", "事務所:", "教諭", "助教", "候補", "学長", "市長", "町長", "村長", "施設長", "所長", "院長", "園長", "校長", "社長", "センター長", "教育長", "補佐", "大臣", "総長", "研究員", "助教", "甲", "乙", "丙", "丁", "である", "との間", "さん", "部長", "科長", "長官", "頭取", "院生", "就任", "選任", "再任", "託者", "任者", "借主", "貸主", "買主", "売主", "賃借人", "賃貸人", "雇用主", "従業員", "労働者", "者の", "者は", "人の", "人は", "歳の", "者:", "者：", "人:", "人：", "者 :", "人 :", " 様", " 氏", "次長", "局長", "室長", "審議官", "統括官", "参事官", "代理", "代行", "相談役", "課長", "作者", "著者", "撮影", "司会", "モデレーター", "文責", "演者", "発表者", "受賞者", "報告者", "執筆者", "会員"},
+			PrefilterLiterals: []string{"会長", "委員", "議長", "君", "担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "知 事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届", "監督", "先生", "講 師", "ゲスト", "登壇", "聞き手", "進行役", "さん×", "さん ×", "選手", "議員", "理事", "監事", "幹事", "様", "館長", "顧問", "［", "[", "】", "年 ", "会社：", "会社:", "事務所：", "事務所:", "教諭", "助教", "候補", "学長", "市長", "町長", "村長", "施設長", "所長", "院長", "園長", "校長", "社長", "センター長", "教育長", "補佐", "大臣", "総長", "研究員", "助教", "甲", "乙", "丙", "丁", "である", "との間", "さん", "部長", "科長", "長官", "頭取", "院生", "就任", "選任", "再任", "託者", "任者", "借主", "貸主", "買主", "売主", "賃借人", "賃貸人", "雇用主", "従業員", "労働者", "者の", "者は", "人の", "人は", "歳の", "者:", "者：", "人:", "人：", "者 :", "人 :", " 様", " 氏", "次長", "局長", "室長", "審議官", "統括官", "参事官", "代理", "代行", "相談役", "課長", "作者", "著者", "撮影", "司会", "モデレーター", "文責", "演者", "発表者", "受賞者", "報告者", "執筆者", "会員", "首相", "総理", "大統領", "区長", "党首", "県議", "市議", "学芸員", "医師", "職員", "主事", "主査", "主任", "役の"},
 			Validate:          notPlaceholderName,
 			Patterns: []Pattern{
 				// 担当者・宛名・連絡先ラベル。敬称のような強い人物シグナルが無いため、
@@ -3073,9 +3075,9 @@ func Builtin() []Rule {
 				{Re: personNameCommitteeListRe, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: rejectCommitteeListTail},
 				// 会議録の「<氏名>君」（personNameKun* のコメント参照。2026-11-11 に実測した見逃し）。
 				{Re: personNameKunSpeakerParenRe, Base: Medium, Validate: validKunStructuredName(true)},
-				{Re: personNameKunSpeakerRe, Base: Medium, Validate: validKunName},
+				{Re: personNameKunSpeakerRe, Base: Medium, Validate: validKunOrKanaGivenName},
 				{Re: personNameKunTodanRe, Base: Medium, Validate: validKunName},
-				{Re: personNameKunCallRe, Base: Medium, Validate: validKunName},
+				{Re: personNameKunCallRe, Base: Medium, Validate: validKunOrKanaGivenName},
 				{Re: personNameKunBillRe, Base: Medium, Validate: validKunName},
 				{Re: personNameKunRosterRe, Base: Medium, Validate: validKunStructuredName(false)},
 				{Re: personNameLecturerSpaceRe, Base: Medium, Validate: validPersonNameFullSplit},
@@ -3119,10 +3121,19 @@ func Builtin() []Rule {
 				{Re: personNameColonOrgTitleRe, Base: Medium, Validate: validSpacedHonorificName},
 				// 会議録の指名「次に、<氏名>君。」、括弧の中の「（<氏名>社長）」、活用語尾に続く
 				// 「<氏名>町長」（name_call_context.go。2026-11-16 に実測した見逃し）。
-				{Re: personNameKunCallPunctRe, Base: Medium, Validate: validKunName},
+				{Re: personNameKunCallPunctRe, Base: Medium, Validate: validKunOrKanaGivenName},
 				{Re: personNameParenTitleRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectParenTitleFragment},
 				{Re: personNameParenTitleSpacedRe, Base: Medium, Validate: validLooseTitleName},
 				{Re: personNameLoosePrefixLocalTitleRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: allValidateLine(rejectLoosePrefixFragment, rejectLocalTitleFragment)},
+				// 職名に直結した「<氏名>君。」、名乗り「<職名>の<氏名>です。」、「<氏名>・党代表」「<氏名>前首相」、
+				// 行の途中の「<氏名>（<所属><職名>）」、「<職名><氏名>さん」（name_post_context.go。
+				// 2026-11-17 に実測した見逃し）。
+				{Re: personNameTitleKunCallRe, Base: Medium, Validate: validKunOrKanaGivenName},
+				{Re: personNameTitleNoDesuRe, Base: Medium, Validate: validSelfIntroName},
+				{Re: personNameDotPartyTitleRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectFormerTitleFragment},
+				{Re: personNameFormerTitleRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectFormerTitleFragment},
+				{Re: personNameMidParenAffiliationRe, Base: Medium, Validate: validLooseTitleName},
+				{Re: personNameTitleHonorificRe, Base: Medium, Validate: validLooseTitleName},
 			},
 		},
 		{

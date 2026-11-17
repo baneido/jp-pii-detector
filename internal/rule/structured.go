@@ -180,7 +180,7 @@ var (
 // 辞書未収録の氏名は取りこぼす（高再現率モード限定の適合率↔再現率トレードオフ）。
 func ValidCrossLineName(v string) bool {
 	v = strings.TrimSpace(v)
-	return notPlaceholderName(v) && notOrgName(v) && validStrictFullNameExtended(v)
+	return notPlaceholderOrSampleName(v) && notOrgName(v) && validStrictFullNameExtended(v)
 }
 
 // SurnameFieldLineRe / GivenFieldLineRe は「<前置き>姓: <値>」「<前置き>名: <値>」だけの行
@@ -210,7 +210,7 @@ func ValidSurnameGivenFieldPair(sei, mei string) bool {
 func ValidSectionNameShape(v string) bool {
 	v = strings.TrimSpace(v)
 	f := strings.Fields(v)
-	if len(f) != 2 || !notOrgName(v) || !notPlaceholderName(v) || spacedGivenStopwords[f[1]] || prefectureWordRe.MatchString(f[0]) {
+	if len(f) != 2 || !notOrgName(v) || !notPlaceholderOrSampleName(v) || spacedGivenStopwords[f[1]] || prefectureWordRe.MatchString(f[0]) {
 		return false
 	}
 	return spacedNameSurnameRe.MatchString(f[0]) && spacedNameGivenRe.MatchString(f[1])
@@ -232,6 +232,10 @@ func ValidSectionName(v string) bool {
 	v = strings.TrimSpace(v)
 	// 字間を空けた見出し語（主 催・概 要）と文の断片（整 備する）は氏名ではない。
 	if f := strings.Fields(v); len(f) == 2 && isLetterSpacedWord(f[0], f[1]) {
+		return false
+	}
+	// 自治体名を姓にした記入例（<自治体名> 花子）は実在の個人ではない（2026-11-17 に実測した偽陽性）。
+	if isMunicipalitySampleName(v) {
 		return false
 	}
 	return ValidCrossLineName(v) || validSpacedNameOneSideDict(v) || ValidUncommonSpacedName(v)
@@ -261,7 +265,7 @@ func ValidUncommonSpacedName(v string) bool {
 // 手がかりが一切無く、ファイル全体の統計だけが根拠になるため。
 func ValidRosterName(v string) bool {
 	v = strings.TrimSpace(v)
-	return notPlaceholderName(v) && notOrgName(v) && validStrictFullName(v)
+	return notPlaceholderOrSampleName(v) && notOrgName(v) && validStrictFullName(v)
 }
 
 // ValidCrossLineSurnameGivenPair は、姓ラベル行から取り出した値 sei と名ラベル行
