@@ -42,7 +42,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -82,7 +82,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -122,7 +122,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -162,7 +162,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -202,7 +202,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -242,7 +242,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -282,7 +282,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -322,7 +322,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -362,7 +362,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -402,7 +402,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -442,7 +442,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -450,7 +450,7 @@
         {
           "rule_id": "jp-my-number",
           "row": {
-            "tp": 45,
+            "tp": 46,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -482,7 +482,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -522,7 +522,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 1,
             "confidence_miss": 0
           }
@@ -562,7 +562,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -602,7 +602,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -642,7 +642,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -682,7 +682,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -722,7 +722,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -762,7 +762,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -770,7 +770,7 @@
         {
           "rule_id": "person-name-role-label",
           "row": {
-            "tp": 322,
+            "tp": 338,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -802,19 +802,19 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
         }
       ],
       "micro": {
-        "tp": 1080,
+        "tp": 1097,
         "fp": 1,
         "fn": 0,
-        "precision": 0.9990749306197965,
+        "precision": 0.9990892531876139,
         "recall": 1,
-        "f1": 0.9995372512725589
+        "f1": 0.9995444191343964
       },
       "micro_span_exact": {
         "tp": 149,
@@ -865,7 +865,7 @@
         "f1": 1
       },
       "auxiliary": {
-        "negatives": 499,
+        "negatives": 513,
         "finding_fp": 1,
         "confidence_miss": 0
       }
@@ -911,7 +911,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -951,7 +951,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -991,7 +991,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1031,7 +1031,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1071,7 +1071,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1111,7 +1111,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1151,7 +1151,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1191,7 +1191,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1231,7 +1231,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1271,7 +1271,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1311,7 +1311,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1319,7 +1319,7 @@
         {
           "rule_id": "jp-my-number",
           "row": {
-            "tp": 45,
+            "tp": 46,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -1351,7 +1351,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1391,7 +1391,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 1,
             "confidence_miss": 0
           }
@@ -1431,7 +1431,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1471,7 +1471,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1511,7 +1511,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1551,7 +1551,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1591,7 +1591,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1631,7 +1631,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1639,7 +1639,7 @@
         {
           "rule_id": "person-name-role-label",
           "row": {
-            "tp": 322,
+            "tp": 338,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -1671,19 +1671,19 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
         }
       ],
       "micro": {
-        "tp": 1078,
+        "tp": 1095,
         "fp": 1,
         "fn": 2,
-        "precision": 0.9990732159406858,
-        "recall": 0.9981481481481481,
-        "f1": 0.9986104678091708
+        "precision": 0.9990875912408759,
+        "recall": 0.9981768459434822,
+        "f1": 0.9986320109439124
       },
       "micro_span_exact": {
         "tp": 149,
@@ -1734,7 +1734,7 @@
         "f1": 1
       },
       "auxiliary": {
-        "negatives": 499,
+        "negatives": 513,
         "finding_fp": 1,
         "confidence_miss": 0
       }
@@ -1780,7 +1780,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1820,7 +1820,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1860,7 +1860,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1900,7 +1900,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1940,7 +1940,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -1980,7 +1980,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2020,7 +2020,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2060,7 +2060,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2100,7 +2100,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2140,7 +2140,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2180,7 +2180,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2220,7 +2220,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2260,7 +2260,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2300,7 +2300,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2308,7 +2308,7 @@
         {
           "rule_id": "jp-my-number",
           "row": {
-            "tp": 45,
+            "tp": 46,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -2340,7 +2340,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2380,7 +2380,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 1,
             "confidence_miss": 0
           }
@@ -2420,7 +2420,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2460,7 +2460,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2500,7 +2500,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2540,7 +2540,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2580,7 +2580,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2620,7 +2620,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2660,7 +2660,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2668,7 +2668,7 @@
         {
           "rule_id": "person-name-role-label",
           "row": {
-            "tp": 322,
+            "tp": 338,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -2700,7 +2700,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2740,7 +2740,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2780,19 +2780,19 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
         }
       ],
       "micro": {
-        "tp": 1279,
+        "tp": 1296,
         "fp": 1,
         "fn": 6,
-        "precision": 0.99921875,
-        "recall": 0.9953307392996109,
-        "f1": 0.997270955165692
+        "precision": 0.9992289899768697,
+        "recall": 0.9953917050691244,
+        "f1": 0.9973066564063102
       },
       "micro_span_exact": {
         "tp": 149,
@@ -2843,7 +2843,7 @@
         "f1": 1
       },
       "auxiliary": {
-        "negatives": 499,
+        "negatives": 513,
         "finding_fp": 1,
         "confidence_miss": 0
       }
@@ -2889,7 +2889,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2929,7 +2929,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -2969,7 +2969,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3009,7 +3009,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3049,7 +3049,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3089,7 +3089,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3129,7 +3129,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3169,7 +3169,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3209,7 +3209,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3249,7 +3249,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3289,7 +3289,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3329,7 +3329,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3369,7 +3369,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3409,7 +3409,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3417,7 +3417,7 @@
         {
           "rule_id": "jp-my-number",
           "row": {
-            "tp": 45,
+            "tp": 46,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -3449,7 +3449,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3489,7 +3489,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 1,
             "confidence_miss": 0
           }
@@ -3529,7 +3529,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3569,7 +3569,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3609,7 +3609,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3649,7 +3649,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3689,7 +3689,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3729,7 +3729,7 @@
             "f1": 1
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3769,7 +3769,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3777,7 +3777,7 @@
         {
           "rule_id": "person-name-role-label",
           "row": {
-            "tp": 322,
+            "tp": 338,
             "fp": 0,
             "fn": 0,
             "precision": 1,
@@ -3809,7 +3809,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3849,7 +3849,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3889,7 +3889,7 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
@@ -3929,19 +3929,19 @@
             "f1": 0
           },
           "auxiliary": {
-            "negatives": 499,
+            "negatives": 513,
             "finding_fp": 0,
             "confidence_miss": 0
           }
         }
       ],
       "micro": {
-        "tp": 1311,
+        "tp": 1328,
         "fp": 1,
         "fn": 4,
-        "precision": 0.9992378048780488,
-        "recall": 0.996958174904943,
-        "f1": 0.9980966882375333
+        "precision": 0.999247554552295,
+        "recall": 0.996996996996997,
+        "f1": 0.9981210071401728
       },
       "micro_span_exact": {
         "tp": 149,
@@ -3992,16 +3992,16 @@
         "f1": 1
       },
       "auxiliary": {
-        "negatives": 499,
+        "negatives": 513,
         "finding_fp": 1,
         "confidence_miss": 0
       }
     }
   ],
   "dataset": {
-    "total_cases": 1813,
-    "positive_cases": 1314,
-    "negative_cases": 499,
+    "total_cases": 1844,
+    "positive_cases": 1331,
+    "negative_cases": 513,
     "span_annotated_cases": 147,
     "per_rule": [
       {
@@ -4062,7 +4062,7 @@
       },
       {
         "rule_id": "jp-my-number",
-        "positive_cases": 45
+        "positive_cases": 46
       },
       {
         "rule_id": "jp-passport",
@@ -4098,7 +4098,7 @@
       },
       {
         "rule_id": "person-name-role-label",
-        "positive_cases": 322
+        "positive_cases": 338
       },
       {
         "rule_id": "person-name-romaji",
@@ -4124,7 +4124,7 @@
       },
       {
         "name": "line",
-        "cases": 1731
+        "cases": 1762
       }
     ],
     "per_format": [
@@ -4150,7 +4150,7 @@
       },
       {
         "name": "unspecified",
-        "cases": 1739
+        "cases": 1770
       }
     ],
     "per_source_class": [
@@ -4160,15 +4160,15 @@
       },
       {
         "name": "hard-negative",
-        "cases": 490
+        "cases": 504
       },
       {
         "name": "public-synthetic",
-        "cases": 1167
+        "cases": 1184
       }
     ]
   },
   "dataset_quality": {
-    "spanless_positive_count": 1168
+    "spanless_positive_count": 1185
   }
 }
