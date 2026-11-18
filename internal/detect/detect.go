@@ -1128,7 +1128,7 @@ func (d *Detector) scanFieldAdjacentNames(file string, lines []string) []Finding
 		}
 		if m := rule.StandaloneNameSentenceRe.FindStringSubmatchIndex(norm); m != nil {
 			entity := norm[m[2]:m[3]]
-			if rule.ValidSectionName(entity) && !d.allowlisted(entity) {
+			if rule.ValidSectionName(entity) && !rule.IsRegionPlacePair(entity) && !d.allowlisted(entity) {
 				rs := utf8.RuneCountInString(norm[:m[2]])
 				out = append(out, d.sectionNameFinding(file, lines, j, rs, rs+utf8.RuneCountInString(entity)))
 			}

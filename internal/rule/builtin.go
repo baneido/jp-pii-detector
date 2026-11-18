@@ -2166,7 +2166,7 @@ func Builtin() []Rule {
 				// OSS コーパスで実測した偽陽性（小数部・識別子の一部・16 進ダンプ・
 				// ログのタイムスタンプ）の棄却（digit_token_guard.go）。
 				{Re: dgNoAlnumHyphen(`\d{4} \d{4} \d{4}`), Base: Medium,
-					ValidateLine: allValidateLine(rejectSeparatedDigitGroup(" ", 4), rejectNumericTokenPart, rejectHexDumpGroup, rejectYearSequence)},
+					ValidateLine: allValidateLine(rejectSeparatedDigitGroup(" ", 4), rejectNumericTokenPart, rejectHexDumpGroup, rejectYearSequence, rejectSpacedNumberRow)},
 				{Re: dgNoAlnumHyphen(`\d{6} \d{6}`), Base: Medium,
 					ValidateLine: allValidateLine(rejectSeparatedDigitGroup(" ", 6), rejectNumericTokenPart, rejectHexDumpGroup,
 						rejectLogTimestamp66(myNumberContext))},
@@ -3134,6 +3134,20 @@ func Builtin() []Rule {
 				{Re: personNameFormerTitleRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectFormerTitleFragment},
 				{Re: personNameMidParenAffiliationRe, Base: Medium, Validate: validLooseTitleName},
 				{Re: personNameTitleHonorificRe, Base: Medium, Validate: validLooseTitleName},
+				// 読みがなの括弧、職名に続く字間を空けた氏名、所属 + 職名の行、「<役割>の<氏名>氏」、
+				// 「<氏名>代表が」、かぎ括弧の氏名 + 敬称、「<氏名>さん主演」、「<職名> <姓><ひらがなの名>氏」、
+				// 決算短信の「問合せ先責任者 <部署> <姓> <名>」（name_reading_context.go。2026-11-18 に実測した見逃し）。
+				{Re: personNameReadingPairRe, Base: Medium, Validate: validSurnamePrefixName},
+				{Re: personNameReadingHonorificRe, Base: Medium, Validate: validSurnamePrefixName},
+				{Re: personNameLetterSpacedExecRe, Base: Medium, Validate: validLetterSpacedName},
+				{Re: personNameRosterDeptTitleRe, Base: Medium, Validate: validSpacedNameOneSideDict},
+				{Re: personNameSpaceDeptTitleRe, Base: Medium, Validate: validLooseTitleName},
+				{Re: personNameRoleNoShiRe, Base: Medium, Validate: validSurnamePrefixName, ValidateLine: rejectShiInsideGivenName},
+				{Re: personNameDaihyoParticleRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectDaihyoFragment},
+				{Re: personNameQuotedHonorificRe, Base: Medium, Validate: validSpacedNameOneSideDict},
+				{Re: personNameHonorificCreditRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectShiInsideGivenName},
+				{Re: personNameTitleKanaGivenRe, Base: Medium, Validate: validTitleKanaGivenName},
+				{Re: personNameContactDeptRe, Base: Medium, Validate: validSpacedNameOneSideDict},
 			},
 		},
 		{
@@ -3163,7 +3177,7 @@ func Builtin() []Rule {
 				), Base: Medium, Validate: honorificPersonNameValid,
 					// 「新品同様」「構文仕様」のような一般語の「様」と、
 					// 「初見さん」「常連さん」「社員皆さん」のような一般語 + 敬称を棄却する。
-					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound, rejectHistoricalUjiName, rejectUjiReadingName, rejectGradePrefix, rejectShrineHall, rejectHonorificTitlePrefix, rejectSansanHonorific, rejectHonorificOrgOrPlace)},
+					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound, rejectHistoricalUjiName, rejectUjiReadingName, rejectGradePrefix, rejectShrineHall, rejectHonorificTitlePrefix, rejectSansanHonorific, rejectHonorificOrgOrPlace, rejectHonorificOrgOrSample)},
 				// 「<町名>町長<姓><名>様」のように職名に地続きの氏名。上の無空白パターンは職名まで値に
 				// 含めるため rejectHonorificTitlePrefix で棄却し、ここで職名を除いた範囲を拾い直す
 				// （2026-10-30 10:00 に実測した範囲の誤り）。
