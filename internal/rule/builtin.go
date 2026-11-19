@@ -1852,7 +1852,7 @@ func validSpacedSurnameGiven(v string) bool {
 	if len(f) != 2 {
 		return false
 	}
-	if n := len([]rune(f[1])); n < 1 || n > 3 || spacedGivenStopwords[f[1]] {
+	if n := len([]rune(f[1])); n < 1 || n > 3 || spacedGivenStopwords[f[1]] || givenEndsWithKun(f[1]) {
 		return false
 	}
 	return dict.IsSurname(f[0])
@@ -2483,7 +2483,7 @@ func Builtin() []Rule {
 				// ハイフン・半角スペースいずれの区切りも許容する（Validate は
 				// stripSeparators で区切り文字を除いた上で判定する）。
 				{Re: dg(`\d{4}[- ]?\d{6}`), Base: High, RequireContext: true,
-					ValidateLine: allValidateLine(rejectSeparatedDigitGroup(" ", 1), rejectTollNumber)},
+					ValidateLine: allValidateLine(rejectSeparatedDigitGroup(" ", 1), rejectTollNumber, rejectDigitsInURL)},
 				// ドット区切り（4-6）。既存のハイフン・空白区切りは書式自体の
 				// 情報量が高く Base High だが、ドット区切りは小数点のようにも
 				// 見えるため新表記ゆれとして Base Medium に据え置く。
@@ -2635,7 +2635,7 @@ func Builtin() []Rule {
 				{Re: regexp.MustCompile(
 					birthdateLabel + birthdateLabelSep +
 						`((?:(?:19|20)\d{2}|(?:明治|大正|昭和|平成|令和|[MTSHRmtshr])(?:元|\d{1,2}))[年/.-]\d{1,2}[月/.-]\d{1,2}日?)`,
-				), Base: Medium},
+				), Base: Medium, ValidateLine: rejectOccurrenceDateLabel},
 				// ラベル直結・区切りなしの 8 桁連結（YYYYMMDD）。DB エクスポート等で
 				// 最頻出の表記。月日のレンジをパターン側で絞り込み、ラベルへの
 				// 直結を必須とすることで、処理日・有効期限など無関係な 8 桁列や、
@@ -2643,7 +2643,7 @@ func Builtin() []Rule {
 				{Re: regexp.MustCompile(
 					birthdateLabel + birthdateLabelSep +
 						`((?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01]))(?:[^0-9]|$)`,
-				), Base: Medium},
+				), Base: Medium, ValidateLine: rejectOccurrenceDateLabel},
 				// 後置ラベル「生まれ」（値→ラベル順で前置ラベルが無いケース。
 				// 実測 FN「1985年1月2日生まれ」相当）。jp-pii-detector:ignore
 				// 上の区切りあり値パターン（第 1 パターン）の捕捉本体をそのまま
@@ -2690,7 +2690,7 @@ func Builtin() []Rule {
 				// 追加する。
 				{Re: dg(`\d{4} \d{4}`), Base: Medium, RequireContext: true,
 					Validate:     func(m string) bool { return !checksum.AllSame(stripSeparators(m)) },
-					ValidateLine: rejectSeparatedDigitGroup(" ", 4)},
+					ValidateLine: allValidateLine(rejectSeparatedDigitGroup(" ", 4), rejectBetweenPhoneNumbers)},
 				// 国民健康保険の保険者番号は 6 桁。日常的な数字との衝突が大きい
 				// ため、既存の広い文脈語（「保険証」「被保険者」等）だけでは
 				// 発火させず、正規表現自体にも強ラベル「保険者番号」と通常の
@@ -2756,7 +2756,7 @@ func Builtin() []Rule {
 				// 桁数が衝突するが、両ルールとも RequireContext:true のため
 				// 「介護保険」「年金」いずれか異なるキーワードが同一 40 ルーン窓に
 				// 共存しない限り同時発火しない。
-				{Re: dg(`\d{10}`), Base: Medium, RequireContext: true},
+				{Re: dg(`\d{10}`), Base: Medium, RequireContext: true, ValidateLine: rejectDigitsInURL},
 			},
 		},
 		{
@@ -3062,7 +3062,7 @@ func Builtin() []Rule {
 				// 「<姓> <名> 議員」の行（name_minutes_context.go。2026-11-13 に実測した見逃し）。
 				{Re: personNameKunNominateRe, Base: Medium, Validate: validKunName},
 				{Re: personNameSenseiParticleRe, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: rejectSenseiFragment},
-				{Re: personNameSpeakerParenRe, Base: Medium, Validate: validSpeakerParenName},
+				{Re: personNameSpeakerParenRe, Base: Medium, Validate: validSpeakerParenName, ValidateLine: rejectTrailingKun},
 				{Re: personNameTitleNoNameRe, Base: Medium, Validate: validSelfIntroName, ValidateLine: rejectPostTitleFragment},
 				{Re: personNameGiinLineRe, Base: Medium, Validate: validSpeakerParenName},
 				{Re: personNameSelfIntroRe, Base: Medium, Validate: validSelfIntroName},
@@ -3148,6 +3148,14 @@ func Builtin() []Rule {
 				{Re: personNameHonorificCreditRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectShiInsideGivenName},
 				{Re: personNameTitleKanaGivenRe, Base: Medium, Validate: validTitleKanaGivenName},
 				{Re: personNameContactDeptRe, Base: Medium, Validate: validSpacedNameOneSideDict},
+				// 氏名に直結する職名（栄誉教授・診療講師・技師・課長など）、空白区切りの氏名 + 職名、職名 + 氏名 + 括弧、
+				// 「社長・<氏名>）」、「CEO <氏名>」の行末、「<所属>の<氏名>教授が」（name_rank_context.go。2026-11-19 に実測した見逃し）。
+				{Re: personNameRankTitleRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectRankTitleFragment},
+				{Re: personNameSpacedAttachedTitleRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectSpacedAttachedTitleFragment},
+				{Re: personNameTitleNameParenRe, Base: Medium, Validate: validLooseTitleName},
+				{Re: personNameTitleDotNameRe, Base: Medium, Validate: validLooseTitleName},
+				{Re: personNameCEOLineEndRe, Base: Medium, Validate: validLooseTitleName},
+				{Re: personNameAffiliationNoTitleRe, Base: Medium, Validate: validSurnamePrefixName, ValidateLine: rejectPostTitleFragment},
 			},
 		},
 		{
@@ -3177,7 +3185,7 @@ func Builtin() []Rule {
 				), Base: Medium, Validate: honorificPersonNameValid,
 					// 「新品同様」「構文仕様」のような一般語の「様」と、
 					// 「初見さん」「常連さん」「社員皆さん」のような一般語 + 敬称を棄却する。
-					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound, rejectHistoricalUjiName, rejectUjiReadingName, rejectGradePrefix, rejectShrineHall, rejectHonorificTitlePrefix, rejectSansanHonorific, rejectHonorificOrgOrPlace, rejectHonorificOrgOrSample)},
+					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound, rejectHistoricalUjiName, rejectUjiReadingName, rejectGradePrefix, rejectShrineHall, rejectHonorificTitlePrefix, rejectSansanHonorific, rejectHonorificOrgOrPlace, rejectHonorificOrgOrSample, rejectHonorificOrgAbbrevOrOaza)},
 				// 「<町名>町長<姓><名>様」のように職名に地続きの氏名。上の無空白パターンは職名まで値に
 				// 含めるため rejectHonorificTitlePrefix で棄却し、ここで職名を除いた範囲を拾い直す
 				// （2026-10-30 10:00 に実測した範囲の誤り）。
