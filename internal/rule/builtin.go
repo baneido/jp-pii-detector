@@ -2388,7 +2388,7 @@ func Builtin() []Rule {
 			Prefilter:   PrefilterAt,
 			Validate:    validEAIEmail,
 			Patterns: []Pattern{
-				{Re: emailEAIRe, Base: High},
+				{Re: emailEAIRe, Base: High, Validate: notPlaceholderEAILocal},
 			},
 		},
 		{
@@ -2437,7 +2437,7 @@ func Builtin() []Rule {
 			RequireContextWindow: digitRuleRequireContextWindow,
 			Validate:             validDriversLicense,
 			Patterns: []Pattern{
-				{Re: dg(`\d{12}`), Base: High, RequireContext: true},
+				{Re: dg(`\d{12}`), Base: High, RequireContext: true, ValidateLine: rejectPermitNumberDaiGo},
 				// ハイフン区切り（4-4-4）。dgNoAlnumHyphen で UUID 等のハイフン区切り
 				// トークンの内部を除外する（dg ではなく my-number と同じ境界ガード）。
 				{Re: dgNoAlnumHyphen(`\d{4}-\d{4}-\d{4}`), Base: High, RequireContext: true},
@@ -2483,7 +2483,7 @@ func Builtin() []Rule {
 				// ハイフン・半角スペースいずれの区切りも許容する（Validate は
 				// stripSeparators で区切り文字を除いた上で判定する）。
 				{Re: dg(`\d{4}[- ]?\d{6}`), Base: High, RequireContext: true,
-					ValidateLine: allValidateLine(rejectSeparatedDigitGroup(" ", 1), rejectTollNumber, rejectDigitsInURL)},
+					ValidateLine: allValidateLine(rejectSeparatedDigitGroup(" ", 1), rejectTollNumber, rejectDigitsInURL, rejectUnderscoreJoinedDigits)},
 				// ドット区切り（4-6）。既存のハイフン・空白区切りは書式自体の
 				// 情報量が高く Base High だが、ドット区切りは小数点のようにも
 				// 見えるため新表記ゆれとして Base Medium に据え置く。
@@ -2756,7 +2756,7 @@ func Builtin() []Rule {
 				// 桁数が衝突するが、両ルールとも RequireContext:true のため
 				// 「介護保険」「年金」いずれか異なるキーワードが同一 40 ルーン窓に
 				// 共存しない限り同時発火しない。
-				{Re: dg(`\d{10}`), Base: Medium, RequireContext: true, ValidateLine: rejectDigitsInURL},
+				{Re: dg(`\d{10}`), Base: Medium, RequireContext: true, ValidateLine: allValidateLine(rejectDigitsInURL, rejectUnderscoreJoinedDigits)},
 			},
 		},
 		{
@@ -3156,6 +3156,19 @@ func Builtin() []Rule {
 				{Re: personNameTitleDotNameRe, Base: Medium, Validate: validLooseTitleName},
 				{Re: personNameCEOLineEndRe, Base: Medium, Validate: validLooseTitleName},
 				{Re: personNameAffiliationNoTitleRe, Base: Medium, Validate: validSurnamePrefixName, ValidateLine: rejectPostTitleFragment},
+				// 括弧の役職の見出し + 読点区切りの氏名、「理事 <氏名>（<本務>）」、「<氏名><県名>知事」「<氏名><市名>市長」、
+				// 「理事長に<氏名>が就任」、「<職名> <姓> <名>...」、「<催し> <氏名>氏」の行末
+				// （name_list_context.go。2026-11-20 に実測した見逃し）。
+				{Re: personNameBracketRoleListRe, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: requireBracketRoleListLine},
+				{Re: personNameDirectorParenRe, Base: Medium, Validate: validLooseTitleName},
+				{Re: personNamePrefectureGovernorRe, Base: Medium, Validate: validLooseTitleName},
+				{Re: personNameMunicipalMayor3Re, Base: Medium, Validate: validLooseTitleName, ValidateLine: requireMunicipalityBeforeMayor},
+				{Re: personNameMunicipalMayor4Re, Base: Medium, Validate: validLooseTitleName, ValidateLine: requireMunicipalityBeforeMayor},
+				{Re: personNameMunicipalMayor5Re, Base: Medium, Validate: validLooseTitleName, ValidateLine: requireMunicipalityBeforeMayor},
+				{Re: personNameMunicipalMayor6Re, Base: Medium, Validate: validLooseTitleName, ValidateLine: requireMunicipalityBeforeMayor},
+				{Re: personNameAppointedAsRe, Base: Medium, Validate: validLooseTitleName},
+				{Re: personNameTitleEllipsisRe, Base: Medium, Validate: validLooseTitleName},
+				{Re: personNameEventShiLineEndRe, Base: Medium, Validate: validLooseTitleName},
 			},
 		},
 		{
@@ -3185,7 +3198,7 @@ func Builtin() []Rule {
 				), Base: Medium, Validate: honorificPersonNameValid,
 					// 「新品同様」「構文仕様」のような一般語の「様」と、
 					// 「初見さん」「常連さん」「社員皆さん」のような一般語 + 敬称を棄却する。
-					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound, rejectHistoricalUjiName, rejectUjiReadingName, rejectGradePrefix, rejectShrineHall, rejectHonorificTitlePrefix, rejectSansanHonorific, rejectHonorificOrgOrPlace, rejectHonorificOrgOrSample, rejectHonorificOrgAbbrevOrOaza)},
+					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound, rejectHistoricalUjiName, rejectUjiReadingName, rejectGradePrefix, rejectShrineHall, rejectHonorificTitlePrefix, rejectSansanHonorific, rejectHonorificOrgOrPlace, rejectHonorificOrgOrSample, rejectHonorificOrgAbbrevOrOaza, rejectHonorificFishShoshiShop)},
 				// 「<町名>町長<姓><名>様」のように職名に地続きの氏名。上の無空白パターンは職名まで値に
 				// 含めるため rejectHonorificTitlePrefix で棄却し、ここで職名を除いた範囲を拾い直す
 				// （2026-10-30 10:00 に実測した範囲の誤り）。
