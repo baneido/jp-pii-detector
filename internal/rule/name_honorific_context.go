@@ -74,7 +74,9 @@ var wideHonorificHiraganaTails = []string{
 //   - 連体修飾の語（各・全・当・同など）から始まる値
 func rejectWideHonorificFragment(line string, start, end int) bool {
 	v := line[start:end]
-	rest := strings.TrimLeft(line[end:], " ")
+	// 隣り合う 2 行を改行でつないだ文字列でも呼ばれるので、値のある行だけを見る。
+	lineStart, lineEnd := physicalLineBounds(line, start, end)
+	rest := strings.TrimLeft(line[end:lineEnd], " ")
 	for _, h := range []string{"さん", "氏", "様"} {
 		after, ok := strings.CutPrefix(rest, h)
 		if !ok {
@@ -85,7 +87,7 @@ func rejectWideHonorificFragment(line string, start, end int) bool {
 			// 行末の「<氏名>さん」は、氏名の前に日本語の語（学年・所属・職名・見出し）か記号（中黒・読点・括弧）が
 			// あるときだけ既定モードで拾う。行全体が「<氏名>さん」だけの行と、英数字の後の「<氏名>さん」は、
 			// 手がかりが敬称しかないので従来どおり高再現率の範囲。
-			before := strings.TrimRight(line[:start], " ")
+			before := strings.TrimRight(line[lineStart:start], " ")
 			if r, _ := utf8.DecodeLastRuneInString(before); before == "" || r < 0x80 {
 				return false
 			}
@@ -236,6 +238,18 @@ func rejectTitleSpaceNameFragment(line string, start, end int) bool {
 	if strings.HasSuffix(v, "的") || strings.HasSuffix(v, "先生") || v == "瀬戸内海" {
 		return false
 	}
-	head := strings.TrimLeft(line, " ")
+	lineStart, _ := physicalLineBounds(line, start, end)
+	head := strings.TrimLeft(line[lineStart:], " ")
 	return !strings.HasPrefix(head, "○") && !strings.HasPrefix(head, "〇")
+}
+
+// physicalLineBounds は値のある物理行の範囲を返す。検出器は隣り合う 2 行を改行でつないだ文字列も
+// 走査するので、行頭・行末を見る検証はこの範囲の中で行う。
+func physicalLineBounds(line string, start, end int) (int, int) {
+	lineStart := strings.LastIndexByte(line[:start], '\n') + 1
+	lineEnd := len(line)
+	if i := strings.IndexByte(line[end:], '\n'); i >= 0 {
+		lineEnd = end + i
+	}
+	return lineStart, lineEnd
 }

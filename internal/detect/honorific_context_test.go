@@ -83,6 +83,13 @@ func TestHonorificContextNegatives(t *testing.T) {
 			}
 		}
 	}
+	// 行全体が氏名 + 敬称だけの行は、前後の行に文があっても既定モードでは報告しない
+	// （検出器は隣り合う 2 行をつないで走査するので、行頭・行末は物理行で判定する）。
+	for _, f := range d.ScanContent("f.txt", "受賞者の一覧です\n山田太郎さん\n佐藤花子氏\n以上です\n") {
+		if strings.HasPrefix(f.RuleID, "person-name") {
+			t.Errorf("unexpected %s %q", f.RuleID, f.Match)
+		}
+	}
 	// 「<職名> <姓> <名>先生は」は敬称まで値に含めず、氏名だけを報告する。
 	for _, f := range d.ScanLine("f.txt", 1, "9回目の記事では、専任講師　山田 花子先生が解説します。") {
 		if strings.HasPrefix(f.RuleID, "person-name") && strings.Contains(f.Match, "先生") {
