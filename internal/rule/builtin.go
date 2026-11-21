@@ -2388,7 +2388,7 @@ func Builtin() []Rule {
 			Prefilter:   PrefilterAt,
 			Validate:    validEAIEmail,
 			Patterns: []Pattern{
-				{Re: emailEAIRe, Base: High, Validate: notPlaceholderEAILocal},
+				{Re: emailEAIRe, Base: High, Validate: func(v string) bool { return notPlaceholderEAILocal(v) && notProseEAILocal(v) }},
 			},
 		},
 		{
@@ -3169,6 +3169,14 @@ func Builtin() []Rule {
 				{Re: personNameAppointedAsRe, Base: Medium, Validate: validLooseTitleName},
 				{Re: personNameTitleEllipsisRe, Base: Medium, Validate: validLooseTitleName},
 				{Re: personNameEventShiLineEndRe, Base: Medium, Validate: validLooseTitleName},
+				// 「<氏名>さん」「<氏名> 氏」「<氏名>様」の行末・空白・括弧の閉じ・かなや英数字に直結する形、
+				// 「<職名> <氏名>が」、「<職名>・<氏名>の」、「<職業><氏名>さん」の氏名だけの範囲
+				// （name_honorific_context.go。2026-11-21 に実測した見逃し）。値は姓名辞書の完全分割を要求する。
+				{Re: personNameWideHonorificRe, Base: Medium, Validate: validLooseTitleName,
+					ValidateLine: allValidateLine(rejectWideHonorificFragment, rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound, rejectHistoricalUjiName, rejectUjiReadingName, rejectShrineHall, rejectSansanHonorific, rejectHonorificOrgOrPlace, rejectHonorificOrgOrSample, rejectHonorificOrgAbbrevOrOaza, rejectHonorificFishShoshiShop, rejectHonorificOrgWide)},
+				{Re: personNameTitleSpaceNameParticleRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectTitleSpaceNameFragment},
+				{Re: personNameTitleDotNameParticleRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectTitleSpaceNameFragment},
+				{Re: personNamePrefixedHonorificRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectWideHonorificFragment},
 			},
 		},
 		{
@@ -3198,7 +3206,7 @@ func Builtin() []Rule {
 				), Base: Medium, Validate: honorificPersonNameValid,
 					// 「新品同様」「構文仕様」のような一般語の「様」と、
 					// 「初見さん」「常連さん」「社員皆さん」のような一般語 + 敬称を棄却する。
-					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound, rejectHistoricalUjiName, rejectUjiReadingName, rejectGradePrefix, rejectShrineHall, rejectHonorificTitlePrefix, rejectSansanHonorific, rejectHonorificOrgOrPlace, rejectHonorificOrgOrSample, rejectHonorificOrgAbbrevOrOaza, rejectHonorificFishShoshiShop)},
+					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound, rejectHistoricalUjiName, rejectUjiReadingName, rejectGradePrefix, rejectShrineHall, rejectHonorificTitlePrefix, rejectSansanHonorific, rejectHonorificOrgOrPlace, rejectHonorificOrgOrSample, rejectHonorificOrgAbbrevOrOaza, rejectHonorificFishShoshiShop, rejectHonorificOrgWide, rejectHonorificNamePrefix)},
 				// 「<町名>町長<姓><名>様」のように職名に地続きの氏名。上の無空白パターンは職名まで値に
 				// 含めるため rejectHonorificTitlePrefix で棄却し、ここで職名を除いた範囲を拾い直す
 				// （2026-10-30 10:00 に実測した範囲の誤り）。
