@@ -3212,6 +3212,10 @@ func Builtin() []Rule {
 				// （2026-10-30 10:00 に実測した範囲の誤り）。
 				{Re: personNameHonorificAfterTitleRe, Base: Medium, Validate: honorificPersonNameValid,
 					ValidateLine: allValidateLine(rejectKaishaChoPrefix, rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound, rejectHistoricalUjiName)},
+				// 「<修了生><姓><名>さん研究発表」のように職業・立場の語に地続きの氏名。上の無空白パターンは
+				// rejectHonorificNamePrefix で棄却し、ここで氏名だけの範囲を拾い直す（既定モードの
+				// personNamePrefixedHonorificRe は敬称の後の形を絞るので、高再現率ではその制限なしで拾う）。
+				{Re: personNamePrefixedHonorificRe, Base: Medium, Validate: validPersonNameFullSplit},
 				// 「6年生<姓><名>さん」「2年<姓><名>さん」のように学年の直後に続く氏名。上の無空白
 				// パターンは「年生<姓><名>」まで値に含めてしまうため rejectGradePrefix で棄却し、
 				// ここで学年を除いた範囲を拾い直す（2026-10-30 08:00 に実測した範囲の誤り）。検証は

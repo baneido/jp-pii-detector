@@ -119,6 +119,16 @@ func TestHonorificOrgAndProseNotReported(t *testing.T) {
 			t.Errorf("unexpected span %s %q", f.RuleID, f.Match)
 		}
 	}
+	// 敬称の後に漢字が続く形でも、高再現率モードでは職業・立場の語を除いた氏名を報告する。
+	found := false
+	for _, f := range d.ScanLine("f.txt", 1, "博士前期課程修了生山田太郎さん研究発表") {
+		if strings.HasPrefix(f.RuleID, "person-name") && f.Match == "山田太郎" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("修了生 + 氏名 + さん: want 山田太郎")
+	}
 	// 敬称付きの氏名と、通常のメールアドレスは従来どおり報告する。
 	for line, prefix := range map[string]string{
 		"寄付ありがとうございます（山田太郎様）":         "person-name",
