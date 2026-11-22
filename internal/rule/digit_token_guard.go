@@ -785,6 +785,13 @@ func rejectPostTitleFragment(line string, start, end int) bool {
 	if dict.IsSurname(v) {
 		return false
 	}
+	// 「（<県名>大学名誉教授）」のように値が大学・学校の名前のときは、「<県名>」+「大学」が姓 + 名に
+	// 見えただけ（2026-11-22 に団体の委員の名簿で実測した偽陽性。所属の名前で、個人の氏名ではない）。
+	for _, s := range []string{"大学", "大学院", "学院", "学園", "高校", "高専"} {
+		if strings.HasSuffix(v, s) {
+			return false
+		}
+	}
 	title := strings.TrimPrefix(line[end:], "副")
 	// 「長岡京市長」「田原本町長」「設楽町町長」は自治体の長で、値は自治体名。
 	for _, h := range []string{"市長", "町長", "村長", "区長"} {
