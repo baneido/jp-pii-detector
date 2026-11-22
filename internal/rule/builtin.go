@@ -3177,6 +3177,22 @@ func Builtin() []Rule {
 				{Re: personNameTitleSpaceNameParticleRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectTitleSpaceNameFragment},
 				{Re: personNameTitleDotNameParticleRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectTitleSpaceNameFragment},
 				{Re: personNamePrefixedHonorificRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectWideHonorificFragment},
+				// 「（<氏名><学科名>教授）」、会議録の「委員<氏名>君辞任につき」「補欠として<氏名>君及び<氏名>君が」、
+				// 「<姓> <名>( <所属> 教授 )」、「<職名> <氏名>）」、「当社 <姓> <名>が」、「社長の<氏名>の」、
+				// 「<氏名>常務理事」、「理事（理事長） <姓> <名>（重任）」、名簿の行「◎<姓> <名> （元 <機関名>所長）」
+				// （name_affil_context.go。2026-11-22 に実測した見逃し）。値は姓名辞書の完全分割を要求する。
+				{Re: personNameParenAffilTitle3Re, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectParenAffilFragment},
+				{Re: personNameParenAffilTitle4Re, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectParenAffilFragment},
+				{Re: personNameParenAffilTitle5Re, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectParenAffilFragment},
+				{Re: personNameKunSubstituteRe, Base: Medium, Validate: validKunName},
+				{Re: personNameKunAndRe, Base: Medium, Validate: validKunName},
+				{Re: personNameSpacedParenAffilTitleRe, Base: Medium, Validate: validLooseTitleName},
+				{Re: personNameTitleSpaceNameCloseRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectTitleSpaceNameFragment},
+				{Re: personNameSelfOrgSpacedRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectTitleSpaceNameFragment},
+				{Re: personNameTitleNoNameParticleRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectFounderTitleName},
+				{Re: personNameDirectorAttachedRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectRankTitleFragment},
+				{Re: personNameDirectorStatusRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectTitleSpaceNameFragment},
+				{Re: personNameMarkedAffilLineRe, Base: Medium, Validate: validSpacedNameOneSideDict},
 			},
 		},
 		{
@@ -3206,7 +3222,7 @@ func Builtin() []Rule {
 				), Base: Medium, Validate: honorificPersonNameValid,
 					// 「新品同様」「構文仕様」のような一般語の「様」と、
 					// 「初見さん」「常連さん」「社員皆さん」のような一般語 + 敬称を棄却する。
-					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound, rejectHistoricalUjiName, rejectUjiReadingName, rejectGradePrefix, rejectShrineHall, rejectHonorificTitlePrefix, rejectSansanHonorific, rejectHonorificOrgOrPlace, rejectHonorificOrgOrSample, rejectHonorificOrgAbbrevOrOaza, rejectHonorificFishShoshiShop, rejectHonorificOrgWide, rejectHonorificNamePrefix)},
+					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound, rejectHistoricalUjiName, rejectUjiReadingName, rejectGradePrefix, rejectShrineHall, rejectHonorificTitlePrefix, rejectSansanHonorific, rejectHonorificOrgOrPlace, rejectHonorificOrgOrSample, rejectHonorificOrgAbbrevOrOaza, rejectHonorificFishShoshiShop, rejectHonorificOrgWide, rejectHonorificNamePrefix, rejectHonorificRoleOrClan)},
 				// 「<町名>町長<姓><名>様」のように職名に地続きの氏名。上の無空白パターンは職名まで値に
 				// 含めるため rejectHonorificTitlePrefix で棄却し、ここで職名を除いた範囲を拾い直す
 				// （2026-10-30 10:00 に実測した範囲の誤り）。

@@ -436,6 +436,10 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 			d.recordDropped(f.RuleID, f.File, f.Line, f.Column, DropReasonCrossLineNegativeContext, f.Confidence)
 			continue
 		}
+		if d.deceasedNoticeName(f, lines) {
+			d.recordDropped(f.RuleID, f.File, f.Line, f.Column, DropReasonValidateLineFailed, f.Confidence)
+			continue
+		}
 		filtered = append(filtered, f)
 	}
 	candidates = filtered
@@ -1187,6 +1191,20 @@ func (d *Detector) surnameGivenFieldNames(file string, lines []string, j int, no
 	return out
 }
 
+// deceasedNoticeName は、氏名のラベル・見出し・再出現から拾った氏名（person-name）のうち、同じ行の
+// 前後 16 字に享年・逝去・訃報などの語があるものを返す（rule.DeceasedNoticeNear）。訃報の氏名は
+// 生存する個人の情報ではないので報告しない。
+func (d *Detector) deceasedNoticeName(f Finding, lines []string) bool {
+	if f.RuleID != "person-name" || f.Line < 1 || f.Line > len(lines) {
+		return false
+	}
+	rs := []rune(normalize.Line(lines[f.Line-1]))
+	if f.start < 0 || f.end > len(rs) || f.start > f.end {
+		return false
+	}
+	return rule.DeceasedNoticeNear(string(rs), len(string(rs[:f.start])), len(string(rs[:f.end])))
+}
+
 // repeatedNameMentions は、同じファイルで medium 以上の氏名として検出した「<姓> <名>」（空白を
 // 含む 4 ルーン以上の値）が他の行に現れる箇所を person-name として検出する。帳票の欄で拾えた
 // 氏名が、本文で「<姓> <名>さんは」のように手がかりなしで繰り返される形を拾うため。新たな
@@ -1449,7 +1467,17 @@ func (d *Detector) ScanLine(file string, lineNo int, line string) []Finding {
 	if line == "" || d.lineIgnored(line) {
 		return nil
 	}
-	return d.scanLineNoIgnore(file, lineNo, line, 0)
+	fs := d.scanLineNoIgnore(file, lineNo, line, 0)
+	// 訃報の氏名（person-name）は ScanContent と同じく報告しない（deceasedNoticeName）。
+	out := fs[:0]
+	for _, f := range fs {
+		if f.RuleID == "person-name" && d.deceasedNoticeName(Finding{RuleID: f.RuleID, Line: 1, start: f.start, end: f.end}, []string{line}) {
+			d.recordDropped(f.RuleID, f.File, f.Line, f.Column, DropReasonValidateLineFailed, f.Confidence)
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
 }
 
 // scanLineWithContext は ScanContent の行単位走査の本体。retainBudget が非 nil
