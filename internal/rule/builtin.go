@@ -3187,7 +3187,7 @@ func Builtin() []Rule {
 				{Re: personNameKunSubstituteRe, Base: Medium, Validate: validKunName},
 				{Re: personNameKunAndRe, Base: Medium, Validate: validKunName},
 				{Re: personNameSpacedParenAffilTitleRe, Base: Medium, Validate: validLooseTitleName},
-				{Re: personNameTitleSpaceNameCloseRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectTitleSpaceNameFragment},
+				{Re: personNameTitleSpaceNameCloseRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectTrailingShiName},
 				{Re: personNameSelfOrgSpacedRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectTitleSpaceNameFragment},
 				{Re: personNameTitleNoNameParticleRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectFounderTitleName},
 				{Re: personNameDirectorAttachedRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectRankTitleFragment},

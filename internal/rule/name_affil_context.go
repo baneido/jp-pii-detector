@@ -59,7 +59,7 @@ var (
 	// personNameTitleNoNameParticleRe は「当社社長の<氏名>のインタビュー記事が」のように、職名 + の + 氏名に
 	// 助詞が続く形（企業のメディア掲載のお知らせで実測）。敬称が続く形は既存のパターンが拾う。
 	personNameTitleNoNameParticleRe = regexp.MustCompile(
-		`(?:` + honorificSpaceTitleWords + `|` + directorTitleWords + `)の([` + kanji + `]{3,6}?)(?:の|が|は|を|に|と|も|より)`,
+		`(?:` + honorificSpaceTitleWords + `|` + directorTitleWords + `)の([` + kanji + `]{3,6}?)(?:の|が|は|を|に|と|も|より|氏|さん|先生)`,
 	)
 	// personNameDirectorAttachedRe は「<団体>の<氏名>常務理事にも」のように、氏名に法人の役員の職名が
 	// 直結する形（団体の活動報告で実測。理事長・会長は既存のパターンが拾う）。
@@ -116,12 +116,26 @@ func rejectParenAffilFragment(line string, start, end int) bool {
 // 会社の沿革で、多くは存命でない創業者を指す。存命かどうかを文から判断できないので報告しない）。
 func rejectFounderTitleName(line string, start, end int) bool {
 	before := lastRunes(line[:start], 12)
-	for _, w := range []string{"初代", "先代", "創業者", "創立者", "創設者"} {
+	for _, w := range []string{"初代", "先代", "歴代", "創業者", "創立者", "創設者"} {
 		if strings.Contains(before, w) {
 			return false
 		}
 	}
+	// 「第二代所長の<氏名>が編集にあたった」「三代目社長の<氏名>が」も沿革の記述。
+	if generationTitleRe.MatchString(before) {
+		return false
+	}
 	return rejectTitleSpaceNameFragment(line, start, end)
+}
+
+// generationTitleRe は「第二代」「3代目」のように、職名の代を数える語。
+var generationTitleRe = regexp.MustCompile(`第[一二三四五六七八九十0-9]{1,3}代|[一二三四五六七八九十0-9]{1,3}代目`)
+
+// rejectTrailingShiName は personNameTitleSpaceNameCloseRe の値の追加検証。rejectTitleSpaceNameFragment に
+// 加えて、値が「氏」で終わる形（「<町名>町長 <氏名>氏）」の敬称まで値に入った形）を棄却する。
+// 氏名だけの範囲は既存のパターンが拾う。
+func rejectTrailingShiName(line string, start, end int) bool {
+	return !strings.HasSuffix(line[start:end], "氏") && rejectTitleSpaceNameFragment(line, start, end)
 }
 
 // honorificRoleNounsWide は敬称の前に来る、取引上の立場・施設・職種を指す一般語（2026-11-22 に不動産会社の
