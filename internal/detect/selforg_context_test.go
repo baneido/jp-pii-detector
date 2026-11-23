@@ -188,3 +188,26 @@ func TestHonorificLeadInAndGenericWords(t *testing.T) {
 		}
 	}
 }
+
+// TestKatakanaFaxLabelPhone は、「ファクス番号：(03)…」「ファックス番号 (03)…」のように、カタカナのラベルの後の
+// 括弧つき市外局番の番号を jp-phone-number として拾うことを確認する（「FAX番号」は従来から拾えていた）。
+// 未知の採番ラベル（受付番号・整理番号）の後の同じ形は従来どおり報告しない。番号は架空。
+func TestKatakanaFaxLabelPhone(t *testing.T) {
+	d := newDetector(t, "")
+	for _, line := range []string{"ファクス番号：(03)1234-5678", "ファックス番号 (03)1234-5678"} { // jp-pii-detector:ignore
+		found := false
+		for _, f := range d.ScanLine("f.txt", 1, line) {
+			if f.RuleID == "jp-phone-number" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%q: want jp-phone-number", line)
+		}
+	}
+	for _, line := range []string{"受付番号：(03)1234-5678", "整理番号：(03)1234-5678"} { // jp-pii-detector:ignore
+		for _, f := range d.ScanLine("f.txt", 1, line) {
+			t.Errorf("%q: unexpected %s %q", line, f.RuleID, f.Match)
+		}
+	}
+}
