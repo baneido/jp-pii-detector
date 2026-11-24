@@ -440,6 +440,11 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 			d.recordDropped(f.RuleID, f.File, f.Line, f.Column, DropReasonValidateLineFailed, f.Confidence)
 			continue
 		}
+		// 動物の紹介（「<名前> （メス）／誕生日／<日付>」）の誕生日は個人情報ではない（rule.AnimalProfileNear）。
+		if f.RuleID == "jp-birthdate" && rule.AnimalProfileNear(lines, f.Line-1) {
+			d.recordDropped(f.RuleID, f.File, f.Line, f.Column, DropReasonValidateLineFailed, f.Confidence)
+			continue
+		}
 		filtered = append(filtered, f)
 	}
 	candidates = filtered
@@ -1472,6 +1477,11 @@ func (d *Detector) ScanLine(file string, lineNo int, line string) []Finding {
 	out := fs[:0]
 	for _, f := range fs {
 		if f.RuleID == "person-name" && d.deceasedNoticeName(Finding{RuleID: f.RuleID, Line: 1, start: f.start, end: f.end}, []string{line}) {
+			d.recordDropped(f.RuleID, f.File, f.Line, f.Column, DropReasonValidateLineFailed, f.Confidence)
+			continue
+		}
+		// 動物の紹介の誕生日（同じ行に性別の印がある形）も ScanContent と同じく報告しない。
+		if f.RuleID == "jp-birthdate" && rule.AnimalProfileNear([]string{line}, 0) {
 			d.recordDropped(f.RuleID, f.File, f.Line, f.Column, DropReasonValidateLineFailed, f.Confidence)
 			continue
 		}

@@ -1965,7 +1965,9 @@ func phoneRules() []Rule {
 		ID:          "jp-phone-number",
 		Description: "電話番号（携帯・固定・IP・国際表記）",
 		Prefilter:   PrefilterDigit,
-		Context:     []string{"電話", "携帯", "連絡先", "tel", "phone", "fax", "mobile", "denwa"},
+		// 「ファクス番号：(<市外局番>)…」「ファックス番号」は、カタカナの語が文脈語に無いと未知の採番ラベル（〜番号）と
+		// みなされて棄却されていた（2026-11-23 に町の公式サイトのフッターで実測した見逃し。「FAX番号」は拾えていた）。
+		Context: []string{"電話", "携帯", "連絡先", "tel", "phone", "fax", "mobile", "denwa", "ファクス", "ファックス"},
 		// 桁ベースの区切りなし固定電話パターンは業務 ID・型番等と衝突しやすいため、
 		// 金額・数量・連番 ID 文脈で棄却する。区切りあり携帯・区切りなし携帯・
 		// 区切りあり固定・国際表記の 4 パターンは、汎用の負文脈クラス（金額・
@@ -2917,11 +2919,13 @@ func Builtin() []Rule {
 			// 「非一様」「実在氏名」のように日常語の内部と衝突して既定に置けない
 			// のに対し、こちらは姓名辞書ゲートだけで実測の誤検出を抑えられる
 			// ため（判定根拠が違うので信頼度プロファイルも別になる）。
-			ID:                "person-name-role-label",
-			Description:       "氏名（担当者・宛名ラベル付き）",
-			Prefilter:         PrefilterCJK,
-			PrefilterLiterals: []string{"会長", "委員", "議長", "君", "担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "知 事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届", "監督", "先生", "講 師", "ゲスト", "登壇", "聞き手", "進行役", "さん×", "さん ×", "選手", "議員", "理事", "監事", "幹事", "様", "館長", "顧問", "［", "[", "】", "年 ", "会社：", "会社:", "事務所：", "事務所:", "教諭", "助教", "候補", "学長", "市長", "町長", "村長", "施設長", "所長", "院長", "園長", "校長", "社長", "センター長", "教育長", "補佐", "大臣", "総長", "研究員", "助教", "甲", "乙", "丙", "丁", "である", "との間", "さん", "部長", "科長", "長官", "頭取", "院生", "就任", "選任", "再任", "託者", "任者", "借主", "貸主", "買主", "売主", "賃借人", "賃貸人", "雇用主", "従業員", "労働者", "者の", "者は", "人の", "人は", "歳の", "者:", "者：", "人:", "人：", "者 :", "人 :", " 様", " 氏", "次長", "局長", "室長", "審議官", "統括官", "参事官", "代理", "代行", "相談役", "課長", "作者", "著者", "撮影", "司会", "モデレーター", "文責", "演者", "発表者", "受賞者", "報告者", "執筆者", "会員", "首相", "総理", "大統領", "区長", "党首", "県議", "市議", "学芸員", "医師", "職員", "主事", "主査", "主任", "役の"},
-			Validate:          notPlaceholderName,
+			ID:          "person-name-role-label",
+			Description: "氏名（担当者・宛名ラベル付き）",
+			Prefilter:   PrefilterCJK,
+			PrefilterLiterals: []string{"会長", "委員", "議長", "君", "担当", "宛名", "連絡先", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "知 事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届", "監督", "先生", "講 師", "ゲスト", "登壇", "聞き手", "進行役", "さん×", "さん ×", "選手", "議員", "理事", "監事", "幹事", "様", "館長", "顧問", "［", "[", "】", "年 ", "会社：", "会社:", "事務所：", "事務所:", "教諭", "助教", "候補", "学長", "市長", "町長", "村長", "施設長", "所長", "院長", "園長", "校長", "社長", "センター長", "教育長", "補佐", "大臣", "総長", "研究員", "助教", "甲", "乙", "丙", "丁", "である", "との間", "さん", "部長", "科長", "長官", "頭取", "院生", "就任", "選任", "再任", "託者", "任者", "借主", "貸主", "買主", "売主", "賃借人", "賃貸人", "雇用主", "従業員", "労働者", "者の", "者は", "人の", "人は", "歳の", "者:", "者：", "人:", "人：", "者 :", "人 :", " 様", " 氏", "次長", "局長", "室長", "審議官", "統括官", "参事官", "代理", "代行", "相談役", "課長", "作者", "著者", "撮影", "司会", "モデレーター", "文責", "演者", "発表者", "受賞者", "報告者", "執筆者", "会員", "首相", "総理", "大統領", "区長", "党首", "県議", "市議", "学芸員", "医師", "職員", "主事", "主査", "主任", "役の",
+				// 2026-11-23 に足したパターン（name_selforg_context.go）の必須リテラル。
+				"監修", "執筆", "取材", "翻訳", "対談", "鼎談", "座談会", "トーク", "紹介", "スタッフ", "メンバー", "師長", "士長", "係長", "主幹"},
+			Validate: notPlaceholderName,
 			Patterns: []Pattern{
 				// 担当者・宛名・連絡先ラベル。敬称のような強い人物シグナルが無いため、
 				// 組織名・部署名（営業部 等）の誤検出を姓名辞書（allowlist）で抑える。
@@ -3193,6 +3197,17 @@ func Builtin() []Rule {
 				{Re: personNameDirectorAttachedRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectRankTitleFragment},
 				{Re: personNameDirectorStatusRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectTitleSpaceNameFragment},
 				{Re: personNameMarkedAffilLineRe, Base: Medium, Validate: validSpacedNameOneSideDict},
+				// 2026-11-23 の公開文書の確認で実測した見逃し（name_selforg_context.go）。
+				{Re: personNameSelfOrgAttachedTitleRe, Base: Medium, Validate: validSurnamePlusShortGiven, ValidateLine: rejectTitleSpaceNameFragment},
+				{Re: personNameKessanShimeiRe, Base: Medium, Validate: ValidSectionName},
+				{Re: personNameCrossTalkRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectTitleSpaceNameFragment},
+				{Re: personNameAttachedDoctorRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectRankTitleFragment},
+				{Re: personNameBreadcrumbRe, Base: Medium, Validate: validSpacedHonorificName},
+				{Re: personNameMobileParenRe, Base: Medium, Validate: validLooseTitleName},
+				{Re: personNameChairLineEndRe, Base: Medium, Validate: validSpacedHonorificName},
+				{Re: personNameStaffTitleLineEndRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectTitleSpaceNameFragment},
+				{Re: personNameCreditLineEndRe, Base: Medium, Validate: validSpacedHonorificName},
+				{Re: personNameThenDeptTitleLineRe, Base: Medium, Validate: validLooseTitleName},
 			},
 		},
 		{
@@ -3222,7 +3237,12 @@ func Builtin() []Rule {
 				), Base: Medium, Validate: honorificPersonNameValid,
 					// 「新品同様」「構文仕様」のような一般語の「様」と、
 					// 「初見さん」「常連さん」「社員皆さん」のような一般語 + 敬称を棄却する。
-					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound, rejectHistoricalUjiName, rejectUjiReadingName, rejectGradePrefix, rejectShrineHall, rejectHonorificTitlePrefix, rejectSansanHonorific, rejectHonorificOrgOrPlace, rejectHonorificOrgOrSample, rejectHonorificOrgAbbrevOrOaza, rejectHonorificFishShoshiShop, rejectHonorificOrgWide, rejectHonorificNamePrefix, rejectHonorificRoleOrClan)},
+					ValidateLine: allValidateLine(rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound, rejectHistoricalUjiName, rejectUjiReadingName, rejectGradePrefix, rejectShrineHall, rejectHonorificTitlePrefix, rejectSansanHonorific, rejectHonorificOrgOrPlace, rejectHonorificOrgOrSample, rejectHonorificOrgAbbrevOrOaza, rejectHonorificFishShoshiShop, rejectHonorificOrgWide, rejectHonorificNamePrefix, rejectHonorificRoleOrClan, rejectHonorificLeadIn, rejectHonorificGenericOrCount)},
+				// 「今<姓>さん」「<金額>円<姓>さん」「課長代理<姓>様」のように、氏名でない語に地続きの氏名。上の
+				// 無空白パターンは前の語まで値に含めるため rejectHonorificLeadIn で棄却し、ここで氏名だけの
+				// 範囲を拾い直す（2026-11-23 に国会の会議録と高校のお知らせで実測した範囲の誤り）。
+				{Re: personNameHonorificAfterLeadInRe, Base: Medium, Validate: validHonorificAfterLeadIn,
+					ValidateLine: allValidateLine(rejectLeadInNotSplit, rejectYouCompound, rejectHonorificCommonNoun, rejectShimeiCompound, rejectHonorificWordCompound, rejectHistoricalUjiName)},
 				// 「<町名>町長<姓><名>様」のように職名に地続きの氏名。上の無空白パターンは職名まで値に
 				// 含めるため rejectHonorificTitlePrefix で棄却し、ここで職名を除いた範囲を拾い直す
 				// （2026-10-30 10:00 に実測した範囲の誤り）。

@@ -238,6 +238,10 @@ func ValidSectionName(v string) bool {
 	if isMunicipalitySampleName(v) {
 		return false
 	}
+	// 字間を空けた地名（岡　山）と、地名 + 施設の名前（<地名> 二番館）は氏名ではない（2026-11-23 に実測した偽陽性）。
+	if isSpacedPlaceOrFacility(v) {
+		return false
+	}
 	return ValidCrossLineName(v) || validSpacedNameOneSideDict(v) || ValidUncommonSpacedName(v)
 }
 
