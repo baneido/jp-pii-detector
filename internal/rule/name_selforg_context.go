@@ -72,8 +72,9 @@ var shortGivenStopRunes = map[string]bool{
 	"特任": true, "客員": true, "名誉": true, "特命": true, "主任": true, "特別": true, "担当": true,
 }
 
-// spacedPlaceOrFacilityTailRe は空白区切りの 2 語目が施設・建物の名前である形（「<地名> 二番館」）。
-var spacedPlaceOrFacilityTailRe = regexp.MustCompile(`(?:[一二三四五六七八九十0-9]+(?:番館|号館|番街|号棟|号店)|本館|別館|新館|会館|本店|支店|会場)$`)
+// spacedPlaceOrFacilityTailRe は空白区切りの 2 語目が施設・建物・店舗の名前である形（「<地名> 二番館」。
+// 「<屋号> <地名>店」は 2026-11-24 に企業の店舗案内で実測）。
+var spacedPlaceOrFacilityTailRe = regexp.MustCompile(`(?:[一二三四五六七八九十0-9]+(?:番館|号館|番街|号棟|号店)|本館|別館|新館|会館|本店|支店|会場|[` + kanji + `]店|営業所|出張所)$`)
 
 // isSpacedPlaceOrFacility は、空白で 2 語に分かれた値が氏名ではなく、字間を空けた地名（「岡　山」
 // 「福　井」）か、地名 + 施設の名前（「<地名> 二番館」）かを返す。2026-11-23 に大学の説明会の会場一覧
@@ -128,7 +129,7 @@ func AnimalProfileNear(lines []string, idx int) bool {
 // honorificLeadInTitles は敬称の値の先頭に付くと、その後ろだけが氏名になる役職の語（honorificTitlePrefixes に
 // 無いもの）。「入試広報課 課長代理<姓>様をお迎えしました」で、高再現率の無空白の敬称パターンが
 // 「課長代理<姓>」を値にしていた（2026-11-23 に高校のお知らせで実測した範囲の誤り）。
-var honorificLeadInTitles = []string{"課長代理", "部長代理", "所長代理", "課長補佐", "部長補佐", "係長", "主任", "主査", "主幹", "課長", "部長", "室長", "次長"}
+var honorificLeadInTitles = []string{"専門医", "認定医", "指導医", "課長代理", "部長代理", "所長代理", "課長補佐", "部長補佐", "係長", "主任", "主査", "主幹", "課長", "部長", "室長", "次長"}
 
 // honorificAmountLeadRe は値の先頭が金額（「二千万円<姓>」）である形。
 var honorificAmountLeadRe = regexp.MustCompile(`^[一二三四五六七八九十百千万億兆]+円`)
@@ -273,9 +274,10 @@ var (
 		`(?:^|[^` + kanji + `])(` + spacedKanjiName + `|[` + kanji + `]{3,6})[ ]?[（(][ ]?0[5789]0[-ー－‐][0-9]{4}[-ー－‐][0-9]{4}`,
 	)
 	// personNameChairLineEndRe は「委員長　<姓>　<名>」のように、会議体の役の名前・空白・空白区切りの氏名で
-	// 行が終わる形（団体の委員会の名簿で実測）。
+	// 行が終わる形（団体の委員会の名簿で実測）。「保険委員長　<姓>　<名>」のように委員会の名前が前に付く形も
+	// 拾う（2026-11-24 に団体の役員名簿で実測した見逃し）。
 	personNameChairLineEndRe = regexp.MustCompile(
-		`(?:^|[ ])(?:副委員長|委員長|副議長|議長|座長|副座長|部会長|幹事長|実行委員長)[ ]{1,4}(` + spacedKanjiName + `)[ ]*$`,
+		`(?:^|[ ])(?:[` + kanji + katakana + `]{0,8}?)(?:副委員長|委員長|副議長|議長|座長|副座長|部会長|幹事長|実行委員長)[ ]{1,4}(` + spacedKanjiName + `)[ ]*$`,
 	)
 	// personNameStaffTitleLineEndRe は「担当者：<部署>看護師長　<氏名>」「部長 <氏名>」のように、職場の役職・
 	// 空白・無空白の氏名で行が終わる形（病院の案内で実測）。

@@ -440,6 +440,11 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 			d.recordDropped(f.RuleID, f.File, f.Line, f.Column, DropReasonValidateLineFailed, f.Confidence)
 			continue
 		}
+		// 「<氏名>さん（仮名）」の仮名と「<氏名>さんを偲んで」の故人は報告しない（rule.PseudonymMarked・rule.MournedAfter）。
+		if d.pseudonymName(f, lines) {
+			d.recordDropped(f.RuleID, f.File, f.Line, f.Column, DropReasonValidateLineFailed, f.Confidence)
+			continue
+		}
 		// 動物の紹介（「<名前> （メス）／誕生日／<日付>」）の誕生日は個人情報ではない（rule.AnimalProfileNear）。
 		if f.RuleID == "jp-birthdate" && rule.AnimalProfileNear(lines, f.Line-1) {
 			d.recordDropped(f.RuleID, f.File, f.Line, f.Column, DropReasonValidateLineFailed, f.Confidence)
@@ -1210,6 +1215,21 @@ func (d *Detector) deceasedNoticeName(f Finding, lines []string) bool {
 	return rule.DeceasedNoticeNear(string(rs), len(string(rs[:f.start])), len(string(rs[:f.end])))
 }
 
+// pseudonymName は、氏名のルール（person-name*）の検出のうち、値の直後に「（仮名）」の印があるもの
+// （rule.PseudonymMarked）と、「を偲んで」「追悼」が続くもの（rule.MournedAfter）を返す。仮名と亡くなった人の
+// 氏名は、特定の生存する個人を識別する情報ではないので報告しない。
+func (d *Detector) pseudonymName(f Finding, lines []string) bool {
+	if !strings.HasPrefix(f.RuleID, "person-name") || f.Line < 1 || f.Line > len(lines) {
+		return false
+	}
+	rs := []rune(normalize.Line(lines[f.Line-1]))
+	if f.start < 0 || f.end > len(rs) || f.start > f.end {
+		return false
+	}
+	ln, start, end := string(rs), len(string(rs[:f.start])), len(string(rs[:f.end]))
+	return rule.PseudonymMarked(ln, start, end) || rule.MournedAfter(ln, start, end)
+}
+
 // repeatedNameMentions は、同じファイルで medium 以上の氏名として検出した「<姓> <名>」（空白を
 // 含む 4 ルーン以上の値）が他の行に現れる箇所を person-name として検出する。帳票の欄で拾えた
 // 氏名が、本文で「<姓> <名>さんは」のように手がかりなしで繰り返される形を拾うため。新たな
@@ -1477,6 +1497,10 @@ func (d *Detector) ScanLine(file string, lineNo int, line string) []Finding {
 	out := fs[:0]
 	for _, f := range fs {
 		if f.RuleID == "person-name" && d.deceasedNoticeName(Finding{RuleID: f.RuleID, Line: 1, start: f.start, end: f.end}, []string{line}) {
+			d.recordDropped(f.RuleID, f.File, f.Line, f.Column, DropReasonValidateLineFailed, f.Confidence)
+			continue
+		}
+		if d.pseudonymName(Finding{RuleID: f.RuleID, Line: 1, start: f.start, end: f.end}, []string{line}) {
 			d.recordDropped(f.RuleID, f.File, f.Line, f.Column, DropReasonValidateLineFailed, f.Confidence)
 			continue
 		}
