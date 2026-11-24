@@ -76,7 +76,7 @@ func validSpacedHonorificName(v string) bool {
 	}
 	// 名が職名・部署の語尾（管理課・委員会）や敬称の字（「<名>氏（<所属>）」の「氏」）で終わる形は、
 	// 名の後ろの語まで値に取り込んでいる。
-	for _, s := range []string{"長", "員", "事", "部", "課", "係", "室", "会", "所", "局", "科", "氏", "様", "殿", "君"} {
+	for _, s := range []string{"長", "員", "事", "部", "課", "係", "室", "会", "所", "局", "科", "氏", "様", "殿", "君", "先生"} {
 		if n >= 2 && strings.HasSuffix(given, s) {
 			return false
 		}

@@ -146,5 +146,5 @@ func rejectSerialIDList(line string, start, end int) bool {
 // 「氏名:」欄・見出しの次の行など、様式の記入例が現れる経路（person-name、構造化された氏名）だけで使う。
 // 役職ラベルの後（代表取締役社長：<姓> <名>）は実在の役員の欄なので対象にしない。
 func notPlaceholderOrSampleName(v string) bool {
-	return notPlaceholderName(v) && !isMunicipalitySampleName(v)
+	return notPlaceholderName(v) && !isMunicipalitySampleName(v) && !isMunicipalityFullName(v)
 }
