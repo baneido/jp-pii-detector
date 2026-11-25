@@ -8,89 +8,13 @@
 コミット前（git hook）や CI/CD（GitHub Actions）で検出します。
 
 - 日本に特化し、マイナンバー検査用数字の検証、全角や長音記号の正規化、和暦、JCB カードなどに対応
-- 高速に動作する Go 製シングルバイナリ（利用時に Go は不要）。pre-commit ではステージ済み差分の追加行のみを走査
+- 高速に動作する Go 製シングルバイナリ（利用時に Go は不要）。pre-commit ではステージ済み差分の追加行だけをスキャン
 - 終了コード、JSON、SARIF、GitHub Actions アノテーション出力により CI に組み込みやすい
 - 二次漏えいを防ぐため、検出値は既定でマスク表示
 
-## gitleaks 等シークレット検出ツールとの違い
-
-gitleaks / trufflehog / secretlint は API キーやトークンなどの**シークレット**検出が
-主目的で、マイナンバー・住所・氏名といった日本語の個人情報（PII）は基本的に対象外です。
-jp-pii-detect はこれらの置き換えではなく、シークレット検出ツールと**併用**して日本語 PII の
-検出を補完することを想定しています。詳細は [docs/comparison.md](docs/comparison.md) を参照してください。
-
-## まず試す
-
-```sh
-brew install baneido/tap/jp-pii-detect
-jp-pii-detect version
-jp-pii-detect scan .
-```
-
-終了コードは `0`（検出なし）、`1`（検出あり）、`2`（走査・設定エラー）です。
-検出された値にはその中身に応じて次のように対処します。
-
-- 実データが混入していた場合は、削除するか架空の値に置き換えます。
-- 意図して置いたダミー値なら、その行に `jp-pii-detector:ignore` を書くか、allowlist に登録します。
-- 導入前から残っている検出をまとめて保留したい場合は、baseline に記録します。
-
-なぜ検出されたかは `--explain` を付けて実行すると確認できます。
-
-## 対応している個人情報
-
-精度の凡例：**◎** 単体で高精度（チェックディジット等で誤検出が少ない） /
-**○** 周辺の語（「TEL」「住所」など）と併用して実用的な精度 /
-**△** ラベルや見出し（`氏名:`、`患者情報` など）の手がかりがある場合に限って検出
-
-| 種別 | 例（すべて架空のダミー） | 精度 | 実測 F1 | 検出の決め手 |
-|---|---|:---:|:---:|---|
-| マイナンバー（個人番号） | `1234-5678-9018` | ◎ | **1.00** | 12 桁 + 検査用数字（総務省令のアルゴリズム） |
-| クレジットカード番号 | `4000-0012-3456-7899` | ◎ | **1.00** | Luhn + ブランド判定（Visa/Master/JCB/Amex 等）+ 公知テストPAN除外 |
-| メールアドレス | `taro@example.jp` | ◎ | **1.00** | パターン + IANA TLD 実在チェック + 予約ドメイン除外（高再現率では日本語 EAI / 限定 confusable も対象） |
-| 電話番号 | `090-XXXX-XXXX` | ◎ | **1.00** | 携帯/IP/固定/+81 + 桁数検証 |
-| 郵便番号 | `〒150-0043` | ◎ / ○ | **1.00** | 7 桁完全一致の実在チェック（〒付きは単独、なしは周辺の語が必要） |
-| 住所 | `東京都渋谷区道玄坂2-10-7` | ○ | **0.99** | 都道府県〜番地のパターン |
-| 運転免許証番号 | `免許証番号: 305012345678` | ○ | 未計測 | 12 桁 + 周辺の語が必要 |
-| 旅券（パスポート）番号 | `パスポート: TK1234567` | ○ | 未計測 | 英字2+数字7 + 周辺の語が必要 |
-| 基礎年金番号 | `年金番号: 1234-567890` | ○ | 未計測 | 4桁-6桁 + 周辺の語が必要 |
-| 在留カード番号 | `在留カード AB12345678CD` | ○ | 未計測 | 英2+数8+英2 + 周辺の語が必要 |
-| 銀行口座番号 | `口座番号: 1234567` | △ | **0.99** | 7 桁 + 周辺の語が必要 |
-| ゆうちょ銀行 記号番号 | `記号 1XX?0 / 番号 XXXXXX1` | ○ | 未計測 | 記号4桁目の検査数字 + 番号との相関 + ゆうちょ固有の周辺語が必要 |
-| 健康保険 保険者番号等 | `保険者番号: 12345678` | △ | **1.00** | 8 桁 + 周辺の語、強ラベル直結の国保6桁保険者番号、またはラベル直結の被保険者証記号・番号 |
-| 雇用保険被保険者番号 | `XXXX-XXXXXX-X` | ○ | 未計測 | 4桁-6桁-1桁 + 周辺の語が必要 |
-| 介護保険被保険者番号 | `XXXXXXXXXX` | △ | 未計測 | 10 桁 + 周辺の語が必要 |
-| 住民票コード | `XXXXXXXXXXX` | ○ | 未計測 | 11 桁 + 周辺の語が必要（全桁同一は除外） |
-| インボイス登録番号 | `TXXXXXXXXXXXXX` | ◎ | 未計測 | T + 13 桁 + 法人番号の検査用数字 |
-| 生年月日 | `生年月日: 1990年1月23日` | △ | **1.00** | ラベル付き。西暦・和暦・区切りなし8桁に対応（詳細は docs/detection-methods.md） |
-| 氏名 | `氏名: 山田 太郎` | △ | **1.00** | ラベル付き（`氏名:` 等）、帳票の人物欄の見出し（`患者情報` 等）の次行、契約書の当事者欄（`乙:` 等）+ 姓名辞書照合。辞書一致か空白区切りの「姓 名」（片側が辞書にあるもの）は `medium`（既定で報告）、それ以外は `low`（既定非表示、詳細は docs/detection-methods.md） |
-| 氏名（担当者・宛名ラベル） | `担当: 山田 太郎` | △ | 未計測 | ラベル付き（`担当:`/`担当者:`/`宛名:`/`連絡先:`/`代表者:`）+ 姓名辞書照合。姓+名の分割一致は `medium`、姓のみ一致は `low`（`person-name-role-label`） |
-
-> **既定で報告される範囲**: 既定では信頼度 `medium` 以上の検出だけを報告します（`min_confidence` で変更できます）。
->
-> 信頼度は、値の近くに「TEL」「住所」などの周辺の語があるかどうかで `low` / `medium` / `high` に分かれます。
-> ただし、周辺の語がないと検出しないルールでは、周辺の語があっても信頼度は上がらず、ルールごとに決めた信頼度で報告します。
-> 表の ○ のルールは `high`、△ のルールは `medium` です。
->
-> 氏名は、姓名辞書に一致するか、空白で区切られた「姓 名」のうち姓か名の片側が辞書にあれば `medium` になり、既定でも報告します。
-> 姓も名も辞書に載っていない値は誤検出の可能性が高いため `low` とし、既定では表示しません。
-> `[rules] cooccurrence_boost = true` を設定すると、この `low` の氏名も、同じファイルの前後 5 行以内に
-> 電話番号やマイナンバーなど検証済みの高信頼の PII があるときに限り、1 段上げて報告します
-> （設定例は後述の「設定（.jp-pii.toml）」を参照）。
-
-「実測 F1」は、公開データセット [Nemotron-PII-Japan](https://huggingface.co/datasets/nvidia/Nemotron-PII-Japan)（NVIDIA、[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)）から抽出した約 1 万件の合成文書で測った F1 スコア（適合率と再現率の調和平均）です。
-表の値と冒頭のバッジは、利用者の既定の運用と同じ条件（`min_confidence=medium`、高再現率ルールは無効）で計測しています。
-評価データセットでの値なので、どんな入力でも同じ精度が出ることを保証するものではありません。
-データセットに正解ラベルがない種別は「未計測」と表示しています（これらの種別のリグレッションは、公開の合成ケースを使って CI で確認しています）。
-「氏名」の行の値は担当者・宛名ラベルなど氏名系のすべてのルールの検出をまとめて数えたものです。
-ルール別の適合率と再現率は [docs/accuracy.md](docs/accuracy.md) にあります。
-
-CI は `low`、`medium`、high-recall の 3 つのプロファイルそれぞれで精度を計測し、記録済みの値と一致するかを確かめています。
-数値を検証・更新するときは `go run ./cmd/pii-fixture eval`（更新は `-update` を付ける）を実行します。
-データセットは revision と SHA-256 を固定して Hugging Face から取得します（詳細は [docs/development.md](docs/development.md)）。
-通常の `go test -race ./...` はネットワークなしで実行でき、評価データセットを使うテストだけがスキップされます。
-
-検出できる PII の種類、手法の詳細、設計判断は
-[docs/detection-methods.md](docs/detection-methods.md) を参照してください。
+gitleaks / trufflehog / secretlint などのシークレット検出ツールは、マイナンバー・住所・氏名といった
+日本語の個人情報を基本的に対象にしていません。jp-pii-detect はこれらの置き換えではなく、
+併用して日本語 PII の検出を補完することを想定しています（[docs/comparison.md](docs/comparison.md)）。
 
 ## インストール
 
@@ -100,104 +24,59 @@ CI は `low`、`medium`、high-recall の 3 つのプロファイルそれぞれ
 brew install baneido/tap/jp-pii-detect
 ```
 
-`baneido/tap` を一度 tap すれば、以後は `brew install jp-pii-detect` でインストール、
-`brew upgrade jp-pii-detect` で更新できます。formula はリリースごとに自動更新されます。
-
 ### Option 2. mise（macOS / Linux）
-
-[mise](https://mise.jdx.dev/) の GitHub backend で GitHub Releases のビルド済みバイナリをインストールできます。
-利用側の環境に Go は不要です。
 
 ```sh
 mise use -g github:baneido/jp-pii-detector@v0.9.4
 ```
 
-プロジェクトローカルでバージョンを固定したい場合は `mise.toml` に以下を追加して `mise install` を実行します。
+プロジェクトでバージョンを固定する場合は `mise.toml` に次を追加して `mise install` を実行します。
 
 ```toml
 [tools]
 "github:baneido/jp-pii-detector" = "v0.9.4"
 ```
 
-### Option 3. バイナリをインストール
-
-GitHub Releases のビルド済みバイナリを取得してインストールするには以下のコマンドを実行します。
-インストール先は既定で `$HOME/.local/bin` です。変更する場合は `JP_PII_DETECT_INSTALL_DIR=/path/to/bin` を指定してください。
-次のリリースから、install.sh は既定で [Sumi モデル同梱ビルド](#option-6-sumi-モデル同梱ビルド)を入れます。
-組み込みルールだけの軽量版を入れる場合は `JP_PII_DETECT_MODEL=false` を指定してください。
+### Option 3. インストールスクリプト
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detector/v0.9.4/scripts/install.sh | JP_PII_DETECT_VERSION=v0.9.4 sh
 ```
 
+インストール先は既定で `$HOME/.local/bin` です。変更する場合は `JP_PII_DETECT_INSTALL_DIR=/path/to/bin` を指定してください。
+
 ### Option 4. Go install
 
 ```sh
- go install github.com/baneido/jp-pii-detector/cmd/jp-pii-detect@latest
+go install github.com/baneido/jp-pii-detector/cmd/jp-pii-detect@latest
 ```
 
-### Option 5. Docker / コンテナ
-
-リリースごとに `ghcr.io/baneido/jp-pii-detector` へマルチアーキテクチャ
-（linux/amd64, linux/arm64）イメージを公開しています。インストール不要で実行できるほか、
-GitLab CI などのジョブイメージとしてそのまま使えます（[docs/integrations.md](docs/integrations.md)）。
+### Option 5. Docker
 
 ```sh
 docker run --rm -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.9.4
 ```
 
-### Option 6. Sumi モデル同梱ビルド
+### Sumi モデル同梱ビルド
 
-組み込みルールに加えて、ローカル推論モデル [Sumi](https://huggingface.co/NagaYu/sumi-ja-pii)
-（ModernBERT-Ja-130M を PII 抽出用に微調整したもの、ONNX INT8）でも検出するビルドです。
-モデルと ONNX Runtime を同梱しているので、展開するだけで動きます（`--model-dir` の
-指定や ONNX Runtime のインストールは不要）。リリースに
-`jp-pii-detect-sumi_<os>_<arch>.tar.gz`（linux/amd64、linux/arm64、darwin/arm64。
-windows/amd64 は試験的）として添付し、チェックサムは `checksums-model.txt` にあります。
+次のリリースから、install.sh、pre-commit フック、GitHub Actions は既定で Sumi モデル同梱ビルドを入れます。
+組み込みルールに加えて、ローカルで動く推論モデル [Sumi](https://huggingface.co/NagaYu/sumi-ja-pii) でも検出するビルドです。
+スキャンはルールだけの場合より大幅に遅く、1 ワーカーあたり数百 MB のメモリを使うため、差分のスキャンに向いています。
+組み込みルールだけの軽量版を使う場合は `JP_PII_DETECT_MODEL=false`（GitHub Actions では `with.model: false`）を指定してください。
 
-```sh
-tar -xzf jp-pii-detect-sumi_linux_amd64.tar.gz
-./jp-pii-detect-sumi_linux_amd64/jp-pii-detect scan .            # ルール + Sumi
-./jp-pii-detect-sumi_linux_amd64/jp-pii-detect scan --no-model . # ルールだけ
-```
-
-- アーカイブは約 100MB（展開後約 180MB）です。走査はルールだけの場合より大幅に遅く、
-  1 ワーカーあたり数百 MB のメモリを使います。pre-commit の `--staged` など差分の走査に
-  向いています。
-- 実行ファイルは隣の `model/` と `lib/` を使います。ディレクトリ構成を保ったまま置き、
-  `PATH` にはシンボリックリンクを張ってください。次のリリースから、install.sh、pre-commit フック、
-  GitHub Actions は既定で同梱版をこの配置で入れます。同梱版のない OS（Windows、Intel Mac）と、
-  同梱版を添付していないリリースでは、警告を表示して軽量版を入れます。
-- 自分でビルドする場合は `scripts/package-model-bundle.sh` を実行します。cgo を使うため、
-  ビルドできるのはビルドするマシンと同じ OS/アーキテクチャ向けだけです。スクリプトは
-  ピン留めしたバージョンのモデルと ONNX Runtime を取得し、SHA-256 を検証します。詳細は [docs/model-bundle.md](docs/model-bundle.md)。
-
-**ライセンスと帰属表示**：同梱の Sumi は Apache License 2.0（Sumi contributors。
-ファイルは未改変で同梱し、ONNX 変換と INT8 量子化は Sumi の作者によるもの）、
-ベースモデル ModernBERT-Ja-130M は MIT（Copyright (c) 2025 SB Intuitions）、
-ONNX Runtime は MIT（Microsoft、サードパーティ表記は `ThirdPartyNotices.txt`）です。
-各ライセンス本文はアーカイブの `NOTICE.md` と `licenses/` に入っています。
-Sumi は合成データセット [NagaYu/sumi-ja-pii-corpus](https://huggingface.co/datasets/NagaYu/sumi-ja-pii-corpus)
-（CC BY-SA 4.0）で学習されています（データセットは同梱していません）。
-
-**免責**：Sumi の作者が明記しているとおり、Sumi はコンプライアンスを保証する仕組みでは
-なく（"Sumi is not a compliance control."）、見逃しは必ず起きます。モデル同梱ビルドを
-使っても、個人情報が含まれないことは保証されません。
+Sumi は Apache License 2.0 で配布され、合成データセット
+[NagaYu/sumi-ja-pii-corpus](https://huggingface.co/datasets/NagaYu/sumi-ja-pii-corpus)（CC BY-SA 4.0）で学習されています。
+Sumi の作者が明記しているとおり、Sumi はコンプライアンスを保証する仕組みではなく（"Sumi is not a compliance control."）、
+見逃しは必ず起きます。同梱物、対応プラットフォーム、ライセンスと帰属表示は [docs/model-bundle.md](docs/model-bundle.md) を参照してください。
 
 ## 使い方
 
-### 1. CLI として利用
-
 ```sh
-$ jp-pii-detect scan .                        # カレントディレクトリ以下をフルスキャン
-$ jp-pii-detect scan --staged                 # ステージ済み変更の追加行のみ（pre-commit 用）
+$ jp-pii-detect scan .                          # カレントディレクトリ以下をフルスキャン
+$ jp-pii-detect scan --staged                   # ステージ済み変更の追加行のみ（pre-commit 用）
 $ jp-pii-detect scan --diff origin/main...HEAD  # PR の追加行のみ（CI 用）
-$ jp-pii-detect scan --high-recall .          # 偽陽性リスクを許容して再現率重視ルールも有効化
-$ jp-pii-detect scan --name-roster .          # 氏名だけが並ぶ名簿ファイルの判定を有効化
-$ jp-pii-detect rules                         # 検出ルール一覧
+$ jp-pii-detect rules                           # 検出ルール一覧
 ```
-
-全コマンド・フラグの詳細は [docs/cli.md](docs/cli.md) を参照してください。
 
 出力例（検出値はマスクされます）:
 
@@ -207,9 +86,17 @@ users.csv:4:6   [high]  jp-phone-number 電話番号（携帯・固定・IP・�
 
 ローカルで実際の値を確認したい場合は `--unmask` を付けます（CI では使わないでください）。
 
-### 2. git commit hook での利用
+終了コードは `0`（検出なし）、`1`（検出あり）、`2`（スキャンや設定のエラー）です。
+検出された値にはその中身に応じて次のように対処します。
 
-#### pre-commit フレームワーク
+- 実データが混入していた場合は、削除するか架空の値に置き換えます。
+- 意図して置いたダミー値なら、その行に `jp-pii-detector:ignore` を書くか、allowlist に登録します。
+- 導入前から残っている検出をまとめて保留したい場合は、[ベースライン](docs/configuration.md#ベースライン)に記録します。
+
+なぜ検出されたかは `--explain` を付けて実行すると確認できます。
+全コマンドとフラグは [docs/cli.md](docs/cli.md) にあります。
+
+### pre-commit
 
 `.pre-commit-config.yaml`:
 
@@ -221,32 +108,10 @@ repos:
       - id: jp-pii-detect
 ```
 
-```sh
-pre-commit install
-pre-commit run jp-pii-detect
-```
+フックはステージ済みの差分だけをスキャンします。リポジトリ全体をスキャンするフックや、
+lefthook / husky などほかの git hook マネージャでの使い方は [docs/integrations.md](docs/integrations.md) を参照してください。
 
-フックは GitHub Releases のビルド済みバイナリを `~/.cache/jp-pii-detector/pre-commit/`
-配下にキャッシュして実行するので、利用側の環境に Go は不要です。
-フックが使うバイナリは通常 `rev` に指定したタグと同じバージョンです。
-次のリリースから、フックは Sumi モデル同梱ビルドを使います（初回は約 100MB をダウンロードします）。
-軽量版を使う場合は、環境変数 `JP_PII_DETECT_MODEL=false` を設定してください。
-
-既定のフック（`jp-pii-detect`）は、常にステージ済みの差分だけを走査します。
-このフックは pre-commit からファイル一覧を受け取らないため、`--all-files` を付けて実行しても走査範囲は広がりません。
-導入時にリポジトリ全体を確認したい場合は、フック ID を `jp-pii-detect-full` に変えて
-`pre-commit run jp-pii-detect-full --all-files` を実行してください。
-
-#### git hook
-
-`.git/hooks/pre-commit`:
-
-```sh
-#!/bin/sh
-exec jp-pii-detect scan --staged
-```
-
-### 3. GitHub Actions
+### GitHub Actions
 
 ```yaml
 name: pii-check
@@ -266,47 +131,49 @@ jobs:
           args: scan --diff origin/${{ github.base_ref }}...HEAD --format github
 ```
 
+`--format github` を指定すると、検出箇所が PR の該当行にアノテーションとして表示されます。
 Action の参照と、ダウンロードするバイナリのバージョンは独立しています。再現性が必要な場合は、
 上記のように `uses:` のタグと `with.version` を同じ値で明示してください。
-
-次のリリースから、Action は既定で Sumi モデル同梱ビルドを入れ、組み込みルールに加えてモデルでも検出します。
-モデルを使うと走査が大幅に遅くなるため、`args` で `--diff` を指定して PR の差分だけを走査するのがおすすめです。
-軽量版を使う場合は `with.model: false` を指定してください。Windows のランナーでは常に軽量版になります。
-
-> 次回リリース以降はムービングメジャータグ `v0` も利用でき、`baneido/jp-pii-detector@v0` で最新の v0 系に追従できます。
-
-`--format github` を指定すると、検出箇所が PR の該当行にアノテーション表示されます。
-アノテーションは信頼度に応じて `error` / `warning` / `notice` になります。たとえば
-Medium 以上を表示しつつ High の検出だけで CI を失敗させるには、次のように指定します。
-
-```yaml
-      - uses: baneido/jp-pii-detector@v0.9.4
-        with:
-          # jp-pii-detect のバイナリ版を固定
-          version: v0.9.4
-          args: scan --diff origin/${{ github.base_ref }}...HEAD --format github --min-confidence medium --fail-on high
-```
-
-`--fail-on` を省略した場合は従来どおり、報告対象の検出が 1 件でもあれば終了コード 1 です。
-`--format sarif` の出力は GitHub Code Scanning に取り込めます
-（アップロード例は [docs/integrations.md](docs/integrations.md)）。
-
-現在の設定で各ルールが有効か、また高再現率ルールかを確認するには
-`jp-pii-detect rules` を実行します。`rules --high-recall` や
-`rules --config <path>` も scan と同じ設定を反映します。
-
-### 4. その他の CI/CD・開発環境
-
-GitLab CI / CircleCI / Bitbucket Pipelines / Jenkins などコンテナが使える CI、
-lefthook / husky などの git hook マネージャ、mise でのバイナリ管理、Dev Containers
-（VS Code / Codespaces）への組み込みレシピは
+`--fail-on` による失敗条件の指定、SARIF の取り込み、GitLab CI などほかの CI での使い方は
 [docs/integrations.md](docs/integrations.md) を参照してください。
 
-## 設定（.jp-pii.toml）
+## 対応している個人情報
 
-リポジトリルートに `.jp-pii.toml` を置くと自動で読み込まれます。探索はカレントディレクトリから
-親方向にリポジトリルート（`.git` のあるディレクトリ）まで行うため、サブディレクトリからの実行でも
-ルートの設定が使われます（`--config` で明示指定も可能）。
+| 種別 | 実測 F1 | 検出方法 |
+|---|:---:|---|
+| マイナンバー（個人番号） | **1.00** | 12 桁 + 検査用数字（総務省令のアルゴリズム） |
+| クレジットカード番号 | **1.00** | Luhn + ブランド判定 + 公開されているテスト用カード番号を除外 |
+| メールアドレス | **1.00** | パターン + IANA TLD 実在チェック + 予約ドメイン除外 |
+| 電話番号 | **1.00** | 携帯/IP/固定/+81 + 桁数検証 |
+| 郵便番号 | **1.00** | 7 桁完全一致の実在チェック（〒なしは周辺のキーワードが必要） |
+| 住所 | **0.99** | 都道府県〜番地のパターン |
+| 運転免許証番号 | - | 12 桁 + 周辺のキーワードが必要 |
+| 旅券（パスポート）番号 | - | 英字2+数字7 + 周辺のキーワードが必要 |
+| 基礎年金番号 | - | 4桁-6桁 + 周辺のキーワードが必要 |
+| 在留カード番号 | - | 英2+数8+英2 + 周辺のキーワードが必要 |
+| 銀行口座番号 | **0.99** | 7 桁 + 周辺のキーワードが必要 |
+| ゆうちょ銀行 記号番号 | - | 記号4桁目の検査数字 + 番号との相関 + ゆうちょ固有のキーワードが必要 |
+| 健康保険 保険者番号等 | **1.00** | 8 桁 + 周辺のキーワード、またはラベルに隣接する国保の 6 桁の保険者番号・被保険者証の記号・番号 |
+| 雇用保険被保険者番号 | - | 4桁-6桁-1桁 + 周辺のキーワードが必要 |
+| 介護保険被保険者番号 | - | 10 桁 + 周辺のキーワードが必要 |
+| 住民票コード | - | 11 桁 + 周辺のキーワードが必要（全桁同一は除外） |
+| インボイス登録番号 | - | T + 13 桁 + 法人番号の検査用数字 |
+| 生年月日 | **1.00** | ラベル付き。西暦・和暦・区切りなし8桁に対応 |
+| 氏名 | **1.00** | ラベル（`氏名:` 等）、帳票の見出し（`患者情報` 等）の次の行、契約書の当事者欄 + 姓名辞書照合 |
+| 氏名（担当者・宛名ラベル） | - | ラベル（`担当:`、`宛名:` 等）+ 姓名辞書照合 |
+
+既定では信頼度 `medium` 以上の検出だけを報告します。信頼度の決まり方と変え方は
+[docs/configuration.md](docs/configuration.md#信頼度) を参照してください。
+
+「実測 F1」は、公開データセット [Nemotron-PII-Japan](https://huggingface.co/datasets/nvidia/Nemotron-PII-Japan)（NVIDIA、[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)）から抽出した約 1 万件の合成文書に対し、既定の設定で測った F1 スコアです。
+評価データセットでの値なので、どんな入力でも同じ精度が出ることを保証するものではありません。
+データセットに正解ラベルがない種別は「-」と表示しています。
+ルール別の適合率と再現率、計測方法は [docs/accuracy.md](docs/accuracy.md)、検出手法の詳細は
+[docs/detection-methods.md](docs/detection-methods.md) にあります。
+
+## 設定
+
+リポジトリルートに `.jp-pii.toml` を置くと自動で読み込まれます。
 
 ```toml
 # 報告する最小信頼度: low | medium | high（デフォルト: medium）
@@ -315,110 +182,27 @@ min_confidence = "medium"
 [rules]
 # 無効化するルール ID（`jp-pii-detect rules` で一覧表示）
 disabled = ["person-name"]
-# 都道府県なし住所・敬称アンカー付き氏名・ラベルと値が別行の氏名（フォーム形式）など、
-# 偽陽性リスクの高い追加ルールを有効化
-high_recall = false
-# ラベルも敬称も無く氏名だけが改行区切りで並ぶ名簿ファイルの判定（person-name-roster）を有効化。
-# 行単位の手がかりを一切使わずファイル全体の統計だけで判断するため、high_recall とは別の opt-in
-name_roster = false
-# 氏名系ルール（person-name / person-name-role-label / person-name-high-recall）の low / medium 候補を、
-# 同一ファイル内の近傍（±5行）に電話番号・郵便番号・マイナンバー等の検証済み高信頼 PII が
-# あるときだけ 1 段昇格（low→medium、まれに medium→high）させる。CSV/DB ダンプ監査など、
-# 強めの検出をしたい場合のみ opt-in する（既定では既存の出力に影響しない）
-cooccurrence_boost = false
-# ルール横断の下位種別（Reason.kind）のうち、指定した種別を検出結果から除外する（既定は未設定＝
-# 全種別検出）。電話番号ルール（jp-phone-number）は service=フリーダイヤル等・ip・mobile・fixed・
-# international、インボイス登録番号ルール（jp-invoice-number）は国税庁公表の公開情報であることを示す
-# public-business を付与する。詳細は docs/detection-methods.md の「電話番号の下位種別分類」を参照
-exclude_kinds = ["service"]
-
-[scan]
-# フルスキャンで .gitignore 等に無視された未追跡ファイルを走査しない（既定: true）。
-# 追跡済みファイルは対象のまま。--no-gitignore で一時的に無効化できます
-respect_gitignore = true
 
 [allowlist]
-# スキャン対象から除外するパス（glob または正規表現）。glob の * は 1 階層、
-# ** は 0 階層以上にマッチします。フルスキャンでは走査時のパス表記に加えて
-# リポジトリルートからの相対パスにも適用されるため、サブディレクトリから
-# 実行しても ^testdata/ や path/to/*.txt のようなルート相対の指定が機能します。
-# パターンは祖先ディレクトリにも評価されるため、"**/generated" のような
-# ディレクトリ指定はフルスキャン・--staged・--diff のどれでも配下全体を除外します。
-paths = ["path/to/*.txt", "path/to/**/target", "^testdata/", "\\.lock$"]
-# マッチ文字列に対する除外（正規表現）。例: 自社ドメインのメール
-regexes = ["@baneido\\.com$"]
+# スキャン対象から除外するパス（glob または正規表現）
+paths = ["^testdata/"]
 # 完全一致で除外するダミー値
 stopwords = ["090-XXXX-XXXX"]
 ```
 
-意図的なダミー値には行内コメントで ignore マーカーを付けられます。
-
-```python
-TEST_PHONE = "090-XXXX-XXXX"  # jp-pii-detector:ignore テスト用ダミー
-```
-
-旧マーカー `pii-allow` も互換性のため引き続き利用できます。
-
-### 外部レコグナイザ連携（`external_recognizer`、opt-in）
-
-軽量 NER（GiNZA/BERT 等）による氏名検出などを、Go バイナリに依存を足さずに接続できます。
-既定は未設定で、完全に無効です。
-
-```toml
-[external_recognizer]
-command = ["python3", "my_ner.py"]  # argv 配列。シェル解釈はしない
-timeout_seconds = 30                # 既定 30
-max_findings = 1000                 # 既定 1000
-```
-
-プロトコル仕様、動くデモ（[integrations/external-recognizer/](integrations/external-recognizer/)）、
-**セキュリティ上の注意**は
-[docs/detection-methods.md の「4.8 外部レコグナイザ連携」](docs/detection-methods.md#48-外部レコグナイザ連携external_recognizeropt-in)
-を参照してください。特に、この機能は設定ファイルに書かれた任意コマンドを実行するため、
-リポジトリ内の `.jp-pii.toml` を信用できない環境では使わないでください。
-
-## ベースライン（既存の検出を凍結して新規のみ fail させる）
-
-既存リポジトリに導入すると、過去に混入済みの PII やダミー値が一斉に検出されて CI が
-通らなくなることがあります。gitleaks の `--baseline-path` や detect-secrets の
-`.secrets.baseline` と同様に、ベースラインファイルへ既知の検出を記録しておくと、
-以降のスキャンでは新規追加分だけを fail させられます。
-
-```sh
-# 導入時: 現在の検出内容でベースラインファイルを作成（以後は --baseline とセットで使う）
-$ jp-pii-detect scan --baseline .jp-pii-baseline.json --update-baseline .
-
-# 通常運用: ベースライン記録済みの検出は結果・終了コードから除外される
-$ jp-pii-detect scan --baseline .jp-pii-baseline.json .
-
-# 除外された検出も参考表示したい場合（終了コードには影響しない）
-$ jp-pii-detect scan --baseline .jp-pii-baseline.json --show-baseline .
-```
-
-`--baseline` / `--update-baseline` / `--show-baseline` は、`--staged`、`--diff`、フルスキャンの
-どのモードでも同じように動作します。
-
-ベースラインには検出値を salt 付き HMAC-SHA256 で計算した **値ハッシュ（fingerprint）** を記録します。
-行の位置は fingerprint に影響しないので、ファイル内で行が前後に移動しても再検出されません。
-一方、ルール ID、ファイルパス、検出値のどれかが変わると別の fingerprint になり、再び検出されます。
-ファイルパスはリポジトリルートからの相対パスにそろえて照合するので、
-サブディレクトリからのフルスキャンで作った baseline も、`--staged` や `--diff`、別のディレクトリからの実行で同じように一致します。
-
-**セキュリティ上の注意**: salt 付きハッシュは複数リポジトリ間でのレインボーテーブル使い回しを
-防ぐものであり、ベースラインファイル自体を入手した第三者による低エントロピーな値
-（7 桁の口座番号など）への総当たり照合を防ぐものではありません。ベースラインファイルは
-元のソース履歴と同程度の機密度で扱ってください（公開リポジトリにコミットしない、
-アクセス制御された場所で管理する、など）。
+全項目、ignore マーカー、ベースライン、外部レコグナイザ連携は
+[docs/configuration.md](docs/configuration.md) を参照してください。
 
 ## ドキュメント
 
-- [CLI リファレンス](docs/cli.md)：全コマンド・全フラグの詳細、走査モード、終了コード
-- [CI/CD・開発環境への組み込み](docs/integrations.md)：コンテナイメージ、GitLab CI /
+- [CLI リファレンス](docs/cli.md)：全コマンド・全フラグの詳細、スキャンモード、終了コード
+- [設定と検出の抑制](docs/configuration.md)：`.jp-pii.toml` の全項目、信頼度、ignore マーカー、ベースライン、外部レコグナイザ連携
+- [CI/CD・開発環境への組み込み](docs/integrations.md)：pre-commit、コンテナイメージ、GitLab CI /
   CircleCI / Bitbucket / Jenkins、lefthook / husky、mise、Dev Containers のレシピ
 - [検出手法の調査と整理](docs/detection-methods.md)：検出できる PII の種類、精度の根拠、
   チェックディジットや正規化の仕組み、対象外とした項目とその理由
 - [検出精度（実測値）](docs/accuracy.md)：評価データセットに対するルール別の適合率、再現率、F1
-- [Sumi モデル同梱ビルド](docs/model-bundle.md)：同梱物、ビルド手順、ピン留めとライセンス表示
+- [Sumi モデル同梱ビルド](docs/model-bundle.md)：同梱物、ビルド手順、バージョンの固定とライセンス表示
 - [誤検出・見逃しのフィードバック](docs/feedback.md)：Issue での報告の仕方（ダミー値のみ）、
   ignore / allowlist の利用状況をルール別に集計する `jp-pii-suppressions`
 - [開発者向けガイド](docs/development.md)：ビルド、テスト、内部構成、検出ルールの追加方法
