@@ -1078,9 +1078,26 @@ func (d *Detector) scanSectionHeadingNames(file string, lines []string) []Findin
 				}
 			}
 		}
-		out = append(out, found...)
+		out = append(out, trimNameHonorificSuffix(found)...)
 	}
 	return out
+}
+
+// trimNameHonorificSuffix は、見出しの次の行から採った氏名の値が「<姓> <名>氏」「<姓> <名>様」のように
+// 敬称で終わるとき、敬称を値から外す（2026-11-25 に催しの案内「講師：<所属>」の次の行で実測。敬称まで
+// 報告の範囲に入っていた）。
+func trimNameHonorificSuffix(fs []Finding) []Finding {
+	for i := range fs {
+		rs := []rune(fs[i].Match)
+		if len(rs) < 4 {
+			continue
+		}
+		if last := rs[len(rs)-1]; last == '氏' || last == '様' || last == '殿' {
+			fs[i].Match = strings.TrimRight(string(rs[:len(rs)-1]), " 　")
+			fs[i].end -= len(rs) - len([]rune(fs[i].Match))
+		}
+	}
+	return fs
 }
 
 // isFieldLine は line が「ラベル: 値」の項目行（ラベルは 12 ルーン以内）かを返す。
@@ -1631,6 +1648,12 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 				return false
 			}
 			st := lineCtx.statementFor(start, end)
+			// 列見出しが「郵便番号」の列の値は郵便番号で、ほかの番号ではない（2026-11-25 に市のオープンデータ
+			// CSV（施設の一覧）で、同じ行の交通案内の欄「<銀行名>向かい」を文脈に、郵便番号の列の 7 桁が
+			// jp-bank-account として誤検出されたのを実測）。
+			if st != nil && r.ID != "jp-postal-code" && strings.Contains(st.PositiveText, "郵便番号") {
+				return true
+			}
 			// モードの契約: NegativeContextAdjacentLabelOnly で抑制に使える
 			// のは採番ラベル明示語彙の隣接一致だけで、それ以外の抑制経路は
 			// 旧 IgnoreNegativeContext: true と同一（＝無効）。構造化 source

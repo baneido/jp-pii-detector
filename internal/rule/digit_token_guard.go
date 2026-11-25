@@ -390,7 +390,16 @@ func rejectURLUserinfo(line string, start, end int) bool {
 // 「さん」「様」付きではまず一般語として使われるため、姓としての再現率より
 // 偽陽性の抑制を優先する（「初見太郎さん」のように名が続く値は完全一致しないので
 // 引き続き検出する）。
+// oldProvinceNames は「<旧国名>源氏」の判定に使う旧国名（姓の辞書と同形のもの）。
+var oldProvinceNames = map[string]bool{
+	"近江": true, "甲斐": true, "河内": true, "摂津": true, "大和": true, "美濃": true, "信濃": true, "常陸": true,
+	"下野": true, "上野": true, "武蔵": true, "陸奥": true, "出羽": true, "越後": true, "越前": true, "若狭": true,
+	"三河": true, "尾張": true, "播磨": true, "伊勢": true, "石見": true, "伊予": true, "土佐": true, "多田": true,
+}
+
 var honorificCommonNouns = map[string]bool{
+	// 2026-11-25 に大学・博物館・団体のサイトで実測（未就園児さん向け・大工さんの記録・寮長寮母さんが・幹事様向け・詩人さん）。
+	"未就園児": true, "園児": true, "大工": true, "寮長寮母": true, "寮母": true, "寮長": true, "幹事": true, "詩人": true,
 	"初見": true, "常連": true, "新規": true, "古参": true, "新参": true, "新人": true, "一見": true,
 	"旦那": true, "親御": true, "大家": true, "家主": true, "地主": true, "運営": true, "相方": true,
 	"奥方": true, "女将": true, "親方": true, "坊主": true, "和尚": true, "住職": true, "神主": true,
@@ -529,6 +538,16 @@ func rejectHonorificCommonNoun(line string, start, end int) bool {
 		if sur := strings.TrimSuffix(v, "源"); utf8.RuneCountInString(sur) < 2 || dict.MatchPersonName(sur) != dict.SurnameOnly {
 			return false
 		}
+		// 「近江源氏」「甲斐源氏」は旧国名を冠した源氏の一族（2026-11-25 に浄瑠璃の外題と寺院の由緒で実測。
+		// 旧国名は姓の辞書にもある）。
+		if oldProvinceNames[strings.TrimSuffix(v, "源")] {
+			return false
+		}
+	}
+	// 「<氏名>、<氏名>各氏に師事」「<姓>・<姓>両氏の発見」の「各」「両」は名の一部ではない（2026-11-25 に
+	// 演奏家の紹介と研究機関の記事で実測。値が「各」「両」まで含んでいた）。
+	if v := line[start:end]; strings.HasPrefix(rest, "氏") && utf8.RuneCountInString(v) >= 3 && (strings.HasSuffix(v, "各") || strings.HasSuffix(v, "両")) {
+		return false
 	}
 	// 「南部杜氏の技」「越後杜氏」の「杜氏」は酒造りの職人を指す一般語で、「<姓>氏」の敬称ではない
 	// （2026-10-30 18:00 に新聞社サイトの広告文で実測した高再現率モードの偽陽性）。

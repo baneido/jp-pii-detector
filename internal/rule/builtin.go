@@ -1082,7 +1082,8 @@ var (
 	// 助詞を「の」から「に・で・と・は・が・を・も・へ・や」に広げた。
 	personNamePostTitleRe = regexp.MustCompile(
 		`(?:^|[^` + kanji + hiragana + katakana + `]|[のにでとはがをもへや])([` + kanji + `]{3,6}?)` +
-			`(?:特任准教授|特任教授|特任講師|特任助教|名誉教授|准教授|教授|講師|助教|弁護士|副理事長|理事長|副学長|学長|` +
+			// 2026-11-25 に研究機関のお知らせで「<氏名>招へい教授、」を実測し、招へい（招聘）教授を足した。
+			`(?:招へい教授|招聘教授|招へい准教授|招聘准教授|特任准教授|特任教授|特任講師|特任助教|名誉教授|准教授|教授|講師|助教|弁護士|副理事長|理事長|副学長|学長|` +
 			`副市長|市長|町長|村長|教育長|副会長|会長|教諭|センター長|候補|` +
 			// 2026-11-12 に大学・県のニュースで「<姓><名>総長からのメッセージ」「<姓><名>医学部長から」を実測。
 			`副総長|総長|副知事|知事|医学部長|看護部長|研究科長|学部長|病院長)` +
@@ -2683,7 +2684,8 @@ func Builtin() []Rule {
 				// 「患者ID: N9U23025380」のような英数字 ID の末尾 8 桁も拾わないよう、
 				// 左側は ASCII 英字の連結も除外する。
 				{Re: regexp.MustCompile(`(?:^|[^0-9A-Za-z])(\d{8})(?:[^0-9]|$)`), Base: Medium, RequireContext: true,
-					ValidateLine: rejectLetterLedCodePart},
+					// rejectDecimalFraction: 統計 CSV の「18.<8 桁>」のような小数部（2026-11-25 に市のオープンデータで実測）。
+					ValidateLine: allValidateLine(rejectLetterLedCodePart, rejectDecimalFraction)},
 				// 空白区切り8桁（4+4）。8桁連結時と同じ RequireContext・窓
 				// （ルール既定の 40 ルーン）を使う。validHealthInsurance は区切り
 				// 文字を含む生のマッチ文字列に対して AllSame を判定するため、
@@ -2750,7 +2752,9 @@ func Builtin() []Rule {
 			Context:     []string{"介護保険", "要介護", "被保険者証", "kaigo hoken"},
 			// 「介護保険事業所番号」「介護保険事業者 <県>指定№」は事業所の番号で、個人の被保険者番号ではない
 			// （2026-11-17 に市のオープンデータ CSV と企業サイトで実測した偽陽性）。
-			NegativeContext:      append(append([]string{}, digitRuleNegativeContext...), "介護保険事業者", "指定№", "指定No"),
+			NegativeContext: append(append([]string{}, digitRuleNegativeContext...), "介護保険事業者", "指定№", "指定No",
+				// 2026-11-25 に病院の重要事項説明書「介護保険指定番号 <県名> <10 桁> 号」で実測（事業所の番号）。
+				"指定番号", "事業所番号"),
 			RequireContextWindow: digitRuleRequireContextWindow,
 			Validate:             validKaigoInsurance,
 			Patterns: []Pattern{
@@ -2758,7 +2762,7 @@ func Builtin() []Rule {
 				// 桁数が衝突するが、両ルールとも RequireContext:true のため
 				// 「介護保険」「年金」いずれか異なるキーワードが同一 40 ルーン窓に
 				// 共存しない限り同時発火しない。
-				{Re: dg(`\d{10}`), Base: Medium, RequireContext: true, ValidateLine: allValidateLine(rejectDigitsInURL, rejectUnderscoreJoinedDigits)},
+				{Re: dg(`\d{10}`), Base: Medium, RequireContext: true, ValidateLine: allValidateLine(rejectDigitsInURL, rejectUnderscoreJoinedDigits, rejectKaigoProviderNumber)},
 			},
 		},
 		{
@@ -2922,7 +2926,7 @@ func Builtin() []Rule {
 			ID:          "person-name-role-label",
 			Description: "氏名（担当者・宛名ラベル付き）",
 			Prefilter:   PrefilterCJK,
-			PrefilterLiterals: []string{"会長", "委員", "議長", "君", "担当", "宛名", "連絡先", "医長", "薬剤師", "看護師", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "知 事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届", "監督", "先生", "講 師", "ゲスト", "登壇", "聞き手", "進行役", "さん×", "さん ×", "選手", "議員", "理事", "監事", "幹事", "様", "館長", "顧問", "［", "[", "】", "年 ", "会社：", "会社:", "事務所：", "事務所:", "教諭", "助教", "候補", "学長", "市長", "町長", "村長", "施設長", "所長", "院長", "園長", "校長", "社長", "センター長", "教育長", "補佐", "大臣", "総長", "研究員", "助教", "甲", "乙", "丙", "丁", "である", "との間", "さん", "部長", "科長", "長官", "頭取", "院生", "就任", "選任", "再任", "託者", "任者", "借主", "貸主", "買主", "売主", "賃借人", "賃貸人", "雇用主", "従業員", "労働者", "者の", "者は", "人の", "人は", "歳の", "者:", "者：", "人:", "人：", "者 :", "人 :", " 様", " 氏", "次長", "局長", "室長", "審議官", "統括官", "参事官", "代理", "代行", "相談役", "課長", "作者", "著者", "撮影", "司会", "モデレーター", "文責", "演者", "発表者", "受賞者", "報告者", "執筆者", "会員", "首相", "総理", "大統領", "区長", "党首", "県議", "市議", "学芸員", "医師", "職員", "主事", "主査", "主任", "役の",
+			PrefilterLiterals: []string{"会長", "委員", "議長", "君", "担当", "宛名", "連絡先", "医長", "務め", "拝命", "左", "右", "中央", "役員", "薬剤師", "看護師", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "知 事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届", "監督", "先生", "講 師", "ゲスト", "登壇", "聞き手", "進行役", "さん×", "さん ×", "選手", "議員", "理事", "監事", "幹事", "様", "館長", "顧問", "［", "[", "】", "年 ", "会社：", "会社:", "事務所：", "事務所:", "教諭", "助教", "候補", "学長", "市長", "町長", "村長", "施設長", "所長", "院長", "園長", "校長", "社長", "センター長", "教育長", "補佐", "大臣", "総長", "研究員", "助教", "甲", "乙", "丙", "丁", "である", "との間", "さん", "部長", "科長", "長官", "頭取", "院生", "就任", "選任", "再任", "託者", "任者", "借主", "貸主", "買主", "売主", "賃借人", "賃貸人", "雇用主", "従業員", "労働者", "者の", "者は", "人の", "人は", "歳の", "者:", "者：", "人:", "人：", "者 :", "人 :", " 様", " 氏", "次長", "局長", "室長", "審議官", "統括官", "参事官", "代理", "代行", "相談役", "課長", "作者", "著者", "撮影", "司会", "モデレーター", "文責", "演者", "発表者", "受賞者", "報告者", "執筆者", "会員", "首相", "総理", "大統領", "区長", "党首", "県議", "市議", "学芸員", "医師", "職員", "主事", "主査", "主任", "役の",
 				// 2026-11-23 に足したパターン（name_selforg_context.go）の必須リテラル。
 				"監修", "執筆", "取材", "翻訳", "対談", "鼎談", "座談会", "トーク", "紹介", "スタッフ", "メンバー", "師長", "士長", "係長", "主幹"},
 			Validate: notPlaceholderName,
@@ -3220,6 +3224,15 @@ func Builtin() []Rule {
 				{Re: personNameSpacedAttachedDoctorRe, Base: Medium, Validate: validSpacedHonorificName},
 				{Re: personNameTitleNameThenParenRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectTitleSpaceNameFragment},
 				{Re: personNameSpacedThenCoachLineRe, Base: Medium, Validate: validSpacedHonorificName},
+				// 2026-11-25 の公開文書の確認で実測した見逃し（name_appoint_context.go）。
+				{Re: personNameGaAppointRe, Base: Medium, Validate: validLooseTitleName},
+				{Re: personNameTitleAppointRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectRankTitleFragment},
+				{Re: personNameAppointedDesuRe, Base: Medium, Validate: validLooseTitleName},
+				{Re: personNameHeadColonHonorificRe, Base: Medium, Validate: validLooseTitleName},
+				{Re: personNameProgramLabelUjiLineRe, Base: Medium, Validate: validLooseTitleName},
+				{Re: personNamePhotoCaptionRe, Base: Medium, Validate: validLooseTitleName},
+				{Re: personNameSelfOrgAttachedExecRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectTitleSpaceNameFragment},
+				{Re: personNameHeadSpacedLineRe, Base: Medium, Validate: validHeadSpacedName},
 			},
 		},
 		{
