@@ -1300,7 +1300,8 @@ func TestModelBundlePinsHaveSHA256(t *testing.T) {
 	}
 }
 
-// 同梱物の帰属表示に、ライセンス上必要な記載と Sumi の免責が残っていること。
+// 同梱物の帰属表示に、ライセンス上必要な記載（追加学習の元の Sumi と追加学習のデータを含む）と
+// Sumi の免責が残っていること。
 func TestModelBundleNoticeKeepsAttributionAndDisclaimer(t *testing.T) {
 	dir := filepath.Join(repoRoot(t), "third_party", "model-bundle")
 	notice, err := os.ReadFile(filepath.Join(dir, "NOTICE.md"))
@@ -1310,6 +1311,7 @@ func TestModelBundleNoticeKeepsAttributionAndDisclaimer(t *testing.T) {
 	for _, want := range []string{
 		"Apache License 2.0", "改変せずに", "Copyright (c) 2025 SB Intuitions",
 		"ThirdPartyNotices.txt", "NagaYu/sumi-ja-pii-corpus", "CC BY-SA 4.0",
+		"baneido/sumi-ja-pii-nemotron-ft", "NagaYu/sumi-ja-pii", "nvidia/Nemotron-PII-Japan", "CC BY 4.0",
 		"Sumi is not a\n  compliance control", "@@SUMI_REVISION@@", "@@ORT_VERSION@@",
 	} {
 		if !strings.Contains(string(notice), want) {

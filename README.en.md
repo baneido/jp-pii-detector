@@ -129,14 +129,18 @@ docker run --rm -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.9.4
 
 Release assets `jp-pii-detect-sumi_<os>_<arch>.tar.gz` (linux/amd64, linux/arm64,
 darwin/arm64; windows/amd64 experimental) bundle the local
-[Sumi](https://huggingface.co/NagaYu/sumi-ja-pii) model (ONNX INT8, Apache-2.0)
-and ONNX Runtime (MIT), so model-based detection works right after extraction.
+[sumi-ja-pii-nemotron-ft](https://huggingface.co/baneido/sumi-ja-pii-nemotron-ft) model
+(ONNX INT8, Apache-2.0) and ONNX Runtime (MIT), so model-based detection works right after
+extraction. The model is [Sumi](https://huggingface.co/NagaYu/sumi-ja-pii) fine-tuned on
+Nemotron-PII-Japan so that it also finds person names with no label or honorific (in logs,
+source code, headerless CSV and so on).
 Use `--no-model` to fall back to rules only. The archive is ~100MB and scanning
 is much slower than rules only. License texts and attribution (Sumi contributors;
-base model ModernBERT-Ja-130M, Copyright (c) 2025 SB Intuitions; training data
-NagaYu/sumi-ja-pii-corpus, CC BY-SA 4.0, not included) are in `NOTICE.md` and
-`licenses/` inside the archive. As the Sumi authors state, Sumi is not a
-compliance control and misses are certain. See [docs/model-bundle.md](docs/model-bundle.md).
+Sumi's base model ModernBERT-Ja-130M, Copyright (c) 2025 SB Intuitions; fine-tuning data
+nvidia/Nemotron-PII-Japan, CC BY 4.0; Sumi's training data NagaYu/sumi-ja-pii-corpus,
+CC BY-SA 4.0; no training data included) are in `NOTICE.md` and `licenses/` inside the
+archive. As the Sumi authors state, Sumi is not a compliance control and misses are
+certain; the same holds for the fine-tuned model. See [docs/model-bundle.md](docs/model-bundle.md).
 Starting with the next release, install.sh, the pre-commit hook and the GitHub Action
 use this bundle by default. Platforms without a bundle (Windows, Intel Mac) and
 releases that lack one get the rules-only binary with a warning.

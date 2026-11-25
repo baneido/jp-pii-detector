@@ -60,14 +60,18 @@ docker run --rm -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.9.4
 ### Sumi モデル同梱ビルド
 
 次のリリースから、install.sh、pre-commit フック、GitHub Actions は既定で Sumi モデル同梱ビルドを入れます。
-組み込みルールに加えて、ローカルで動く推論モデル [Sumi](https://huggingface.co/NagaYu/sumi-ja-pii) でも検出するビルドです。
+組み込みルールに加えて、ローカルで動く推論モデル [sumi-ja-pii-nemotron-ft](https://huggingface.co/baneido/sumi-ja-pii-nemotron-ft) でも検出するビルドです。
+このモデルは、PII 抽出モデル [Sumi](https://huggingface.co/NagaYu/sumi-ja-pii) を Nemotron-PII-Japan で追加学習し、
+ラベルや敬称のない氏名（ログ、ソースコード、ヘッダのない CSV の中の氏名など）も検出できるようにしたものです。
 スキャンはルールだけの場合より大幅に遅く、1 ワーカーあたり数百 MB のメモリを使うため、差分のスキャンに向いています。
 組み込みルールだけの軽量版を使う場合は `JP_PII_DETECT_MODEL=false`（GitHub Actions では `with.model: false`）を指定してください。
 
-Sumi は Apache License 2.0 で配布され、合成データセット
-[NagaYu/sumi-ja-pii-corpus](https://huggingface.co/datasets/NagaYu/sumi-ja-pii-corpus)（CC BY-SA 4.0）で学習されています。
+同梱のモデルは Apache License 2.0 で、Sumi（Apache License 2.0、Sumi contributors）の重みを追加学習で変更したものです。
+追加学習には NVIDIA の合成データセット [Nemotron-PII-Japan](https://huggingface.co/datasets/nvidia/Nemotron-PII-Japan)（CC BY 4.0）を、
+元の Sumi は合成データセット [NagaYu/sumi-ja-pii-corpus](https://huggingface.co/datasets/NagaYu/sumi-ja-pii-corpus)（CC BY-SA 4.0）を使っています。
 Sumi の作者が明記しているとおり、Sumi はコンプライアンスを保証する仕組みではなく（"Sumi is not a compliance control."）、
-見逃しは必ず起きます。同梱物、対応プラットフォーム、ライセンスと帰属表示は [docs/model-bundle.md](docs/model-bundle.md) を参照してください。
+見逃しは必ず起きます。追加学習したモデルも同じです。
+同梱物、対応プラットフォーム、ライセンスと帰属表示は [docs/model-bundle.md](docs/model-bundle.md) を参照してください。
 
 ## 使い方
 
@@ -213,6 +217,6 @@ stopwords = ["090-XXXX-XXXX"]
 
 [MIT License](LICENSE) の下で配布しています。同梱・依存するサードパーティ成果物の
 ライセンス表記は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照してください。
-Sumi モデル同梱ビルドの同梱物（Sumi：Apache-2.0、ModernBERT-Ja-130M：MIT、
+Sumi モデル同梱ビルドの同梱物（sumi-ja-pii-nemotron-ft と Sumi：Apache-2.0、ModernBERT-Ja-130M：MIT、
 ONNX Runtime：MIT）の表記は [third_party/model-bundle/NOTICE.md](third_party/model-bundle/NOTICE.md) にあり、
 アーカイブにも同梱しています。

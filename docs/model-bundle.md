@@ -1,10 +1,17 @@
 # Sumi モデル同梱ビルド
 
-ローカル推論モデル Sumi（[NagaYu/sumi-ja-pii](https://huggingface.co/NagaYu/sumi-ja-pii)、
+ローカル推論モデル sumi-ja-pii-nemotron-ft（[baneido/sumi-ja-pii-nemotron-ft](https://huggingface.co/baneido/sumi-ja-pii-nemotron-ft)、
 ONNX INT8）と ONNX Runtime を同梱し、展開するだけで `--model-dir` 相当の検出
 （組み込みルール + モデル起点の検出。[design-ai-detection.md](design-ai-detection.md)）
 が動く配布物である。従来の軽量バイナリ（`CGO_ENABLED=0`、`jp-pii-detect_<os>_<arch>.tar.gz`）は
 変えずに、別のアセットとして配る。
+
+同梱するモデルは、Sumi（[NagaYu/sumi-ja-pii](https://huggingface.co/NagaYu/sumi-ja-pii)）を
+[Nemotron-PII-Japan](https://huggingface.co/datasets/nvidia/Nemotron-PII-Japan) で追加学習したもので、
+ラベルや敬称のない氏名（`尾上遥月が作成した資料`、ログの `user=齊藤 福市` など）も検出する。
+ラベル・トークナイザ・入出力の形式は Sumi と同じなので、`--model-dir` に元の Sumi を渡しても動く。
+アセット名（`jp-pii-detect-sumi_*`）と `scripts/model-bundle.env` の変数名（`SUMI_*`）は、
+Sumi を同梱していた頃のまま変えていない。
 
 ## アーカイブの構成
 
@@ -13,7 +20,7 @@ ONNX INT8）と ONNX Runtime を同梱し、展開するだけで `--model-dir` 
 ```text
 jp-pii-detect-sumi_linux_amd64/
 ├── jp-pii-detect          # CGO_ENABLED=1 -tags ort のビルド（Windows は .exe）
-├── model/                 # Sumi（未改変）
+├── model/                 # sumi-ja-pii-nemotron-ft（Hugging Face のファイルを未改変）
 │   ├── model.int8.onnx    #   133MB
 │   ├── tokenizer.json
 │   ├── sumi_labels.json
@@ -81,7 +88,7 @@ Linux は Ubuntu 22.04 でビルドするので、glibc 2.35 程度以降を前�
 
 | 成果物 | 固定する値 |
 |---|---|
-| Sumi | Hugging Face のコミット `daa43a033830a38911b178e7951b97ad64b0080a`（2026-10-17）。4 ファイルの SHA-256 |
+| sumi-ja-pii-nemotron-ft | Hugging Face のコミット `ac8b53ca062611080c9a92541600b78d74033caa`（2026-11-25）。4 ファイルの SHA-256。追加学習の元は Sumi のコミット `daa43a033830a38911b178e7951b97ad64b0080a`（2026-10-17） |
 | ONNX Runtime | 1.31.0。Microsoft が NuGet で配る公式パッケージ `Microsoft.ML.OnnxRuntime`（全プラットフォームの共有ライブラリ入り）の SHA-256。GitHub のリリース（`github.com/microsoft/onnxruntime`）は 2026 年 11 月中旬に消えたため、NuGet から取得する。共有ライブラリは GitHub 版と同じもの（osx-arm64 だけはコード署名の領域が異なる） |
 
 更新するときは `scripts/model-bundle.env` の値を変え、`scripts/package-model-bundle.sh` と
@@ -98,7 +105,7 @@ scripts/package-model-bundle.sh --version v0.0.0-local
 scripts/smoke-model-bundle.sh dist/jp-pii-detect-sumi_linux_amd64.tar.gz
 ```
 
-`SUMI_LOCAL_DIR=<dir>` を指定すると Sumi をダウンロードせずにコピーし、`ORT_CACHE_DIR` に
+`SUMI_LOCAL_DIR=<dir>` を指定するとモデルをダウンロードせずにコピーし、`ORT_CACHE_DIR` に
 ONNX Runtime のアーカイブを置いておくと再ダウンロードしない（いずれも SHA-256 は検証する）。
 
 ## リリース
@@ -119,11 +126,13 @@ ONNX Runtime のアーカイブを置いておくと再ダウンロードしな�
 | 構成要素 | ライセンス | 配布物での対応 |
 |---|---|---|
 | jp-pii-detect | MIT | `LICENSE`、`licenses/jp-pii-detector/` |
-| Sumi（重み・トークナイザ・ラベル・校正値） | Apache-2.0 | 全文を `licenses/sumi-ja-pii/LICENSE` に同梱。`NOTICE.md` に出典（リビジョン）と、ファイルを改変していないこと（ONNX 変換と INT8 量子化は Sumi の作者による）を記載。Sumi のリポジトリに NOTICE ファイルはない |
+| sumi-ja-pii-nemotron-ft（重み・トークナイザ・ラベル・校正値） | Apache-2.0 | 全文を `licenses/sumi-ja-pii/LICENSE` に同梱。`NOTICE.md` に出典（リビジョン）と、Sumi からの変更（重みを追加学習で変更し、校正値を合わせ直した。トークナイザとラベルは未改変）を記載 |
+| Sumi（追加学習の元） | Apache-2.0 | `NOTICE.md` に出典（リビジョン）を記載。Sumi のリポジトリに NOTICE ファイルはない |
 | ModernBERT-Ja-130M（Sumi のベースモデル） | MIT | 著作権表示（SB Intuitions）と許諾文を `licenses/modernbert-ja-130m/LICENSE` に同梱 |
 | ONNX Runtime | MIT | ORT のアーカイブの `LICENSE` と `ThirdPartyNotices.txt` をそのまま同梱 |
 | Go 標準ライブラリ・Go モジュール | BSD-3-Clause、MIT | `licenses/go/` に同梱（ビルド時に `go list -deps` から集める） |
-| 学習データ NagaYu/sumi-ja-pii-corpus | CC BY-SA 4.0 | 同梱しない。`NOTICE.md` と README でクレジットする |
+| 追加学習のデータ nvidia/Nemotron-PII-Japan | CC BY 4.0 | 同梱しない。`NOTICE.md` でクレジットする（個人情報を含まない例に使った ja.react.dev、railsguides.jp、kagome も同様） |
+| Sumi の学習データ NagaYu/sumi-ja-pii-corpus | CC BY-SA 4.0 | 同梱しない。`NOTICE.md` と README でクレジットする |
 
 Sumi の作者による免責（"Sumi is not a compliance control. It reduces risk; it does not
 certify anything."、"Misses are certain."、評価値は合成データでの上限値であること）は

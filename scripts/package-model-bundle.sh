@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# モデル同梱ビルド（jp-pii-detect + Sumi + ONNX Runtime + ライセンス表示）の
+# モデル同梱ビルド（jp-pii-detect + Sumi を追加学習したモデル + ONNX Runtime + ライセンス表示）の
 # アーカイブを作る。cgo を使うので、実行しているホストの OS/アーキテクチャ向けにしか
 # 作れない（release-model ワークフローは OS/アーキテクチャごとのランナーで実行する）。
 #
@@ -8,7 +8,7 @@
 # 出力: <out>/jp-pii-detect-sumi_<goos>_<goarch>.tar.gz
 # 中身（トップディレクトリ jp-pii-detect-sumi_<goos>_<goarch>/）:
 #   jp-pii-detect[.exe]  -tags ort の cgo ビルド。既定で ./model を使う
-#   model/               Sumi の ONNX INT8 モデル一式（未改変）
+#   model/               baneido/sumi-ja-pii-nemotron-ft の ONNX INT8 モデル一式（未改変）
 #   lib/                 ONNX Runtime の共有ライブラリ
 #   README.md NOTICE.md LICENSE licenses/
 #
