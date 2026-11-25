@@ -34,6 +34,19 @@ jp-pii-detect-sumi_linux_amd64/
 linux/amd64 の実測（ONNX Runtime 1.31.0）では、アーカイブは 108MB（103MiB）、展開後は
 約 177MB（モデル 133MB、ONNX Runtime 29MB、実行ファイル 8MB）だった。
 
+## インストール（install.sh、pre-commit、GitHub Actions）
+
+次のリリースから、`scripts/install.sh` は既定でこの同梱版を入れる。pre-commit フックと
+GitHub Actions も install.sh を使うので、同じく既定で同梱版になる。
+
+- アーカイブを `<インストール先>/jp-pii-detect-sumi/` に展開し、
+  `<インストール先>/jp-pii-detect` をその中の実行ファイルへのシンボリックリンクにする。
+- チェックサムは `checksums-model.txt` で検証する。一致しないときは軽量版に切り替えず、失敗する。
+- 同梱版のない OS/アーキテクチャ（windows、darwin/amd64）と、同梱版を添付していないリリース
+  （v0.9.3、v0.9.4 など）では、警告を表示して軽量版を入れる。
+- 軽量版を入れるには、`--no-model`、環境変数 `JP_PII_DETECT_MODEL=false`、Action の `with.model: false`
+  のいずれかを指定する。pre-commit は軽量版を `<version>-no-model/` にキャッシュする。
+
 ## モデルとライブラリの探し方
 
 - `bundledModelDir`（`-ldflags -X main.bundledModelDir=model`）が埋め込まれたビルドでは、
@@ -53,7 +66,7 @@ linux/amd64 の実測（ONNX Runtime 1.31.0）では、アーカイブは 108MB�
 |---|---|---|
 | linux/amd64 | `ubuntu-22.04` | 対応 |
 | linux/arm64 | `ubuntu-22.04-arm` | 対応 |
-| darwin/arm64 | `macos-14` | 対応 |
+| darwin/arm64 | `macos-latest`（`MACOSX_DEPLOYMENT_TARGET=14.0`） | 対応 |
 | windows/amd64 | `windows-2022` | 試験的（失敗してもほかの公開を止めない） |
 | darwin/amd64 | — | 対象外。ONNX Runtime 1.31.0 は Intel Mac 向けの公式ビルドを出していない |
 | windows/arm64 | — | 対象外（軽量版と同じくサポート外のため、需要が出るまで作らない） |

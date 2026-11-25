@@ -132,6 +132,10 @@ High / Medium / Low の GitHub アノテーションは、それぞれ `error` /
 Action の参照とダウンロードするバイナリ版は独立しているため、再現性が必要な場合は
 `uses:` のタグと `with.version` を同じ値で明示します。
 
+次のリリースから、Action は既定で Sumi モデル同梱ビルド（[model-bundle.md](model-bundle.md)）を入れます。
+モデルを使う走査はルールだけの場合より大幅に遅く、メモリも多く使うため、`--diff` で差分だけを走査してください。
+組み込みルールだけで走査する場合は `with.model: false` を指定します。
+
 ### SARIF を GitHub Code Scanning に取り込む
 
 検出結果を PR の Security タブ / Code Scanning アラートとして管理したい場合は

@@ -41,9 +41,11 @@ jobs:
             goarch: arm64
             runner: ubuntu-22.04-arm
             experimental: false
+          # macos-14 のイメージは提供終了し、ジョブが起動しなくなった（v0.9.3・v0.9.4）。
+          # 動作する最小の macOS は MACOSX_DEPLOYMENT_TARGET で固定する。
           - goos: darwin
             goarch: arm64
-            runner: macos-14
+            runner: macos-latest
             experimental: false
           # Windows は ci.yml の test (windows) でルール部分のテストを回しているが、
           # モデル同梱版は実績が少ないため試験的扱いとし、失敗してもほかの公開を止めない。
@@ -55,12 +57,18 @@ jobs:
     continue-on-error: ${{ matrix.experimental }}
     permissions:
       contents: read
+    env:
+      # macOS 以外のビルドでは使われない。
+      MACOSX_DEPLOYMENT_TARGET: '14.0'
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          # 既存リリースに後から添付するとき（workflow_dispatch で tag を指定）は、
+          # そのタグのソースからビルドする。
+          ref: ${{ inputs.tag || github.ref }}
           persist-credentials: false
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:

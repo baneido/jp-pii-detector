@@ -110,6 +110,9 @@ mise use -g github:baneido/jp-pii-detector@v0.9.4
 curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detector/v0.9.4/scripts/install.sh | JP_PII_DETECT_VERSION=v0.9.4 sh
 ```
 
+Starting with the next release, install.sh installs the Sumi model bundle by default.
+Set `JP_PII_DETECT_MODEL=false` to install the rules-only binary.
+
 ### Go install
 
 ```sh
@@ -122,7 +125,7 @@ go install github.com/baneido/jp-pii-detector/cmd/jp-pii-detect@latest
 docker run --rm -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.9.4
 ```
 
-### Sumi model bundle (experimental)
+### Sumi model bundle
 
 Release assets `jp-pii-detect-sumi_<os>_<arch>.tar.gz` (linux/amd64, linux/arm64,
 darwin/arm64; windows/amd64 experimental) bundle the local
@@ -134,6 +137,9 @@ base model ModernBERT-Ja-130M, Copyright (c) 2025 SB Intuitions; training data
 NagaYu/sumi-ja-pii-corpus, CC BY-SA 4.0, not included) are in `NOTICE.md` and
 `licenses/` inside the archive. As the Sumi authors state, Sumi is not a
 compliance control and misses are certain. See [docs/model-bundle.md](docs/model-bundle.md).
+Starting with the next release, install.sh, the pre-commit hook and the GitHub Action
+use this bundle by default. Platforms without a bundle (Windows, Intel Mac) and
+releases that lack one get the rules-only binary with a warning.
 
 ## Usage
 
@@ -163,6 +169,9 @@ pre-commit install
 pre-commit run jp-pii-detect
 ```
 
+Starting with the next release, the hook uses the Sumi model bundle (~100MB on the
+first run); set `JP_PII_DETECT_MODEL=false` for the rules-only binary.
+
 The default hook always scans the staged diff. To audit the whole repository during
 adoption, configure `id: jp-pii-detect-full` and run
 `pre-commit run jp-pii-detect-full --all-files`.
@@ -189,6 +198,11 @@ jobs:
 
 The Action ref and downloaded binary version are resolved independently. For
 reproducible builds, explicitly set `with.version` to the same tag as `uses:`.
+
+Starting with the next release, the Action installs the Sumi model bundle by default
+and detects with the model as well as the built-in rules. The model makes scans much
+slower, so scan only the PR diff with `--diff`. Set `with.model: false` for the
+rules-only binary. Windows runners always get the rules-only binary.
 
 ## Configuration
 
