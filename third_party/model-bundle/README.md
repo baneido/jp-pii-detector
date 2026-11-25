@@ -1,12 +1,14 @@
 # jp-pii-detect（Sumi モデル同梱ビルド）
 
 日本特化の個人情報（PII）静的検出器 jp-pii-detect に、ローカル推論モデル
-[Sumi](https://huggingface.co/NagaYu/sumi-ja-pii)（ONNX INT8）と ONNX Runtime を
-同梱したビルドです。展開するだけで、組み込みルールにモデル起点の検出を加えた走査が
-できます（`--model-dir` の指定や ONNX Runtime の別途インストールは不要）。
+[sumi-ja-pii-nemotron-ft](https://huggingface.co/baneido/sumi-ja-pii-nemotron-ft)（ONNX INT8）と
+ONNX Runtime を同梱したビルドです。このモデルは、[Sumi](https://huggingface.co/NagaYu/sumi-ja-pii) を
+Nemotron-PII-Japan で追加学習し、ラベルや敬称のない氏名も検出できるようにしたものです。
+展開するだけで、組み込みルールにモデル起点の検出を加えた走査ができます
+（`--model-dir` の指定や ONNX Runtime の別途インストールは不要）。
 
 ```sh
-./jp-pii-detect scan .            # 組み込みルール + Sumi で走査
+./jp-pii-detect scan .            # 組み込みルール + モデルで走査
 ./jp-pii-detect scan --staged     # pre-commit 用
 ./jp-pii-detect scan --no-model . # モデルを使わず組み込みルールだけで走査
 ./jp-pii-detect version           # 2 行目に同梱しているモデルと ONNX Runtime の版
@@ -27,5 +29,5 @@
   `xattr -dr com.apple.quarantine <展開先>` で外してください。
 
 同梱物のライセンスと帰属表示、免責は `NOTICE.md` と `licenses/` を参照してください。
-Sumi は見逃しが必ず起きることを前提にしたリスク低減の道具であり、コンプライアンスを
-保証するものではありません。
+このモデルは、Sumi と同じく見逃しが必ず起きることを前提にしたリスク低減の道具であり、
+コンプライアンスを保証するものではありません。

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sumi（NagaYu/sumi-ja-pii）の ONNX INT8 モデル一式を、scripts/model-bundle.env で
+# 同梱するモデル（Sumi を追加学習した baneido/sumi-ja-pii-nemotron-ft）の ONNX INT8 モデル一式を、scripts/model-bundle.env で
 # ピン留めした Hugging Face のリビジョンから取得し、SHA-256 を検証して <dest> に置く。
 #
 #   scripts/fetch-sumi-model.sh <dest>

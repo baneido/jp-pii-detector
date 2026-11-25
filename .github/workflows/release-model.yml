@@ -1,5 +1,5 @@
 name: release-model
-# Sumi モデルと ONNX Runtime を同梱したビルド（jp-pii-detect-sumi_<os>_<arch>.tar.gz）を
+# Sumi を追加学習したモデル（baneido/sumi-ja-pii-nemotron-ft）と ONNX Runtime を同梱したビルド（jp-pii-detect-sumi_<os>_<arch>.tar.gz）を
 # 作り、リリースに添付する。従来の軽量バイナリ（CGO_ENABLED=0、release.yml）とは
 # 独立している。cgo でクロスコンパイルしないよう、OS/アーキテクチャごとのランナーで
 # ネイティブにビルドする。手順の本体は scripts/package-model-bundle.sh

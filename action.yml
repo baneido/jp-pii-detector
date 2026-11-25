@@ -13,7 +13,7 @@ inputs:
     required: false
     default: latest
   model:
-    description: true ならローカル推論モデル（Sumi）を同梱した版を入れ、組み込みルールに加えてモデルでも検出する。false なら組み込みルールだけの軽量版を入れる。同梱版がない OS（Windows、Intel Mac）は軽量版になる
+    description: true ならローカル推論モデル（Sumi を追加学習した sumi-ja-pii-nemotron-ft）を同梱した版を入れ、組み込みルールに加えてモデルでも検出する。false なら組み込みルールだけの軽量版を入れる。同梱版がない OS（Windows、Intel Mac）は軽量版になる
     required: false
     default: 'true'
 runs:

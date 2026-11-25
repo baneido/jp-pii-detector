@@ -148,8 +148,10 @@ docker run --rm -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.9.4
 
 ### Option 6. Sumi モデル同梱ビルド
 
-組み込みルールに加えて、ローカル推論モデル [Sumi](https://huggingface.co/NagaYu/sumi-ja-pii)
-（ModernBERT-Ja-130M を PII 抽出用に微調整したもの、ONNX INT8）でも検出するビルドです。
+組み込みルールに加えて、ローカル推論モデル [sumi-ja-pii-nemotron-ft](https://huggingface.co/baneido/sumi-ja-pii-nemotron-ft)
+（ONNX INT8）でも検出するビルドです。このモデルは、PII 抽出モデル [Sumi](https://huggingface.co/NagaYu/sumi-ja-pii)
+（ModernBERT-Ja-130M を微調整したもの）を Nemotron-PII-Japan で追加学習し、ラベルや敬称のない氏名
+（ログ、ソースコード、ヘッダのない CSV の中の氏名など）も検出できるようにしたものです。
 モデルと ONNX Runtime を同梱しているので、展開するだけで動きます（`--model-dir` の
 指定や ONNX Runtime のインストールは不要）。リリースに
 `jp-pii-detect-sumi_<os>_<arch>.tar.gz`（linux/amd64、linux/arm64、darwin/arm64。
@@ -157,7 +159,7 @@ windows/amd64 は試験的）として添付し、チェックサムは `checksu
 
 ```sh
 tar -xzf jp-pii-detect-sumi_linux_amd64.tar.gz
-./jp-pii-detect-sumi_linux_amd64/jp-pii-detect scan .            # ルール + Sumi
+./jp-pii-detect-sumi_linux_amd64/jp-pii-detect scan .            # ルール + モデル
 ./jp-pii-detect-sumi_linux_amd64/jp-pii-detect scan --no-model . # ルールだけ
 ```
 
@@ -172,16 +174,17 @@ tar -xzf jp-pii-detect-sumi_linux_amd64.tar.gz
   ビルドするマシンと同じ OS/アーキテクチャ向けだけ）。モデルと ONNX Runtime は
   ピン留めした版を取得し、SHA-256 を検証します。詳細は [docs/model-bundle.md](docs/model-bundle.md)。
 
-**ライセンスと帰属表示**：同梱の Sumi は Apache License 2.0（Sumi contributors。
-ファイルは未改変で同梱し、ONNX 変換と INT8 量子化は Sumi の作者によるもの）、
-ベースモデル ModernBERT-Ja-130M は MIT（Copyright (c) 2025 SB Intuitions）、
+**ライセンスと帰属表示**：同梱のモデルは Apache License 2.0 で、Sumi（Apache License 2.0、
+Sumi contributors）の重みを追加学習で変更したものです（トークナイザとラベルは Sumi のファイルのまま）。
+Sumi のベースモデル ModernBERT-Ja-130M は MIT（Copyright (c) 2025 SB Intuitions）、
 ONNX Runtime は MIT（Microsoft、サードパーティ表記は `ThirdPartyNotices.txt`）です。
 各ライセンス本文はアーカイブの `NOTICE.md` と `licenses/` に入っています。
-Sumi は合成データセット [NagaYu/sumi-ja-pii-corpus](https://huggingface.co/datasets/NagaYu/sumi-ja-pii-corpus)
-（CC BY-SA 4.0）で学習されています（データセットは同梱していません）。
+追加学習には NVIDIA の合成データセット [Nemotron-PII-Japan](https://huggingface.co/datasets/nvidia/Nemotron-PII-Japan)
+（CC BY 4.0）を、元の Sumi は合成データセット [NagaYu/sumi-ja-pii-corpus](https://huggingface.co/datasets/NagaYu/sumi-ja-pii-corpus)
+（CC BY-SA 4.0）を使っています（どちらも同梱していません）。
 
 **免責**：Sumi の作者が明記しているとおり、Sumi はコンプライアンスを保証する仕組みでは
-なく（"Sumi is not a compliance control."）、見逃しは必ず起きます。モデル同梱ビルドを
+なく（"Sumi is not a compliance control."）、見逃しは必ず起きます。追加学習したモデルも同じです。モデル同梱ビルドを
 使っても、個人情報が含まれないことは保証されません。
 
 ## 使い方
@@ -429,6 +432,6 @@ $ jp-pii-detect scan --baseline .jp-pii-baseline.json --show-baseline .
 
 [MIT License](LICENSE) の下で配布しています。同梱・依存するサードパーティ成果物の
 ライセンス表記は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照してください。
-Sumi モデル同梱ビルドの同梱物（Sumi：Apache-2.0、ModernBERT-Ja-130M：MIT、
+Sumi モデル同梱ビルドの同梱物（sumi-ja-pii-nemotron-ft と Sumi：Apache-2.0、ModernBERT-Ja-130M：MIT、
 ONNX Runtime：MIT）の表記は [third_party/model-bundle/NOTICE.md](third_party/model-bundle/NOTICE.md) にあり、
 アーカイブにも同梱しています。

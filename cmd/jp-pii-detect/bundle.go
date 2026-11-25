@@ -7,5 +7,5 @@ package main
 var bundledModelDir = ""
 
 // bundleInfo は、モデル同梱ビルドで version の 2 行目に表示する同梱物の説明
-// （例: "bundle: NagaYu/sumi-ja-pii@daa43a0 + onnxruntime 1.31.0"）。
+// （例: "bundle: baneido/sumi-ja-pii-nemotron-ft@ac8b53c + onnxruntime 1.31.0"）。
 var bundleInfo = ""
