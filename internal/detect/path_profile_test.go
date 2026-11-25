@@ -130,7 +130,7 @@ func TestPathDemotionExcludesHighBaseRequireContextRule(t *testing.T) {
 // ルール）はテスト経路でも対象外。
 func TestPathDemotionDoesNotAffectRulesWithoutRequireContext(t *testing.T) {
 	d := newDetector(t, "")
-	fs := d.ScanContent("testdata/sample.go", "email: user@acme-corp.com")
+	fs := d.ScanContent("testdata/sample.go", "email: user@home.arpa")
 	assertRules(t, fs, "email-address")
 	if fs[0].Confidence != rule.High {
 		t.Fatalf("confidence = %v, want high", fs[0].Confidence)

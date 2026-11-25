@@ -7,7 +7,7 @@ TEL: 090-0000-0000
 代表: 03-0000-0000
 international: +81-90-0000-0000
 mail: taro.yamada@gmail.invalid-not-detected
-contact: hanako.suzuki@dummymail.co.jp
+contact: hanako.suzuki@dummymail.home.arpa
 〒530-0001 大阪府大阪市北区梅田3丁目1番3号
 住所: 東京都渋谷区道玄坂2-10-7
 card: 4000-0012-3456-7899

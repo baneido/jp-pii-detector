@@ -139,7 +139,7 @@ func TestHonorificOrgAndProseNotReported(t *testing.T) {
 	// 敬称付きの氏名と、通常のメールアドレスは従来どおり報告する。
 	for line, prefix := range map[string]string{
 		"寄付ありがとうございます（山田太郎様）":         "person-name",
-		"連絡先: info@jp-pii-test.co.jp": "email",
+		"連絡先: info@home.arpa": "email",
 	} {
 		found := false
 		for _, f := range d.ScanLine("f.txt", 1, line) {

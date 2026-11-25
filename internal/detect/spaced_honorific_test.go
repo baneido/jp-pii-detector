@@ -168,8 +168,8 @@ func TestEAIAbsorbedLabelText(t *testing.T) {
 		return out
 	}
 	for _, line := range []string{
-		"ファクス00-0000-0000　電子メールkakuu-info@baneido.com",
-		"（E-mailの場合は各施設ともkakuu-incident@baneido.com）",
+		"ファクス00-0000-0000　電子メールkakuu-info@home.arpa",
+		"（E-mailの場合は各施設ともkakuu-incident@home.arpa）",
 	} {
 		got := ids(line)
 		if m, ok := got["email-address-eai"]; ok {
@@ -180,15 +180,15 @@ func TestEAIAbsorbedLabelText(t *testing.T) {
 		}
 	}
 	for _, line := range []string{
-		"※大学のアカウント（学籍番号@baneido.com）でのログインが必要です。",
-		"大学が発行するアドレス（Kakuu Mail用アカウント＠baneido.com）が必要です。",
-		"本システムにおいてご登録いただいた@baneido.com のメールアドレスに送信できない",
+		"※大学のアカウント（学籍番号@home.arpa）でのログインが必要です。",
+		"大学が発行するアドレス（Kakuu Mail用アカウント＠home.arpa）が必要です。",
+		"本システムにおいてご登録いただいた@home.arpa のメールアドレスに送信できない",
 	} {
 		if got := ids(line); len(got) != 0 {
 			t.Errorf("%q: 例示・文の断片を報告した: %v", line, got)
 		}
 	}
-	if _, ok := ids("連絡は 山田太郎@baneido.com まで")["email-address-eai"]; !ok {
+	if _, ok := ids("連絡は 山田太郎@home.arpa まで")["email-address-eai"]; !ok {
 		t.Error("日本語のローカル部を持つ EAI を報告しなかった")
 	}
 }

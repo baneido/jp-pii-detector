@@ -186,10 +186,10 @@ func TestAppointContextCSVReadingColumn(t *testing.T) {
 func TestAppointContextEAIGluedLabel(t *testing.T) {
 	d := newDetector(t, "[rules]\nhigh_recall = true\n")
 	var ids []string
-	for _, f := range d.ScanLine("f.txt", 1, "ライブラリーlibrary9@tosho.kakuu-u.ac.jp") {
+	for _, f := range d.ScanLine("f.txt", 1, "ライブラリーlibrary9@tosho.home.arpa") {
 		ids = append(ids, f.RuleID+":"+f.Match)
 	}
-	if len(ids) != 1 || ids[0] != "email-address:library9@tosho.kakuu-u.ac.jp" {
+	if len(ids) != 1 || ids[0] != "email-address:library9@tosho.home.arpa" {
 		t.Errorf("got %q", ids)
 	}
 }
