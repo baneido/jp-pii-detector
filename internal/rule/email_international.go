@@ -409,6 +409,23 @@ func rejectEAIDomainContinuation(line string, start, end int) bool {
 	return true
 }
 
+// rejectIAMGroupMember は、Google Cloud IAM のメンバー指定 "group:<アドレス>"
+// （Terraform の member / principal 等）のアドレスを棄却する。宛先は個人ではなく
+// Google グループ。"user:" は個人を指すので棄却しない。直前が英数字の
+// "mygroup:" のような語の一部は対象外。
+func rejectIAMGroupMember(line string, start, end int) bool {
+	before := line[:start]
+	if !strings.HasSuffix(before, "group:") {
+		return true
+	}
+	before = strings.TrimSuffix(before, "group:")
+	if before == "" {
+		return false
+	}
+	r, _ := utf8.DecodeLastRuneInString(before)
+	return unicode.IsLetter(r) || unicode.IsNumber(r)
+}
+
 // rejectEmailFormExample は、入力欄の説明の「入力例：<アドレス>」「記入例:<アドレス>」のように、
 // 例示のラベルに直結するアドレスを棄却する（2026-11-15 に市のメール配信の登録案内で実測した偽陽性。
 // 入力の形を示す例で、特定の個人の連絡先ではない）。「例：」だけの形は、本文の実例にも使われるので棄却しない。
