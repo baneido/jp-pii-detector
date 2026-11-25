@@ -1,17 +1,17 @@
 # CI/CD・開発環境への組み込み
 
 jp-pii-detect を各種 CI/CD サービスや開発環境に組み込むためのレシピ集です。
-基本のインストール方法（Homebrew / バイナリ / `go install`）と GitHub Actions の
+基本のインストール方法（Homebrew / バイナリ / `go install`）と pre-commit・GitHub Actions の
 最小構成は [README](../README.md) を参照してください。
 
-どの CI でも考え方は同じです:
+どの CI でも考え方は同じです。
 
-- **終了コード**: `0`=検出なし / `1`=検出あり / `2`=エラー。検出ありでジョブを
+- 終了コード: `0`=検出なし / `1`=検出あり / `2`=エラー。検出ありでジョブを
   落とすだけなら追加設定は不要です。
-- **出力形式**: `--format text|json|sarif|github`（いずれも標準出力）。機械処理には
+- 出力形式: `--format text|json|sarif|github`（いずれも標準出力）。機械処理には
   `json`、GitHub Code Scanning には `sarif`、PR アノテーションには `github` を使います。
-- **スキャン範囲**: フルスキャン（`scan .`）か、変更行のみ（`scan --diff <range>`）。
-  PR/MR ゲートには `--diff` が高速で、既存コードの検出結果に埋もれません。
+- スキャン範囲: フルスキャン（`scan .`）か、変更行のみ（`scan --diff <range>`）。
+  PR/MR のチェックには `--diff` が速く、既存コードの検出結果に埋もれません。
   `--diff` は git の履歴が必要なので、shallow clone の CI では履歴を取得してください。
 
 ## コンテナイメージ（GHCR）
@@ -22,7 +22,7 @@ jp-pii-detect を各種 CI/CD サービスや開発環境に組み込むため�
 
 イメージには `git` と shell（alpine ベース）が入っているため、そのまま CI の
 ジョブコンテナとして使えます。`ENTRYPOINT` は `jp-pii-detect`、作業ディレクトリは
-`/scan`、既定コマンドは `scan .` です:
+`/scan`、既定コマンドは `scan .` です。
 
 ```sh
 # カレントディレクトリをフルスキャン
@@ -36,25 +36,25 @@ docker run --rm -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.9.4 scan --fo
 
 ### メモリ上限を課すなら `GOMEMLIMIT` を併せて設定する
 
-フルスキャンはワーカーごとに読み込みと走査を融合しているため、同時に保持する
+フルスキャンでは各ワーカーがファイルを読み込んですぐにスキャンするため、同時に保持する
 テキスト量はワーカー数 × 最大 5MB（それを超えるファイルはスキップ）に収まり、
-Go の live heap は 30MB 前後で定常です。**ただしこれは保持量であってプロセスの
+Go の live heap は 30MB 前後で安定します。**ただしこれは保持量であってプロセスの
 RSS ではありません。** 既定の GC 設定では回収の余裕分とアロケータが OS へ返さない
-スパンが積み上がるため、5MB 級のファイルを 4 ワーカーで並列走査すると RSS は
+スパンが積み上がるため、5MB 級のファイルを 4 ワーカーで並列にスキャンすると RSS は
 最大 498MB まで伸びました。保持量の目安（数十MB）を根拠に `--memory=64m` のような
 小さな上限を設定すると OOM Kill されます。
 
-上限を課す環境では、同じ上限を `GOMEMLIMIT` でランタイム側にも伝えてください。
+メモリ上限を設定する環境では、同じ上限を `GOMEMLIMIT` でランタイム側にも伝えてください。
 128MiB を指定した実測では RSS が 125MB 前後に収まり、実行時間の悪化は計測誤差の
 範囲でした。コンテナ側の上限は `GOMEMLIMIT`（Go ヒープのソフト上限）より
-少し大きめに取ります:
+少し大きめに取ります。
 
 ```sh
 docker run --rm --memory=192m -e GOMEMLIMIT=128MiB \
   -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.9.4
 ```
 
-GitLab CI / Kubernetes ではジョブの環境変数として渡します:
+GitLab CI / Kubernetes ではジョブの環境変数として渡します。
 
 ```yaml
 # .gitlab-ci.yml（ジョブ定義に追記）
@@ -80,9 +80,9 @@ GitLab CI / Kubernetes ではジョブの環境変数として渡します:
 数字が密に並ぶデータファイル（CSV / SQL ダンプ / ログ）は 1 行あたりの検出候補が
 多く、通常のソースコードに比べて実測で 12〜15 倍遅くなります。
 4MB の CSV をステージした `scan --staged` は 13 秒ほどかかり、commit hook としては
-体感できる待ちになります。
+体感できるほどの待ち時間になります。
 
-走査しなくてよいデータディレクトリは `.jp-pii.toml` の allowlist で除外してください:
+スキャンしなくてよいデータディレクトリは `.jp-pii.toml` の allowlist で除外してください。
 
 ```toml
 [allowlist]
@@ -129,17 +129,20 @@ Medium の候補は PR 上に `warning` として表示し、High の検出が�
 
 `--fail-on` の指定がない場合は後方互換のため、報告された検出が 1 件でもあれば終了コード 1 です。
 High / Medium / Low の GitHub アノテーションは、それぞれ `error` / `warning` / `notice` になります。
-Action の参照とダウンロードするバイナリ版は独立しているため、再現性が必要な場合は
+Action の参照と、ダウンロードするバイナリのバージョンは別々に決まるため、再現性が必要な場合は
 `uses:` のタグと `with.version` を同じ値で明示します。
 
 次のリリースから、Action は既定で Sumi モデル同梱ビルド（[model-bundle.md](model-bundle.md)）を入れます。
-モデルを使う走査はルールだけの場合より大幅に遅く、メモリも多く使うため、`--diff` で差分だけを走査してください。
-組み込みルールだけで走査する場合は `with.model: false` を指定します。
+モデルを使うスキャンはルールだけの場合より大幅に遅く、メモリも多く使うため、`--diff` で差分だけをスキャンしてください。
+組み込みルールだけでスキャンする場合は `with.model: false` を指定します。Windows のランナーでは常に軽量版になります。
+
+次回リリース以降は、リリースのたびに最新版へ付け替えるメジャーバージョンのタグ `v0` も利用でき、
+`baneido/jp-pii-detector@v0` で最新の v0 系に追従できます。
 
 ### SARIF を GitHub Code Scanning に取り込む
 
 検出結果を PR の Security タブ / Code Scanning アラートとして管理したい場合は
-`--format sarif` の出力をアップロードします:
+`--format sarif` の出力をアップロードします。
 
 ```yaml
 jobs:
@@ -162,8 +165,8 @@ jobs:
           sarif_file: jp-pii.sarif
 ```
 
-走査が不完全な exit 2 では upload ステップへ進めません。部分的な SARIF を
-アップロードすると、未走査ファイルの既存アラートが自動解決される恐れがあるため、
+スキャンが不完全な exit 2 では upload ステップへ進めません。部分的な SARIF を
+アップロードすると、スキャンされなかったファイルの既存アラートが自動解決される恐れがあるため、
 ここでは意図的に `if: always()` を付けていません。warning を解消して再実行してください。
 
 ## GitLab CI
@@ -258,13 +261,41 @@ pipeline {
 
 コミット前のチェックには `scan --staged`（ステージ済み変更の追加行のみ）を使います。
 [pre-commit フレームワーク](https://pre-commit.com)を使う場合はバイナリの用意が不要です
-（README 参照）。それ以外のマネージャでは、開発者のマシンに jp-pii-detect が
+（[pre-commit フレームワーク](#pre-commit-フレームワーク)）。それ以外のマネージャでは、開発者のマシンに jp-pii-detect が
 インストールされている前提になります（Homebrew / install.sh / mise など）。
 
 大きな CSV / SQL ダンプ / ログをステージすると commit hook の待ち時間が数秒から
 十数秒に伸びます。対処は
 [大きなデータファイルを含むリポジトリ](#大きなデータファイルを含むリポジトリ)を
 参照してください。
+
+### pre-commit フレームワーク
+
+`.pre-commit-config.yaml`:
+
+```yaml
+repos:
+  - repo: https://github.com/baneido/jp-pii-detector
+    rev: v0.9.4
+    hooks:
+      - id: jp-pii-detect
+```
+
+```sh
+pre-commit install
+pre-commit run jp-pii-detect
+```
+
+フックは GitHub Releases のビルド済みバイナリを `~/.cache/jp-pii-detector/pre-commit/`
+配下にキャッシュして実行するので、利用側の環境に Go は不要です。
+フックが使うバイナリは通常 `rev` に指定したタグと同じバージョンです。
+次のリリースから、フックは Sumi モデル同梱ビルドを使います（初回は約 100MB をダウンロードします）。
+軽量版を使う場合は、環境変数 `JP_PII_DETECT_MODEL=false` を設定してください。
+
+既定のフック（`jp-pii-detect`）は、常にステージ済みの差分だけをスキャンします。
+このフックは pre-commit からファイル一覧を受け取らないため、`--all-files` を付けて実行してもスキャン範囲は広がりません。
+導入時にリポジトリ全体を確認したい場合は、フック ID を `jp-pii-detect-full` に変えて
+`pre-commit run jp-pii-detect-full --all-files` を実行してください。
 
 ### lefthook
 
@@ -294,7 +325,7 @@ exec jp-pii-detect scan --staged
 ## mise（旧 rtx）でのツール管理
 
 [mise](https://mise.jdx.dev) の GitHub バックエンドで GitHub Releases のバイナリを
-そのまま管理できます（Go 不要）:
+そのまま管理できます（Go 不要）。
 
 ```sh
 mise use "github:baneido/jp-pii-detector@v0.9.4"
@@ -310,7 +341,7 @@ mise use "github:baneido/jp-pii-detector@v0.9.4"
 ## Dev Containers（VS Code / GitHub Codespaces）
 
 `postCreateCommand` でインストールしておくと、コンテナ内のターミナルや
-git hook からすぐ使えます:
+git hook からすぐ使えます。
 
 ```json
 {
@@ -320,10 +351,10 @@ git hook からすぐ使えます:
 
 ## AI コーディングエージェント
 
-Claude Code などの AI コーディングエージェントは、新しい PII 混入経路を生みます。
-会話に貼り付けた本番データがそのままテストフィクスチャへ転写されたり、実在しうる氏名や
+Claude Code などの AI コーディングエージェントを使うと、PII が混入する新しい経路ができます。
+会話に貼り付けた本番データがそのままテストフィクスチャへコピーされたり、実在しうる氏名や
 住所が「ダミー」として生成されコミットされたりします。エージェントがファイルを書き込む
-直前に走査するフックへ `scan --stdin`（標準入力のテキストを 1 本として走査）を組み込むと、
+直前にスキャンするフックへ `scan --stdin`（標準入力のテキストを 1 本としてスキャン）を組み込むと、
 こうした混入を書き込み前に止められます。
 
 ### Claude Code hooks
@@ -364,7 +395,7 @@ printf '%s' "$content" | jp-pii-detect scan --stdin || exit 2
 
 ### 汎用パターン（任意のエージェント / パイプライン）
 
-エージェントの種類を問わず、書き込み予定のテキストを標準入力へ渡して判定できます:
+エージェントの種類を問わず、書き込み予定のテキストを標準入力へ渡して判定できます。
 
 ```sh
 printf '%s' "$TEXT" | jp-pii-detect scan --stdin --format json

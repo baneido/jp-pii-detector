@@ -11,7 +11,7 @@ CI/CD への組み込みレシピは [docs/integrations.md](integrations.md) を
 ## 目次
 
 - [コマンド一覧](#コマンド一覧)
-- [scan: 走査モード](#scan-走査モード)
+- [scan: スキャンモード](#scan-スキャンモード)
   - [パスとフラグの順序](#パスとフラグの順序)
   - [`--stdin` の座標系](#--stdin-の座標系)
 - [scan: フラグリファレンス](#scan-フラグリファレンス)
@@ -30,7 +30,7 @@ CI/CD への組み込みレシピは [docs/integrations.md](integrations.md) を
 
 | コマンド | 説明 |
 |---|---|
-| `jp-pii-detect scan [flags] [path...]` | PII を走査する（本ツールの主機能） |
+| `jp-pii-detect scan [flags] [path...]` | PII をスキャンする（本ツールの主機能） |
 | `jp-pii-detect rules [--config <path>] [--high-recall] [--name-roster]` | 実効ルール一覧を表示する |
 | `jp-pii-detect version` \| `--version` \| `-version` | バージョンを表示する |
 | `jp-pii-detect help` \| `-h` \| `--help` | usage を表示する |
@@ -41,27 +41,27 @@ CI/CD への組み込みレシピは [docs/integrations.md](integrations.md) を
 `scan -h` / `scan --help`、`rules -h` / `rules --help` のように、各サブコマンドに
 `-h` / `--help` を付けても usage を表示できます（この場合は終了コード `0`）。
 
-## scan: 走査モード
+## scan: スキャンモード
 
-`scan` には次の 5 つの走査モードがあります。モードを指定する 4 つのフラグ
+`scan` には次の 5 つのスキャンモードがあります。モードを指定する 4 つのフラグ
 （`--full` / `--staged` / `--diff` / `--stdin`）は**互いに排他**で、2 つ以上
-同時に指定するとエラーになります。位置引数パスとの併用可否はフラグごとに
-異なります（下記）。
+同時に指定するとエラーになります。位置引数のパスと一緒に指定できるかどうかは
+フラグごとに異なります（下記）。
 
 | モード | 指定方法 | 用途 |
 |---|---|---|
 | フルスキャン（位置引数） | `scan [path...]`（既定はカレントディレクトリ `.`） | 通常のフルスキャン |
-| フルスキャン（固定ルート） | `scan --full` | pre-commit の full フック用。カレントディレクトリを固定で走査 |
+| フルスキャン（固定ルート） | `scan --full` | pre-commit の full フック用。カレントディレクトリを固定でスキャン |
 | ステージ済み差分 | `scan --staged` | pre-commit フック用。`git diff --staged` の追加行のみ |
 | diff 範囲 | `scan --diff <range>` | CI（PR）用。指定リビジョン範囲の追加行のみ |
-| 標準入力 | `scan --stdin` | 外部連携用。標準入力のテキスト 1 本を走査 |
+| 標準入力 | `scan --stdin` | 外部連携用。標準入力のテキスト 1 本をスキャン |
 
 - `--full` は位置引数のパスと併用するとエラーになります
   （`--full` は「カレントディレクトリ固定」を表すため、パスとの併用は矛盾する指定として拒否されます）。
-- `--staged` / `--diff` / `--stdin` は位置引数のパスがあっても**黙って無視**します。
+- `--staged` / `--diff` / `--stdin` は位置引数のパスがあっても**何も表示せずに無視**します。
   pre-commit の `pass_filenames: true` のようにファイル名がフックへ渡される既存設定との
-  後方互換のためです。走査範囲を変えたい場合はパスではなく `--diff` の範囲指定などを使ってください。
-- 位置引数パスだけを指定する（4 フラグをどれも使わない）通常のフルスキャンは、
+  後方互換のためです。スキャン範囲を変えたい場合はパスではなく `--diff` の範囲指定などを使ってください。
+- 位置引数のパスだけを指定する（4 フラグをどれも使わない）通常のフルスキャンは、
   この排他制約の対象外です。
 
 ### パスとフラグの順序
@@ -82,14 +82,14 @@ $ jp-pii-detect scan -- -weird-filename.txt
 
 ### `--stdin` の座標系
 
-`--stdin` は標準入力を 1 本のテキストとして走査し、`json` 出力の各検出に
+`--stdin` は標準入力を 1 本のテキストとしてスキャンし、`json` 出力の各検出に
 `offset` / `end_offset` を付与します。Microsoft Presidio など文字オフセット基準で
 連携するツール向けです。
 
 - `offset` / `end_offset` は**テキスト先頭からのルーン単位の半開区間**です
   （UTF-8 のバイト位置ではありません）。
 - 入力に JSON の `\uXXXX` エスケープ（`json.dumps(ensure_ascii=True)` の出力など）が
-  含まれる場合、復号済みのビューに対して走査します。`offset` / `end_offset` も
+  含まれる場合、復号済みのビューをスキャンします。`offset` / `end_offset` も
   **復号後のテキスト**上のルーンオフセットになります。復号を無効化するフラグはありません。
 
 ## scan: フラグリファレンス
@@ -97,24 +97,24 @@ $ jp-pii-detect scan -- -weird-filename.txt
 | フラグ | 既定値 | 説明 |
 |---|---|---|
 | `--format <fmt>` | `text` | 出力形式: `text` \| `json` \| `sarif` \| `github` |
-| `--config <path>` | 上方探索 | 設定ファイルのパス（既定は `.jp-pii.toml` をリポジトリルートまで上方探索） |
-| `--min-confidence <lvl>` | 設定ファイル値 or `medium` | 報告する最小信頼度: `low` \| `medium` \| `high` |
+| `--config <path>` | 自動で探索 | 設定ファイルのパス（既定は `.jp-pii.toml` を親ディレクトリへたどってリポジトリルートまで探す） |
+| `--min-confidence <lvl>` | 設定ファイルの値、なければ `medium` | 報告する最小信頼度: `low` \| `medium` \| `high` |
 | `--fail-on <lvl>` | 未指定 | 終了コードを `1` にする最小信頼度: `low` \| `medium` \| `high` |
 | `--unmask` | 無効 | 検出値をマスクせず出力する（ローカル限定） |
-| `--explain` | 無効 | 検出理由（コンテキスト昇格・検証有無など）を text/json 出力に追加する |
+| `--explain` | 無効 | 検出理由（キーワードによる信頼度の昇格・検証の有無など）を text/json 出力に追加する |
 | `--explain-dropped` | 無効 | 検出候補がどの段階で棄却されたかを text/json 出力に追加する（FN 分析用。`json` 出力の `dropped` 配列に検出値そのものは含まれません） |
 | `--high-recall` | 無効 | 偽陽性リスクの高い再現率重視ルールを有効化する |
 | `--name-roster` | 無効 | 氏名だけが改行区切りで並ぶ名簿ファイルの判定（`person-name-roster`）を有効化する |
-| `--no-gitignore` | 無効 | フルスキャンで `.gitignore` 等に無視された未追跡ファイルも走査する（設定ファイルの `[scan] respect_gitignore = false` と同じ）。詳細は [`.gitignore` の扱い](#gitignore-の扱い) |
-| `--model-dir <dir>` | 未指定 | 試験的機能。ローカル推論モデル（Sumi、ONNX INT8）による検出を組み込みルールに追加する。`dir` には `model.int8.onnx`・`tokenizer.json`・`sumi_labels.json`・`calibrator.json` を置く。`CGO_ENABLED=1 go build -tags ort` でビルドしたバイナリでのみ使え、配布バイナリでは終了コード `2` になる。ONNX Runtime の共有ライブラリは環境変数 `JP_PII_ORT_LIBRARY`、`dir` 内、実行ファイルの隣の `lib/`、実行ファイルと同じディレクトリの順に探す。[モデル同梱ビルド](model-bundle.md)では、未指定でも実行ファイルの隣の `model/` を使う。Linux（x86-64）では、仮想マシンで INT8 推論の結果が壊れる ONNX Runtime の不具合（microsoft/onnxruntime#33247）を避けるため、既定で AMX を使わせない（`JP_PII_ORT_AMX=1` で解除）。設計は [design-ai-detection.md](design-ai-detection.md) |
-| `--model-full` | 無効 | `--model-dir`（またはモデル同梱ビルド）で、モデルにファイル全体を読ませる。既定では 2 段階方式で、日本語・`@`・長い数字の並び・ローマ字の姓名を含む行とその前後 1 行だけをモデルに読ませる（4096 バイトを超える行は minified や生成物とみなして読ませない）。組み込みルールは常にファイル全体を走査する。検出結果はほぼ同じで、コード中心のリポジトリでは数倍速い |
-| `--no-model` | 無効 | [モデル同梱ビルド](model-bundle.md)でも、モデルを使わず組み込みルールだけで走査する。`--model-dir` とは同時に指定できない |
+| `--no-gitignore` | 無効 | フルスキャンで `.gitignore` などで無視された未追跡ファイルもスキャンする（設定ファイルの `[scan] respect_gitignore = false` と同じ）。詳細は [`.gitignore` の扱い](#gitignore-の扱い) |
+| `--model-dir <dir>` | 未指定 | 試験的機能。ローカル推論モデル（Sumi、ONNX INT8）による検出を組み込みルールに追加する。`dir` には `model.int8.onnx`・`tokenizer.json`・`sumi_labels.json`・`calibrator.json` を置く。`CGO_ENABLED=1 go build -tags ort` でビルドしたバイナリでのみ使え、配布バイナリでは終了コード `2` になる。ONNX Runtime の共有ライブラリは環境変数 `JP_PII_ORT_LIBRARY`、`dir` 内、実行ファイルの隣の `lib/`、実行ファイルと同じディレクトリの順に探す。[モデル同梱ビルド](model-bundle.md)では、未指定でも実行ファイルの隣の `model/` を使う。Linux（x86-64）では、仮想マシンで INT8 推論の結果がおかしくなる ONNX Runtime の不具合（microsoft/onnxruntime#33247）を避けるため、既定で AMX を使わせない（`JP_PII_ORT_AMX=1` で解除）。設計は [design-ai-detection.md](design-ai-detection.md) |
+| `--model-full` | 無効 | `--model-dir`（またはモデル同梱ビルド）で、モデルにファイル全体を読ませる。既定では 2 段階方式で、日本語・`@`・長い数字の並び・ローマ字の姓名を含む行とその前後 1 行だけをモデルに読ませる（4096 バイトを超える行は minified や生成物とみなして読ませない）。組み込みルールは常にファイル全体をスキャンする。検出結果はほぼ同じで、コード中心のリポジトリでは数倍速い |
+| `--no-model` | 無効 | [モデル同梱ビルド](model-bundle.md)でも、モデルを使わず組み込みルールだけでスキャンする。`--model-dir` とは同時に指定できない |
 | `--exit-zero` | 無効 | 検出があっても終了コード `0` を返す |
 | `--baseline <path>` | 未指定 | ベースラインファイルを読み込み、記録済みの検出を結果と終了コードから除外する |
 | `--update-baseline` | 無効 | 現在の検出内容でベースラインファイルを作成・追記して終了する |
 | `--show-baseline` | 無効 | ベースラインで除外された検出も参考表示する |
-| `--summary` | 無効 | 走査の要約を stderr に表示する |
-| `--quiet` | 無効 | 端末での自動要約表示を抑止する |
+| `--summary` | 無効 | スキャンの要約を stderr に表示する |
+| `--quiet` | 無効 | 端末で要約を自動表示しない |
 
 ### `--min-confidence` と `--fail-on`
 
@@ -130,7 +130,7 @@ $ jp-pii-detect scan -- -weird-filename.txt
 終了コードには反映されます。その場合、該当件数と対処方法（`--min-confidence` を
 下げて詳細を見る）を stderr に通知します。
 
-この分離により、「medium 以上を PR に可視化しつつ、CI を落とすのは high の
+2 つを分けておくと、「medium 以上を PR に可視化しつつ、CI を落とすのは high の
 検出だけ」といった運用ができます（GitHub Actions での例は
 [docs/integrations.md](integrations.md) を参照）。
 
@@ -139,18 +139,18 @@ $ jp-pii-detect scan -- -weird-filename.txt
 - `--update-baseline` と `--show-baseline` は、どちらも `--baseline <path>` の
   指定が必須です。単独では使えません。
 - `--update-baseline` と `--show-baseline` は同時に指定できません。
-- `--update-baseline` 指定時は `--format` の値を無視します
+- `--update-baseline` を指定したときは `--format` の値を無視します
   （ベースライン更新は出力レンダラを経由しないため）。
-- `--update-baseline` は、走査中に警告（一部ファイルが読み取れなかった等）が
-  あった場合、ベースラインの更新を**拒否**します。不完全な走査結果を
+- `--update-baseline` は、スキャン中に警告（一部のファイルが読み取れなかったなど）が
+  あった場合、ベースラインの更新を**拒否**します。不完全なスキャン結果を
   ベースラインとして固定してしまうのを防ぐためです。
 - `--update-baseline` は、ファイルへの書き込みに成功すれば検出件数によらず
   常に終了コード `0` で終了します（gitleaks の `--baseline-path` や
-  detect-secrets の baseline 更新運用と同様です）。走査・書き込み自体が
-  失敗した場合のみ `2` を返します。
+  detect-secrets の baseline 更新運用と同様です）。スキャンや書き込みそのものが
+  失敗した場合だけ `2` を返します。
 
-運用例やベースラインの設計思想は README の
-[「ベースライン」節](../README.md#ベースライン既存の検出を凍結して新規のみ-fail-させる)、
+運用例やベースラインの設計思想は
+[docs/configuration.md の「ベースライン」節](configuration.md#ベースライン)、
 および [docs/detection-methods.md 4.7 節](detection-methods.md#47-ベースライン方式既存検出の凍結)
 を参照してください。
 
@@ -158,7 +158,7 @@ $ jp-pii-detect scan -- -weird-filename.txt
 
 `--summary` と `--quiet` は同時に指定できません。
 
-`--summary` は走査モード・走査件数・除外件数・検出件数の要約を stderr に表示します。
+`--summary` はスキャンモード・スキャン件数・除外件数・検出件数の要約を stderr に表示します。
 `text` 形式で stderr が端末（TTY）に接続されている場合は、指定しなくても
 自動で要約が表示されます。CI のようにパイプ・リダイレクトされる環境では
 自動表示されないため、要約が必要なら明示的に `--summary` を付けてください。
@@ -167,22 +167,22 @@ $ jp-pii-detect scan -- -weird-filename.txt
 ### `.gitignore` の扱い
 
 フルスキャン（`scan [path...]` / `--full`）は既定で `.gitignore` を尊重し、無視された
-**未追跡**ファイル（ビルド成果物・ローカルの `.env` 等）を走査しません。走査ルートが git の
+**未追跡**ファイル（ビルド成果物やローカルの `.env` など）をスキャンしません。スキャンのルートが git の
 作業ツリー内なら判定は git 自身に任せる（`git ls-files --others --ignored --exclude-standard`）ため、
 ネストした `.gitignore`・否定パターン・`.git/info/exclude`・`core.excludesFile` も git と同じ
-意味で効きます。バージョン管理済み（tracked）のファイルは `.gitignore` にマッチしても走査します。
-git 管理外のディレクトリでは、走査中に見つけた `.gitignore` ファイルだけを解釈します。
+意味で効きます。バージョン管理済み（tracked）のファイルは `.gitignore` にマッチしてもスキャンします。
+git 管理外のディレクトリでは、スキャン中に見つけた `.gitignore` ファイルだけを解釈します。
 
-走査ルートとして明示指定したファイル・ディレクトリは、無視対象でも走査します。
-無視されたファイルも含めて走査したい場合は `--no-gitignore`（または設定ファイルの
+スキャンのルートとして明示的に指定したファイルやディレクトリは、無視の対象でもスキャンします。
+無視されたファイルも含めてスキャンしたい場合は `--no-gitignore`（または設定ファイルの
 `[scan] respect_gitignore = false`）を指定してください。除外件数は `--summary` の
 `excluded-gitignore=` に表示されます。`--staged` / `--diff` / `--stdin` には影響しません。
 
 ### `--exit-zero` と読み取りエラー
 
-`--exit-zero` を指定していても、走査中に一部ファイルが読み取れないなどの警告が
-発生した場合は終了コード `2` になります。走査が不完全なまま「検出なし」を
-装う事態を避けるための挙動です。収集済みの検出は通常どおり出力されます。
+`--exit-zero` を指定していても、スキャン中に一部のファイルが読み取れないなどの警告が
+発生した場合は終了コード `2` になります。スキャンが不完全なまま「検出なし」で
+終わるのを避けるためです。収集済みの検出は通常どおり出力されます。
 
 ## 出力形式
 
@@ -194,11 +194,11 @@ git 管理外のディレクトリでは、走査中に見つけた `.gitignore`
 | `github` | GitHub Actions の PR アノテーション向け（信頼度に応じて `error`/`warning`/`notice`） |
 
 検出値は既定でマスクして出力します。`--unmask` はマスクを解除しますが、
-CI のログに実データが残るリスクがあるため**ローカル調査限定**での利用を
+CI のログに実データが残るリスクがあるため、**ローカルでの調査に限って**使うことを
 想定しています。
 
 出力例や SARIF アップロードの具体的な手順は重複を避けるため、
-README の [「1. CLI として利用」](../README.md#1-cli-として利用)、
+README の [「使い方」](../README.md#使い方)、
 [docs/integrations.md の「SARIF を GitHub Code Scanning に取り込む」](integrations.md#sarif-を-github-code-scanning-に取り込む)
 を参照してください。
 
@@ -208,7 +208,7 @@ README の [「1. CLI として利用」](../README.md#1-cli-として利用)、
 |---|---|
 | `0` | 検出なし（または `--exit-zero` 指定時） |
 | `1` | 報告対象の検出あり（`--fail-on` 指定時はその閾値以上の検出あり） |
-| `2` | 走査・設定エラー |
+| `2` | スキャン・設定エラー |
 
 一部ファイルが読み取れなかった場合、収集済みの検出結果は通常どおり出力した
 うえで終了コード `2` を返します。`--exit-zero` を指定していても上書きされません
@@ -223,7 +223,7 @@ $ jp-pii-detect rules [--config <path>] [--high-recall] [--name-roster]
 `--config` / `--high-recall` / `--name-roster` を反映した**実効ルール一覧**を表示します。
 `scan` が実際に使うルール集合と同じ合成ロジック（builtin + カスタムルール）を
 経由するため、`scan` に指定するのと同じフラグ・設定ファイルを渡せば、
-本番の走査で有効になるルールをそのまま確認できます。
+本番のスキャンで有効になるルールをそのまま確認できます。
 
 - 設定ファイルで無効化したルールも一覧からは外れず、状態タグで「無効」と
   表示されます。
@@ -247,14 +247,13 @@ $ jp-pii-detect --version   # -version でも可
    （リリースビルドで使われます）
 2. `go install module@vX.Y.Z` でインストールした場合に埋め込まれる
    モジュールバージョン
-3. ローカルビルド（`go build`）時は、埋め込まれた VCS リビジョン
+3. ローカルでビルド（`go build`）した場合は、埋め込まれた VCS リビジョン
    （コミットハッシュ先頭 12 文字、作業ツリーが変更されていれば `-dirty` 付き）
 4. いずれの情報もなければ `dev`
 
 ## 関連ドキュメント
 
-- 設定ファイル（`.jp-pii.toml`）の全項目: README の
-  [「設定（.jp-pii.toml）」節](../README.md#設定jp-piitoml)
+- 設定ファイル（`.jp-pii.toml`）の全項目: [docs/configuration.md](configuration.md)
 - CI/CD・開発環境への組み込みレシピ: [docs/integrations.md](integrations.md)
 - メモリ上限（`GOMEMLIMIT`）・大きなデータファイルでの実行時間:
   [docs/integrations.md「リソース制限下での実行」節](integrations.md#リソース制限下での実行メモリ実行時間)
