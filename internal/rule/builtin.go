@@ -4013,7 +4013,10 @@ var (
 //   - gserviceaccount.com: Google Cloud のサービスアカウント
 //     （"*.iam.gserviceaccount.com"、"*@developer.gserviceaccount.com"）。
 //     個人ではなくワークロードの ID（秘密情報の検出は対象外）。
-var emailNonPersonalDomains = []string{"openssh.com", "libssh.org", "gserviceaccount.com"}
+//   - noreply.github.com: GitHub の送信専用アドレス（"<ID>+<ユーザー名>@users.noreply.github.com"、
+//     Actions の commit 用 "<名前>@users.noreply.github.com"）。実アドレスを隠すために
+//     GitHub が発行するもので受信できず、含まれるのは公開済みのユーザー名だけ。
+var emailNonPersonalDomains = []string{"openssh.com", "libssh.org", "gserviceaccount.com", "noreply.github.com"}
 
 // emailNonPersonalLocals は、個人を指さない送信専用・システムのローカル部
 // （完全一致、大文字小文字は区別しない）。

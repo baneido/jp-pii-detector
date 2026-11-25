@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf16"
@@ -78,6 +79,40 @@ func TestScanPaths(t *testing.T) {
 	}
 	if f.RuleID != "jp-phone-number" || f.Line != 1 {
 		t.Errorf("finding = %+v", f)
+	}
+}
+
+// TestScanPathsSkipsGoModCache は、Go のモジュールキャッシュに展開されたモジュール
+// （"<要素>@v<メジャー>.<マイナー>.<パッチ>…"）を走査せず、"@v" を含むだけの
+// 通常のディレクトリ（"api@v2"、"keep@vendor"）は走査することを固定する。
+func TestScanPathsSkipsGoModCache(t *testing.T) {
+	tmp := t.TempDir()
+	phone := []byte("TEL: " + testfixtures.MustGet(t, "source.phone_mobile_sep") + "\n")
+	writeFile(t, filepath.Join(tmp, ".gopath", "pkg", "mod", "github.com", "foo", "bar@v1.2.3", "leak.txt"), phone)
+	writeFile(t, filepath.Join(tmp, ".gopath", "pkg", "mod", "x@v0.0.0-20240101000000-abcdef123456", "leak.txt"), phone)
+	writeFile(t, filepath.Join(tmp, ".gopath", "pkg", "mod", "y@v2.0.0+incompatible", "leak.txt"), phone)
+	writeFile(t, filepath.Join(tmp, "api@v2", "pii.txt"), phone)
+	writeFile(t, filepath.Join(tmp, "keep@vendor", "pii.txt"), phone)
+
+	cfg, err := config.Parse("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := detect.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, _, err := ScanPaths(d, cfg, []string{tmp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dirs []string
+	for _, f := range findings {
+		dirs = append(dirs, filepath.Base(filepath.Dir(filepath.FromSlash(f.File))))
+	}
+	slices.Sort(dirs)
+	if want := []string{"api@v2", "keep@vendor"}; !slices.Equal(dirs, want) {
+		t.Errorf("検出したディレクトリ = %v, want %v", dirs, want)
 	}
 }
 

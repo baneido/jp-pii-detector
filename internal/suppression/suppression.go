@@ -28,12 +28,6 @@ import (
 // Markers は集計対象の行内 ignore マーカー（detect.IgnoreMarker と旧 detect.AllowMarker）。
 var Markers = []string{detect.IgnoreMarker, detect.AllowMarker}
 
-// skipDirs は internal/source のフルスキャンが既定で降りないディレクトリ。
-var skipDirs = map[string]bool{
-	".git": true, "node_modules": true, "vendor": true, ".venv": true, "venv": true,
-	"__pycache__": true, "dist": true, "build": true, ".next": true, "target": true,
-}
-
 // RuleRow は 1 ルール分の集計。
 type RuleRow struct {
 	RuleID string `json:"rule_id"`
@@ -299,7 +293,7 @@ func scanMarkers(det *detect.Detector, cfg *config.Config, paths []string, rep *
 				return nil
 			}
 			if ent.IsDir() {
-				if skipDirs[ent.Name()] || (path != root && attr.excludedBy(cfg, path)) {
+				if source.SkipDir(ent.Name()) || (path != root && attr.excludedBy(cfg, path)) {
 					return filepath.SkipDir
 				}
 				return nil

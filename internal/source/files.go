@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -33,6 +34,18 @@ var skipDirs = map[string]bool{
 	"build":        true,
 	".next":        true,
 	"target":       true,
+}
+
+// goModCacheDirRe は Go のモジュールキャッシュ（$GOMODCACHE、既定は $GOPATH/pkg/mod）に
+// 展開されたモジュールのディレクトリ名 "<要素>@v<バージョン>"（"expr@v0.24.0"、
+// "x@v0.0.0-20240101000000-abcdef123456"、"y@v2.0.0+incompatible"）。GOPATH を
+// リポジトリ内（".gopath/" 等）に置く構成では依存のソースが丸ごと走査対象になり、
+// 依存の CODE_OF_CONDUCT.md や生成コードのメールアドレスが大量に報告される。
+var goModCacheDirRe = regexp.MustCompile(`^[^@]+@v[0-9]+\.[0-9]+\.[0-9]+`)
+
+// SkipDir は、フルスキャンが既定で降りない依存・生成物のディレクトリ名かを返す。
+func SkipDir(name string) bool {
+	return skipDirs[name] || goModCacheDirRe.MatchString(name)
 }
 
 // ScanPaths は指定パス配下のテキストファイルを走査する。
@@ -108,7 +121,7 @@ func listFiles(cfg *config.Config, paths []string) ([]string, []error, ScanStats
 				return nil
 			}
 			if ent.IsDir() {
-				if skipDirs[ent.Name()] {
+				if SkipDir(ent.Name()) {
 					stats.ExcludedDefaultDirs++
 					return filepath.SkipDir
 				}

@@ -523,7 +523,7 @@ exclude_kinds = ["public-business"]
   （行をまたぐ相関は隣接 ±1 行）。文脈行は正のコンテキスト補完にのみ使い、抑制には使わない
 - CI（Pull Request）: `--diff origin/main...HEAD` で PR の差分を同様に走査
 - フルスキャン: バイナリ判定（先頭 8KB の NUL バイト）、5MB 超のファイル除外、
-  `node_modules` 等の依存ディレクトリの自動スキップ
+  `node_modules` 等の依存ディレクトリと Go のモジュールキャッシュ（`<モジュール>@v<バージョン>`）の自動スキップ
 - フルスキャンはさらに、UTF-16/Shift_JIS/EUC-JP/ISO-2022-JP からの透過的なデコード
   （疑わしければ通常のバイナリ/UTF-8 判定へフォールバック）の後段として、最終的な
   UTF-8 テキストに対し JSON の `\uXXXX` エスケープ（`json.dumps(ensure_ascii=True)` の
