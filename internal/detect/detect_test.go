@@ -4884,10 +4884,14 @@ func TestEmailNonPersonal(t *testing.T) {
 		"serviceAccount: deploy@my-proj.iam.gserviceaccount.com",
 		"123456789012-compute@developer.gserviceaccount.com",
 		"From: noreply@home.arpa",
+		`  dev_group = "group:dev@home.arpa"`,
+		`  members = ["deleted:group:old@home.arpa?uid=123"]`,
 	} {
 		assertRules(t, d.ScanLine("f.txt", 1, line))
 	}
 	assertRules(t, d.ScanLine("f.txt", 1, "To: taro.yamada@home.arpa"), "email-address")
+	assertRules(t, d.ScanLine("f.txt", 1, `  member = "user:taro.yamada@home.arpa"`), "email-address")
+	assertRules(t, d.ScanLine("f.txt", 1, `owner_group:taro.yamada@home.arpa`), "email-address")
 }
 
 // TestRepresentativeLabelRoleLabel は、法人代表者の「代表者:」ラベル（役職名を挟む
