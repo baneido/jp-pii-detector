@@ -99,7 +99,7 @@ $ go run ./cmd/pii-fixture eval -update    # docs/accuracy.md・docs/accuracy.js
 で `docs/accuracy.md`・`docs/accuracy.json`・README.md / README.en.md の精度表記をまとめて
 再生成してコミット**してください（手動での数値編集は不要です）。
 
-手元で実行できない環境（GitHub 上のブラウザのみ等）からでも、
+手元で実行できない環境（GitHub 上のブラウザしか使えない場合など）からでも、
 [`.github/workflows/accuracy-update.yml`](../.github/workflows/accuracy-update.yml) が
 上記の再生成を代行します。GitHub の Actions タブから「accuracy-update」→
 「Run workflow」で実行すると、ci.yml の corpus-eval ジョブと同じ手順で評価コーパスを
@@ -121,7 +121,7 @@ PR ごとに `go test ./internal/publiceval` を実行します（認証不要�
   決定的な合成ケースだけ（ソースに PII を持たない）。全ルール（既定・高再現率・名簿ファイル
   判定）の陽性候補と hard negative を含み、検出器の出力で選別・注釈しないため、ルールが
   劣化すればそのまま FN/FP に現れます。
-  `internal/publiceval/notations.go` の `NotationCases()` は、公開文書の走査で見つけて
+  `internal/publiceval/notations.go` の `NotationCases()` は、公開文書のスキャンで見つけて
   検出ロジックを直した表記（役員の肩書き、士業・当事者ラベル、屋号こと氏名、問合せ先の
   Tel・内線・読み括弧、〜官、複数空白、康熙部首、異体字など）を合成値で作り直したケースで、
   分類ごとに陽性と陰性（法人名・会議体・姓だけ・項目名など）を持ちます。新しい表記を
@@ -138,7 +138,7 @@ PR ごとに `go test ./internal/publiceval` を実行します（認証不要�
   合成器を追加してください。
 - 改善や許容内の変化は失敗にせず、ジョブサマリと警告で再生成を促します。
 
-意図した精度変化は、次のコマンドでゴールデンを再生成して差分をレビューに出してください
+意図した精度変化は次のコマンドでゴールデンを再生成して差分をレビューに出してください
 （評価コーパスの `docs/accuracy.json` とは別物で、ネットワークなしで実行できます）。
 
 ```console
@@ -178,18 +178,18 @@ relaxedの各spanスコア、`FindingFP` / `Negatives` / `ConfidenceMiss`をす�
   と数える）ですが、`FindingFP` は同一ケース内の多重誤検出を過小評価しません。
 - `ConfidenceMiss`: `spans` に任意項目 `want_confidence`（`"low"|"medium"|"high"`）
   を指定したケースで、検出が期待span全体を包含したものの実際の最終信頼度が
-  期待未満だった件数。既定設定で黙って埋もれる「実質検出漏れ」を表します。
+  期待未満だった件数。既定設定では気づかないうちに埋もれる「実質検出漏れ」を表します。
 
 `want_confidence` は `evalcase.Span` の任意項目（`omitempty`）です。`Negatives` / `FindingFP` /
 `ConfidenceMiss` は各ルールと各プロファイルの補助指標として `docs/accuracy.json` に永続化し、
 `DiffGolden` が許容誤差なしで比較します。`docs/accuracy.md` にもprofile別で公開します。
 
 ドロップ候補記録（`--explain-dropped`、issue #43 段階4）は実装済みです。「検出候補が
-どの段階で棄却されたか」を opt-in で記録・出力し、FN（見逃し）分析を容易にします。
+どの段階で棄却されたか」を opt-in で記録・出力し、FN（見逃し）を分析しやすくします。
 棄却理由は次の固定語彙のいずれかです: `require-context-missing`
 （RequireContext 不成立）・`negative-context`（同一行の負文脈）・
 `cross-line-negative-context`（論理隣接行の負文脈）・`validate-failed`
-（Rule/Pattern の Validate 不成立。チェックサム等）・`validate-line-failed`
+（Rule/Pattern の Validate 不成立。チェックサムなど）・`validate-line-failed`
 （ValidateLine 不成立）・`allowlisted`（stopword / 正規表現 allowlist）・
 `kind-excluded`（`[rules] exclude_kinds`）・`below-min-confidence`
 （`min_confidence` 未満で破棄。cooccurrence_boost で保持に回った候補が
@@ -200,11 +200,11 @@ relaxedの各spanスコア、`FindingFP` / `Negatives` / `ConfidenceMiss`をす�
 
 既定では完全に無効で、性能・挙動・出力のいずれにも影響しません。
 `detect.Detector` に `CollectDropped(true)` を呼んだ場合のみ、`ScanContent` /
-`ScanLine` / `ScanDiffHunk` の走査中に `DroppedCandidate`（ルール ID・ファイル・
+`ScanLine` / `ScanDiffHunk` のスキャン中に `DroppedCandidate`（ルール ID・ファイル・
 行・列・棄却理由・パターンの基準信頼度のみ。生のマッチ値は一切保持しません）を
 蓄積し、`TakeDropped()` で回収します（drain 方式。内部の蓄積はクリアされる）。
-1 回の走査（`TakeDropped` で回収するまでの累積）あたり 1000 件の上限があり、
-超過時は黙って捨てず `DroppedTruncated()` で打ち切りの有無を確認できます。
+1 回のスキャン（`TakeDropped` で回収するまでの累積）あたり 1000 件の上限があり、
+超過しても気づかないうちに捨てられることはなく、`DroppedTruncated()` で打ち切りの有無を確認できます。
 `internal/source` の並列フルスキャンで同一 `Detector` の `ScanContent` が
 複数ゴルーチンから呼ばれても安全なように、記録は mutex で保護しています。
 
@@ -219,13 +219,13 @@ $ echo '口座番号: 1234567 (手数料300円)' | jp-pii-detect scan --stdin --
 
 上記の例では `1234567` が `jp-bank-account`（コンテキスト「口座」）として
 Medium で検出される一方、同じ 7 桁は `jp-postal-code` の裸 7 桁パターンの
-候補にもなりますが、郵便番号のコンテキスト語（「郵便」「〒」等）が無いため
+候補にもなりますが、郵便番号のコンテキストキーワード（「郵便」「〒」など）が無いため
 `require-context-missing` として `dropped` に記録されます。
 
 ### 評価コーパスの取得
 
 通常の単体・結合テストは [`internal/testfixtures`](../internal/testfixtures/testfixtures.go) の
-公開合成値で完結します。精度評価だけが、Nemotron-PII-Japan から生成した評価コーパスを
+公開合成値で完結します。精度評価だけが Nemotron-PII-Japan から生成した評価コーパスを
 [`internal/privatecorpus`](../internal/privatecorpus/privatecorpus.go) 経由で読み込みます。
 
 未設定なら精度評価だけが `t.Skip` されます。環境変数を設定したのに、ファイルが読めない、
@@ -261,7 +261,7 @@ parquet は `os.UserCacheDir()` 配下に SHA-256 名で保存し、SHA-256 が 
 1 つの `person-name` スパンへ結合します。正解は系統単位なので、精度評価では
 `person-name-role-label` などの派生ルールの検出を `person-name` の検出として数えます
 （`eval.RuleFamily`）。データセットにラベルがないルール（運転免許証番号・旅券番号など）は
-README で「未計測」と表示し、回帰は公開合成コーパス（public-eval）が確認します。
+README で「-」（英語版は「not measured」）と表示し、リグレッションは公開合成コーパス（public-eval）で確認します。
 
 評価コーパスの JSON スキーマは
 `{ "schema_version": 1, "dataset_id": "<id>", "dataset": [ { "id", "source_class", "file", "line", "content", "diff", "want", "spans", "tags" } ] }` です。
@@ -279,7 +279,7 @@ README で「未計測」と表示し、回帰は公開合成コーパス（publ
 計上されます（省略時はチェック対象外・既存データセットとの後方互換）。
 
 `file` は任意で、`.go` や `.ts` などファイル名依存の
-ソースコード文脈を評価したいケースだけ指定します。未指定時は従来どおり `dataset` として走査します。
+ソースコード文脈を評価したいケースだけ指定します。未指定時は従来どおり `dataset` としてスキャンします。
 
 詳細は `internal/evalcase` と `internal/privatecorpus` のコメントに定義されています。
 
@@ -317,7 +317,7 @@ PRのマージ前評価が必要な場合は、main上のworkflowを`workflow_di
 | `scenario:` | 評価シナリオ | `scenario:hard-negative-business-id` |
 
 `easy` / `hard`（プレフィックスなし）は既存の `Span.Tags` の慣用タグとして許容します。
-未知のタグ（typo で層が分裂する等）は `eval_test.go` の `TestCaseTagsAreKnown` が検出しますが、
+未知のタグ（typo で層が分裂するものなど）は `eval_test.go` の `TestCaseTagsAreKnown` が検出しますが、
 フェーズ1では CI を落とさない非致命的な警告（`t.Logf`）に留めています。新しい層化軸が必要になったら
 このタグ表と `knownCaseTagPrefixes` の両方を更新してください。
 
@@ -327,7 +327,7 @@ PRのマージ前評価が必要な場合は、main上のworkflowを`workflow_di
 マトリクス（ラベル語彙・区切り種別・全角/半角・ラベル位置など）に沿った評価ケースを計算合成します。
 値はすべて `internal/checksum` のチェックディジット算出ロジックや `internal/dict` の実在辞書
 （姓名辞書・郵便番号ビットセット）から逆算・抽出したもので、リテラルの実在 PII はソースに
-一切書きません（ドッグフード CI 対策。値をコメント等に書き写す例示もしないこと）。対応ルールは、
+一切書きません（ドッグフード CI 対策。値をコメントなどに書き写す例示もしないこと）。対応ルールは
 値を計算合成できるものに限定しています: `jp-my-number`（`checksum.MyNumber` の検査式を逆算）、
 `credit-card`（`checksum.Luhn` を逆算 + ブランドプレフィックス）、`jp-postal-code`
 （`dict.SamplePostalCodes` で実在番号を抽出。郵便番号自体はチェックディジットを持たないため
@@ -346,7 +346,7 @@ PRのマージ前評価が必要な場合は、main上のworkflowを`workflow_di
 $ go run ./cmd/pii-dataset-gen -output /path/outside/repo/synthetic-cases.json
 ```
 
-出力先はリポジトリ管理外にしてください。合成契約は仕様回帰のpass/fail用であり、評価コーパスへ
+出力先はリポジトリ管理外にしてください。合成契約は仕様のリグレッションをpass/failで確かめるためのもので、評価コーパスへ
 マージせず、README F1・`docs/accuracy.json`の分母にも含めません。合成ケースを増やして実採取
 コーパスの見かけの精度が上がることを防ぐためです。
 生成件数はルールあたり数十件規模に抑えています
@@ -358,7 +358,7 @@ $ go run ./cmd/pii-dataset-gen -output /path/outside/repo/synthetic-cases.json
 `internal/eval` の適合率・再現率は自リポジトリの外部フィクスチャ（ラベル付きデータセット）で
 測っていますが、実運用の偽陽性率（findings/MLoC）を測る仕組みは自リポジトリの dogfooding
 （`ci.yml`、既定で 0 件期待）しかありません。小さな自リポジトリ 1 つでは陰性母数が不足し、
-`NegativeContext` 追加や allowlist 追加のような偽陽性削減施策の効果を測る場がないため、
+`NegativeContext` 追加や allowlist 追加のような偽陽性を減らす施策の効果を測る場がないため、
 [`.github/workflows/fp-corpus-report.yml`](../.github/workflows/fp-corpus-report.yml) が
 大規模公開 OSS コーパスに対して定期的に jp-pii-detect を走らせ、findings/MLoC を
 トレンド指標として記録します。**このワークフローは `ci.yml` の test job（精度ゴールデン・README
@@ -369,7 +369,7 @@ $ go run ./cmd/pii-dataset-gen -output /path/outside/repo/synthetic-cases.json
 `jp-pii-detect scan --format json --exit-zero <corpus-dir>` の出力（マスク済み値のみ）を
 `rule_id` ごとの件数に集計し、`<corpus-dir>` 配下の物理行数（`find <dir> -type f | xargs wc -l`
 相当）で割った `findings/MLoC` を計算します。マスク済みの `match` 値すら出力に含めません
-（件数集計のみ）。各コーパスを既定プロファイルと `--high-recall` の 2 回走査し、別々に
+（件数集計のみ）。各コーパスを既定プロファイルと `--high-recall` で 2 回スキャンし、別々に
 集計します（`summary.json` / `summary-high-recall.json`）。
 
 **著作者メタデータの扱い**: OSS の `LICENSE`・`AUTHORS`・`CONTRIBUTORS`・`NOTICE`・
@@ -380,16 +380,16 @@ jp-pii-detect はこれを検出するのが正しい動作とし、ルールで
 同じ行は「公開してよいか」を人が判断する対象で、不要なら allowlist やインラインの抑制で
 明示的に外します）。一方で偽陽性でもないので、`fp-corpus-report.sh` は該当する検出を
 `attribution` として別に数え、偽陽性率は `fp_total` / `fp_per_mloc`（attribution を除いた
-件数）で見ます。判定はファイル名と該当行の内容だけで行い（`classify_attribution`）、
+件数）で見ます。ファイル名と該当行の内容だけで判定し（`classify_attribution`）、
 出力には件数しか残しません。`findings_total` / `findings_per_mloc` は前回比較の互換のため
 attribution を含めたままにしています。
 
 **コーパス選定基準**: 大規模かつ長期間・広く第三者に精査されている著名 OSS（標準ライブラリ・
-ビルドツール等）に限定します。自治体オープンデータ処理系のように実 PII を扱う蓋然性が高い
+ビルドツールなど）に限定します。自治体オープンデータ処理系のように実 PII を扱う可能性が高い
 カテゴリは対象外です。日本語コメントを含む対象を追加する場合は、個人ブログ的なサンプル
 データを含まない、企業がメンテする本体コードに限定してください。実機から集めたログの
-データセット（loghub 等）も、利用者名やメールアドレスを含みうるので対象外です。ログ書式
-（タイムスタンプ・ブロック ID 等）の偽陽性は、ダミー値の単体テスト
+データセット（loghub など）も、利用者名やメールアドレスを含みうるので対象外です。ログ書式
+（タイムスタンプ・ブロック ID など）の偽陽性は、ダミー値の単体テスト
 （`internal/rule/digit_token_guard_test.go`）で固定します。
 第三者のコードやその検出結果（生値・マスク値）はリポジトリにコミットせず、ワークフローが
 実行時に固定コミットを取得し、件数だけを残します。
@@ -398,7 +398,7 @@ attribution を含めたままにしています。
 
 1. 対象リポジトリの安定版タグに対応するコミット SHA を確認します
    （`git ls-remote --tags <url>` など。ワークフロー再実行時に upstream の変更で
-   トレンドがノイズ化しないよう、コミットを固定します）。
+   トレンドにノイズが混ざらないよう、コミットを固定します）。
 2. ローカルでそのコミットを浅く取得し、`jp-pii-detect scan --format text --unmask <dir>`
    を実行します。報告される findings の大半は JAN コード・型番・テスト用カード番号・
    スコア/日付が住所形式に一致した、といった偽陽性のはずです。目視で内容を確認し、
@@ -412,7 +412,7 @@ attribution を含めたままにしています。
 （実リポジトリ名と findings 内訳の組を公開の場に出さないための責任ある開示上の配慮）。
 前回比較の仕組みは持たないため、トレンドは過去の run のジョブサマリを見比べて確認します。
 
-**運用フェーズ**: 固定した go・curl・TypeScript コーパスの取得と現行検出器での走査を確認し、
+**運用フェーズ**: 固定した go・curl・TypeScript コーパスの取得と現行の検出器でのスキャンを確認し、
 毎週月曜 03:00 UTC の cron に昇格済みです。その後、言語・種別の偏りを減らすため、Python
 （Django・Requests・Ansible）・JavaScript（Express・Vue）・Java（Guava）・Rust（ripgrep・Tokio）・
 Go の設定/YAML 中心のプロジェクト（Prometheus）と、日本語の文書（React・Rails ガイド・Vue の
@@ -450,27 +450,27 @@ internal/
 
 #### 検出パイプライン
 
-1. **source** が走査対象を列挙します。
+1. **source** がスキャン対象を列挙します。
    - フルスキャン: ファイルツリーを walk し、バイナリ（先頭 8KB に NUL）、5MB 超、
-     `node_modules` 等の依存ディレクトリを除外します。
+     `node_modules` などの依存ディレクトリを除外します。
    - バイナリ判定の前に `decodeUTF16` が UTF-16 の BOM（`FF FE`/`FE FF`）を検出し、
      標準ライブラリの `unicode/utf16` で UTF-8 へ変換します。BOM の直後が奇数バイト長、
      または不正なサロゲートペアの場合は通常のバイナリ判定へフォールバックします。
      デコード後の行・列はルーン単位としては正しいものの、元ファイルのバイトオフセット
      とは対応しません。この変換はフルスキャン限定で、`git diff` がバイナリ扱いする
-     UTF-16 ファイルは `--staged` / `--diff` の走査対象になりません。
+     UTF-16 ファイルは `--staged` / `--diff` のスキャン対象になりません。
    - git モード: `git diff -U3` で文脈行付きの差分を取得し、`detect.ScanDiffHunkOpts`
-     で走査します（`.csv`/`.tsv` は post-image のヘッダ行、`.json`/`.yaml`/`.yml` は
+     でスキャンします（`.csv`/`.tsv` は post-image のヘッダ行、`.json`/`.yaml`/`.yml` は
      post-image 全文を `git show` で追加取得できたときだけ `DiffScanOptions` 経由で
      渡し、取得できなければ従来どおりコンテキストなしにフォールバックします。
-     `ScanDiffHunk`/`ScanDiffHunkWithCSVHeader` は後方互換の薄い委譲として残ります。
+     `ScanDiffHunk`/`ScanDiffHunkWithCSVHeader` は後方互換のため、処理を委譲するだけの薄い関数として残ります。
      詳細は後述の CSV/TSV の項）。検出値が**追加行に乗っているもののみ**を報告し、
      文脈行（未変更行）上の既存 PII は報告しません。
    - ラベルが**論理的に隣接する未変更行**（間が空白のみの行なら最大 2 行挟んでもよい。
      `j-i<=3`）にあり値だけを追加したケースでも、コンテキスト必須ルールが発火します
      （ScanContent の論理隣接ウィンドウに準じます）。
    - 文脈行は正のコンテキスト補完にのみ使い、抑制（ignore マーカー・負コンテキスト）の
-     駆動には使わないため、追加行の新規 PII を既存行の都合で取りこぼしません。
+     判定には使わないため、追加行の新規 PII を既存行の都合で取りこぼしません。
 2. **detect.ScanLine** が 1 行ごとに処理します。
    - **normalize.Line** で全角英数字、ハイフン類、数字隣接の長音記号を半角化します。
      変換はルーン単位の 1:1 に限定しているため、正規化後の位置がそのまま元テキストの
@@ -480,7 +480,7 @@ internal/
      数字を含まないコード行がほぼ無コストになります。
    - `.go`、`.ts`、`.py`、`.json`、`.yaml`、`.env` など既知のソースコード/設定ファイルでは、
      変数名・キー名・代入/key-value 構造を軽量な source context として抽出します。
-     source context は文脈判定にだけ使い、正規表現は従来どおり正規化済みの元行だけを走査します。
+     source context は文脈判定にだけ使い、正規表現は従来どおり正規化済みの元行だけをスキャンします。
      statement の値範囲は正規化済み行の byte offset で持ち、候補マッチがその範囲内にある場合だけ
      `PositiveText` / `NegativeText` を適用します。AST 解析や言語別 parser は使いません。
    - `.csv`/`.tsv`（[`internal/detect/csv_context.go`](../internal/detect/csv_context.go)）は
@@ -500,27 +500,27 @@ internal/
      （姓名辞書照合）で検証して `person-name-structured` として報告します（フリガナ列は
      辞書が漢字ベースのため対象外です）。この Medium finding は `min_confidence` を尊重します。
      フルスキャンではファイル自身の 1 行目を `csvLineContexts` がヘッダとして使います。
-     diff 走査（`--staged` / `--diff`）は hunk 自体がヘッダ行を含まないことが多い
+     diff スキャン（`--staged` / `--diff`）は hunk 自体がヘッダ行を含まないことが多い
      （変更箇所がファイル先頭付近でない限り）ため、`internal/source/gitdiff.go` が
      post-image のヘッダ行だけを個別に `git show` で取得し、
      `detect.ScanDiffHunkWithCSVHeader`（`ScanDiffHunk` の既存シグネチャ・既存呼び出しは
      変えず、CSV ヘッダを渡せる別関数として追加）経由で `csvDiffLineContexts` に渡します
      （`csvLineContexts` と異なり hunk の 1 行目からデータ行として列を割り当てます）。
      取得コマンドは `--staged` なら `git show :<path>`（インデックスの stage 0）、
-     `--diff <range>` なら `git show <rev>:<path>`（`range` の post-image 側 —
-     `A..B` / `A...B` いずれも右辺、省略時は `HEAD` — を `rev` として使う。
+     `--diff <range>` なら `git show <rev>:<path>`（`range` の post-image 側を
+     `rev` として使う。`A..B` / `A...B` はいずれも右辺、省略時は `HEAD`。
      `diffRangePostRevision` が range 文字列から解決します）。取得に失敗した場合
-     （新規ファイルが対象リビジョンにまだ無い等）・出力がバイナリ判定される場合・
+     （新規ファイルが対象リビジョンにまだ無いなど）・出力がバイナリ判定される場合・
      空・ヘッダ行らしくない場合は、いずれも列コンテキストなしの従来どおりの安全側に
      フォールバックします（`fetchCSVHeader`）。`--diff <range>` がドットを含まない
      裸のリビジョン（作業ツリーとの比較になり単一の post-image リビジョンを指せない）
-     の場合も同様にヘッダ取得自体を行いません。
-     **制限**: hunk 内で引用符状態が破綻した行（フィールド内改行の途中等）に
+     の場合も同様にヘッダ自体を取得しません。
+     **制限**: hunk 内で引用符状態が破綻した行（フィールド内改行の途中など）に
      遭遇したら、フルスキャンの `csvUnterminatedRecordEnd` と同じ安全側の方針で
      それ以降の列コンテキスト付与を打ち切ります。ただし hunk の先頭が、hunk に
      含まれない先行行から続く引用符未閉レコードの途中である可能性そのものは
      診断できません（hunk 外の内容は見えないため）。
-   - 各ルールのパターンを正規表現でマッチし、`Validate`（チェックディジット等）と
+   - 各ルールのパターンを正規表現でマッチし、`Validate`（チェックディジットなど）と
      allowlist で絞り込みます。
      - 同一行にコンテキストキーワードがあれば信頼度を High に昇格します。昇格時の探索は
        マッチ前後 40 ルーン（`RequireContextWindow` 設定時はその値）に限定し、minified JSON
@@ -544,14 +544,14 @@ internal/
      含めないため、`min_confidence` と JSON/SARIF の契約は変わりません。
    - **detect.ScanContent / detect.ScanDiffHunk** は通常の行単位検出に加え、
      「行 i と、間が空白のみの行を挟んでもよい後続の最初の非空白行 j」（`j-i<=3`。
-     空行なしの物理隣接は `j-i=1`）を結合した仮想ウィンドウとして走査します（論理隣接）。
+     空行なしの物理隣接は `j-i=1`）を結合した仮想ウィンドウとしてスキャンします（論理隣接）。
      `RequireContext` ルールだけでなく非 `RequireContext` ルールも対象で、後者は値の
      マッチ位置から 40 ルーン以内にラベルがある場合だけ High へ昇格します
      （`digitRuleRequireContextWindow` と同じ窓幅を流用し、遠く離れたラベルによる
      誤昇格を抑えます。昇格時は `Reason.ContextPromoted` を立てます）。ignore マーカーは
      結合文字列ではなく値が乗る行ごとに判定するため、ラベル側だけの marker が値側の
-     検出を消しません（フル走査・diff 走査とも対称）。検出位置は元の行と列へマップし直します。
-     単独行走査で得た finding と論理隣接ウィンドウで得た finding が同じ span になった場合、
+     検出を消しません（フルスキャンでも diff スキャンでも同じです）。検出位置は元の行と列へマップし直します。
+     単独行のスキャンで得た finding と論理隣接ウィンドウで得た finding が同じ span になった場合、
      `dedupAndSortFindings` は信頼度の高い方を残します。
      ソースコード文脈では、`bankAccountNo:` の次行に値があるような key/value 分離も
      logical context として値行に付与します。diff では文脈行由来の source context は正の
@@ -562,7 +562,7 @@ internal/
      同じ論理隣接規則で前後の非空白行を見るため、空行を挟んだ負コンテキストも取りこぼしません。
 3. **report** が `min_confidence` で絞った結果を指定フォーマットで出力します。
    検出値は既定でマスクされます。`--explain` 指定時は JSON 出力の `reason` に加え、text 出力にも
-   検出理由（コンテキスト昇格・検証有無等）を 1 行追加します。`--fail-on` を指定すると、報告閾値
+   検出理由（コンテキスト昇格・検証有無など）を 1 行追加します。`--fail-on` を指定すると、報告閾値
    （`min_confidence`）とは独立に、その信頼度以上の検出があるときだけ終了コードを 1 にできます
    （未指定時は既存どおり報告があれば 1）。SARIF の各 result には `region.endLine`/`endColumn` と、
    ルール ID・ファイルパス・同一ルールのファイル内出現順ベースの `partialFingerprints` を付与します。
@@ -589,7 +589,7 @@ internal/
 - `[rules] path_demotion = false` で機能全体を無効化できます（既定は有効）。
 - allowlist（`.jp-pii.toml` の `paths` / 行末 `jp-pii-detector:ignore`）とは独立した
   補助的な信頼度シグナルであり、置き換えるものではありません。High 固定ルールが
-  `*_test.go` 等で大量に誤検出する場合は、引き続き allowlist での除外や行単位の
+  `*_test.go` などで大量に誤検出する場合は、引き続き allowlist での除外や行単位の
   ignore マーカーが必要になります（本リポジトリの `.jp-pii.toml` の `_test\.go$` は
   この理由で残しています）。
 
@@ -633,16 +633,16 @@ internal/
   `RequireContextWindow` で肯定語を近接必須にし、金額、数量、連番 ID と衝突しやすい場合は
   `NegativeContext` を設定します。`id`、`version`、`count` などコード特有のノイズは、
   通常テキストにも効く `NegativeContext` へ安易に追加せず、source context 側の
-  コード限定 `NegativeText` として扱います。数百〜千語規模の辞書（固有名詞等）を
+  コード限定 `NegativeText` として扱います。数百〜千語規模の辞書（固有名詞など）を
   文脈シグナルにしたい場合は `Context` に語をすべて足さず、`ContextPattern`
   （`Rule.ContextPatterns`）で「安価な `Literals` ゲート → 正規表現で候補切り出し
   → 辞書 `Validate`」の専用経路にします（`jp-bank-account` の銀行名辞書照合を参照）。
   日本語の連続文を候補の前方に取り込みうる場合は `ValidateSuffixes` を有効にし、
   辞書に一致する最長の接尾部分を回収します。
-  `Context` の線形走査（`containsWord`）に大きな辞書を混ぜるとホットパスが劣化します。
+  `Context` の線形探索（`containsWord`）に大きな辞書を混ぜるとホットパスが劣化します。
 - **Prefilter**: パターンが特定の文字種（数字、`@`、日本語）なしにマッチし得ない
-  場合は `Prefilter` を設定します。該当文字を含まない行の走査が丸ごと省けます。
-  迷ったら未設定（常に走査）が安全です。
+  場合は `Prefilter` を設定します。該当文字を含まない行はスキャンを丸ごと省けます。
+  迷ったら未設定（常にスキャン）が安全です。
 - **検証ロジック**: チェックディジットなどは `internal/checksum` に置き、独立にテストします。
   実在性確認に使う小さな静的辞書は `internal/dict` に置き、`//go:embed` で同梱します。
 - **高再現率ルール**: 偽陽性リスクが高いルールは `internal/rule/high_recall.go` の
@@ -655,24 +655,24 @@ internal/
 番号自体が法人番号と同一であり、国税庁の適格請求書発行事業者公表サイトで制度上公開されている情報です。
 個人事業主分は氏名までの名寄せが可能な実質的個人識別子となるため検出対象としていますが、法人・個人を
 区別せずに検出する設計上、自社の請求書テンプレートや契約書ひな形などで誤検出（公開情報の指摘ノイズ）が
-起きた場合は `.jp-pii.toml` の allowlist で除外してください。書式（`T` + 13 桁）・周辺語に加え、
+起きた場合は `.jp-pii.toml` の allowlist で除外してください。書式（`T` + 13 桁）・周辺のキーワードに加え、
 `T` を除いた末尾 13 桁を `checksum.CorporateNumber`（法人番号の検査用数字、平成26年財務省令第70号）で
-検証する。
+検証します。
 
 固定電話の市外局番は総務省の電気通信番号指定状況（「市外局番の一覧」）由来の実在集合を
 [`internal/dict/area_codes.txt`](../internal/dict/area_codes.txt) にテキストで保存して
-`//go:embed` で取り込む。`dict.ValidAreaCode` は電話番号の先頭から**最長一致**する
+`//go:embed` で取り込みます。`dict.ValidAreaCode` は電話番号の先頭から**最長一致**する
 市外局番を探し、`validPhone`（`internal/rule/builtin.go`）が区切りなし固定電話 10 桁の
-実在性検証に使う。市外局番はほぼ変化しないため、郵便番号のような月次自動更新ワークフローは
-設けていない。
+実在性検証に使います。市外局番はほぼ変化しないため、郵便番号のような月次自動更新ワークフローは
+設けていません。
 
 > **既知の制限（#56 時点）**: `area_codes.txt` は総務省の公式データそのものではなく、
 > 都道府県庁所在地・政令指定都市クラスの市外局番（46 件、2〜3 桁のみ）に絞った
-> **代表的なシードデータ**である。総務省が公開する市外局番は全国で約 500 件（4〜5 桁の
-> 中小都市分を含む）あり、このシードはそのごく一部にすぎない。未収録の実在市外局番を使う
-> 固定電話番号は誤って未検出（false negative）になる。総務省の公式データを取得できる環境で、
+> **代表的なシードデータ**です。総務省が公開する市外局番は全国で約 500 件（4〜5 桁の
+> 中小都市分を含む）あり、このシードはそのごく一部にすぎません。未収録の実在市外局番を使う
+> 固定電話番号は誤って未検出（false negative）になります。総務省の公式データを取得できる環境で、
 > 市外局番列を抽出した CSV（1 列目が市外局番。ヘッダ行や他の列があっても無視される）を用意し、
-> 次のコマンドで完全な一覧に差し替えること。
+> 次のコマンドで完全な一覧に差し替えてください。
 
 ```console
 $ go run ./internal/dict/gen -phone \
@@ -683,8 +683,8 @@ $ go run ./internal/dict/gen -phone \
 差し替え後は `go test ./internal/dict ./internal/detect ./internal/rule` に加えて、
 `JP_PII_FIXTURES=<path> go test ./internal/eval` で `jp-phone-number` の F1 を再測定し、
 `-update` で3プロファイルのゴールデン、READMEバッジ、`docs/accuracy.md`を
-再生成すること（区切りなし固定電話 10 桁の正例・未割当プレフィックスの負例を
-評価データセットに追加した場合は特に）。
+再生成してください（区切りなし固定電話 10 桁の正例・未割当プレフィックスの負例を
+評価データセットに追加した場合は特に必要です）。
 
 新ルールは `jp-pii-detect rules` に自動で表示されます。
 
@@ -726,8 +726,8 @@ digit_boundary = true                # true なら builtin の dg() と同じ境
   多用するとスキャン性能が落ちうるので、可能な限り具体的なパターンにしてください。
 - **精度は自動計測されない**: `internal/eval` は builtin ルールのみを対象にした
   固定プロファイルで測っており、`.jp-pii.toml` の custom ルールは評価対象外
-  （README バッジ・`docs/accuracy.md` には影響しません）。誤検出の調整は
-  `negative_context` / `require_context` / `require_context_window` で行い、
+  （README バッジ・`docs/accuracy.md` には影響しません）。誤検出は
+  `negative_context` / `require_context` / `require_context_window` で調整し、
   実際の検出結果で確認してください。
 - `jp-pii-detect rules [--config <path>]` で、有効化されている builtin + custom の
   実効ルール一覧（`rules.disabled` を反映済み）を確認できます。
@@ -737,9 +737,9 @@ digit_boundary = true                # true なら builtin の dg() と同じ境
 IANA TLD 一覧は公式の `https://data.iana.org/TLD/tlds-alpha-by-domain.txt` を
 [`internal/dict/tlds-alpha-by-domain.txt`](../internal/dict/tlds-alpha-by-domain.txt) に保存しています。
 
-更新は通常 [`.github/workflows/tld-update.yml`](../.github/workflows/tld-update.yml) が
-毎月 1 日に自動で行います（新規委任 TLD の見落としによる偽陰性、廃止 TLD が辞書に残り続けることによる
-偽陽性の温床化を防ぐため）。gTLD/ccTLD の削除は極めて稀なため、削除が 1 件でも検出された場合は
+通常は [`.github/workflows/tld-update.yml`](../.github/workflows/tld-update.yml) が
+毎月 1 日に自動で更新します（新規委任 TLD の見落としによる偽陰性と、廃止 TLD が辞書に残り続けて
+偽陽性の原因になることを防ぐため）。gTLD/ccTLD の削除は極めて稀なため、削除が 1 件でも検出された場合は
 PR タイトルに `[要レビュー]` を付与し、本文に削除された TLD 一覧を明記するので、マージ前に必ず
 目視でレビューしてください。手動で更新する場合は同 URL から取得して
 `internal/dict/tlds-alpha-by-domain.txt` を置き換え、
@@ -752,13 +752,13 @@ PR タイトルに `[要レビュー]` を付与し、本文に削除された T
 `dict.ValidPostalCode` はこのビットセットで **7 桁完全一致**を判定します（上位 3 桁ではなく
 7 桁すべてで実在を確認するため、`150-9999` のように上位 3 桁は実在しても 7 桁としては
 未割当の番号は棄却されます）。インデックスのエンコーディングとサイズ定数は `internal/dict` 側で
-公開し、ジェネレータと共有します（両者が無言で乖離しないため）。
+公開し、ジェネレータと共有します（両者が気づかないうちに食い違わないようにするため）。
 
 同じ KEN_ALL データの record[6]（都道府県名）・record[7]（市区町村名）から、実在する
 市区町村名の一覧 [`internal/dict/municipalities.txt`](../internal/dict/municipalities.txt)
 （1 行 1 エントリ、ソート・重複排除済み）も生成し `//go:embed` で取り込みます。
 `dict.MunicipalitySuffixMatch` が jp-address-high-recall の `Validate` に使い、
-「通学区域」のような市区町村ではない語を municipality と誤認した検出を棄却します
+「通学区域」のような市区町村ではない語を市区町村と誤認した検出を棄却します
 （既定の `jp-address` には付けません。郡・表記揺れによる FN リスクが高再現率でない
 既定ルールでは相対的に大きいためです）。郡付きエントリ（石狩郡当別町）は郡を省いた
 省略形（当別町）も、政令指定都市の区（札幌市中央区）は市単独形（札幌市）も併録し、
@@ -766,8 +766,8 @@ PR タイトルに `[要レビュー]` を付与し、本文に削除された T
 （`龍/竈/嶋/條/惠/檜`）は、生成側・照合側の両方で一般的な新字体へ正規化します
 （詳細は `internal/dict/gen/postal.go` の `addMunicipalityVariants` を参照してください）。
 
-更新は通常 [`.github/workflows/postal-update.yml`](../.github/workflows/postal-update.yml) が
-毎月 1 日に自動で行います。手動で更新する場合は次の 2 つのデータを取得し、コマンドでビットセットと
+通常は [`.github/workflows/postal-update.yml`](../.github/workflows/postal-update.yml) が
+毎月 1 日に自動で更新します。手動で更新する場合は次の 2 つのデータを取得し、コマンドでビットセットと
 市区町村名一覧を再生成してから
 `go test ./internal/dict ./internal/dict/gen ./internal/detect ./internal/eval` で検証します。
 
@@ -794,7 +794,7 @@ $ go run ./internal/dict/gen \
 `-municipalities-output` は市区町村名（record[7]）を持つ KEN_ALL フォーマット専用のため
 `-ken-all-input` が必須です（`-jigyosyo-input` だけでは生成できません）。
 郵便番号の増減で `jp-postal-code` の精度数値が動くことがあるため、新しいビットセットを
-コミットしたら eval / バッジの再生成も行ってください（市区町村名一覧は jp-address-high-recall
+コミットしたら eval / バッジも再生成してください（市区町村名一覧は jp-address-high-recall
 のみに使い、eval は既定で high-recall ルールを評価しないため精度ゲートへの影響はありません）。
 
 デジタル庁アドレス・ベース・レジストリ（ABR）「全国 町字マスター」（`mt_town_all.csv`、
@@ -805,14 +805,14 @@ jp-address-high-recall の**昇格専用**エビデンスとして使います: 
 実在町字名で始まる場合だけ Base Medium → High へ昇格させる twin パターン（同一正規表現を
 共有する 2 枚組、person-name の辞書検証 twin と同じ手法）を、マーカー付き番地・漢数字番地の
 2 形に適用しています。町字辞書に不一致でも棄却はされず Medium のまま検出され続けるため、
-recall には影響しません。マーカーなしダッシュ連結（`2-1-5` 等）には twin を適用していません
+recall には影響しません。マーカーなしダッシュ連結（`2-1-5` など）には twin を適用していません
 （`TestPromotionContextWindowBoundary` が固定サンプル「渋谷区道玄坂1-2-3」でコンテキスト窓の
 境界を検証しており、"道玄坂" が実在町字名と一致するため、twin を追加するとコンテキスト窓の
 内外を問わず常に昇格してしまい同テストと衝突する。詳細は `internal/rule/builtin.go` の
 jp-address-high-recall 節のコメントを参照）。ヶ→ケ の正規化は市区町村名辞書と同じ
 `dict.NormalizeMunicipalityKa` を使い、加えて NFKC 正規化（全角英数字・CJK 互換漢字の
 統一漢字面への畳み込み）を適用します。北海道の開拓地割に由来する 1 文字だけの町字名
-（"イ" "上" 等）は、ありふれた書き出しの語への偶然の前方一致を避けるため収録から除外します
+（"イ" "上" など）は、ありふれた書き出しの語への偶然の前方一致を避けるため収録から除外します
 （詳細は `internal/dict/gen/towns.go` を参照）。
 
 postal-update.yml のような定期自動更新は用意していません（手動更新のみ）。更新する場合は
@@ -827,7 +827,7 @@ $ go run ./internal/dict/gen -towns \
     -output internal/dict/towns.txt
 ```
 
-出典 URL・データ版・取得日・SHA-256・ライセンスは `internal/dict/towns.txt` 冒頭のコメントに
+出典 URL・データのバージョン・取得日・SHA-256・ライセンスは `internal/dict/towns.txt` 冒頭のコメントに
 記録するので、再生成のたびに更新してください。
 
 姓名辞書（[`internal/dict/surnames.txt`](../internal/dict/surnames.txt) /
@@ -837,8 +837,8 @@ $ go run ./internal/dict/gen -towns \
 `person-name-romaji` ルール専用）は
 [`shuheilocale/japanese-personal-name-dataset`](https://github.com/shuheilocale/japanese-personal-name-dataset)
 （MIT。ライセンス全文は [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md)）の CSV から
-[`internal/dict/gen-names`](../internal/dict/gen-names) で生成する。既存エントリは変更せず、
-未収録の新規エントリだけをソート済みで追記する（再実行しても重複しない）。
+[`internal/dict/gen-names`](../internal/dict/gen-names) で生成します。既存エントリは変更せず、
+未収録の新規エントリだけをソート済みで追記します（再実行しても重複しません）。
 
 ```console
 $ go run ./internal/dict/gen-names \
@@ -857,28 +857,28 @@ $ go run ./internal/dict/gen-names \
 ```
 
 既定の名辞書とローマ字名辞書には引き続き「curated popular names」サブセット
-（`*_opti.csv`）だけを使う。`*_org.csv` のカタカナ読み 7,636 件（opti・姓との重複を除く）は
+（`*_opti.csv`）だけを使います。`*_org.csv` のカタカナ読み 7,636 件（opti・姓との重複を除く）は
 [`given_names_katakana_org.txt`](../internal/dict/given_names_katakana_org.txt) へ分離し、
-`person-name-high-recall` の敬称アンカーと `person-name-structured` / CSV 列文脈だけで照合する。
-この段階分離により既定 low/medium プロファイルの判定集合を変えず、high-recall プロファイルで
-precision/recall を独立に測定できる。3 つの org 用フラグは全て指定するか、全て省略する。
+`person-name-high-recall` の敬称アンカーと `person-name-structured` / CSV 列文脈だけで照合します。
+このように段階を分けることで、既定の low/medium プロファイルの判定集合を変えずに、high-recall プロファイルで
+precision/recall を独立に測定できます。3 つの org 用フラグはすべて指定するか、すべて省略します。
 
 生成元は `shuheilocale/japanese-personal-name-dataset` の commit
-`c5220278652e7bae05b06cfaf527f1b09a100de6` に固定する。この commit の入力 SHA-256 は
+`c5220278652e7bae05b06cfaf527f1b09a100de6` に固定します。この commit の入力 SHA-256 は次のとおりです。
 `first_name_man_org.csv=c14a67047f6101fa3234e87c3f643f68ec1807f3fdb545855e57ab9bd5cd5a3b`、
 `first_name_woman_org.csv=de8ce6f8f430e14e0036ca209656a1ec06e9bcd83e9defffe1b0654dc636f9a9`、
 `first_name_man_opti.csv=c7ef947f334daa84b66f7cb5f3f42641a9919bdf35faa2d70b6275d833dcfe0c`、
 `first_name_woman_opti.csv=43a3a7412f0e358d0810fcd618b94750ec773d17f44284a7fc119fa667683dee`、
 `last_name_org.csv=02706bd06932d6bde121e6fbaf9bc2a88c43e6f015128215eecb213223523d30`。
 
-4 文字姓は公開固定版の IPADIC `2.7.0-20070801` `Noun.name.csv`（EUC-JP）から、品詞が
-`名詞,固有名詞,人名,姓` かつ漢字 4 文字の行だけを生成器で抽出する。使用した Debian source の
-SHA-256 は `792040c47410b60235af15ba84eb2771f035434e18bd3e22e84fa0968fbf2084`。
-ライセンス全文は [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) に収録する。
+4 文字姓は、バージョンを固定した公開 IPADIC `2.7.0-20070801` の `Noun.name.csv`（EUC-JP）から、品詞が
+`名詞,固有名詞,人名,姓` かつ漢字 4 文字の行だけをジェネレータで抽出します。使用した Debian source の
+SHA-256 は `792040c47410b60235af15ba84eb2771f035434e18bd3e22e84fa0968fbf2084` です。
+ライセンス全文は [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) に収録しています。
 
-既定の姓名辞書に無い姓名は、同じ `Noun.name.csv` から別の生成器で
+既定の姓名辞書に無い姓名は、同じ `Noun.name.csv` から別のジェネレータで
 [`surnames_ipadic.txt`](../internal/dict/surnames_ipadic.txt) と
-[`given_names_ipadic.txt`](../internal/dict/given_names_ipadic.txt) に作り直す（手で編集しない）。
+[`given_names_ipadic.txt`](../internal/dict/given_names_ipadic.txt) に作り直します（手で編集しません）。
 
 ```console
 $ go run ./internal/dict/gen-ipadic-names \
@@ -890,19 +890,19 @@ $ go run ./internal/dict/gen-ipadic-names \
 ```
 
 取り込むのは、漢字 2〜4 文字の姓（既定の名辞書と同形のものを除く）と、漢字を 1 文字以上含み
-残りがひらがなだけの 2〜4 文字の名（姓と同形のものを除く）に限る。1 文字の姓名（「上」「尊」等）と
-かなだけの名（「みな」等）は一般語と衝突するため取り込まない。2 つのファイルは照合（`dict.IsSurname` /
+残りがひらがなだけの 2〜4 文字の名（姓と同形のものを除く）に限ります。1 文字の姓名（「上」「尊」など）と
+かなだけの名（「みな」など）は一般語と衝突するため取り込みません。2 つのファイルは照合（`dict.IsSurname` /
 `dict.IsGivenName` など）にだけ使い、テスト用の合成値を作る `dict.SurnameSample` /
-`dict.GivenNameSample` には含めない（辞書を拡張するたびにテストの合成値が入れ替わらないようにするため）。
+`dict.GivenNameSample` には含めません（辞書を拡張するたびにテストの合成値が入れ替わらないようにするため）。
 
-既定の辞書と IPADIC 追加分のどちらにも無い姓名は、同じ生成器で
+既定の辞書と IPADIC 追加分のどちらにも無い姓名は、同じジェネレータで
 [SudachiDict](https://github.com/WorksApplications/SudachiDict)（Apache-2.0）の語彙 CSV から
 [`surnames_sudachi.txt`](../internal/dict/surnames_sudachi.txt) と
-[`given_names_sudachi.txt`](../internal/dict/given_names_sudachi.txt) に作り直す。
+[`given_names_sudachi.txt`](../internal/dict/given_names_sudachi.txt) に作り直します。
 語彙 CSV は `http://sudachi.s3-website-ap-northeast-1.amazonaws.com/sudachidict-raw/20261015/` の
 `small_lex.zip`（SHA-256 `e14eb78decd7b059218735738a626c618388da3f1faedb62e5509a1ca1657041`）、
 `core_lex.zip`（`32c1dc51db66218fdd68975ec3ecbd806628bc1f027ba4834baabd548fae2bae`）、
-`notcore_lex.zip`（`b9e980a75a7d6500782bddd5ed661c389ed9ac165c582fb16d1b0bafcae0d53b`）を展開して使う。
+`notcore_lex.zip`（`b9e980a75a7d6500782bddd5ed661c389ed9ac165c582fb16d1b0bafcae0d53b`）を展開して使います。
 
 ```console
 $ go run ./internal/dict/gen-ipadic-names \
@@ -919,15 +919,15 @@ $ go run ./internal/dict/gen-ipadic-names \
 ```
 
 取り込み条件は IPADIC と同じで、さらに一般語の一覧（`common_words.txt`）と同じ書き方の語と、
-都道府県名・市区町村名（政令市の区を含む）の語幹（東京、仙台、八王子）を除く。SudachiDict は
-収録数が多く、こうした語を含めると「東京　都庁」を氏名と判定してしまうため。
-「上増田」「伊佐山」のような小さな地名は実在の姓でもあるので除かない。
+都道府県名・市区町村名（政令市の区を含む）の語幹（東京、仙台、八王子）を除きます。SudachiDict は
+収録数が多く、こうした語を含めると「東京　都庁」を氏名と判定してしまうためです。
+「上増田」「伊佐山」のような小さな地名は実在の姓でもあるので除きません。
 
 姓名分割と同形の一般名詞・地名候補は、実在人名を抑制しないことを確認した語だけを
-[`name_homographs.txt`](../internal/dict/name_homographs.txt) へ追加する。
+[`name_homographs.txt`](../internal/dict/name_homographs.txt) へ追加します。
 
 辞書を拡張したら `go test ./...` と `go run ./cmd/pii-fixture eval` で検証し、精度が動く場合は
-`go run ./cmd/pii-fixture eval -update` で `docs/accuracy.json` / バッジを再生成すること。
+`go run ./cmd/pii-fixture eval -update` で `docs/accuracy.json` / バッジを再生成してください。
 
 固定電話の市外局番は総務省の電気通信番号指定状況（「市外局番の一覧」）由来の実在集合を
 [`internal/dict/area_codes.txt`](../internal/dict/area_codes.txt) にテキストで保存して
@@ -959,17 +959,17 @@ $ go run ./internal/dict/gen -phone \
 銀行名（[`internal/dict/bank_names.txt`](../internal/dict/bank_names.txt)、
 `dict.IsBankName` が参照）は、全国銀行協会（Zengin）加盟金融機関のうち著名な
 銀行・信用金庫・労働金庫を**手作業で収録した代表サブセット**（約 110 件）です。
-zengin-code 等が公開する公式マスタ（約 1,100 件）そのものではありません。
+zengin-code などが公開する公式マスタ（約 1,100 件）そのものではありません。
 `jp-bank-account` ルールは、この辞書と `internal/rule/builtin.go` の
 `bankNameCandidateRe`（`(候補)(銀行|信用金庫|信用組合|信金|信組|労働金庫|ろうきん|農協)`
 のアンカー正規表現）で候補を切り出し、候補の接尾部分を長い順に
 `dict.IsBankName` で O(1) 検証した結果を
 `rule.ContextPattern` 経由の文脈シグナルとして使います（銀行名 1,000 語超を
-`Context` の線形走査に混ぜないための専用経路。`internal/detect/context.go` の
+`Context` の線形探索に混ぜないための専用経路。`internal/detect/context.go` の
 `matchContextPatterns` を参照）。支店辞書（全国支店で数百 KB〜数 MB 規模になりうる）は
 スコープ外として別 Issue に切り出しています。
 
-実データ（zengin-code 等）で辞書を更新・拡張する場合は、ライセンス（元データ提供元
+実データ（zengin-code など）で辞書を更新・拡張する場合は、ライセンス（元データ提供元
 への帰属を含む）と継続性をメンテナが確認・サインオフしてから取り込んでください
 （postal_codes.bitset が公式 KEN_ALL を出典にしているのと同水準の確認が必要）。
 `internal/dict/bank_names.txt` はテキストファイルを直接編集し、
@@ -992,7 +992,7 @@ zengin-code 等が公開する公式マスタ（約 1,100 件）そのもので�
 `set_checkdigit`）を一次資料として `checksum.YuchoAccount` で検証します。式・URL・
 文書番号が付されていない Web 仕様である旨は同関数のコメントに記録しています。
 同一行ハイフン形式、同一行の記号/番号ラベル形式、別行ペアの全経路で同じ検証器を
-通してください。公開合成コーパスの合成値も、検査数字を計算して生成します。
+通してください。公開合成コーパスの合成値も検査数字を計算して生成します。
 
 新ルールは `jp-pii-detect rules` に自動で表示されます。
 
@@ -1010,4 +1010,4 @@ GitHub Action と pre-commit フックはこの Release asset を取得して実
 Go が入っている開発環境向けには
 `go install github.com/baneido/jp-pii-detector/cmd/jp-pii-detect@<version>` も引き続き使えます。
 
-README と action.yml の例で参照しているバージョン（`rev: v0.1.0` 等）も合わせて更新してください。
+README と action.yml の例で参照しているバージョン（`rev: v0.1.0` など）も合わせて更新してください。

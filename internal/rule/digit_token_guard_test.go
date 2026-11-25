@@ -118,9 +118,9 @@ func TestRejectURLUserinfo(t *testing.T) {
 		{`{lastReq: "http://gopher@test.com", newReq: "x"}`, "gopher@test.com", false},
 		{`// "ssh://git@github.com/user/repo".`, "git@github.com", false},
 		{`see http://user:p@host.example.org/x`, "p@host.example.org", false},
-		{`連絡先: taro@mail.co.jp`, "taro@mail.co.jp", true},
-		{`<a href="mailto:taro@mail.co.jp">`, "taro@mail.co.jp", true},
-		{`https://example.org/ taro@mail.co.jp`, "taro@mail.co.jp", true},
+		{`連絡先: taro@mail.home.arpa`, "taro@mail.home.arpa", true},
+		{`<a href="mailto:taro@mail.home.arpa">`, "taro@mail.home.arpa", true},
+		{`https://example.org/ taro@mail.home.arpa`, "taro@mail.home.arpa", true},
 	}
 	for _, c := range cases {
 		s, e := span(t, c.line, c.m)
@@ -137,7 +137,7 @@ func TestValidEmailPlaceholderDomain(t *testing.T) {
 		}
 	}
 	// ラベル 3 つ以上（サブドメイン）や、第 1 ラベルが一致しないものは残す。
-	for _, m := range []string{"taro@mail.domain.co.jp", "taro@testing.co.jp", "taro@gmail.com"} {
+	for _, m := range []string{"taro@mail.domain.home.arpa", "taro@testing.home.arpa", "taro@mail.home.arpa"} {
 		if !validEmail(m) {
 			t.Errorf("validEmail(%q) = false, want true", m)
 		}
@@ -278,16 +278,16 @@ func TestNonPersonalEmail(t *testing.T) {
 		{"123456789012@cloudbuild.gserviceaccount.com", false},
 		{"runner@gserviceaccount.com", false},
 		{"Deploy@Kairo-Proj.IAM.GServiceAccount.COM", false},
-		{"noreply@corp.co.jp", false},
-		{"No-Reply@corp.co.jp", false},
-		{"taro.yamada@corp.co.jp", true},
+		{"noreply@home.arpa", false},
+		{"No-Reply@home.arpa", false},
+		{"taro.yamada@home.arpa", true},
 		// 似たドメイン・ローカル部は棄却しない。
 		{"taro@notopenssh.com", true},
-		{"deploy@kairo-proj.gserviceaccount.com.evil.jp", true},
+		{"deploy@kairo-proj.gserviceaccount.com.evil.home.arpa", true},
 		{"deploy@xgserviceaccount.com", true},
 		{"deploy@gserviceaccount.co", true},
-		{"taro.yamada+gcp@gmail.com", true},
-		{"noreply.taro@corp.co.jp", true},
+		{"taro.yamada+gcp@mail.home.arpa", true},
+		{"noreply.taro@home.arpa", true},
 	}
 	for _, c := range cases {
 		if got := validEmail(c.m); got != c.want {

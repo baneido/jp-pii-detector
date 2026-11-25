@@ -238,19 +238,19 @@ func value(key string) (string, bool) {
 	case "detect.address_shibuya_ward", "address.shibuya_ward":
 		return "渋谷区神南" + "1丁目2番3号", true
 	case "detect.email_gmail":
-		return email(1, "baneido.com"), true
+		return email(1, "home.arpa"), true
 	case "detect.email_gmail_a":
-		return email(2, "baneido.com"), true
+		return email(2, "home.arpa"), true
 	case "detect.email_gmail_b":
-		return email(3, "baneido.com"), true
+		return email(3, "home.arpa"), true
 	case "detect.email_gmail_fullwidth_at":
-		return strings.Replace(email(1, "baneido.com"), "@", "＠", 1), true
+		return strings.Replace(email(1, "home.arpa"), "@", "＠", 1), true
 	case "detect.email_subdomain":
-		return "codex.fixture+tag" + "@" + "fixtures.baneido.com", true
+		return "codex.fixture+tag" + "@" + "fixtures.home.arpa", true
 	case "detect.email_dev":
-		return email(4, "baneido.com"), true
+		return email(4, "home.arpa"), true
 	case "detect.email_baneido":
-		return email(5, "baneido.com"), true
+		return email(5, "home.arpa"), true
 	case "detect.drivers_license":
 		return "30" + digitRun(91, 10), true
 	case "detect.passport":

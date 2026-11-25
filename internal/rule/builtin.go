@@ -2380,7 +2380,7 @@ func Builtin() []Rule {
 				// ValidateLine は URL のユーザー情報（"http://gopher@test.com"、
 				// "ssh://git@github.com/user/repo"）を棄却する（OSS コーパスでの実測。
 				// digit_token_guard.go の rejectURLUserinfo 参照）。
-				{Re: emailASCIIRe, Base: High, ValidateLine: allValidateLine(rejectURLUserinfo, rejectEAIDomainContinuation, rejectEmailFormExample)},
+				{Re: emailASCIIRe, Base: High, ValidateLine: allValidateLine(rejectURLUserinfo, rejectEAIDomainContinuation, rejectEmailFormExample, rejectIAMGroupMember)},
 			},
 		},
 		{

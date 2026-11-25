@@ -673,7 +673,7 @@ func TestEmailRule(t *testing.T) {
 		{"IANA 登録済み TLD は検出", "contact: " + testfixtures.MustGet(t, "detect.email_dev"), []string{"email-address"}},
 		{"Ruby インスタンス変数チェーンは除外", "@dates_by_month ||= (@participant.starts_on..@participant.finishes_on_by_status).group_by(&:beginning_of_month)", nil},
 		{"Ruby unary minus receiver is not an email", "number_to_currency(-@bill.withholding_tax(worked_on))", nil},
-		{"ローカル部の連続ドットは除外", "contact: taro..yamada@gmail.com", nil},
+		{"ローカル部の連続ドットは除外", "contact: taro..yamada@mail.home.arpa", nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -709,12 +709,12 @@ func TestInternationalEmailHighRecall(t *testing.T) {
 		// 直前の「連絡先:」ラベルにより person-name-role-label（既定ルール）が
 		// 氏名として拾う。high_recall 有効時は、より長いスパンを持つ
 		// email-address-eai が resolveOverlaps で優先される。
-		{"日本語ローカル部", "連絡先: 山田太郎@kaisha.co.jp", "email-address-eai", []string{"person-name-role-label"}},
+		{"日本語ローカル部", "連絡先: 山田太郎@home.arpa", "email-address-eai", []string{"person-name-role-label"}},
 		{"日本語ドメインと全角記号", "連絡先：ｕｓｅｒ＠例え．ｊｐ", "email-address-eai", nil},
 		{"Unicode TLD", "連絡先: 担当@例え.みんな", "email-address-eai", nil},
 		{"CSV 第2列", "管理番号,山田@例え.jp", "email-address-eai", nil},
-		{"ローカル部のキリル confusable", "連絡先: usеr@kaisha.co.jp", "email-address-confusable", nil},
-		{"TLD のギリシャ confusable", "連絡先: user@kaisha.cοm", "email-address-confusable", nil},
+		{"ローカル部のキリル confusable", "連絡先: usеr@home.arpa", "email-address-confusable", nil},
+		{"TLD のギリシャ confusable", "連絡先: user@home.αrpa", "email-address-confusable", nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -738,10 +738,10 @@ func TestInternationalEmailBoundariesAndPositions(t *testing.T) {
 	}{
 		{"EAI 位置保存", "前置😀: 山田@例え.jp", []string{"email-address-eai"}, 6, "山田@例え.jp"},
 		{"全角位置保存", "前置：ｕｓｅｒ＠例え．ｊｐ", []string{"email-address-eai"}, 4, "ｕｓｅｒ＠例え．ｊｐ"},
-		{"confusable 原文保存", "連絡先: usеr@kaisha.co.jp", []string{"email-address-confusable"}, 6, "usеr@kaisha.co.jp"},
+		{"confusable 原文保存", "連絡先: usеr@home.arpa", []string{"email-address-confusable"}, 6, "usеr@home.arpa"},
 		{"日本語本文への吸着を防止", "連絡先山田@例え.jp", nil, 0, ""},
 		{"右側の識別子連結を防止", "山田@例え.jp追記", nil, 0, ""},
-		{"confusable 三文字超は抑制", "連絡先: раураl@kaisha.com", nil, 0, ""},
+		{"confusable 三文字超は抑制", "連絡先: раураl@home.arpa", nil, 0, ""},
 		{"通常のキリル EAI は対象外", "連絡先: почта@пример.com", nil, 0, ""},
 		{"未登録 Unicode TLD", "連絡先: 山田@例え.未登録", nil, 0, ""},
 	}
@@ -773,10 +773,10 @@ func TestInternationalEmailContentAndDiff(t *testing.T) {
 
 	fs = d.ScanDiffHunk("f.txt", []DiffLine{
 		{Text: "連絡先:", Added: false},
-		{Text: "usеr@kaisha.co.jp", Added: true},
+		{Text: "usеr@home.arpa", Added: true},
 	})
 	assertRules(t, fs, "email-address-confusable")
-	if fs[0].Line != 2 || fs[0].Column != 1 || fs[0].Match != "usеr@kaisha.co.jp" {
+	if fs[0].Line != 2 || fs[0].Column != 1 || fs[0].Match != "usеr@home.arpa" {
 		t.Fatalf("diff finding = %+v, want added line 2 original match", fs[0])
 	}
 
@@ -2007,7 +2007,7 @@ func TestAllowlist(t *testing.T) {
 	d := newDetector(t, `
 [allowlist]
 stopwords = ["`+stopword+`"]
-regexes = ["@baneido\\.com$"]
+regexes = ["@home\\.arpa$"]
 `)
 	tests := []struct {
 		name, line string
@@ -3155,21 +3155,21 @@ func TestCrossLineNameNormalizationAndQuotes(t *testing.T) {
 
 // メールアドレスの右境界ガード。直後が英数字・_ % + - で続く部分一致を棄却し、
 // 文末ピリオドや句点で終わる正当なアドレスは検出する。実在 PII ではない
-// gmail.com の合成アドレスを inline で用いる。
+// home.arpa（RFC 8375 の予約ドメイン）の合成アドレスを inline で用いる。
 func TestEmailRightBoundary(t *testing.T) {
 	d := newDetector(t, "")
 	tests := []struct {
 		name, line string
 		want       string // 期待する検出値。"" は非検出。
 	}{
-		{"通常", "連絡先: taro@gmail.com", "taro@gmail.com"},
-		{"文末ピリオド", "連絡は taro@gmail.com.", "taro@gmail.com"},
-		{"日本語句点", "連絡は taro@gmail.com。", "taro@gmail.com"},
-		{"空白で区切り", "foo taro@gmail.com bar", "taro@gmail.com"},
-		{"アンダースコアで継続は棄却", "value=taro@gmail.com_suffix", ""},
-		{"プラスで継続は棄却", "value=taro@gmail.com+suffix", ""},
-		{"英数字で継続は棄却", "id=taro@gmail.com2", ""},
-		{"ハイフンで継続は棄却", "x taro@gmail.com-foo", ""},
+		{"通常", "連絡先: taro@mail.home.arpa", "taro@mail.home.arpa"},
+		{"文末ピリオド", "連絡は taro@mail.home.arpa.", "taro@mail.home.arpa"},
+		{"日本語句点", "連絡は taro@mail.home.arpa。", "taro@mail.home.arpa"},
+		{"空白で区切り", "foo taro@mail.home.arpa bar", "taro@mail.home.arpa"},
+		{"アンダースコアで継続は棄却", "value=taro@mail.home.arpa_suffix", ""},
+		{"プラスで継続は棄却", "value=taro@mail.home.arpa+suffix", ""},
+		{"英数字で継続は棄却", "id=taro@mail.home.arpa2", ""},
+		{"ハイフンで継続は棄却", "x taro@mail.home.arpa-foo", ""},
 		{"GitHub SSH URL は棄却", "repoURL: git@github.com:baneido/jp-pii-detecter.git", ""},
 	}
 	for _, tt := range tests {
@@ -3586,22 +3586,22 @@ func TestComputeOffsets(t *testing.T) {
 		},
 		{
 			name:    "先頭一致（offset 0）",
-			content: "taro@kaisha.co.jp\n",
-			f:       Finding{Line: 1, Column: 1, Match: "taro@kaisha.co.jp"},
-			want:    "taro@kaisha.co.jp",
+			content: "taro@home.arpa\n",
+			f:       Finding{Line: 1, Column: 1, Match: "taro@home.arpa"},
+			want:    "taro@home.arpa",
 		},
 		{
 			name:    "CRLF 改行",
-			content: "ヘッダ\r\nmail: a@kaisha.co\r\n",
-			f:       Finding{Line: 2, Column: 7, Match: "a@kaisha.co"},
-			want:    "a@kaisha.co",
+			content: "ヘッダ\r\nmail: a@home.arpa\r\n",
+			f:       Finding{Line: 2, Column: 7, Match: "a@home.arpa"},
+			want:    "a@home.arpa",
 		},
 		{
 			// 非BMP（サロゲートペア）。Go の rune と Python のコードポイントは
 			// どちらも 1 文字＝1 とする。UTF-16 単位で数える回帰を弾く。
 			// 𠮷(U+20BB7) と 😀(U+1F600) を前置し、Column はルーン基準。
 			name:    "非BMP文字を含む行",
-			content: "前置 𠮷😀\nname: a@kaisha.co\n",
+			content: "前置 𠮷😀\nname: a@home.arpa\n",
 			f:       Finding{Line: 1, Column: 4, Match: "𠮷😀"},
 			want:    "𠮷😀",
 		},
@@ -4883,11 +4883,15 @@ func TestEmailNonPersonal(t *testing.T) {
 		"KexAlgorithms curve25519-sha256@libssh.org",
 		"serviceAccount: deploy@my-proj.iam.gserviceaccount.com",
 		"123456789012-compute@developer.gserviceaccount.com",
-		"From: noreply@corp.co.jp",
+		"From: noreply@home.arpa",
+		`  dev_group = "group:dev@home.arpa"`,
+		`  members = ["deleted:group:old@home.arpa?uid=123"]`,
 	} {
 		assertRules(t, d.ScanLine("f.txt", 1, line))
 	}
-	assertRules(t, d.ScanLine("f.txt", 1, "To: taro.yamada@corp.co.jp"), "email-address")
+	assertRules(t, d.ScanLine("f.txt", 1, "To: taro.yamada@home.arpa"), "email-address")
+	assertRules(t, d.ScanLine("f.txt", 1, `  member = "user:taro.yamada@home.arpa"`), "email-address")
+	assertRules(t, d.ScanLine("f.txt", 1, `owner_group:taro.yamada@home.arpa`), "email-address")
 }
 
 // TestRepresentativeLabelRoleLabel は、法人代表者の「代表者:」ラベル（役職名を挟む
@@ -5844,7 +5848,7 @@ high_recall = true
 // どのモード（low / medium / high-recall / 名簿ファイル判定を含む全 opt-in）でも
 // 個人情報として報告しないことを固定する。ローカル部のプロジェクト番号
 // （マイナンバーの検査数字を満たす 12 桁を含む）も数値ルールとして報告しない。
-// 一方、個人のアドレス（gmail.com・会社ドメイン・.co.jp・+タグ）と、
+// 一方、個人のアドレス（home.arpa・サブドメイン・+タグ）と、
 // 末尾一致しない似たドメインは従来どおり検出する。値はすべて架空。
 func TestServiceAccountEmailNotDetected(t *testing.T) {
 	modes := map[string]string{
@@ -5871,16 +5875,16 @@ func TestServiceAccountEmailNotDetected(t *testing.T) {
 		"やまだ@kairo-proj.iam.gserviceaccount.com",
 	}
 	personal := []string{
-		"taro.yamada@gmail.com",
-		"taro.yamada+gcp@gmail.com",
-		"t-yamada@kairo-tech.co.jp",
-		"hanako.sato@kairo-tech.com",
+		"taro.yamada@mail.home.arpa",
+		"taro.yamada+gcp@mail.home.arpa",
+		"t-yamada@home.arpa",
+		"hanako.sato@home.arpa",
 		// 似たドメイン（後ろに続く・ラベルの途中・TLD 違い・ドメイン名に含むだけ）
-		"deploy@kairo-proj.gserviceaccount.com.evil.jp",
+		"deploy@kairo-proj.gserviceaccount.com.evil.home.arpa",
 		"deploy@xgserviceaccount.com",
 		"deploy@gserviceaccount.co",
-		"deploy@gserviceaccount.com-mail.jp",
-		"gserviceaccount.com.taro@gmail.com",
+		"deploy@gserviceaccount.com-mail.home.arpa",
+		"gserviceaccount.com.taro@mail.home.arpa",
 	}
 	for name, toml := range modes {
 		t.Run(name, func(t *testing.T) {
@@ -5894,13 +5898,13 @@ func TestServiceAccountEmailNotDetected(t *testing.T) {
 				assertRules(t, d.ScanLine("f.txt", 1, line), "email-address")
 			}
 			// 同じ行にサービスアカウントと個人のアドレスがあれば、個人のほうだけを報告する。
-			fs := d.ScanLine("f.txt", 1, "連絡先 taro.yamada@gmail.com / SA: deploy-bot@kairo-proj.iam.gserviceaccount.com")
-			if len(fs) != 1 || fs[0].Match != "taro.yamada@gmail.com" {
-				t.Errorf("mixed line: findings = %+v, want only taro.yamada@gmail.com", fs)
+			fs := d.ScanLine("f.txt", 1, "連絡先 taro.yamada@mail.home.arpa / SA: deploy-bot@kairo-proj.iam.gserviceaccount.com")
+			if len(fs) != 1 || fs[0].Match != "taro.yamada@mail.home.arpa" {
+				t.Errorf("mixed line: findings = %+v, want only taro.yamada@mail.home.arpa", fs)
 			}
 			// 日本語ローカル部（high-recall の email-address-eai）も個人ドメインなら検出する。
 			if strings.Contains(toml, "high_recall") {
-				assertRules(t, d.ScanLine("f.txt", 1, "やまだ@kairo-tech.co.jp"), "email-address-eai")
+				assertRules(t, d.ScanLine("f.txt", 1, "やまだ@home.arpa"), "email-address-eai")
 			}
 		})
 	}
@@ -5914,7 +5918,7 @@ func TestServiceAccountEmailSpans(t *testing.T) {
 	}{
 		{"id 300000000012@cloudbuild.gserviceaccount.com", "300000000012", true},
 		{"a@b.iam.gserviceaccount.com, 300000000012", "300000000012", false},
-		{"300000000012@cloudbuild.gserviceaccount.com.evil.jp", "300000000012", false},
+		{"300000000012@cloudbuild.gserviceaccount.com.evil.home.arpa", "300000000012", false},
 		{"300000000012@xgserviceaccount.com", "300000000012", false},
 		{"300000000012@gserviceaccount.co", "300000000012", false},
 		{"@gserviceaccount.com 300000000012", "300000000012", false},
@@ -5935,7 +5939,7 @@ func TestServiceAccountEmailSpans(t *testing.T) {
 // 候補がサービスアカウントのアドレスの内部に収まる場合も報告しないことを固定する。
 func TestMergeExternalFindingsDropsServiceAccountEmail(t *testing.T) {
 	d := newDetector(t, "")
-	content := "SA: 300000000012@cloudbuild.gserviceaccount.com\nmail: 300000000012@kairo-tech.co.jp\n"
+	content := "SA: 300000000012@cloudbuild.gserviceaccount.com\nmail: 300000000012@home.arpa\n"
 	cands := []external.Candidate{
 		{File: "f.go", RuleID: "jp-my-number-external", Line: 1, Column: 5, Length: 12, Confidence: "high"},
 		{File: "f.go", RuleID: "email-address-external", Line: 1, Column: 5, Length: 43, Confidence: "high"},
@@ -6153,9 +6157,9 @@ func TestFormHintBracketAndDeityHonorificFP20261101Evening(t *testing.T) {
 func TestEmailFollowedByJapanese20261101(t *testing.T) {
 	d := newDetector(t, "")
 	tests := []struct{ line, match string }{
-		{"お申し込みは hanako@abc-kyokai.or.jp宛にお送りください。", "hanako@abc-kyokai.or.jp"}, // jp-pii-detector:ignore
-		{"【連絡】seminar@abc-kyokai.or.jpまでご連絡ください。", "seminar@abc-kyokai.or.jp"},  // jp-pii-detector:ignore
-		{"窓口 info@abc-kyokai.or.jpへ。", "info@abc-kyokai.or.jp"},                 // jp-pii-detector:ignore
+		{"お申し込みは hanako@home.arpa宛にお送りください。", "hanako@home.arpa"}, // jp-pii-detector:ignore
+		{"【連絡】seminar@home.arpaまでご連絡ください。", "seminar@home.arpa"},  // jp-pii-detector:ignore
+		{"窓口 info@home.arpaへ。", "info@home.arpa"},                 // jp-pii-detector:ignore
 	}
 	for _, tt := range tests {
 		fs := d.ScanLine("f.txt", 1, tt.line)
@@ -6165,7 +6169,7 @@ func TestEmailFollowedByJapanese20261101(t *testing.T) {
 		}
 	}
 	// 日本語を含むドメインラベルの途中（EAI の ASCII 部分）は通常のメールとして切り出さない。
-	for _, line := range []string{"連絡先: user@abc.co例え.jp", "user@abc.co例.jp"} {
+	for _, line := range []string{"連絡先: user@home.arpa例え.jp", "user@home.arpa例.jp"} {
 		assertRules(t, d.ScanLine("f.txt", 1, line))
 	}
 }

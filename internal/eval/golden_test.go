@@ -223,7 +223,7 @@ func TestSpanlessPositiveCountCountsWantAndSpanRulePairsWithoutASpan(t *testing.
 		},
 		// 複数ルールを期待し、片方だけスパンあり → spanless 1 件。
 		{
-			Content: "memo\n連絡先: taro@gmail.com",
+			Content: "memo\n連絡先: taro@mail.home.arpa",
 			Want:    []string{"email-address", "jp-address"},
 			Spans:   []Span{{RuleID: "email-address", Line: 2, Start: 5, End: 19}},
 		},

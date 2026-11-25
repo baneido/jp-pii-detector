@@ -5,11 +5,11 @@ import "testing"
 func TestEvaluateConfidenceCalibrationCases(t *testing.T) {
 	cases := []Case{
 		{
-			Line:  "contact: user@gmail.com", // jp-pii-detector:ignore
+			Line:  "contact: user@mail.home.arpa", // jp-pii-detector:ignore
 			Spans: []Span{{RuleID: "email-address", Line: 1, Start: 9, End: 23}},
 		},
 		{
-			Line: "debug: randomperson@gmail.com", // jp-pii-detector:ignore
+			Line: "debug: randomperson@mail.home.arpa", // jp-pii-detector:ignore
 		},
 		{
 			Line:  "口座番号: 1234567", // jp-pii-detector:ignore

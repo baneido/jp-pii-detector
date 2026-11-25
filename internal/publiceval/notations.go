@@ -645,14 +645,14 @@ func notationSpecs() []notationCase {
 	neg("gcp-service-account", "担当者メール "+at("Deploy-Bot", "Kairo-Proj.IAM.GServiceAccount.COM"))
 	neg("gcp-service-account", "member: serviceAccount:"+at("taro-yamada", "kairo-proj.iam."+gsa))
 	neg("gcp-service-account", "担当: "+at("やまだ", "kairo-proj.iam."+gsa))
-	pos("gcp-service-account", email, "メール："+at("taro.yamada", "g"+"mail.com"))
-	pos("gcp-service-account", email, at("taro.yamada+gcp", "g"+"mail.com"))
-	pos("gcp-service-account", email, "連絡先 "+at("t-yamada", "kairo-tech.co.jp"))
-	pos("gcp-service-account", email, at("hanako.sato", "kairo-tech.com"))
-	pos("gcp-service-account", email, at("deploy", "kairo-proj."+gsa+".evil.jp"))
+	pos("gcp-service-account", email, "メール："+at("taro.yamada", "mail.home."+"arpa"))
+	pos("gcp-service-account", email, at("taro.yamada+gcp", "mail.home."+"arpa"))
+	pos("gcp-service-account", email, "連絡先 "+at("t-yamada", "home."+"arpa"))
+	pos("gcp-service-account", email, at("hanako.sato", "corp.home."+"arpa"))
+	pos("gcp-service-account", email, at("deploy", "kairo-proj."+gsa+".evil.home.arpa"))
 	pos("gcp-service-account", email, at("deploy", "x"+gsa))
 	pos("gcp-service-account", email, at("deploy", "gservice"+"account.co"))
-	pos("gcp-service-account", email, "連絡先 "+at("taro.yamada", "g"+"mail.com")+" / SA: "+at("deploy-bot", "kairo-proj.iam."+gsa))
+	pos("gcp-service-account", email, "連絡先 "+at("taro.yamada", "mail.home."+"arpa")+" / SA: "+at("deploy-bot", "kairo-proj.iam."+gsa))
 	// 運動公園のサイトの寄付者一覧「<姓>　<名>　様」と博物館の役員名簿「<姓>　<名>(理事長)」
 	// （2026-10-31 08:00 実測の Medium の見逃し）と、治水施設・霊屋・遺跡・商店街・ウェブコミック・
 	// 不動産のサイトの建物名の「殿」・通りの名前・物語の呼び名 + 敬称・申込様式の記入の指示
@@ -794,8 +794,8 @@ func notationSpecs() []notationCase {
 	pos("title-credit-form", role, "【作・演出】 "+full(54, " "))
 	pos("title-credit-form", role, "情報学科 2年 "+full(55, ""))
 	pos("title-credit-form", role, "架空株式会社："+full(56, ""))
-	pos("title-credit-form", email, "お申し込みは kikaku@kakuu-kyokai.or.jp宛にお送りください。") // jp-pii-detector:ignore
-	pos("title-credit-form", email, "【連絡先】seminar@kakuu-kyokai.or.jpまでご連絡ください。")  // jp-pii-detector:ignore
+	pos("title-credit-form", email, "お申し込みは kikaku@home.arpa宛にお送りください。") // jp-pii-detector:ignore
+	pos("title-credit-form", email, "【連絡先】seminar@home.arpaまでご連絡ください。")  // jp-pii-detector:ignore
 	neg("title-credit-form", "客員教授が来日")
 	neg("title-credit-form", "顧問弁護士に相談")
 	neg("title-credit-form", "前市長と面会")
@@ -901,7 +901,7 @@ func notationSpecs() []notationCase {
 	neg("address-phone-run", "協賛店 架空町"+cardLike[0:1]+"-"+cardLike[1:2]+"-"+cardLike[2:4]+" "+cardLike[4:7]+"-"+cardLike[7:10]+"-"+cardLike[10:]+" 割引あり")
 	// 電話番号は正しく拾い、番地 + 市外局番を口座番号として拾わないこと（陽性は電話番号だけ）。
 	pos("address-phone-run", "jp-phone-number", "架空銀行 架空支店    架空町大字架空456 "+"0270-"+"00-0000  金利優遇")
-	neg("address-phone-run", "メール：xxxxx@yyyyy.jp")
+	neg("address-phone-run", "メール：xxxxx@yyyyy.home.arpa")
 	neg("address-phone-run", "「架空の催し～超多様～」内の展示")
 	card := luhnDigits("453201234567890")
 	pos("address-phone-run", "credit-card", "カード番号 "+card[0:4]+"-"+card[4:8]+"-"+card[8:12]+"-"+card[12:])
@@ -987,7 +987,7 @@ func notationSpecs() []notationCase {
 	pos(sh, role, full(4, "")+"さん出演の動画を公開します")
 	pos(sh, role, "（"+full(5, "")+"選手/教育学部3年）")
 	pos(sh, role, "この場所における"+full(1, "")+"衆議院議員の、発言がありました")
-	pos(sh, email, "ファクス00-0000-0000　電子メール"+at("corpusv2-madoguchi", "baneido.com"))
+	pos(sh, email, "ファクス00-0000-0000　電子メール"+at("corpusv2-madoguchi", "home.arpa"))
 	neg(sh, "事務室 管理課長 廃棄")
 	neg(sh, "取締役 監査等委員")
 	neg(sh, "指名委員 監査委員")
@@ -1004,8 +1004,8 @@ func notationSpecs() []notationCase {
 	neg(sh, "お客 様 各位")
 	neg(sh, "サンプル UK Ltd. の拠点名: サンプル 英国")
 	neg(sh, "サンプル大学とサンプル銀行が協定書を締結 1234567...22")
-	neg(sh, "※大学のアカウント（学籍番号@baneido.com）でのログインが必要です。")
-	neg(sh, "大学が発行するアドレス（Sample Mail用アカウント＠baneido.com）が必要です。")
+	neg(sh, "※大学のアカウント（学籍番号@home.arpa）でのログインが必要です。")
+	neg(sh, "大学が発行するアドレス（Sample Mail用アカウント＠home.arpa）が必要です。")
 	// 活用語尾・接続の語・カタカナ語に直結する氏名ほか（2026-11-15 に公開文書 2,659 件の人手確認で見つけた
 	// 見逃しと誤検出。値はすべて架空）。
 	const pc = "prefix-context"
@@ -1028,7 +1028,7 @@ func notationSpecs() []notationCase {
 	pos(pc, role, n(2).sur+"さくらさんとサンプル市長の対談動画")
 	pos(pc, role, "まず、委員長の報告を求めます。農林水産委員長"+full(3, "")+"君。")
 	pos(pc, role, "2012年12月21日："+full(4, " ")+" サンプル大学特別栄誉教授 フェローに選出")
-	pos(pc, email, "サンプル村役場"+at("corpusv2-madoguchi", "baneido.com"))
+	pos(pc, email, "サンプル村役場"+at("corpusv2-madoguchi", "home.arpa"))
 	neg(pc, "ノーベル賞を受賞した"+n(0).sur+"栄誉教授の研究とは")
 	neg(pc, "当時の"+n(1).sur+"厚生大臣が私見を述べた")
 	neg(pc, "海洋研究開発機構の"+n(2).sur+"主任研究員らの研究")
@@ -1044,7 +1044,7 @@ func notationSpecs() []notationCase {
 	neg(pc, "委員長報告のとおり決するに賛成の諸君。")
 	neg(pc, "○サンプル委員　日銀さんの意見は分かりましたので、次に移ります。")
 	neg(pc, "この絵柄に採用したのは、「菊文様」と「波流水」。")
-	neg(pc, "入力例："+at("corpusv2-taro", "baneido.com"))
+	neg(pc, "入力例："+at("corpusv2-taro", "home.arpa"))
 	// 会議録の指名・括弧の中の氏名 + 職名ほか（2026-11-16 に公開文書 6,842 件の人手確認で見つけた見逃しと
 	// 誤検出。値はすべて架空）。
 	const cc = "call-context"
