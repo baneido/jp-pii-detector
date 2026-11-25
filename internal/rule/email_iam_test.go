@@ -12,7 +12,7 @@ func TestRejectIAMGroupMember(t *testing.T) {
 		line, email string
 		want        bool
 	}{
-		{`  kanri_dev_group = "group:kanri-dev@example.co.jp"`, "kanri-dev@example.co.jp", false},
+		{`  dev_group = "group:dev@example.co.jp"`, "dev@example.co.jp", false},
 		{`group:ops@example.co.jp`, "ops@example.co.jp", false},
 		{`  members = ["deleted:group:old@example.co.jp?uid=123"]`, "old@example.co.jp", false},
 		{`  member = "user:taro.yamada@example.co.jp"`, "taro.yamada@example.co.jp", true},
