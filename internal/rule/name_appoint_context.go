@@ -18,7 +18,7 @@ var (
 	// 職名・「就任」が続く形（企業の沿革で実測。「<職名>に<氏名>が就任」は拾えていた）。値は姓 + 名の
 	// 完全分割を要求する。
 	personNameGaAppointRe = regexp.MustCompile(
-		`(?:^|[^` + kanji + hiragana + katakana + `]|[、はにでてりし])([` + kanji + `]{3,6}?)(?:氏|さん)?が` +
+		`(?:^|[^` + kanji + hiragana + katakana + `]|[、はにでてりしの])([` + kanji + `]{3,6}?)(?:氏|さん)?が` +
 			`(?:第[0-9一二三四五六七八九十]{1,3}代)?[` + kanji + katakana + `ー]{0,10}?(?:` + appointTitles + `)(?:に|へ)?(?:就任|着任|昇格)`,
 	)
 	// personNameTitleAppointRe は「取締役交代　<氏名>社長就任」のように、氏名に直結した職名の直後が
