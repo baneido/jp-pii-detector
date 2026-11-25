@@ -17,6 +17,9 @@ func TestRejectIAMGroupMember(t *testing.T) {
 		{`  members = ["deleted:group:old@example.co.jp?uid=123"]`, "old@example.co.jp", false},
 		{`  member = "user:taro.yamada@example.co.jp"`, "taro.yamada@example.co.jp", true},
 		{`mygroup:taro.yamada@example.co.jp`, "taro.yamada@example.co.jp", true},
+		{`my_group:taro.yamada@example.co.jp`, "taro.yamada@example.co.jp", true},
+		{`my-group:taro.yamada@example.co.jp`, "taro.yamada@example.co.jp", true},
+		{`my.group:taro.yamada@example.co.jp`, "taro.yamada@example.co.jp", true},
 		{`To: taro.yamada@example.co.jp`, "taro.yamada@example.co.jp", true},
 	} {
 		start := strings.Index(tc.line, tc.email)
