@@ -112,9 +112,9 @@ func TestValidEmail(t *testing.T) {
 		want bool
 	}{
 		// ---- 有効 ----
-		{"通常", "taro.yamada@gmail.com", true},
-		{"ドット・プラス・サブドメイン", "user.name+tag@sub-domain.company.co.jp", true},
-		{"IANA 登録済み TLD", "user@service.dev", true},
+		{"通常", "taro.yamada@mail.home.arpa", true},
+		{"ドット・プラス・サブドメイン", "user.name+tag@sub-domain.corp.home.arpa", true},
+		{"IANA 登録済み TLD（arpa）", "user@service.home.arpa", true},
 		// ---- 無効: 予約済みドメイン/TLD ----
 		{"example ラベルは除外", "user@example.com", false},
 		{"サブドメインの example も除外", "user@sub.example.co.jp", false},
@@ -124,34 +124,34 @@ func TestValidEmail(t *testing.T) {
 		{"予約 TLD local", "user@host.local", false},
 		{"未登録 TLD", "user@service.notatld", false},
 		// ---- 無効: ローカル部 ----
-		{"連続ドット", "taro..yamada@gmail.com", false},
-		{"先頭ドット", ".taro@gmail.com", false},
-		{"末尾ドット", "taro.@gmail.com", false},
-		{"英数字を含まないローカル部", "_@gmail.com", false},
+		{"連続ドット", "taro..yamada@mail.home.arpa", false},
+		{"先頭ドット", ".taro@mail.home.arpa", false},
+		{"末尾ドット", "taro.@mail.home.arpa", false},
+		{"英数字を含まないローカル部", "_@mail.home.arpa", false},
 		// ---- 無効: ドメインのラベル境界 ----
 		{"ラベル先頭のハイフン", "user@-foo.com", false},
 		{"ラベル末尾のハイフン", "user@foo-.com", false},
 		// ---- 無効: 構造不正（防御的ガード）----
-		{"@ が先頭", "@gmail.com", false},
+		{"@ が先頭", "@mail.home.arpa", false},
 		{"@ が末尾", "user@", false},
 		// ---- 無効: ローカル部/ドメイン第 1 ラベルのダミー値語（部分一致）----
-		{"ローカル部が hoge", "hoge@fuga.co.jp", false},
-		{"ドメイン第1ラベルが sample", "test1@sample.com", false},
-		{"ローカル部が dummy を含む", "dummyuser@company.co.jp", false},
-		{"ドメイン第1ラベルが foo", "user@foo.co.jp", false},
-		{"ローカル部が hogehoge", "hogehoge@company.co.jp", false},
+		{"ローカル部が hoge", "hoge@fuga.home.arpa", false},
+		{"ドメイン第1ラベルが sample", "test1@sample.home.arpa", false},
+		{"ローカル部が dummy を含む", "dummyuser@home.arpa", false},
+		{"ドメイン第1ラベルが foo", "user@foo.home.arpa", false},
+		{"ローカル部が hogehoge", "hogehoge@home.arpa", false},
 		// ---- 無効: 短いダミー語（foo/bar）はトークン一致で棄却する ----
-		{"ローカル部のトークンが bar", "foo.bar@company.co.jp", false},
-		{"ローカル部が連番付き foo", "foo01@company.co.jp", false},
+		{"ローカル部のトークンが bar", "foo.bar@home.arpa", false},
+		{"ローカル部が連番付き foo", "foo01@home.arpa", false},
 		// ---- 有効: 短いダミー語を部分文字列として含むだけの実在アドレス ----
 		// 以前は strings.Contains の部分一致だったためこれらを巻き添えで棄却していた。
-		{"bar を含む実在の人名ローカル部", "barry@company.co.jp", true},
-		{"bar を含む実在の人名ローカル部2", "barbara@company.co.jp", true},
-		{"bar を含む実在のドメイン", "info@barclays.co.jp", true},
-		{"foo を含む実在のドメイン", "info@foodservice.co.jp", true},
+		{"bar を含む実在の人名ローカル部", "barry@home.arpa", true},
+		{"bar を含む実在の人名ローカル部2", "barbara@home.arpa", true},
+		{"bar を含む語のドメイン", "info@barclays.home.arpa", true},
+		{"foo を含む語のドメイン", "info@foodservice.home.arpa", true},
 		// ---- 無効: 長さ上限（RFC 5321 4.5.3.1 / RFC 1035 2.3.4）----
-		{"ローカル部が65文字", strings.Repeat("a", 65) + "@company.co.jp", false},
-		{"ローカル部が64文字（上限ちょうど）", strings.Repeat("a", 64) + "@company.co.jp", true},
+		{"ローカル部が65文字", strings.Repeat("a", 65) + "@home.arpa", false},
+		{"ローカル部が64文字（上限ちょうど）", strings.Repeat("a", 64) + "@home.arpa", true},
 		{"ドメインラベルが64文字", "user@" + strings.Repeat("a", 64) + ".jp", false},
 		{"アドレス全体が255文字", strings.Repeat("a", 64) + "@" + strings.Repeat("b", 63) +
 			"." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 60) + ".com", false},
@@ -186,10 +186,10 @@ func TestInternationalEmailValidators(t *testing.T) {
 			name, in string
 			want     bool
 		}{
-			{"日本語ローカル部", "山田太郎@kaisha.co.jp", true},
+			{"日本語ローカル部", "山田太郎@home.arpa", true},
 			{"日本語ドメイン", "user@例え.jp", true},
 			{"Unicode TLD", "担当@例え.みんな", true},
-			{"連続ドット", "山田..太郎@kaisha.co.jp", false},
+			{"連続ドット", "山田..太郎@home.arpa", false},
 			{"未登録 TLD", "山田@例え.未登録", false},
 			{"予約ドメイン", "山田@example.co.jp", false},
 			{"日本語なし", "δοκιμή@παράδειγμα.com", false},
@@ -207,10 +207,10 @@ func TestInternationalEmailValidators(t *testing.T) {
 			name, in string
 			want     bool
 		}{
-			{"キリル е 一文字", "usеr@kaisha.co.jp", true},
-			{"ギリシャ ο を TLD に混入", "user@kaisha.cοm", true},
-			{"confusable なし", "user@kaisha.com", false},
-			{"三文字超", "раураl@kaisha.com", false},
+			{"キリル е 一文字", "usеr@home.arpa", true},
+			{"ギリシャ α を TLD に混入", "user@home.αrpa", true},
+			{"confusable なし", "user@home.arpa", false},
+			{"三文字超", "раураl@home.arpa", false},
 			{"通常のキリル EAI", "почта@пример.com", false},
 			{"スケルトンが予約ドメイン", "usеr@example.com", false},
 		}

@@ -614,7 +614,7 @@ func TestScanSummaryIsWrittenToStderr(t *testing.T) {
 // すること、そのオフセットで元テキストを切り出すと検出値に一致することを確認する。
 // メールアドレスは機微でない架空ドメインを使うため外部フィクスチャ不要。
 func TestScanStdinOffsets(t *testing.T) {
-	input := "連絡先一覧\n担当: test.user@kaisha.co.jp まで\n"
+	input := "連絡先一覧\n担当: test.user@home.arpa まで\n"
 	// 一時ディレクトリで実行し、リポジトリの .jp-pii.toml を拾わない（既定設定で走査）。
 	cmd := exec.Command(binPath, "scan", "--stdin", "--format", "json", "--unmask")
 	cmd.Dir = t.TempDir()
@@ -658,8 +658,8 @@ func TestScanStdinOffsets(t *testing.T) {
 		if got := string(runes[*f.Offset:*f.EndOffset]); got != f.Match {
 			t.Errorf("input[%d:%d] = %q, want match %q", *f.Offset, *f.EndOffset, got, f.Match)
 		}
-		if f.Match != "test.user@kaisha.co.jp" {
-			t.Errorf("match = %q, want %q", f.Match, "test.user@kaisha.co.jp")
+		if f.Match != "test.user@home.arpa" {
+			t.Errorf("match = %q, want %q", f.Match, "test.user@home.arpa")
 		}
 	}
 	if !found {
@@ -793,7 +793,7 @@ func TestScanStdinDecodesJSONUnicodeEscapes(t *testing.T) {
 	// text を変更しないため、出力（offset を含む）は本機能追加前と不変である
 	// はず。TestScanStdinOffsets と同じ入力・期待値を使った回帰確認。
 	t.Run("エスケープなし_出力不変", func(t *testing.T) {
-		input := "連絡先一覧\n担当: test.user@kaisha.co.jp まで\n"
+		input := "連絡先一覧\n担当: test.user@home.arpa まで\n"
 		runes := []rune(input)
 
 		findings, code := runStdinJSON(t, input)
@@ -816,8 +816,8 @@ func TestScanStdinDecodesJSONUnicodeEscapes(t *testing.T) {
 			if got := string(runes[*f.Offset:*f.EndOffset]); got != f.Match {
 				t.Errorf("input[%d:%d] = %q, want match %q", *f.Offset, *f.EndOffset, got, f.Match)
 			}
-			if f.Match != "test.user@kaisha.co.jp" {
-				t.Errorf("match = %q, want %q", f.Match, "test.user@kaisha.co.jp")
+			if f.Match != "test.user@home.arpa" {
+				t.Errorf("match = %q, want %q", f.Match, "test.user@home.arpa")
 			}
 		}
 		if !found {
@@ -855,7 +855,7 @@ func baselineJSON(t *testing.T, dir string, args ...string) (findings []struct {
 // 不要（TestScanStdinOffsets と同じ慣習）。
 func TestBaselineUpdateThenFilterSuppressesKnownFindings(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "legacy.txt"), []byte("担当: legacy.user@kaisha.co.jp まで\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "legacy.txt"), []byte("担当: legacy.user@home.arpa まで\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	baselinePath := filepath.Join(dir, "baseline.json")
@@ -889,7 +889,7 @@ func TestBaselineUpdateThenFilterSuppressesKnownFindings(t *testing.T) {
 // exit 1 になることを確認する negative ケース。
 func TestBaselineNewFindingStillFails(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "legacy.txt"), []byte("担当: legacy.user@kaisha.co.jp まで\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "legacy.txt"), []byte("担当: legacy.user@home.arpa まで\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	baselinePath := filepath.Join(dir, "baseline.json")
@@ -898,7 +898,7 @@ func TestBaselineNewFindingStillFails(t *testing.T) {
 	}
 
 	// 新規ファイルに別のメールアドレスを追加する（baseline には未記録）。
-	if err := os.WriteFile(filepath.Join(dir, "new.txt"), []byte("担当: new.user@kaisha.co.jp まで\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "new.txt"), []byte("担当: new.user@home.arpa まで\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -917,7 +917,7 @@ func TestBaselineNewFindingStillFails(t *testing.T) {
 func TestBaselineValueChangeStillFires(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "legacy.txt")
-	if err := os.WriteFile(path, []byte("担当: legacy.user@kaisha.co.jp まで\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("担当: legacy.user@home.arpa まで\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	baselinePath := filepath.Join(dir, "baseline.json")
@@ -926,7 +926,7 @@ func TestBaselineValueChangeStillFires(t *testing.T) {
 	}
 
 	// 同じファイル・同じ行の値だけを変更する。
-	if err := os.WriteFile(path, []byte("担当: legacy.user.changed@kaisha.co.jp まで\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("担当: legacy.user.changed@home.arpa まで\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -944,7 +944,7 @@ func TestBaselineValueChangeStillFires(t *testing.T) {
 // 1 回目の記録が失われない）ことを確認する。
 func TestBaselineUpdateMergesWithExisting(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "legacy.txt"), []byte("担当: legacy.user@kaisha.co.jp まで\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "legacy.txt"), []byte("担当: legacy.user@home.arpa まで\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	baselinePath := filepath.Join(dir, "baseline.json")
@@ -952,7 +952,7 @@ func TestBaselineUpdateMergesWithExisting(t *testing.T) {
 		t.Fatal("1st update-baseline should exit 0")
 	}
 
-	if err := os.WriteFile(filepath.Join(dir, "new.txt"), []byte("担当: new.user@kaisha.co.jp まで\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "new.txt"), []byte("担当: new.user@home.arpa まで\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, code := run(t, dir, "scan", "--baseline", baselinePath, "--update-baseline", "."); code != 0 {
@@ -1018,7 +1018,7 @@ func TestBaselineUpdateShowsSummaryAndIgnoresFormat(t *testing.T) {
 // 確認する。
 func TestBaselineShowBaselineDisplaysWithoutAffectingExitCode(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "legacy.txt"), []byte("担当: legacy.user@kaisha.co.jp まで\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "legacy.txt"), []byte("担当: legacy.user@home.arpa まで\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	baselinePath := filepath.Join(dir, "baseline.json")

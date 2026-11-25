@@ -129,11 +129,11 @@ func TestBankAccountRejectsPhoneContinuation(t *testing.T) {
 	}
 }
 
-// TestEmailRejectsRepeatedLetterPlaceholder は、様式の記入例「xxxxx@yyyyy.jp」のような伏せ字の
+// TestEmailRejectsRepeatedLetterPlaceholder は、様式の記入例「xxxxx@yyyyy.home.arpa」のような伏せ字の
 // アドレスを拾わないことを確認する（2026-11-11 に市の申請様式で実測した誤検出。実在の宛先ではない）。
 func TestEmailRejectsRepeatedLetterPlaceholder(t *testing.T) {
 	d := newDetector(t, "")
-	for _, line := range []string{"メール：xxxxx@yyyyy.jp", "E-mail AAAA@BBBB.co.jp"} {
+	for _, line := range []string{"メール：xxxxx@yyyyy.home.arpa", "E-mail AAAA@BBBB.home.arpa"} {
 		for _, f := range d.ScanLine("f.txt", 1, line) {
 			if f.RuleID == "email-address" {
 				t.Errorf("%q: unexpected email %q", line, f.Match)
@@ -141,7 +141,7 @@ func TestEmailRejectsRepeatedLetterPlaceholder(t *testing.T) {
 		}
 	}
 	// ローカル部だけが繰り返しのアドレスは実在しうるので拾う。
-	line := "連絡先 zzz@kaisha-mail.jp"
+	line := "連絡先 zzz@mail.home.arpa"
 	found := false
 	for _, f := range d.ScanLine("f.txt", 1, line) {
 		if f.RuleID == "email-address" {

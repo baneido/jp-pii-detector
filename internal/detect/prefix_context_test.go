@@ -97,19 +97,19 @@ func TestGluedOrgLabelEmail(t *testing.T) {
 	for _, cfg := range []string{"", "[rules]\nhigh_recall = true\n"} {
 		d := newDetector(t, cfg)
 		var got []string
-		for _, f := range d.ScanLine("f.txt", 1, "架空村役場madoguchi@baneido.com") {
+		for _, f := range d.ScanLine("f.txt", 1, "架空村役場madoguchi@home.arpa") {
 			got = append(got, f.RuleID+":"+f.Match)
 		}
-		if strings.Join(got, "|") != "email-address:madoguchi@baneido.com" {
+		if strings.Join(got, "|") != "email-address:madoguchi@home.arpa" {
 			t.Errorf("cfg %q: got %q", cfg, got)
 		}
-		for _, line := range []string{"入力例：taro@baneido.com", "記入例: taro@baneido.com"} {
+		for _, line := range []string{"入力例：taro@home.arpa", "記入例: taro@home.arpa"} {
 			for _, f := range d.ScanLine("f.txt", 1, line) {
 				t.Errorf("cfg %q: %q: 例示を報告した: %s %q", cfg, line, f.RuleID, f.Match)
 			}
 		}
 		// 「例：」だけの形と、本文中のアドレスは従来どおり報告する。
-		if fs := d.ScanLine("f.txt", 1, "連絡先（例：taro@baneido.com）"); len(fs) != 1 {
+		if fs := d.ScanLine("f.txt", 1, "連絡先（例：taro@home.arpa）"); len(fs) != 1 {
 			t.Errorf("cfg %q: 例：のアドレスを報告しなかった: %v", cfg, fs)
 		}
 	}

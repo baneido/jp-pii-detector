@@ -166,12 +166,12 @@ func TestDisabledHighRecallExpectationsDoNotPolluteDefaultProfile(t *testing.T) 
 func TestEvaluateCasesScansContentWithLineAwareSpans(t *testing.T) {
 	results, err := EvaluateCases([]Case{
 		{
-			Content: "memo\n連絡先: taro@gmail.com",
+			Content: "memo\n連絡先: taro@mail.home.arpa",
 			Spans: []Span{{
 				RuleID: "email-address",
 				Line:   2,
 				Start:  5,
-				End:    19,
+				End:    24,
 			}},
 		},
 	})
@@ -193,7 +193,7 @@ func TestEvaluateCaseUsesFileOverride(t *testing.T) {
 	results, err := EvaluateCases([]Case{
 		{
 			File:    "sample.ts",
-			Content: "contact: taro@gmail.com",
+			Content: "contact: taro@mail.home.arpa",
 			Want:    []string{"email-address"},
 		},
 	})
@@ -228,7 +228,7 @@ func TestEvaluateCaseFileOverrideEnablesSourceContext(t *testing.T) {
 func TestEvaluateCasesSpanLineMustMatch(t *testing.T) {
 	results, err := EvaluateCases([]Case{
 		{
-			Content: "連絡先: taro@gmail.com\nmemo",
+			Content: "連絡先: taro@mail.home.arpa\nmemo",
 			Spans: []Span{{
 				RuleID: "email-address",
 				Line:   2,
@@ -255,14 +255,14 @@ func TestEvaluateCasesScansDiffAddedLines(t *testing.T) {
 	results, err := EvaluateCases([]Case{
 		{
 			Diff: []DiffLine{
-				{Text: "連絡先: old@gmail.com", Added: false},
-				{Text: "連絡先: taro@gmail.com", Added: true},
+				{Text: "連絡先: old@mail.home.arpa", Added: false},
+				{Text: "連絡先: taro@mail.home.arpa", Added: true},
 			},
 			Spans: []Span{{
 				RuleID: "email-address",
 				Line:   2,
 				Start:  5,
-				End:    19,
+				End:    24,
 			}},
 		},
 	})
@@ -325,13 +325,13 @@ func TestEvaluateCasesRejectsExpectedCaseWithoutInput(t *testing.T) {
 func TestEvaluateCasesErrorsDoNotEchoInput(t *testing.T) {
 	_, err := EvaluateCases([]Case{{
 		ID:      "case-safe-id",
-		Line:    "連絡先: taro@gmail.com",
+		Line:    "連絡先: taro@mail.home.arpa",
 		Content: "memo",
 	}})
 	if err == nil {
 		t.Fatal("EvaluateCases accepted an ambiguous case")
 	}
-	if strings.Contains(err.Error(), "taro@gmail.com") {
+	if strings.Contains(err.Error(), "taro@mail.home.arpa") {
 		t.Fatalf("error echoed input containing PII-like data: %v", err)
 	}
 	if !strings.Contains(err.Error(), "case-safe-id") {
@@ -379,7 +379,7 @@ func TestEvaluateCasesCountsNegativeCases(t *testing.T) {
 	results, err := EvaluateCases([]Case{
 		{Content: "memo: nothing sensitive on this line"},              // 陰性ケース（Want/Spans なし）
 		{Content: "another clean memo", File: "clean.txt"},             // 陰性ケース
-		{Line: "連絡先: taro@gmail.com", Want: []string{"email-address"}}, // 陽性ケース
+		{Line: "連絡先: taro@mail.home.arpa", Want: []string{"email-address"}}, // 陽性ケース
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -401,7 +401,7 @@ func TestEvaluateCasesCountsFindingLevelFalsePositives(t *testing.T) {
 	results, err := EvaluateCases([]Case{
 		{
 			// 陰性ケース（Want なし）だが、email-address が 2 件誤検出される。
-			Content: "memo: taro@gmail.com and hanako@gmail.com are both examples",
+			Content: "memo: taro@mail.home.arpa and hanako@mail.home.arpa are both examples",
 		},
 	})
 	if err != nil {
@@ -420,7 +420,7 @@ func TestEvaluateCasesCountsFindingLevelFalsePositives(t *testing.T) {
 func TestEvaluateCasesFindingLevelFalsePositivesExcludeWantedRules(t *testing.T) {
 	results, err := EvaluateCases([]Case{
 		{
-			Line: "連絡先: taro@gmail.com",
+			Line: "連絡先: taro@mail.home.arpa",
 			Want: []string{"email-address"},
 		},
 	})
@@ -471,7 +471,7 @@ func TestEvaluateCasesFlagsConfidenceMissAgainstWantSpan(t *testing.T) {
 func TestEvaluateCasesWantConfidenceSatisfiedDoesNotCountAsMiss(t *testing.T) {
 	results, err := EvaluateCases([]Case{
 		{
-			Line: "連絡先: taro@gmail.com",
+			Line: "連絡先: taro@mail.home.arpa",
 			Spans: []Span{{
 				RuleID:         "email-address",
 				Start:          5,
@@ -516,7 +516,7 @@ func TestEvaluateCasesWantConfidenceOptionalWhenUnset(t *testing.T) {
 func TestEvaluateCasesRejectsUnknownWantConfidence(t *testing.T) {
 	_, err := EvaluateCases([]Case{
 		{
-			Line: "連絡先: taro@gmail.com",
+			Line: "連絡先: taro@mail.home.arpa",
 			Spans: []Span{{
 				RuleID:         "email-address",
 				Start:          5,
@@ -574,12 +574,12 @@ func TestSpanMacroAveragesScoredRules(t *testing.T) {
 func TestEvaluateCasesStratifiedByTag(t *testing.T) {
 	s, err := EvaluateCasesStratifiedWithOptions([]Case{
 		{
-			Line: "連絡先: taro@gmail.com",
+			Line: "連絡先: taro@mail.home.arpa",
 			Want: []string{"email-address"},
 			Tags: []string{"source:synthetic", "notation:halfwidth"},
 		},
 		{
-			Content: "memo\n連絡先: hanako@gmail.com",
+			Content: "memo\n連絡先: hanako@mail.home.arpa",
 			Want:    []string{"email-address"},
 			Tags:    []string{"source:synthetic", "layout:cross-line"},
 		},
@@ -610,12 +610,12 @@ func TestEvaluateCasesStratifiedByTag(t *testing.T) {
 // 層別集計（Stratified.Kinds）を検証する。
 func TestEvaluateCasesStratifiedByKind(t *testing.T) {
 	s, err := EvaluateCasesStratifiedWithOptions([]Case{
-		{Line: "連絡先: taro@gmail.com", Want: []string{"email-address"}},
-		{Content: "memo\n連絡先: hanako@gmail.com", Want: []string{"email-address"}},
+		{Line: "連絡先: taro@mail.home.arpa", Want: []string{"email-address"}},
+		{Content: "memo\n連絡先: hanako@mail.home.arpa", Want: []string{"email-address"}},
 		{
 			Diff: []DiffLine{
-				{Text: "連絡先: old@gmail.com", Added: false},
-				{Text: "連絡先: jiro@gmail.com", Added: true},
+				{Text: "連絡先: old@mail.home.arpa", Added: false},
+				{Text: "連絡先: jiro@mail.home.arpa", Added: true},
 			},
 			Want: []string{"email-address"},
 		},
@@ -644,7 +644,7 @@ func TestEvaluateCasesStratifiedByKind(t *testing.T) {
 // 完全に一致することを検証する（後方互換の回帰ガード）。
 func TestEvaluateCasesWithOptionsMatchesStratifiedResults(t *testing.T) {
 	cases := []Case{
-		{Line: "連絡先: taro@gmail.com", Want: []string{"email-address"}, Tags: []string{"source:synthetic"}},
+		{Line: "連絡先: taro@mail.home.arpa", Want: []string{"email-address"}, Tags: []string{"source:synthetic"}},
 	}
 	results, err := EvaluateCasesWithOptions(cases, Options{MinConfidence: "low"})
 	if err != nil {

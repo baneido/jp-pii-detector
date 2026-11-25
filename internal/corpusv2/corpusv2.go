@@ -134,14 +134,14 @@ func positiveCandidates(id string, seed int) []evalcase.Case {
 				out = append(out, lineCase(fmt.Sprintf("住所: 東京都渋谷区神南%d丁目%d番%d号", i%9+1, i%20+1, i%15+1)))
 			}
 		case "email-address":
-			out = append(out, lineCase("連絡先: corpusv2-"+digitRun(seed+i+90, 8)+"@baneido.com"))
+			out = append(out, lineCase("連絡先: corpusv2-"+digitRun(seed+i+90, 8)+"@home.arpa"))
 		case "email-address-eai":
 			// 文字列を分割し、dogfood がコーパス構築コード自体を PII として
 			// 報告しないようにする。実行時には日本語ローカル部の EAI になる。
-			out = append(out, lineCase("連絡先: 利用者"+digitRun(seed+i+90, 4)+"@"+"baneido.com"))
+			out = append(out, lineCase("連絡先: 利用者"+digitRun(seed+i+90, 4)+"@"+"home.arpa"))
 		case "email-address-confusable":
 			// キリル小文字 s（U+0455）を ASCII 中心ローカル部へ 1 文字だけ混入。
-			out = append(out, lineCase("連絡先: u"+"ѕ"+"er"+digitRun(seed+i+90, 4)+"@"+"baneido.com"))
+			out = append(out, lineCase("連絡先: u"+"ѕ"+"er"+digitRun(seed+i+90, 4)+"@"+"home.arpa"))
 		case "credit-card":
 			out = append(out, lineCase("カード番号: "+group(cardNumber(seed+i), []int{4, 4, 4, 4}, "-")))
 		case "jp-drivers-license":
