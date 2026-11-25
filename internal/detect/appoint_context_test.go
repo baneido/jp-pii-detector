@@ -148,8 +148,13 @@ func TestAppointContextNumberFalsePositives(t *testing.T) {
 	if fs := d.ScanContent("shisetsu.csv", shisetsu); has(fs, "jp-bank-account") {
 		t.Errorf("郵便番号の欄: unexpected jp-bank-account")
 	}
+	// 欄の中に改行がある CSV（列見出しの文脈が使えない）でも、郵便番号 + 住所の欄の並びは口座番号にしない。
+	multiline := "施設名,アクセス,郵便番号,住所,メッセージ\n架空食堂 駅前店,架空駅南口すぐ　ゆうちょ銀行架空店向かい,1000001,東京都千代田区千代田1-1,\"※ご注文時に\nご提示ください\"\n"
+	if fs := d.ScanContent("shisetsu2.csv", multiline); has(fs, "jp-bank-account") {
+		t.Errorf("郵便番号の欄（欄内改行）: unexpected jp-bank-account")
+	}
 	// 口座番号の欄は従来どおり拾う。
-	koza := "氏名,銀行名,口座番号\n架空 太郎,みずほ銀行,1234567\n" // jp-pii-detector:ignore（合成ケース。架空の番号）
+	koza := "氏名,銀行名,口座番号,住所\n架空 太郎,みずほ銀行,1000001,東京都千代田区千代田1-1\n" // jp-pii-detector:ignore（合成ケース。架空の番号）
 	if fs := d.ScanContent("koza.csv", koza); !has(fs, "jp-bank-account") {
 		t.Errorf("口座番号の欄: jp-bank-account が消えた")
 	}

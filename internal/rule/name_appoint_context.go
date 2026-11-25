@@ -2,6 +2,9 @@ package rule
 
 import (
 	"regexp"
+	"strings"
+
+	"github.com/baneido/jp-pii-detector/internal/dict"
 )
 
 // 2026-11-25 の公開文書の走査（8,083 件）で、既定モードのルールが取りこぼしていた氏名の形
@@ -89,4 +92,23 @@ func rejectKaigoProviderNumber(line string, start, end int) bool {
 	}
 	lineStart, _ := physicalLineBounds(line, start, start)
 	return !kaigoProviderLabelRe.MatchString(line[lineStart:start])
+}
+
+// postalThenAddressFieldRe は 7 桁の値の直後が CSV の区切りと、市区町村・都道府県で始まる住所の欄である形。
+var postalThenAddressFieldRe = regexp.MustCompile(`^"?[,\t]"?[ ]?[` + kanji + `]{1,6}?[都道府県市区郡町村]`)
+
+// PostalCodeBeforeAddressField は line[start:end] の 7 桁が実在の郵便番号で、直後の欄が住所であり、同じ行に
+// 「口座」「預金」の語が無い形かを返す。2026-11-25 に市のオープンデータ CSV（施設の一覧）で、同じ行の
+// 交通案内の欄「<銀行名>向かい」を文脈に、郵便番号の欄の 7 桁が jp-bank-account として 42 件誤検出されたのを
+// 実測した。欄の中に改行のある CSV では列見出しの文脈が使えないので、行の形で判定する。列見出しが
+// 口座番号の列（「口座番号,住所」と並ぶ名簿）は、呼び出し側（detect）が列の文脈を見て除外する。
+func PostalCodeBeforeAddressField(line string, start, end int) bool {
+	if start < 0 || end > len(line) || start > end {
+		return false
+	}
+	lineStart, lineEnd := physicalLineBounds(line, start, end)
+	if phys := line[lineStart:lineEnd]; strings.Contains(phys, "口座") || strings.Contains(phys, "預金") {
+		return false
+	}
+	return dict.ValidPostalCode(line[start:end]) && postalThenAddressFieldRe.MatchString(line[end:lineEnd])
 }

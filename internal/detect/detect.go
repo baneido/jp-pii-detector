@@ -1654,6 +1654,12 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 			if st != nil && r.ID != "jp-postal-code" && strings.Contains(st.PositiveText, "郵便番号") {
 				return true
 			}
+			// 欄の中に改行がある CSV では列の文脈が付かないので、「実在の郵便番号 + 次の欄が住所」の行の形でも
+			// 判定する（rule.PostalCodeBeforeAddressField）。列見出しが口座の列（口座番号・預金）なら口座番号として残す。
+			if r.ID == "jp-bank-account" && (st == nil || !(strings.Contains(st.PositiveText, "口座") || strings.Contains(st.PositiveText, "預金") || strings.Contains(strings.ToLower(st.PositiveText), "account"))) &&
+				rule.PostalCodeBeforeAddressField(norm, start, end) {
+				return true
+			}
 			// モードの契約: NegativeContextAdjacentLabelOnly で抑制に使える
 			// のは採番ラベル明示語彙の隣接一致だけで、それ以外の抑制経路は
 			// 旧 IgnoreNegativeContext: true と同一（＝無効）。構造化 source
