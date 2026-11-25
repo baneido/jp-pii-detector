@@ -53,12 +53,12 @@ GitHub Actions も install.sh を使うので、同じく既定で同梱版に�
   `--model-dir` を指定しなくても、実行ファイルのあるディレクトリの `model/` を使う。
   実行ファイルがシンボリックリンクなら、リンク先の実体の場所を基準にする。
 - 優先順位は `--no-model`（モデルを使わない）、`--model-dir <dir>`、同梱の `model/` の順。
-- 同梱モデルを読み込めないときは、ルールだけで走査を続けず終了コード `2` で終わる
-  （`--no-model` で回避できる旨を表示する）。
+- 同梱モデルを読み込めないときは、ルールだけでスキャンを続けず終了コード `2` で終わる
+  （`--no-model` で回避できることを表示する）。
 - ONNX Runtime の共有ライブラリは、`JP_PII_ORT_LIBRARY`、モデルディレクトリ内、
   実行ファイルの隣の `lib/`、実行ファイルと同じディレクトリの順に探す。
   `LD_LIBRARY_PATH` などの設定は要らない。
-- `jp-pii-detect version` は、2 行目に同梱しているモデルのリビジョンと ONNX Runtime の版を表示する。
+- `jp-pii-detect version` は、2 行目に同梱しているモデルのリビジョンと ONNX Runtime のバージョンを表示する。
 
 ## 対応プラットフォーム
 
@@ -75,18 +75,18 @@ cgo を使うため、クロスコンパイルはしない。各ランナーで�
 Linux は Ubuntu 22.04 でビルドするので、glibc 2.35 程度以降を前提にする
 （ONNX Runtime 自体は glibc 2.28 以降）。
 
-## ピン留めと検証
+## バージョンの固定と検証
 
-取得する外部成果物は `scripts/model-bundle.env` でピン留めし、すべて SHA-256 を検証する。
+取得する外部成果物は `scripts/model-bundle.env` でバージョンを固定し、すべて SHA-256 を検証する。
 
-| 成果物 | ピン留め |
+| 成果物 | 固定する値 |
 |---|---|
 | Sumi | Hugging Face のコミット `daa43a033830a38911b178e7951b97ad64b0080a`（2026-10-17）。4 ファイルの SHA-256 |
 | ONNX Runtime | 1.31.0。Microsoft が NuGet で配る公式パッケージ `Microsoft.ML.OnnxRuntime`（全プラットフォームの共有ライブラリ入り）の SHA-256。GitHub のリリース（`github.com/microsoft/onnxruntime`）は 2026 年 11 月中旬に消えたため、NuGet から取得する。共有ライブラリは GitHub 版と同じもの（osx-arm64 だけはコード署名の領域が異なる） |
 
 更新するときは `scripts/model-bundle.env` の値を変え、`scripts/package-model-bundle.sh` と
 `scripts/smoke-model-bundle.sh` が通ることを確かめる。ONNX Runtime の Go バインディング
-（`github.com/microsoft/onnxruntime/go`）は ORT_API_VERSION 29 以上を要るので、
+（`github.com/microsoft/onnxruntime/go`）は ORT_API_VERSION 29 以上が必要なので、
 ONNX Runtime を 1.29 未満には下げられない。
 
 ## ビルド
@@ -135,17 +135,17 @@ certify anything."、"Misses are certain."、評価値は合成データでの�
 
 ## 既知の制約
 
-- 走査はルールだけの場合より大幅に遅い。既定ではモデルに読ませる行を候補行（日本語・`@`・長い数字の
+- スキャンはルールだけの場合より大幅に遅い。既定ではモデルに読ませる行を候補行（日本語・`@`・長い数字の
   並び・ローマ字の姓名を含む行と前後 1 行）に絞る（`--model-full` で全行）。コード中心のリポジトリでは
   数倍速くなるが、日本語の文書や氏名辞書のようにほぼ全行が候補になる入力では速くならない。
   このリポジトリ全体（氏名辞書を含む）のフルスキャンは、8 コアの Linux でルールだけなら 0.3 秒、
   モデルを使うと 4〜5 分かかる。辞書データのような氏名の羅列はモデルが大量に氏名と判定するので、
-  `allowlist.paths` で除外するか `--no-model` を使う。pre-commit（`--staged`）など差分の走査に向く。
+  `allowlist.paths` で除外するか `--no-model` を使う。pre-commit（`--staged`）など差分のスキャンに向く。
 - Linux（x86-64）では AMX を使わせないために seccomp フィルタを入れるので、プロセスに
   no_new_privs が付く（`JP_PII_ORT_AMX=1` で解除）。
 - macOS で、ブラウザでダウンロードしたアーカイブは Gatekeeper の隔離属性が付き、実行や
   `lib/libonnxruntime.dylib` の読み込みが拒否されることがある（`xattr -dr com.apple.quarantine`）。
   実行ファイルは Go のリンカによるアドホック署名だけで、公証（notarization）はしていない。
-- Windows 版の ONNX Runtime は Microsoft Visual C++ 再頒布可能パッケージを要ることがある。
+- Windows 版の ONNX Runtime は Microsoft Visual C++ 再頒布可能パッケージが必要になることがある。
   Windows 版のモデル同梱ビルドは、リリース時のスモークテストとモデルテスト（`-tags ort`）でしか
   確かめていない（ルール部分のテストは ci.yml の test (windows) で PR ごとに回している）。

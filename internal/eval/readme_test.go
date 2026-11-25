@@ -67,12 +67,14 @@ var readmeRowEN = map[string]string{
 }
 
 var (
-	// 表の各行のルール別 F1（太字の数値 `**x.xx**`）。数値部分に翻訳の余地が
-	// ないため、両言語の表で同じパターンを使える。置換は行ラベルで特定した
+	// 表の各行のルール別 F1（太字の数値 `**x.xx**`、または未計測の表記）。数値部分に
+	// 翻訳の余地がないため、両言語の表で同じパターンを使える。置換は行ラベルで特定した
 	// 表の行に限って行うので、表外の太字数値を誤って書き換えることはない。
 	// 英語版本文の総合 F1 表記 `**F1 x.xx**` は太字が `F1 ` で始まるため
 	// このパターンには一致しない。
-	ruleF1Re = regexp.MustCompile(`\*\*[0-9]+\.[0-9]{2}\*\*|` + notMeasuredJA + `|` + notMeasuredEN)
+	// 日本語版の未計測は `-` で、例の値（`1234-5678-9018` など）のハイフンにも
+	// 一致してしまうため、セルの区切り `| … |` ごと照合し、値はグループ 1 で取り出す。
+	ruleF1Re = regexp.MustCompile(`\| (\*\*[0-9]+\.[0-9]{2}\*\*|` + regexp.QuoteMeta(notMeasuredJA) + `|` + notMeasuredEN + `) \|`)
 
 	// 先頭の総合バッジ（マイクロ平均 F1）。
 	//
@@ -111,7 +113,7 @@ var (
 
 // 評価コーパス（Nemotron-PII-Japan）に正解ラベルがないルールの行に書く表記。
 const (
-	notMeasuredJA = "未計測"
+	notMeasuredJA = "-"
 	notMeasuredEN = "not measured"
 )
 
@@ -124,7 +126,7 @@ func coveredRules() map[string]bool {
 	return m
 }
 
-// ruleCell は表の実測 F1 列に書く値。正解がないルールは未計測と書く。
+// ruleCell は表の実測 F1 列に書く値。正解がないルールは未計測の表記（日本語版は `-`）を書く。
 func ruleCell(spec readmeSpec, id string, f1 map[string]float64) string {
 	if !coveredRules()[id] {
 		return spec.notMeasured
@@ -253,6 +255,49 @@ func TestOverallBadgeRe(t *testing.T) {
 	}
 }
 
+// TestRuleF1Re は精度表の F1 列の正規表現が、行の中で F1 列のセルだけを 1 件捕捉し、
+// 書き換えもそのセルだけに効くことを検証する。private コーパスに依存しない。
+// 日本語版の未計測 `-` は例の値（`1234-5678-9018`、`4桁-6桁`）のハイフンと区別できる必要がある。
+func TestRuleF1Re(t *testing.T) {
+	tests := []struct {
+		row, want, repl, wantRow string
+	}{
+		{
+			row:     "| マイナンバー（個人番号） | **1.00** | 12 桁 + 検査用数字（`1234-5678-9018` 形式） |",
+			want:    "**1.00**",
+			repl:    "**0.98**",
+			wantRow: "| マイナンバー（個人番号） | **0.98** | 12 桁 + 検査用数字（`1234-5678-9018` 形式） |",
+		},
+		{
+			row:     "| 基礎年金番号 | - | 4桁-6桁 + 周辺のキーワードが必要 |",
+			want:    "-",
+			repl:    "**0.97**",
+			wantRow: "| 基礎年金番号 | **0.97** | 4桁-6桁 + 周辺のキーワードが必要 |",
+		},
+		{
+			row:     "| 住所 | **0.99** | 都道府県〜番地のパターン |",
+			want:    "**0.99**",
+			repl:    "-",
+			wantRow: "| 住所 | - | 都道府県〜番地のパターン |",
+		},
+		{
+			row:     "| Basic pension number | not measured | 4-digit + 6-digit + nearby context keyword required |",
+			want:    "not measured",
+			repl:    "**0.97**",
+			wantRow: "| Basic pension number | **0.97** | 4-digit + 6-digit + nearby context keyword required |",
+		},
+	}
+	for _, tt := range tests {
+		m := ruleF1Re.FindAllStringSubmatch(tt.row, -1)
+		if len(m) != 1 || m[0][1] != tt.want {
+			t.Errorf("%q: 捕捉が %v、want 1 件の %q", tt.row, m, tt.want)
+		}
+		if got := replaceGroup1(tt.row, ruleF1Re, tt.repl); got != tt.wantRow {
+			t.Errorf("書き換え結果が不一致:\n got %s\nwant %s", got, tt.wantRow)
+		}
+	}
+}
+
 // checkReadme は 1 ファイル分の精度表記を実測値と突き合わせる。
 func checkReadme(t *testing.T, spec readmeSpec, readme string, results []Result) {
 	t.Helper()
@@ -273,7 +318,11 @@ func checkReadme(t *testing.T, spec readmeSpec, readme string, results []Result)
 				continue
 			}
 			want := ruleCell(spec, id, f1)
-			if cells := ruleF1Re.FindAllString(row, -1); len(cells) != 1 || cells[0] != want {
+			var cells []string
+			for _, m := range ruleF1Re.FindAllStringSubmatch(row, -1) {
+				cells = append(cells, m[1])
+			}
+			if len(cells) != 1 || cells[0] != want {
 				t.Errorf("%s: %q 行の実測 F1 列が %q、want %q（-update で更新できます）",
 					spec.path, label, cells, want)
 			}
@@ -353,7 +402,7 @@ func rewriteBadges(readme string, spec readmeSpec, results []Result) string {
 		for i, line := range lines {
 			for id, label := range spec.ruleRows {
 				if strings.HasPrefix(line, "| "+label+" |") {
-					lines[i] = ruleF1Re.ReplaceAllString(line, ruleCell(spec, id, f1))
+					lines[i] = replaceGroup1(line, ruleF1Re, ruleCell(spec, id, f1))
 					break
 				}
 			}
