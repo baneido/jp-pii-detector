@@ -123,6 +123,8 @@ mise use -g github:baneido/jp-pii-detector@v0.9.4
 
 GitHub Releases のビルド済みバイナリを取得してインストールするには以下のコマンドを実行します。
 インストール先は既定で `$HOME/.local/bin` です。変更する場合は `JP_PII_DETECT_INSTALL_DIR=/path/to/bin` を指定してください。
+次のリリースから、install.sh は既定で [Sumi モデル同梱ビルド](#option-6-sumi-モデル同梱ビルド)を入れます。
+組み込みルールだけの軽量版を入れる場合は `JP_PII_DETECT_MODEL=false` を指定してください。
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detector/v0.9.4/scripts/install.sh | JP_PII_DETECT_VERSION=v0.9.4 sh
@@ -144,7 +146,7 @@ GitLab CI などのジョブイメージとしてそのまま使えます（[doc
 docker run --rm -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.9.4
 ```
 
-### Option 6. Sumi モデル同梱ビルド（試験的）
+### Option 6. Sumi モデル同梱ビルド
 
 組み込みルールに加えて、ローカル推論モデル [Sumi](https://huggingface.co/NagaYu/sumi-ja-pii)
 （ModernBERT-Ja-130M を PII 抽出用に微調整したもの、ONNX INT8）でも検出するビルドです。
@@ -163,7 +165,9 @@ tar -xzf jp-pii-detect-sumi_linux_amd64.tar.gz
   1 ワーカーあたり数百 MB のメモリを使います。pre-commit の `--staged` など差分の走査に
   向いています。
 - 実行ファイルは隣の `model/` と `lib/` を使います。ディレクトリ構成を保ったまま置き、
-  `PATH` にはシンボリックリンクを張ってください。
+  `PATH` にはシンボリックリンクを張ってください。install.sh、pre-commit フック、GitHub Actions は
+  この配置で入れます（次のリリースから既定）。同梱版のない OS（Windows、Intel Mac）と、
+  同梱版を添付していないリリースでは、警告を表示して軽量版を入れます。
 - 自分でビルドする場合は `scripts/package-model-bundle.sh` を実行します（cgo のため
   ビルドするマシンと同じ OS/アーキテクチャ向けだけ）。モデルと ONNX Runtime は
   ピン留めした版を取得し、SHA-256 を検証します。詳細は [docs/model-bundle.md](docs/model-bundle.md)。
@@ -225,6 +229,8 @@ pre-commit run jp-pii-detect
 フックは GitHub Releases のビルド済みバイナリを `~/.cache/jp-pii-detector/pre-commit/`
 配下にキャッシュして実行するので、利用側の環境に Go は不要です。
 使うバイナリは、通常 `rev` に指定したタグと同じバージョンです。
+次のリリースから、フックは Sumi モデル同梱ビルドを使います（初回は約 100MB をダウンロードします）。
+軽量版を使う場合は、環境変数 `JP_PII_DETECT_MODEL=false` を設定してください。
 
 既定のフック（`jp-pii-detect`）は、常にステージ済みの差分だけを走査します。
 このフックは pre-commit からファイル一覧を受け取らないため、`--all-files` を付けて実行しても走査範囲は広がりません。
@@ -262,6 +268,10 @@ jobs:
 
 Action の参照とダウンロードするバイナリ版は独立しています。再現性が必要な場合は、
 上記のように `uses:` のタグと `with.version` を同じ値で明示してください。
+
+次のリリースから、Action は既定で Sumi モデル同梱ビルドを入れ、組み込みルールに加えてモデルでも検出します。
+モデルを使うと走査が大幅に遅くなるため、`args` で `--diff` を指定して PR の差分だけを走査するのがおすすめです。
+軽量版を使う場合は `with.model: false` を指定してください。Windows のランナーでは常に軽量版になります。
 
 > 次回リリース以降はムービングメジャータグ `v0` も利用でき、`baneido/jp-pii-detector@v0` で最新の v0 系を追従できます。
 

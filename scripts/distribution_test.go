@@ -19,6 +19,7 @@ const (
 	testOS      = "linux"
 	testArch    = "amd64"
 	testAsset   = "jp-pii-detect_linux_amd64.tar.gz"
+	testBundle  = "jp-pii-detect-sumi_linux_amd64"
 
 	// docsVersion は README / docs が案内する現行リリース版。README のバージョン表記と
 	// 一致させる（更新時はこの定数だけを直せば済むよう、期待文字列はここから組み立てる）。
@@ -129,13 +130,165 @@ func distributionEnv(baseURL, installDir string) []string {
 }
 
 func TestInstallScriptPrintsReleaseAssetURL(t *testing.T) {
-	out, code := runScript(t, "scripts/install.sh", distributionEnv("https://example.test/releases", t.TempDir()), "--print-url")
-	if code != 0 {
-		t.Fatalf("install.sh --print-url exit=%d\n%s", code, out)
+	base := "https://example.test/releases/" + testVersion + "/"
+	for _, tc := range []struct {
+		name string
+		env  []string
+		args []string
+		want string
+	}{
+		{"default installs the model bundle", nil, nil, base + testBundle + ".tar.gz"},
+		{"--no-model", nil, []string{"--no-model"}, base + testAsset},
+		{"JP_PII_DETECT_MODEL=false", []string{"JP_PII_DETECT_MODEL=false"}, nil, base + testAsset},
+		{"no bundle for windows", []string{"JP_PII_DETECT_OS=windows"}, nil, "https://example.test/releases/" + testVersion + "/jp-pii-detect_windows_amd64.tar.gz"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := append(distributionEnv("https://example.test/releases", t.TempDir()), tc.env...)
+			out, code := runScript(t, "scripts/install.sh", env, append(tc.args, "--print-url")...)
+			if code != 0 {
+				t.Fatalf("install.sh --print-url exit=%d\n%s", code, out)
+			}
+			lines := strings.Split(strings.TrimSpace(out), "\n")
+			if got := lines[len(lines)-1]; got != tc.want {
+				t.Fatalf("URL = %q, want %q\n%s", got, tc.want, out)
+			}
+		})
 	}
-	want := "https://example.test/releases/" + testVersion + "/" + testAsset
-	if strings.TrimSpace(out) != want {
-		t.Fatalf("URL = %q, want %q", strings.TrimSpace(out), want)
+}
+
+// writeFakeModelBundle はモデル同梱版のアーカイブ（トップディレクトリ付き、
+// 実行ファイルの隣に model/ と lib/）と checksums-model.txt を作る。
+func writeFakeModelBundle(t *testing.T, root, version string) string {
+	t.Helper()
+	releaseDir := filepath.Join(root, version)
+	if err := os.MkdirAll(releaseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	archivePath := filepath.Join(releaseDir, testBundle+".tar.gz")
+	f, err := os.Create(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gz := gzip.NewWriter(f)
+	tw := tar.NewWriter(gz)
+	// 実行ファイルは、自分の実体の隣に model/ があるかを表示する。
+	body := "#!/bin/sh\nd=$(dirname \"$(readlink -f \"$0\" 2>/dev/null || realpath \"$0\")\")\n[ -f \"$d/model/model.int8.onnx\" ] && echo fake-sumi-with-model \"$@\"\n"
+	for _, e := range []struct {
+		name, body string
+		mode       int64
+	}{
+		{testBundle + "/jp-pii-detect", body, 0o755},
+		{testBundle + "/model/model.int8.onnx", "fake", 0o644},
+		{testBundle + "/lib/libonnxruntime.so", "fake", 0o644},
+	} {
+		if err := tw.WriteHeader(&tar.Header{Name: e.name, Mode: e.mode, Size: int64(len(e.body))}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(e.body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256File(t, archivePath) + "  " + testBundle + ".tar.gz\n"
+	if err := os.WriteFile(filepath.Join(releaseDir, "checksums-model.txt"), []byte(sum), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return archivePath
+}
+
+func TestInstallScriptInstallsModelBundleByDefault(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink layout is not used on windows")
+	}
+	releases := t.TempDir()
+	writeFakeReleaseArchive(t, releases)
+	writeFakeModelBundle(t, releases, testVersion)
+	installDir := filepath.Join(t.TempDir(), "bin")
+
+	out, code := runScript(t, "scripts/install.sh", distributionEnv("file://"+releases, installDir))
+	if code != 0 {
+		t.Fatalf("install.sh exit=%d\n%s", code, out)
+	}
+	bin := filepath.Join(installDir, "jp-pii-detect")
+	run, err := exec.Command(bin, "scan").CombinedOutput()
+	if err != nil || !strings.Contains(string(run), "fake-sumi-with-model scan") {
+		t.Fatalf("installed binary should be the bundle and find model/ next to its real path: %v\n%s\n%s", err, run, out)
+	}
+
+	// 軽量版に入れ替えると、同梱版のディレクトリは消える。
+	out, code = runScript(t, "scripts/install.sh", append(distributionEnv("file://"+releases, installDir), "JP_PII_DETECT_MODEL=false"))
+	if code != 0 {
+		t.Fatalf("install.sh (no model) exit=%d\n%s", code, out)
+	}
+	if fi, err := os.Lstat(bin); err != nil || fi.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("rules-only install should replace the link with a file: %v %v", fi, err)
+	}
+	if _, err := os.Stat(filepath.Join(installDir, "jp-pii-detect-sumi")); !os.IsNotExist(err) {
+		t.Fatalf("bundle directory should be removed: %v", err)
+	}
+}
+
+// 同梱版のないリリースでは、警告を出して軽量版を入れる（黙ってモデルなしにしない）。
+func TestInstallScriptFallsBackLoudlyWithoutBundle(t *testing.T) {
+	releases := t.TempDir()
+	writeFakeReleaseArchive(t, releases)
+	installDir := filepath.Join(t.TempDir(), "bin")
+
+	out, code := runScript(t, "scripts/install.sh", distributionEnv("file://"+releases, installDir))
+	if code != 0 {
+		t.Fatalf("install.sh exit=%d\n%s", code, out)
+	}
+	if !strings.Contains(out, "warning:") || !strings.Contains(out, "モデルによる検出は行いません") {
+		t.Fatalf("fallback should warn, got:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(installDir, "jp-pii-detect")); err != nil {
+		t.Fatalf("rules-only binary should be installed: %v", err)
+	}
+}
+
+// 同梱版のチェックサム不一致は、軽量版へ切り替えずに失敗させる。
+func TestInstallScriptRejectsModelBundleChecksumMismatch(t *testing.T) {
+	releases := t.TempDir()
+	writeFakeReleaseArchive(t, releases)
+	archive := writeFakeModelBundle(t, releases, testVersion)
+	if err := os.WriteFile(archive, []byte("tampered archive"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	installDir := filepath.Join(t.TempDir(), "bin")
+
+	out, code := runScript(t, "scripts/install.sh", distributionEnv("file://"+releases, installDir))
+	if code == 0 || !strings.Contains(out, "checksum verification failed") {
+		t.Fatalf("install.sh should reject a tampered bundle, exit=%d\n%s", code, out)
+	}
+	if _, err := os.Lstat(filepath.Join(installDir, "jp-pii-detect")); !os.IsNotExist(err) {
+		t.Fatalf("nothing should be installed after checksum failure: %v", err)
+	}
+}
+
+// pre-commit は、軽量版を選んだときに同じバージョンの同梱版と別の場所へキャッシュする。
+func TestPreCommitCachesRulesOnlyBinarySeparately(t *testing.T) {
+	releases := t.TempDir()
+	writeFakeReleaseArchive(t, releases)
+	cacheDir := filepath.Join(t.TempDir(), "cache")
+	env := append(distributionEnv("file://"+releases, cacheDir), "JP_PII_DETECT_MODEL=false")
+
+	out, code := runScript(t, "scripts/pre-commit.sh", env)
+	if code != 0 || !strings.Contains(out, "fake-jp-pii-detect scan --staged") {
+		t.Fatalf("pre-commit.sh exit=%d\n%s", code, out)
+	}
+	if strings.Contains(out, "warning:") {
+		t.Fatalf("explicit opt-out should not warn:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(cacheDir, testVersion+"-no-model", "jp-pii-detect")); err != nil {
+		t.Fatalf("rules-only binary should be cached under <version>-no-model: %v", err)
 	}
 }
 
@@ -1093,7 +1246,7 @@ func TestModelReleaseWorkflowBuildsNativeBundles(t *testing.T) {
 		"contains(github.ref_name, '.')",
 		"runner: ubuntu-22.04\n",
 		"runner: ubuntu-22.04-arm",
-		"runner: macos-14",
+		"runner: macos-latest",
 		"scripts/package-model-bundle.sh",
 		"scripts/smoke-model-bundle.sh",
 		"go test -tags ort",
@@ -1139,8 +1292,7 @@ func TestModelBundlePinsHaveSHA256(t *testing.T) {
 	for _, k := range []string{
 		"SUMI_SHA256_model_int8_onnx", "SUMI_SHA256_tokenizer_json",
 		"SUMI_SHA256_sumi_labels_json", "SUMI_SHA256_calibrator_json",
-		"ORT_SHA256_linux_x64", "ORT_SHA256_linux_aarch64",
-		"ORT_SHA256_osx_arm64", "ORT_SHA256_win_x64",
+		"ORT_NUGET_SHA256",
 	} {
 		if !sha.MatchString(vals[k]) {
 			t.Fatalf("%s must be a SHA-256 hex digest, got %q", k, vals[k])
@@ -1177,5 +1329,58 @@ func TestModelBundleNoticeKeepsAttributionAndDisclaimer(t *testing.T) {
 	}
 	if !strings.Contains(string(mit), "Copyright (c) 2025 SB Intuitions") {
 		t.Fatal("modernbert-ja-130m.LICENSE must keep the copyright notice")
+	}
+}
+
+// 入れてある同梱版がリリースと同じなら、アーカイブ（約 100MB）を取り直さない。
+func TestInstallScriptSkipsUnchangedModelBundle(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink layout is not used on windows")
+	}
+	releases := t.TempDir()
+	archive := writeFakeModelBundle(t, releases, testVersion)
+	installDir := filepath.Join(t.TempDir(), "bin")
+	env := distributionEnv("file://"+releases, installDir)
+
+	if out, code := runScript(t, "scripts/install.sh", env); code != 0 {
+		t.Fatalf("first install exit=%d\n%s", code, out)
+	}
+	// アーカイブを消しても、チェックサムが同じなら成功する（取りに行かない）。
+	if err := os.Remove(archive); err != nil {
+		t.Fatal(err)
+	}
+	out, code := runScript(t, "scripts/install.sh", env)
+	if code != 0 || !strings.Contains(out, "Up to date") {
+		t.Fatalf("unchanged bundle should not be re-downloaded, exit=%d\n%s", code, out)
+	}
+}
+
+// 同梱版を取得できずに軽量版にしたバージョンは、pre-commit が次回も入れ直しを試す。
+func TestPreCommitRetriesModelBundleAfterFallback(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink layout is not used on windows")
+	}
+	releases := t.TempDir()
+	writeFakeReleaseArchive(t, releases)
+	cacheDir := filepath.Join(t.TempDir(), "cache")
+	env := distributionEnv("file://"+releases, cacheDir)
+
+	out, code := runScript(t, "scripts/pre-commit.sh", env)
+	if code != 0 || !strings.Contains(out, "fake-jp-pii-detect scan --staged") {
+		t.Fatalf("first run should fall back to rules-only, exit=%d\n%s", code, out)
+	}
+	writeFakeModelBundle(t, releases, testVersion)
+	out, code = runScript(t, "scripts/pre-commit.sh", env)
+	if code != 0 || !strings.Contains(out, "fake-sumi-with-model scan --staged") {
+		t.Fatalf("second run should pick up the bundle, exit=%d\n%s", code, out)
+	}
+	if _, err := os.Stat(filepath.Join(cacheDir, testVersion, ".jp-pii-detect-model-fallback")); !os.IsNotExist(err) {
+		t.Fatalf("fallback marker should be removed after the bundle is installed: %v", err)
+	}
+	// 同梱版が入った後は、固定バージョンなら取り直さない。
+	offline := append(env, "JP_PII_DETECT_RELEASE_BASE_URL=file://"+filepath.Join(releases, "missing"))
+	out, code = runScript(t, "scripts/pre-commit.sh", offline)
+	if code != 0 || !strings.Contains(out, "fake-sumi-with-model scan --staged") || strings.Contains(out, "warning:") {
+		t.Fatalf("pinned bundle should be reused without network, exit=%d\n%s", code, out)
 	}
 }

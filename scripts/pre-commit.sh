@@ -40,10 +40,16 @@ if [ -z "$cache_root" ]; then
 fi
 
 install_dir="${cache_root}/${version}"
+# 既定はモデル同梱版（install.sh）。軽量版を選んだときは別のディレクトリに
+# キャッシュし、同じバージョンの同梱版と取り違えないようにする。
+case "${JP_PII_DETECT_MODEL:-true}" in
+	0 | false | False | FALSE | no | off) install_dir="${install_dir}-no-model" ;;
+esac
 bin_name=$(bin_name_for_os "${JP_PII_DETECT_OS:-$(uname -s)}")
 bin="${install_dir}/${bin_name}"
 
-if [ "$version" = "latest" ] || [ ! -x "$bin" ]; then
+# 同梱版を取得できずに軽量版を入れた後（install.sh が印を残す）も、毎回入れ直しを試す。
+if [ "$version" = "latest" ] || [ ! -x "$bin" ] || [ -f "${install_dir}/.jp-pii-detect-model-fallback" ]; then
 	# ダウンロード失敗（オフライン・GitHub 障害等）でコミット自体を止めない。
 	# キャッシュ済みバイナリがあれば警告してそれで走査を続行する。
 	if ! JP_PII_DETECT_VERSION="$version" "$script_dir/install.sh" --version "$version" --install-dir "$install_dir"; then
