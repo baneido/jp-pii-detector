@@ -2,8 +2,10 @@ package detect
 
 import (
 	"path/filepath"
+	"regexp"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/baneido/jp-pii-detector/internal/normalize"
 	"github.com/baneido/jp-pii-detector/internal/rule"
@@ -162,11 +164,29 @@ func looksLikeCSVHeader(line string, fields []csvField) bool {
 	}
 	for _, f := range fields {
 		text := strings.TrimSpace(line[f.start:f.end])
-		if text == "" || isNumericMajorityText(text) {
+		if text == "" || isNumericMajorityText(stripOrdinalPrefix(text)) {
 			return false
 		}
 	}
 	return true
+}
+
+// stripOrdinalPrefix は「01会計」「02款」「08予算額」のように、列見出しの先頭に付いた 1〜2 桁の通し番号を
+// 外す（2026-11-25 に市の予算書のオープンデータ CSV で実測。「02款」は数字が半数以上なので、見出し行が
+// データ行とみなされ、列の文脈が使われていなかった）。番号の直後が漢字・かなのときだけ外す。
+func stripOrdinalPrefix(s string) string {
+	n := 0
+	for n < len(s) && n < 2 && s[n] >= '0' && s[n] <= '9' {
+		n++
+	}
+	if n == 0 || n >= len(s) {
+		return s
+	}
+	r, _ := utf8.DecodeRuneInString(s[n:])
+	if unicode.In(r, unicode.Han, unicode.Hiragana, unicode.Katakana) {
+		return s[n:]
+	}
+	return s
 }
 
 // isNumericMajorityText は空白を除いた文字の半数以上が ASCII 数字かを返す
@@ -200,6 +220,10 @@ var csvNegativeContextWordsJP = []string{
 	// 「被保険者保険給付総額」「公的年金」を文脈に jp-kaigo-insurance・jp-health-insurance・jp-pension-number が
 	// 3 ファイルで 220 件誤検出されたのを実測）。
 	"時間軸コード", "地域コード", "統計コード", "数値", "人数", "総数", "総額",
+	// 予算書・決算書の CSV の「予算額」「支出額(円)」の列は金額で、個人の番号ではない（2026-11-25 に市と国の
+	// オープンデータ CSV で、同じ行の科目名「一般被保険者療養給付費」を文脈に jp-health-insurance が、検査用数字が
+	// 偶然合った 12 桁の合計額に jp-my-number が誤検出されたのを実測）。
+	"予算額", "決算額", "支出額", "収入額", "歳出額", "歳入額", "対象者数",
 }
 
 // csvColumnSignal はヘッダの 1 フィールド本文からその列の PositiveText /
@@ -372,6 +396,9 @@ func csvAssignColumnContexts(out []lineContext, lines []string, delim byte, head
 	}
 }
 
+// csvReadingHeaderRe は読みだけを表す列見出し（ふりがな・フリガナ・よみ・カナ）。
+var csvReadingHeaderRe = regexp.MustCompile(`^(?:ふりがな|フリガナ|よみがな|ヨミガナ|よみ|ヨミ|かな|カナ)$`)
+
 // scanCSVNameColumns は CSV/TSV のヘッダが氏名系の強いラベル
 // （personNameLabelJP / personNameLabelASCIIStrong と列全体が完全一致）と
 // なる列について、各データ行のフィールド値が氏名として妥当か（辞書照合込み）
@@ -400,6 +427,19 @@ func (d *Detector) scanCSVNameColumns(file string, lines []string) []Finding {
 		text := strings.TrimSpace(headerNorm[f.start:f.end])
 		if text != "" && rule.CSVNameHeaderRe.MatchString(text) {
 			nameCols[i] = true
+		}
+	}
+	// 「観光地名,ふりがな」「施設名,フリガナ」のように、読みの列の直前が人の氏名でない「〜名」「名称」の列なら、
+	// 読みはその施設・場所の名前の読みで、氏名の読みではない（2026-11-25 に県のオープンデータ CSV（観光地の
+	// 一覧）で、地名の読みが person-name-structured として誤検出されたのを実測）。
+	for i := range nameCols {
+		if i == 0 || nameCols[i-1] {
+			continue
+		}
+		text := strings.TrimSpace(headerNorm[headerFields[i].start:headerFields[i].end])
+		prev := strings.TrimSpace(headerNorm[headerFields[i-1].start:headerFields[i-1].end])
+		if csvReadingHeaderRe.MatchString(text) && (strings.HasSuffix(prev, "名") || strings.HasSuffix(prev, "名称")) {
+			delete(nameCols, i)
 		}
 	}
 	if len(nameCols) == 0 {

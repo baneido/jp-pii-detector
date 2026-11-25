@@ -74,6 +74,11 @@ func validSpacedHonorificName(v string) bool {
 	if !dict.IsSurname(sur) || prefectureWordRe.MatchString(sur) {
 		return false
 	}
+	// 「26日前 <姓>さん」の「日前」は投稿からの経過日数で、姓ではない（2026-11-25 に自治体の SNS の
+	// 埋め込み表示で実測。姓の辞書に同形の語がある）。
+	if sur == "日前" || sur == "年前" {
+		return false
+	}
 	// 名が職名・部署の語尾（管理課・委員会）や敬称の字（「<名>氏（<所属>）」の「氏」）で終わる形は、
 	// 名の後ろの語まで値に取り込んでいる。
 	for _, s := range []string{"長", "員", "事", "部", "課", "係", "室", "会", "所", "局", "科", "氏", "様", "殿", "君", "先生"} {
