@@ -7,10 +7,10 @@
 日本特化の個人情報（PII）静的検出器。リポジトリに混入したマイナンバーや電話番号、住所などを
 コミット前（git hook）や CI/CD（GitHub Actions）で検出します。
 
-- **日本特化**: マイナンバー検査用数字の検証、全角や長音記号の正規化、和暦、JCB カードなどに対応
-- **高速**: Go 製シングルバイナリ（利用時に Go は不要）。pre-commit ではステージ済み差分の追加行のみを走査
-- **CI フレンドリー**: 終了コード、JSON、SARIF、GitHub Actions アノテーション出力
-- **二次漏えい防止**: 検出値は既定でマスク表示
+- 日本に特化し、マイナンバー検査用数字の検証、全角や長音記号の正規化、和暦、JCB カードなどに対応
+- 高速に動作する Go 製シングルバイナリ（利用時に Go は不要）。pre-commit ではステージ済み差分の追加行のみを走査
+- 終了コード、JSON、SARIF、GitHub Actions アノテーション出力により CI に組み込みやすい
+- 二次漏えいを防ぐため、検出値は既定でマスク表示
 
 ## gitleaks 等シークレット検出ツールとの違い
 
@@ -28,13 +28,13 @@ jp-pii-detect scan .
 ```
 
 終了コードは `0`（検出なし）、`1`（検出あり）、`2`（走査・設定エラー）です。
-検出された値には、その中身に応じて次のように対処します。
+検出された値にはその中身に応じて次のように対処します。
 
 - 実データが混入していた場合は、削除するか架空の値に置き換えます。
 - 意図して置いたダミー値なら、その行に `jp-pii-detector:ignore` を書くか、allowlist に登録します。
 - 導入前から残っている検出をまとめて保留したい場合は、baseline に記録します。
 
-なぜ検出されたかは、`--explain` を付けて実行すると確認できます。
+なぜ検出されたかは `--explain` を付けて実行すると確認できます。
 
 ## 対応している個人情報
 
@@ -68,7 +68,7 @@ jp-pii-detect scan .
 > **既定で報告される範囲**: 既定では信頼度 `medium` 以上の検出だけを報告します（`min_confidence` で変更できます）。
 >
 > 信頼度は、値の近くに「TEL」「住所」などの周辺の語があるかどうかで `low` / `medium` / `high` に分かれます。
-> ただし、周辺の語がないと検出しないルールは、周辺の語があっても信頼度が上がらず、ルールごとに決めた信頼度で報告します。
+> ただし、周辺の語がないと検出しないルールでは、周辺の語があっても信頼度は上がらず、ルールごとに決めた信頼度で報告します。
 > 表の ○ のルールは `high`、△ のルールは `medium` です。
 >
 > 氏名は、姓名辞書に一致するか、空白で区切られた「姓 名」のうち姓か名の片側が辞書にあれば `medium` になり、既定でも報告します。
@@ -80,8 +80,8 @@ jp-pii-detect scan .
 「実測 F1」は、公開データセット [Nemotron-PII-Japan](https://huggingface.co/datasets/nvidia/Nemotron-PII-Japan)（NVIDIA、[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)）から抽出した約 1 万件の合成文書で測った F1 スコア（適合率と再現率の調和平均）です。
 表の値と冒頭のバッジは、利用者の既定の運用と同じ条件（`min_confidence=medium`、高再現率ルールは無効）で計測しています。
 評価データセットでの値なので、どんな入力でも同じ精度が出ることを保証するものではありません。
-データセットに正解ラベルがない種別は「未計測」と表示しています（これらの回帰は公開の合成ケースで CI が確認しています）。
-「氏名」の値は、担当者・宛名ラベルなど氏名系のすべてのルールの検出をまとめて数えたものです。
+データセットに正解ラベルがない種別は「未計測」と表示しています（これらの種別のリグレッションは、公開の合成ケースを使って CI で確認しています）。
+「氏名」の行の値は担当者・宛名ラベルなど氏名系のすべてのルールの検出をまとめて数えたものです。
 ルール別の適合率と再現率は [docs/accuracy.md](docs/accuracy.md) にあります。
 
 CI は `low`、`medium`、high-recall の 3 つのプロファイルそれぞれで精度を計測し、記録済みの値と一致するかを確かめています。
@@ -100,7 +100,7 @@ CI は `low`、`medium`、high-recall の 3 つのプロファイルそれぞれ
 brew install baneido/tap/jp-pii-detect
 ```
 
-`baneido/tap` を一度 tap すれば、以後は `brew install jp-pii-detect` /
+`baneido/tap` を一度 tap すれば、以後は `brew install jp-pii-detect` でインストール、
 `brew upgrade jp-pii-detect` で更新できます。formula はリリースごとに自動更新されます。
 
 ### Option 2. mise（macOS / Linux）
@@ -165,12 +165,12 @@ tar -xzf jp-pii-detect-sumi_linux_amd64.tar.gz
   1 ワーカーあたり数百 MB のメモリを使います。pre-commit の `--staged` など差分の走査に
   向いています。
 - 実行ファイルは隣の `model/` と `lib/` を使います。ディレクトリ構成を保ったまま置き、
-  `PATH` にはシンボリックリンクを張ってください。install.sh、pre-commit フック、GitHub Actions は
-  この配置で入れます（次のリリースから既定）。同梱版のない OS（Windows、Intel Mac）と、
+  `PATH` にはシンボリックリンクを張ってください。次のリリースから、install.sh、pre-commit フック、
+  GitHub Actions は既定で同梱版をこの配置で入れます。同梱版のない OS（Windows、Intel Mac）と、
   同梱版を添付していないリリースでは、警告を表示して軽量版を入れます。
-- 自分でビルドする場合は `scripts/package-model-bundle.sh` を実行します（cgo のため
-  ビルドするマシンと同じ OS/アーキテクチャ向けだけ）。モデルと ONNX Runtime は
-  ピン留めした版を取得し、SHA-256 を検証します。詳細は [docs/model-bundle.md](docs/model-bundle.md)。
+- 自分でビルドする場合は `scripts/package-model-bundle.sh` を実行します。cgo を使うため、
+  ビルドできるのはビルドするマシンと同じ OS/アーキテクチャ向けだけです。スクリプトは
+  ピン留めしたバージョンのモデルと ONNX Runtime を取得し、SHA-256 を検証します。詳細は [docs/model-bundle.md](docs/model-bundle.md)。
 
 **ライセンスと帰属表示**：同梱の Sumi は Apache License 2.0（Sumi contributors。
 ファイルは未改変で同梱し、ONNX 変換と INT8 量子化は Sumi の作者によるもの）、
@@ -228,7 +228,7 @@ pre-commit run jp-pii-detect
 
 フックは GitHub Releases のビルド済みバイナリを `~/.cache/jp-pii-detector/pre-commit/`
 配下にキャッシュして実行するので、利用側の環境に Go は不要です。
-使うバイナリは、通常 `rev` に指定したタグと同じバージョンです。
+フックが使うバイナリは通常 `rev` に指定したタグと同じバージョンです。
 次のリリースから、フックは Sumi モデル同梱ビルドを使います（初回は約 100MB をダウンロードします）。
 軽量版を使う場合は、環境変数 `JP_PII_DETECT_MODEL=false` を設定してください。
 
@@ -266,14 +266,14 @@ jobs:
           args: scan --diff origin/${{ github.base_ref }}...HEAD --format github
 ```
 
-Action の参照とダウンロードするバイナリ版は独立しています。再現性が必要な場合は、
+Action の参照と、ダウンロードするバイナリのバージョンは独立しています。再現性が必要な場合は、
 上記のように `uses:` のタグと `with.version` を同じ値で明示してください。
 
 次のリリースから、Action は既定で Sumi モデル同梱ビルドを入れ、組み込みルールに加えてモデルでも検出します。
 モデルを使うと走査が大幅に遅くなるため、`args` で `--diff` を指定して PR の差分だけを走査するのがおすすめです。
 軽量版を使う場合は `with.model: false` を指定してください。Windows のランナーでは常に軽量版になります。
 
-> 次回リリース以降はムービングメジャータグ `v0` も利用でき、`baneido/jp-pii-detector@v0` で最新の v0 系を追従できます。
+> 次回リリース以降はムービングメジャータグ `v0` も利用でき、`baneido/jp-pii-detector@v0` で最新の v0 系に追従できます。
 
 `--format github` を指定すると、検出箇所が PR の該当行にアノテーション表示されます。
 アノテーションは信頼度に応じて `error` / `warning` / `notice` になります。たとえば
@@ -351,7 +351,7 @@ regexes = ["@baneido\\.com$"]
 stopwords = ["090-XXXX-XXXX"]
 ```
 
-意図的なダミー値には行内コメントで ignore マーカーを付けられます:
+意図的なダミー値には行内コメントで ignore マーカーを付けられます。
 
 ```python
 TEST_PHONE = "090-XXXX-XXXX"  # jp-pii-detector:ignore テスト用ダミー
@@ -362,7 +362,7 @@ TEST_PHONE = "090-XXXX-XXXX"  # jp-pii-detector:ignore テスト用ダミー
 ### 外部レコグナイザ連携（`external_recognizer`、opt-in）
 
 軽量 NER（GiNZA/BERT 等）による氏名検出などを、Go バイナリに依存を足さずに接続できます。
-既定は未設定＝完全に無効です:
+既定は未設定で、完全に無効です。
 
 ```toml
 [external_recognizer]
@@ -371,11 +371,11 @@ timeout_seconds = 30                # 既定 30
 max_findings = 1000                 # 既定 1000
 ```
 
-プロトコル仕様・動くデモ（[integrations/external-recognizer/](integrations/external-recognizer/)）・
-**セキュリティ上の注意**（設定ファイルに書かれた任意コマンドを実行する機能のため、
-リポジトリ内の `.jp-pii.toml` を信用できない環境では使わないこと等）は
+プロトコル仕様、動くデモ（[integrations/external-recognizer/](integrations/external-recognizer/)）、
+**セキュリティ上の注意**は
 [docs/detection-methods.md の「4.8 外部レコグナイザ連携」](docs/detection-methods.md#48-外部レコグナイザ連携external_recognizeropt-in)
-を参照してください。
+を参照してください。特に、この機能は設定ファイルに書かれた任意コマンドを実行するため、
+リポジトリ内の `.jp-pii.toml` を信用できない環境では使わないでください。
 
 ## ベースライン（既存の検出を凍結して新規のみ fail させる）
 
@@ -398,11 +398,11 @@ $ jp-pii-detect scan --baseline .jp-pii-baseline.json --show-baseline .
 `--baseline` / `--update-baseline` / `--show-baseline` は、`--staged`、`--diff`、フルスキャンの
 どのモードでも同じように動作します。
 
-ベースラインには、検出値を salt 付き HMAC-SHA256 で計算した **値ハッシュ（fingerprint）** を記録します。
+ベースラインには検出値を salt 付き HMAC-SHA256 で計算した **値ハッシュ（fingerprint）** を記録します。
 行の位置は fingerprint に影響しないので、ファイル内で行が前後に移動しても再検出されません。
 一方、ルール ID、ファイルパス、検出値のどれかが変わると別の fingerprint になり、再び検出されます。
-ファイルパスはリポジトリルートからの相対パスにそろえて照合します。
-そのため、サブディレクトリからのフルスキャンで作った baseline も、`--staged` や `--diff`、別のディレクトリからの実行で同じように一致します。
+ファイルパスはリポジトリルートからの相対パスにそろえて照合するので、
+サブディレクトリからのフルスキャンで作った baseline も、`--staged` や `--diff`、別のディレクトリからの実行で同じように一致します。
 
 **セキュリティ上の注意**: salt 付きハッシュは複数リポジトリ間でのレインボーテーブル使い回しを
 防ぐものであり、ベースラインファイル自体を入手した第三者による低エントロピーな値
