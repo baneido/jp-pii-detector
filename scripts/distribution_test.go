@@ -1292,8 +1292,7 @@ func TestModelBundlePinsHaveSHA256(t *testing.T) {
 	for _, k := range []string{
 		"SUMI_SHA256_model_int8_onnx", "SUMI_SHA256_tokenizer_json",
 		"SUMI_SHA256_sumi_labels_json", "SUMI_SHA256_calibrator_json",
-		"ORT_SHA256_linux_x64", "ORT_SHA256_linux_aarch64",
-		"ORT_SHA256_osx_arm64", "ORT_SHA256_win_x64",
+		"ORT_NUGET_SHA256",
 	} {
 		if !sha.MatchString(vals[k]) {
 			t.Fatalf("%s must be a SHA-256 hex digest, got %q", k, vals[k])

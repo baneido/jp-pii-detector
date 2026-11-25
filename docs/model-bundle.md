@@ -82,7 +82,7 @@ Linux は Ubuntu 22.04 でビルドするので、glibc 2.35 程度以降を前�
 | 成果物 | ピン留め |
 |---|---|
 | Sumi | Hugging Face のコミット `daa43a033830a38911b178e7951b97ad64b0080a`（2026-10-17）。4 ファイルの SHA-256 |
-| ONNX Runtime | 1.31.0。プラットフォームごとの公式アーカイブの SHA-256（GitHub のアセット digest と一致） |
+| ONNX Runtime | 1.31.0。Microsoft が NuGet で配る公式パッケージ `Microsoft.ML.OnnxRuntime`（全プラットフォームの共有ライブラリ入り）の SHA-256。GitHub のリリース（`github.com/microsoft/onnxruntime`）は 2026 年 11 月中旬に消えたため、NuGet から取得する。共有ライブラリは GitHub 版と同じもの（osx-arm64 だけはコード署名の領域が異なる） |
 
 更新するときは `scripts/model-bundle.env` の値を変え、`scripts/package-model-bundle.sh` と
 `scripts/smoke-model-bundle.sh` が通ることを確かめる。ONNX Runtime の Go バインディング
