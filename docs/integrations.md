@@ -17,7 +17,7 @@ jp-pii-detect を各種 CI/CD サービスや開発環境に組み込むため�
 ## コンテナイメージ（GHCR）
 
 リリースごとに `ghcr.io/baneido/jp-pii-detector` へマルチアーキテクチャ
-（linux/amd64, linux/arm64）イメージを公開しています。タグは `v0.9.4` のような
+（linux/amd64, linux/arm64）イメージを公開しています。タグは `v0.10.0` のような
 バージョンと `latest` です。CI での再現性のため、バージョンタグの利用を推奨します。
 
 イメージには `git` と shell（alpine ベース）が入っているため、そのまま CI の
@@ -26,10 +26,10 @@ jp-pii-detect を各種 CI/CD サービスや開発環境に組み込むため�
 
 ```sh
 # カレントディレクトリをフルスキャン
-docker run --rm -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.9.4
+docker run --rm -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.10.0
 
 # 引数はそのまま jp-pii-detect に渡る
-docker run --rm -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.9.4 scan --format json /scan
+docker run --rm -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.10.0 scan --format json /scan
 ```
 
 ## リソース制限下での実行（メモリ・実行時間）
@@ -51,7 +51,7 @@ RSS ではありません。** 既定の GC 設定では回収の余裕分とア
 
 ```sh
 docker run --rm --memory=192m -e GOMEMLIMIT=128MiB \
-  -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.9.4
+  -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.10.0
 ```
 
 GitLab CI / Kubernetes ではジョブの環境変数として渡します。
@@ -109,10 +109,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0 # --diff に完全な履歴が必要
-      - uses: baneido/jp-pii-detector@v0.9.4
+      - uses: baneido/jp-pii-detector@v0.10.0
         with:
           # jp-pii-detect のバイナリ版を固定
-          version: v0.9.4
+          version: v0.10.0
           args: scan --diff origin/${{ github.base_ref }}...HEAD --format github
 ```
 
@@ -120,10 +120,10 @@ Medium の候補は PR 上に `warning` として表示し、High の検出が�
 失敗させる場合は、報告閾値と失敗閾値を分けて指定します。
 
 ```yaml
-      - uses: baneido/jp-pii-detector@v0.9.4
+      - uses: baneido/jp-pii-detector@v0.10.0
         with:
           # jp-pii-detect のバイナリ版を固定
-          version: v0.9.4
+          version: v0.10.0
           args: scan --diff origin/${{ github.base_ref }}...HEAD --format github --min-confidence medium --fail-on high
 ```
 
@@ -155,8 +155,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install jp-pii-detect
         run: |
-          curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detector/v0.9.4/scripts/install.sh \
-            | JP_PII_DETECT_VERSION=v0.9.4 sh
+          curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detector/v0.10.0/scripts/install.sh \
+            | JP_PII_DETECT_VERSION=v0.10.0 sh
       - name: Scan
         # 検出あり（exit 1）は継続し、走査エラー（exit 2）はジョブを失敗させる
         run: ~/.local/bin/jp-pii-detect scan --format sarif --exit-zero . > jp-pii.sarif
@@ -178,7 +178,7 @@ jobs:
 # .gitlab-ci.yml
 pii-check:
   image:
-    name: ghcr.io/baneido/jp-pii-detector:v0.9.4
+    name: ghcr.io/baneido/jp-pii-detector:v0.10.0
     entrypoint: [""] # script を実行できるよう ENTRYPOINT を無効化する
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
@@ -205,7 +205,7 @@ version: 2.1
 jobs:
   pii-check:
     docker:
-      - image: ghcr.io/baneido/jp-pii-detector:v0.9.4
+      - image: ghcr.io/baneido/jp-pii-detector:v0.10.0
     steps:
       - checkout
       - run: jp-pii-detect scan .
@@ -225,7 +225,7 @@ pipelines:
     '**':
       - step:
           name: pii-check
-          image: ghcr.io/baneido/jp-pii-detector:v0.9.4
+          image: ghcr.io/baneido/jp-pii-detector:v0.10.0
           clone:
             depth: full # --diff の merge-base 解決に完全な履歴が必要
           script:
@@ -243,7 +243,7 @@ Docker Pipeline プラグインのエージェントとして使います。Jenk
 pipeline {
   agent {
     docker {
-      image 'ghcr.io/baneido/jp-pii-detector:v0.9.4'
+      image 'ghcr.io/baneido/jp-pii-detector:v0.10.0'
       args '--entrypoint='
     }
   }
@@ -276,7 +276,7 @@ pipeline {
 ```yaml
 repos:
   - repo: https://github.com/baneido/jp-pii-detector
-    rev: v0.9.4
+    rev: v0.10.0
     hooks:
       - id: jp-pii-detect
 ```
@@ -328,14 +328,14 @@ exec jp-pii-detect scan --staged
 そのまま管理できます（Go 不要）。
 
 ```sh
-mise use "github:baneido/jp-pii-detector@v0.9.4"
+mise use "github:baneido/jp-pii-detector@v0.10.0"
 ```
 
 `mise.toml` に直接書く場合:
 
 ```toml
 [tools]
-"github:baneido/jp-pii-detector" = "v0.9.4"
+"github:baneido/jp-pii-detector" = "v0.10.0"
 ```
 
 ## Dev Containers（VS Code / GitHub Codespaces）
@@ -345,7 +345,7 @@ git hook からすぐ使えます。
 
 ```json
 {
-  "postCreateCommand": "curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detector/v0.9.4/scripts/install.sh | JP_PII_DETECT_VERSION=v0.9.4 JP_PII_DETECT_INSTALL_DIR=/usr/local/bin sh"
+  "postCreateCommand": "curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detector/v0.10.0/scripts/install.sh | JP_PII_DETECT_VERSION=v0.10.0 JP_PII_DETECT_INSTALL_DIR=/usr/local/bin sh"
 }
 ```
 
