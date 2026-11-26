@@ -102,6 +102,41 @@ func foldNameVariants(s string) string {
 	return nameVariants.Replace(s)
 }
 
+// oldFormNameVariants は人名で使われる旧字体を新字体へ 1 ルーン → 1 ルーンで畳む置換表（2026-11-26 の公開文書の
+// 確認で追加）。1950 年代の国会会議録の「○議長（<姓><旧字体の名>君）」「○政府委員（<姓><旧字体の 1 字の名>君）」
+// のように、旧字体で書かれた名は辞書（旧字体の名の多くは新字体だけを収録）に一致せず、
+// 同じ形の新字体の氏名は拾えるのに全モードで見逃していた。辞書には旧字体のまま
+// 収録された項目（「齋藤」「澤田」）もあり、辞書の側を畳むと姓と名の区別が崩れる（「千藏」（姓）と「千蔵」（名）
+// など 273 組が重なる）ので、nameVariants と違い照合の順番を変えない: 姓・名の 1 要素ごとに、まずそのままの
+// 字形で引き、無かったときだけ畳んだ字形で引き直す（surnameIn / givenNameIn）。
+var oldFormNameVariantPairs = []string{
+	"彌", "弥", "經", "経", "豐", "豊", "衞", "衛", "與", "与", "榮", "栄", "壽", "寿", "瀨", "瀬",
+	"廣", "広", "國", "国", "齋", "斎", "齊", "斉", "澤", "沢", "邊", "辺", "邉", "辺", "濱", "浜",
+	"櫻", "桜", "德", "徳", "惠", "恵", "實", "実", "藏", "蔵", "淺", "浅", "黑", "黒", "淸", "清",
+	"靜", "静", "增", "増", "禮", "礼", "傳", "伝", "條", "条", "圓", "円", "學", "学", "萬", "万",
+	"龜", "亀", "巖", "巌", "兒", "児", "晉", "晋", "緖", "緒", "縣", "県", "佛", "仏", "醫", "医",
+}
+
+var (
+	oldFormNameVariants = strings.NewReplacer(oldFormNameVariantPairs...)
+	oldFormNameRunes    = func() string {
+		var b strings.Builder
+		for i := 0; i < len(oldFormNameVariantPairs); i += 2 {
+			b.WriteString(oldFormNameVariantPairs[i])
+		}
+		return b.String()
+	}()
+)
+
+// inNameSet は s（foldNameVariants 済み）が set にあるかを返す。そのままの字形で無く、旧字体を含むときは
+// 新字体へ畳んで引き直す（oldFormNameVariants のコメント参照）。
+func inNameSet(set map[string]bool, s string) bool {
+	if set[s] {
+		return true
+	}
+	return strings.ContainsAny(s, oldFormNameRunes) && set[oldFormNameVariants.Replace(s)]
+}
+
 // nameComponentMaxRunes は分割検証で許す姓・名 1 要素あたりの最大ルーン数。
 // これを超える長い文字列は人名要素として扱わない（一般名詞・組織名の誤検証防止）。
 const nameComponentMaxRunes = 4
@@ -186,7 +221,7 @@ func splitFullName(s string, includeExtended, applyDenylist bool) (surname, give
 	surnames := surnameSet()
 	if strings.ContainsAny(s, " 　") {
 		fields := strings.FieldsFunc(s, func(r rune) bool { return r == ' ' || r == '　' })
-		if len(fields) == 2 && surnames[fields[0]] && isGivenName(fields[1], includeExtended) {
+		if len(fields) == 2 && inNameSet(surnames, fields[0]) && isGivenName(fields[1], includeExtended) {
 			return fields[0], fields[1], true
 		}
 		return "", "", false
@@ -200,7 +235,7 @@ func splitFullName(s string, includeExtended, applyDenylist bool) (surname, give
 			continue // 姓・名とも 1 ルーンの分割（区切りなし）は不成立
 		}
 		sur, giv := string(rs[:i]), string(rs[i:])
-		if surnames[sur] && isGivenName(giv, includeExtended) {
+		if inNameSet(surnames, sur) && isGivenName(giv, includeExtended) {
 			return sur, giv, true
 		}
 	}
@@ -216,17 +251,17 @@ func SplitsAsFullName(s string) bool {
 }
 
 // IsSurname は s が収録済みの姓かを返す。
-func IsSurname(s string) bool { return surnameSet()[foldNameVariants(s)] }
+func IsSurname(s string) bool { return inNameSet(surnameSet(), foldNameVariants(s)) }
 
 // IsGivenName は s が収録済みの名かを返す。
-func IsGivenName(s string) bool { return givenNameSet()[foldNameVariants(s)] }
+func IsGivenName(s string) bool { return inNameSet(givenNameSet(), foldNameVariants(s)) }
 
 // IsGivenNameExtended は既定辞書に加え、高再現率用 org 版カタカナ名も照合する。
 func IsGivenNameExtended(s string) bool { return isGivenName(s, true) }
 
 func isGivenName(s string, includeExtended bool) bool {
 	s = foldNameVariants(s)
-	return givenNameSet()[s] || (includeExtended && extendedGivenNameSet()[s])
+	return inNameSet(givenNameSet(), s) || (includeExtended && extendedGivenNameSet()[s])
 }
 
 // MatchPersonName は候補文字列 s が人名らしいかを姓名辞書で検証し、その判定
@@ -246,9 +281,9 @@ func MatchPersonName(s string) NameMatch {
 		return FullNameSplit
 	}
 	switch {
-	case surnameSet()[s]:
+	case inNameSet(surnameSet(), s):
 		return SurnameOnly
-	case givenNameSet()[s]:
+	case inNameSet(givenNameSet(), s):
 		return GivenOnly
 	default:
 		return NoMatch
@@ -283,7 +318,7 @@ func IsPersonNameExtended(s string) bool {
 	if _, _, ok := SplitFullNameExtended(s); ok {
 		return true
 	}
-	return surnameSet()[s] || isGivenName(s, true)
+	return inNameSet(surnameSet(), s) || isGivenName(s, true)
 }
 
 // SurnameSample は姓辞書から先頭 n 件を決定的に返す（バイト列でソート済み）。
