@@ -76,9 +76,33 @@ func validKunStructuredName(allowUnspaced bool) func(string) bool {
 			if len(r) >= 3 && looseKunSingleGiven(string(r[:len(r)-1]), string(r[len(r)-1:])) {
 				return true
 			}
+			// 名が辞書にない氏名（2026-11-26 に実測した見逃し。looseKunSurnameFirst）。
+			for s := 2; s <= 3; s++ {
+				if len(r)-s == 2 && looseKunSurnameFirst(string(r[:s]), string(r[s:])) {
+					return true
+				}
+			}
 		}
 		return false
 	}
+}
+
+// looseKunSurnameFirst は発言者ラベルの括弧内・登壇の注記「〔<氏名>君登壇〕」で、名が辞書にない氏名を
+// 「姓が姓の辞書に一致する 2〜3 字、名が 2 字の漢字で一般語・姓・職名の末字でない」ときに採る
+// （2026-11-26 に 1950 年代の国会の会議録で実測した見逃し「〔<姓><辞書にない名>君登壇〕」）。
+func looseKunSurnameFirst(sur, given string) bool {
+	if utf8.RuneCountInString(given) != 2 || !allKanji(sur) || !allKanji(given) {
+		return false
+	}
+	if !dict.IsSurname(sur) || dict.IsCommonWord(given) || dict.IsSurname(given) || spacedGivenStopwords[given] || endsWithTitleWord(given) {
+		return false
+	}
+	for _, t := range kunSurnameStopTails {
+		if strings.HasSuffix(given, t) {
+			return false
+		}
+	}
+	return true
 }
 
 func looseKunPair(sur, given string) bool {

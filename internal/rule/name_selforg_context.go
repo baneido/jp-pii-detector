@@ -131,6 +131,12 @@ func AnimalProfileNear(lines []string, idx int) bool {
 // 「課長代理<姓>」を値にしていた（2026-11-23 に高校のお知らせで実測した範囲の誤り）。
 var honorificLeadInTitles = []string{"専門医", "認定医", "指導医", "課長代理", "部長代理", "所長代理", "課長補佐", "部長補佐", "係長", "主任", "主査", "主幹", "課長", "部長", "室長", "次長"}
 
+// honorificLeadInAdverbs は会議録の発言で敬称の値の先頭に地続きになる副詞・時の語・人を指す一般語
+// （「多分<姓>さんは」「大体<姓>さんのおつしやるところでは」「現在<姓><名>さんは出席しておりません」
+// 「往年<姓><名>氏が」「政治家<姓>さんを」。2026-11-26 に 1950 年代の国会の会議録で実測した、高再現率の
+// 無空白の敬称パターンの範囲の誤り）。「今」と同じく、その後ろだけを氏名として拾い直す。
+var honorificLeadInAdverbs = []string{"多分", "大体", "現在", "往年", "当時", "結局", "先日", "昨日", "本日", "只今", "唯今", "先程", "先刻", "今日", "政治家"}
+
 // honorificAmountLeadRe は値の先頭が金額（「二千万円<姓>」）である形。
 var honorificAmountLeadRe = regexp.MustCompile(`^[一二三四五六七八九十百千万億兆]+円`)
 
@@ -151,6 +157,11 @@ func splitHonorificLeadIn(v string) (rest string, ok bool) {
 			return r, isName(r)
 		}
 	}
+	for _, a := range honorificLeadInAdverbs {
+		if r, found := strings.CutPrefix(v, a); found && !dict.IsSurname(v) && !dict.IsPersonName(v) && isName(r) {
+			return r, true
+		}
+	}
 	if r, found := strings.CutPrefix(v, "今"); found && !dict.IsSurname(v) && !dict.IsPersonName(v) && isName(r) {
 		return r, true
 	}
@@ -167,7 +178,7 @@ func rejectHonorificLeadIn(line string, start, end int) bool {
 // personNameHonorificAfterLeadInRe は「今<姓>さん」「<金額>円<姓>さん」「課長代理<姓>様」の、前の語を除いた
 // 氏名の範囲（rejectHonorificLeadIn で棄却した値の拾い直し）。
 var personNameHonorificAfterLeadInRe = regexp.MustCompile(
-	`(?:今|円|` + strings.Join(honorificLeadInTitles, "|") + `)([` + kanji + `]{2,6})(?:様|さん|氏|殿)`,
+	`(?:` + strings.Join(honorificLeadInAdverbs, "|") + `|今|円|` + strings.Join(honorificLeadInTitles, "|") + `)([` + kanji + `]{2,6})(?:様|さん|氏|殿)`,
 )
 
 // validHonorificAfterLeadIn は personNameHonorificAfterLeadInRe の値を、姓の辞書か姓 + 名の完全分割で検証する。
@@ -180,6 +191,12 @@ func validHonorificAfterLeadIn(v string) bool {
 // 拾い直さない。前の語を含む値は元のパターンがそのまま報告する。
 func rejectLeadInNotSplit(line string, start, end int) bool {
 	head := line[:start]
+	for _, a := range honorificLeadInAdverbs {
+		if strings.HasSuffix(head, a) {
+			whole := a + line[start:end]
+			return !dict.IsSurname(whole) && !dict.IsPersonName(whole)
+		}
+	}
 	if strings.HasSuffix(head, "今") {
 		whole := "今" + line[start:end]
 		return !dict.IsSurname(whole) && !dict.IsPersonName(whole)

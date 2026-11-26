@@ -22,4 +22,5 @@ var commonWordSet = sync.OnceValue(func() map[string]bool {
 
 // IsCommonWord は s が一般語（IPADIC の固有名詞以外の語）かを返す。辞書にない姓名を形だけで
 // 受けるとき、「別紙 参照」「同上 同上」のような一般語の組を除くために使う。
-func IsCommonWord(s string) bool { return commonWordSet()[foldNameVariants(s)] }
+// 旧字体で書かれた一般語（「國立」「大學」）は、新字体に畳んで引き直す（inNameSet）。
+func IsCommonWord(s string) bool { return inNameSet(commonWordSet(), foldNameVariants(s)) }

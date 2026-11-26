@@ -3084,7 +3084,8 @@ func Builtin() []Rule {
 				// 会議録の「<氏名>君」（personNameKun* のコメント参照。2026-11-11 に実測した見逃し）。
 				{Re: personNameKunSpeakerParenRe, Base: Medium, Validate: validKunStructuredName(true)},
 				{Re: personNameKunSpeakerRe, Base: Medium, Validate: validKunOrKanaGivenName},
-				{Re: personNameKunTodanRe, Base: Medium, Validate: validKunName},
+				// 登壇の注記は発言者ラベルと同じく強い形なので、同じ検証を使う（2026-11-26 に実測した見逃し）。
+				{Re: personNameKunTodanRe, Base: Medium, Validate: validKunStructuredName(true)},
 				{Re: personNameKunCallRe, Base: Medium, Validate: validKunOrKanaGivenName},
 				{Re: personNameKunBillRe, Base: Medium, Validate: validKunName},
 				{Re: personNameKunRosterRe, Base: Medium, Validate: validKunStructuredName(false)},
@@ -3233,6 +3234,8 @@ func Builtin() []Rule {
 				{Re: personNamePhotoCaptionRe, Base: Medium, Validate: validLooseTitleName},
 				{Re: personNameSelfOrgAttachedExecRe, Base: Medium, Validate: validLooseTitleName, ValidateLine: rejectTitleSpaceNameFragment},
 				{Re: personNameHeadSpacedLineRe, Base: Medium, Validate: validHeadSpacedName},
+				// 2026-11-26 の公開文書の確認で実測した見逃し（name_signature_context.go）。
+				{Re: personNameJudgeSignatureSpacedRe, Base: Medium, Validate: validJudgeSignatureName},
 			},
 		},
 		{
