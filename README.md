@@ -27,20 +27,20 @@ brew install baneido/tap/jp-pii-detect
 ### Option 2. mise（macOS / Linux）
 
 ```sh
-mise use -g github:baneido/jp-pii-detector@v0.9.4
+mise use -g github:baneido/jp-pii-detector@v0.10.0
 ```
 
 プロジェクトでバージョンを固定する場合は `mise.toml` に次を追加して `mise install` を実行します。
 
 ```toml
 [tools]
-"github:baneido/jp-pii-detector" = "v0.9.4"
+"github:baneido/jp-pii-detector" = "v0.10.0"
 ```
 
 ### Option 3. インストールスクリプト
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detector/v0.9.4/scripts/install.sh | JP_PII_DETECT_VERSION=v0.9.4 sh
+curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detector/v0.10.0/scripts/install.sh | JP_PII_DETECT_VERSION=v0.10.0 sh
 ```
 
 インストール先は既定で `$HOME/.local/bin` です。変更する場合は `JP_PII_DETECT_INSTALL_DIR=/path/to/bin` を指定してください。
@@ -54,7 +54,7 @@ go install github.com/baneido/jp-pii-detector/cmd/jp-pii-detect@latest
 ### Option 5. Docker
 
 ```sh
-docker run --rm -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.9.4
+docker run --rm -v "$PWD:/scan" ghcr.io/baneido/jp-pii-detector:v0.10.0
 ```
 
 ### Sumi モデル同梱ビルド
@@ -107,7 +107,7 @@ users.csv:4:6   [high]  jp-phone-number 電話番号（携帯・固定・IP・�
 ```yaml
 repos:
   - repo: https://github.com/baneido/jp-pii-detector
-    rev: v0.9.4
+    rev: v0.10.0
     hooks:
       - id: jp-pii-detect
 ```
@@ -128,10 +128,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: baneido/jp-pii-detector@v0.9.4
+      - uses: baneido/jp-pii-detector@v0.10.0
         with:
           # jp-pii-detect のバイナリ版を固定
-          version: v0.9.4
+          version: v0.10.0
           args: scan --diff origin/${{ github.base_ref }}...HEAD --format github
 ```
 
