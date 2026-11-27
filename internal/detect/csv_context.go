@@ -370,6 +370,13 @@ func csvAssignColumnContexts(out []lineContext, lines []string, delim byte, head
 			// 付与しない。ただしレコードが閉じ次第、次の物理行からは列の
 			// ずれがないため付与を再開する（範囲内で閉じない場合のみ、
 			// 従来どおり残り全体を打ち切る）。
+			//
+			// 例外として、レコードの 1 行目のうち、閉じない引用フィールドより前の
+			// フィールド（splitCSVLine が返す完成したフィールド）は、レコードの先頭から
+			// 数えた位置が確定しているので列文脈を付ける。2026-11-27 に自治体の
+			// オープンデータ CSV で、後ろの列に改行を含む備考がある行だけ「ID」列の
+			// 12 桁の施設 ID（検査数字が偶然合う）が jp-my-number に誤検出されたのを実測した。
+			out[i].Statements = csvFieldStatements(fields, header)
 			next, closed := csvUnterminatedRecordEnd(lines, i)
 			if !closed {
 				return
@@ -377,23 +384,28 @@ func csvAssignColumnContexts(out []lineContext, lines []string, delim byte, head
 			i = next - 1
 			continue
 		}
-		var stmts []statementContext
-		for fi, f := range fields {
-			if fi >= len(header.text) || header.text[fi] == "" || f.start >= f.end {
-				continue
-			}
-			if header.positive[fi] == "" && header.negative[fi] == "" {
-				continue
-			}
-			stmts = append(stmts, statementContext{
-				Start:        f.start,
-				End:          f.end,
-				PositiveText: header.positive[fi],
-				NegativeText: header.negative[fi],
-			})
-		}
-		out[i].Statements = stmts
+		out[i].Statements = csvFieldStatements(fields, header)
 	}
+}
+
+// csvFieldStatements は 1 物理行のフィールドに、ヘッダの同じ位置の列の文脈を付ける。
+func csvFieldStatements(fields []csvField, header csvHeader) []statementContext {
+	var stmts []statementContext
+	for fi, f := range fields {
+		if fi >= len(header.text) || header.text[fi] == "" || f.start >= f.end {
+			continue
+		}
+		if header.positive[fi] == "" && header.negative[fi] == "" {
+			continue
+		}
+		stmts = append(stmts, statementContext{
+			Start:        f.start,
+			End:          f.end,
+			PositiveText: header.positive[fi],
+			NegativeText: header.negative[fi],
+		})
+	}
+	return stmts
 }
 
 // csvReadingHeaderRe は読みだけを表す列見出し（ふりがな・フリガナ・よみ・カナ）。

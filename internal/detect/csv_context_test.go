@@ -712,3 +712,29 @@ func TestCSVNameColumnNoHeaderIsSafe(t *testing.T) {
 // CSVNameHeaderRe / CSVNameValueRe 自体の単体テストは
 // internal/rule/structured_test.go（TestCSVNameRegexes）にある。ここでは
 // detect.ScanContent 経由の end-to-end 挙動のみを確認する。
+
+// 後ろの列に改行を含む引用セルがあるレコードでも、1 物理行目のうち閉じない引用セルより前の
+// フィールドには列文脈を付ける（レコードの先頭から数えた位置が確定しているため）。2026-11-27 に
+// 自治体のオープンデータ CSV（自治体標準オープンデータセット）で、備考の列に改行がある行だけ「ID」列の
+// 12 桁の施設 ID（検査数字が偶然合う）が jp-my-number に誤検出されたのを実測した。値は架空
+// （999999000000 は検査数字を満たす合成値）。
+func TestCSVColumnContextBeforeEmbeddedNewlineField(t *testing.T) {
+	lines := []string{
+		"全国地方公共団体コード,ID,名称,備考",
+		`999999,999999000000,架空幼稚園,"休園日: 土日`,
+		`年末年始"`,
+	}
+	contexts := csvLineContexts("data.csv", lines)
+	if len(contexts[1].Statements) == 0 {
+		t.Fatalf("line 2 の閉じない引用セルより前の列に列文脈が付与されていない: %+v", contexts[1])
+	}
+	if len(contexts[2].Statements) != 0 {
+		t.Errorf("line 3（複数行レコードの続き）statements = %+v, want none", contexts[2].Statements)
+	}
+	d := newDetector(t, "")
+	for _, f := range d.ScanContent("data.csv", strings.Join(lines, "\n")+"\n") {
+		if f.RuleID == "jp-my-number" {
+			t.Errorf("ID 列の施設 ID が jp-my-number として報告された: %+v", f)
+		}
+	}
+}

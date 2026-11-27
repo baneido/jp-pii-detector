@@ -29,6 +29,26 @@ var (
 		`(?:^|[^` + kanji + hiragana + katakana + `]|[のでとはがにらをもへ])([` + kanji + `]{3,6}?)先生` +
 			`(?:[ 、。・，,！!）)（(」がはのをにともへや]|$)`,
 	)
+	// personNameKunInlineRe は国会の会議録の本文の「民主党・無所属クラブの<姓><名>君、次に…」
+	// 「<姓><名>君外八名提出」「理事に<姓><名>君及び<姓><名>君を指名」「<姓><名>君、時間が来ております」。
+	// 2026-11-27 に公開文書（国会会議録 2003〜2006 年）で、発言者ラベルでも指名・当選でもない
+	// 本文の「<氏名>君」の見逃しを実測した。値の前後を区切り・助詞に限り、値は 3〜6 字の漢字で
+	// 姓名辞書の完全分割（姓 + 名）を必須にする（姓だけ・「諸君」・一般語は通らない）。
+	personNameKunInlineRe = regexp.MustCompile(
+		`(?:^|[ 、・。）)]|[のにとはが]|及び|並びに)([` + kanji + `]{3,6})君` +
+			`(?:[、。のがにをはと]|及び|並びに|外[一二三四五六七八九十0-9]+名)`,
+	)
+	// personNameJudgeInlineRe は判決書の本文の「裁判官<姓><名>、同<姓><名>の少数意見」
+	// 「裁判官<姓><名>の反対意見」。2026-11-27 に公開文書（裁判例）で実測した見逃し。
+	// 「裁判官全員一致」のような一般語は姓名辞書の完全分割を通らない。
+	personNameJudgeInlineRe = regexp.MustCompile(
+		`裁判官([` + kanji + `]{3,6}?)(?:同|、|の(?:少数|反対|補足|意見)|及び|並びに)`,
+	)
+	// personNameJudgeSameRe は上の列挙の 2 人目以降「、同<姓><名>の少数意見」「<氏名>同<姓><名>の」。
+	// 「同」の後ろは 1 字目から姓名辞書の完全分割を要するので「同意見」「同裁判官」は通らない。
+	personNameJudgeSameRe = regexp.MustCompile(
+		`同([` + kanji + `]{3,6}?)(?:、|の(?:少数|反対|補足|意見)|及び|並びに)`,
+	)
 	// personNameSpeakerParenRe は地方議会の会議録の発言者ラベル「○副議長（<姓><名>）」
 	// 「○教育長（<姓><名>）」。国会の会議録と違い「君」を付けない。PDF の 2 段組みでは行の途中に
 	// 現れるため行頭に限らない。名がひらがなの議員（<姓> + ひらがな）も、○ + 職名 + 括弧という
@@ -138,4 +158,10 @@ var ujiReadingRe = regexp.MustCompile(`^氏[` + kanji + `][ ]?[（(][` + hiragan
 
 func rejectUjiReadingName(line string, start, end int) bool {
 	return !ujiReadingRe.MatchString(line[end:])
+}
+
+// requireJudgeLine は personNameJudgeSameRe 用。値より前に「裁判官」がある行（判決書の裁判官の
+// 列挙の続き）に限る。「同<氏名>」だけでは同社・同市のような一般の「同」と区別できないため。
+func requireJudgeLine(line string, start, end int) bool {
+	return strings.Contains(line[:start], "裁判官")
 }

@@ -129,7 +129,7 @@ func (d *Detector) hasNegativeContextNear(s string, start, end, radius int, rune
 				return true
 			}
 		case rule.NegativeKeywordCurrencySuffix:
-			if hasUnitAfter(rs, runeEnd, radius, []rune(kw), false) {
+			if hasUnitAfter(rs, runeEnd, radius, []rune(kw), false) && !multiplierStartsPlaceName(rs, runeEnd, radius, kw) {
 				return true
 			}
 		case rule.NegativeKeywordCounterSuffix:
@@ -523,6 +523,34 @@ func hasUnitAfter(rs []rune, end, radius int, unit []rune, requireBoundary bool)
 	// 扱わない（境界不成立）。ひらがな（件に/件が/件を のような助詞続き）や
 	// 記号・行末は単位として独立しているとみなし、抑制を適用する。
 	return !requireBoundary || unitEnd == len(rs) || !isKanji(rs[unitEnd])
+}
+
+// multiplierContinuation は桁の語（千・万・億）の直後に続いて金額・数量を作る漢字。
+// 「5千円」「3千万」「2万人」のように、これらが続くときは桁の語を単位として扱う。
+const multiplierContinuation = "円万億兆人件個本台枚回名社戸棟株口点歳年月日"
+
+// multiplierStartsPlaceName は、値の直後の桁の語（千・万・億）が地名などの語の
+// 先頭（「〒<郵便番号> 千葉県」の千葉、千代田、千歳、万代 など）で、金額の単位では
+// ないかを返す。桁の語の直後が漢字で、金額・数量を作る漢字（multiplierContinuation）
+// でないときに true。2026-11-27 に公開文書で「〒<郵便番号> 千葉県…」の郵便番号が
+// 千を金額の単位とみなされて落ちていた（千葉県の自治体のページ 6 件）。
+func multiplierStartsPlaceName(rs []rune, end, radius int, kw string) bool {
+	if kw != "千" && kw != "万" && kw != "億" {
+		return false
+	}
+	i := end
+	to := end + radius
+	if to > len(rs) {
+		to = len(rs)
+	}
+	for i < to && (rs[i] == ' ' || rs[i] == '\t') {
+		i++
+	}
+	next := i + 1
+	if next >= len(rs) || !isKanji(rs[next]) {
+		return false
+	}
+	return !strings.ContainsRune(multiplierContinuation, rs[next])
 }
 
 func runesEqual(a, b []rune) bool {
