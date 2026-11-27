@@ -282,7 +282,9 @@ var (
 // jp-address-high-recall にだけある勤務地・勤務先は含めない
 // （TestHighRecallRulesDisabledByDefault 等が「勤務地: …」を jp-address 側の
 // 非検出として固定しているため、この語彙差自体が既存動作の保護になる）。
-const addressLabeledPrefix = `(?:住所|所在地|自宅|居住|address)\s*[:=]?\s*`
+// 「〒<郵便番号>」の直後もラベルとして扱う（2026-11-27 に公開文書で「〒<郵便番号> <市><町名>1番1号」
+// のような都道府県を省いた所在地の見逃しを実測。郵便番号 + 実在の市区町村 + 番地の並びは住所以外にまず無い）。
+const addressLabeledPrefix = `(?:(?:住所|所在地|自宅|居住|address)\s*[:=]?\s*|〒\s*\d{3}-\d{4}\s*)`
 
 // jp-address 第 3 エントリが使う部分パターン。市区町村部分・番地部分の文字
 // クラス/ギャップは addressHighRecallMarkedRe / addressHighRecallDashRe の定義を
@@ -307,6 +309,13 @@ var (
 	)
 	// addressLabeledDashRe はマーカーなしダッシュ連結（banchiDash）用。ギャップは
 	// addressHighRecallDashRe と同じ hiraganaNoParticle（助詞抜き）に制限する。
+	// addressPostalBareNumberRe は jp-address 第 4 エントリ（〒 の直後の、番地が数字だけの住所）。
+	addressPostalBareNumberRe = regexp.MustCompile(
+		`〒\s*\d{3}-\d{4}\s*(` +
+			`(?:北海道|東京都|京都府|大阪府|[` + kanji + `]{2,3}県)?` +
+			`[` + kanji + katakana + `]{1,15}[市区町村]` +
+			`[` + kanji + katakana + `]{1,20}?\d{1,5})(?:$|[\s(（,、])`,
+	)
 	addressLabeledDashRe = regexp.MustCompile(
 		addressLabeledPrefix + `(` +
 			`[` + kanji + hiragana + katakana + `]{1,15}[市区町村]` +
@@ -2294,7 +2303,7 @@ func Builtin() []Rule {
 			ID:                "jp-address",
 			Description:       "住所（都道府県〜番地）",
 			Prefilter:         PrefilterDigit,
-			PrefilterLiterals: []string{"住所", "所在地", "自宅", "居住", "address"},
+			PrefilterLiterals: []string{"住所", "所在地", "自宅", "居住", "address", "〒"},
 			Context:           []string{"住所", "所在地", "自宅", "address", "居住"},
 			Validate:          addressLabeledMunicipalityValid,
 			Patterns: []Pattern{
@@ -2311,6 +2320,22 @@ func Builtin() []Rule {
 				// 同じ AND 合成。理由は同関数のコメント参照）。
 				{Re: addressLabeledDashRe, Base: High, Validate: notCalendarDateBanchiAndRealTown},
 				{Re: addressLabeledDashRe, Base: Medium, Validate: notCalendarDateBanchi},
+			},
+		},
+		{
+			// 「〒<郵便番号> <都道府県>?<市区町村><町名><数字>」の、番地が数字だけの形
+			// （jp-address 第 4 エントリ）。2026-11-27 に公開文書の所在地で「〒<郵便番号> <県><市><町名><2 桁の数字>」
+			// 「〒<郵便番号> <県><郡><町>大字<字名><2 桁の数字>」「〒<郵便番号> <市><字名><4 桁の数字>」の見逃しを実測した。
+			// 丁目・番・号もダッシュも無いので、郵便番号の直後に限り、町名に助詞・ひらがなを含まず、
+			// 数字の直後が行末・空白・括弧・読点のときだけ採る。実在の市区町村名を含むこと（辞書）を要求する。
+			ID:                "jp-address",
+			Description:       "住所（都道府県〜番地）",
+			Prefilter:         PrefilterDigit,
+			PrefilterLiterals: []string{"〒"},
+			Context:           []string{"住所", "所在地", "自宅", "address", "居住"},
+			Validate:          dict.MunicipalitySuffixMatch,
+			Patterns: []Pattern{
+				{Re: addressPostalBareNumberRe, Base: Medium},
 			},
 		},
 		{
@@ -3069,6 +3094,9 @@ func Builtin() []Rule {
 				// 会議録の指名・当選・発言者ラベル・名乗り、「<氏名>先生に」、「<職名>の<氏名>が、」、
 				// 「<姓> <名> 議員」の行（name_minutes_context.go。2026-11-13 に実測した見逃し）。
 				{Re: personNameKunNominateRe, Base: Medium, Validate: validKunName},
+				{Re: personNameKunInlineRe, Base: Medium, Validate: validPersonNameFullSplit},
+				{Re: personNameJudgeInlineRe, Base: Medium, Validate: validPersonNameFullSplit},
+				{Re: personNameJudgeSameRe, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: requireJudgeLine},
 				{Re: personNameSenseiParticleRe, Base: Medium, Validate: validPersonNameFullSplit, ValidateLine: rejectSenseiFragment},
 				{Re: personNameSpeakerParenRe, Base: Medium, Validate: validSpeakerParenName, ValidateLine: rejectTrailingKun},
 				{Re: personNameTitleNoNameRe, Base: Medium, Validate: validSelfIntroName, ValidateLine: rejectPostTitleFragment},
