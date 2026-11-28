@@ -56,6 +56,19 @@ var (
 // validKunOrKanaGivenName は会議録の発言者ラベル「○<姓><ひらがなの名>君」と指名「<姓><ひらがなの名>君。」の
 // 値を検証する。validKunName に加えて「辞書の姓 + ひらがな 2〜5 字」を採る（名をひらがなで届け出ている
 // 議員。2026-11-17 に国会の会議録で実測した見逃し）。
+// validKunRosterName は出席者・投票者の名簿の行「<姓>　<名>君　　　<姓><ひらがなの名>君」の値を検証する。
+// 2026-11-28 に公開文書（国会会議録）で、名がひらがなの議員（「<姓><ひらがな 2〜4 字>君」）の全モードの
+// 見逃しを実測した。漢字だけの値は従来どおり validKunStructuredName(false)、空白の無い
+// 「漢字 + ひらがな」は姓の辞書に一致する漢字 + ひらがな 2 字以上（validSpeakerParenName）を要求する。
+// 名簿の行は前後を空白・行頭・行末に限るので、「諸君」のような一般語の続く本文は通らない。
+func validKunRosterName(v string) bool {
+	if validKunStructuredName(false)(v) {
+		return true
+	}
+	t := strings.TrimSpace(v)
+	return !strings.Contains(t, " ") && !allKanji(t) && validSpeakerParenName(t)
+}
+
 func validKunOrKanaGivenName(v string) bool {
 	return validKunName(v) || (!strings.Contains(strings.TrimSpace(v), " ") && validSpeakerParenName(v))
 }

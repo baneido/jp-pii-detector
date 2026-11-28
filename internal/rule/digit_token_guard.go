@@ -827,3 +827,48 @@ func rejectPostTitleFragment(line string, start, end int) bool {
 	}
 	return true
 }
+
+// addressChomeOnlyTailRe は値が「<n>丁目」で終わり、番地・号を持たない形。
+var addressChomeOnlyTailRe = regexp.MustCompile(`[0-9]{1,4}丁目$`)
+
+// rejectStatTableChome は統計表の CSV の行「<地域コード>,<n>,<市><町名><n>丁目,<人口>,<世帯>,…」の
+// 町丁の名前を棄却する。2026-11-28 に公開文書（市のオープンデータの町丁別人口）で実測した
+// 高再現率モードの偽陽性（町丁の名前で、特定の人・施設の所在地ではない）。値がカンマ・タブ区切りの
+// 1 フィールドまるごとで、番地の無い「<n>丁目」で終わり、前後のフィールドがどちらも数字だけ
+// （地域コード・件数・人口）のときに限る。施設一覧の「札幌市中央区北1条西2丁目,011-…」のように
+// 隣が電話番号（ハイフン入り）・緯度経度（小数点入り）・文字のフィールドなら棄却しない。
+func rejectStatTableChome(line string, start, end int) bool {
+	v := line[start:end]
+	if !addressChomeOnlyTailRe.MatchString(v) {
+		return true
+	}
+	before, after := line[:start], line[end:]
+	if before == "" || after == "" {
+		return true
+	}
+	sep := before[len(before)-1]
+	if (sep != ',' && sep != '\t') || after[0] != sep {
+		return true
+	}
+	prev := before[:len(before)-1]
+	if i := strings.LastIndexByte(prev, sep); i >= 0 {
+		prev = prev[i+1:]
+	}
+	next := after[1:]
+	if i := strings.IndexByte(next, sep); i >= 0 {
+		next = next[:i]
+	}
+	return !(allASCIIDigits(strings.TrimSpace(prev)) && allASCIIDigits(strings.TrimSpace(next)))
+}
+
+func allASCIIDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}

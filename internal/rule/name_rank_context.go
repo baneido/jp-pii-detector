@@ -44,9 +44,17 @@ var (
 		`(?:社長|会長|理事長|頭取|CEO|代表取締役|代表理事|代表)・[ ]?([` + kanji + `]{1,4}[ ][` + kanji + `]{1,4}|[` + kanji + `]{3,6})(?:[）)、]|氏|$)`,
 	)
 	// personNameCEOLineEndRe は「右：<社名> 社長兼CEO <氏名>」のように、英字の役職名・空白・氏名で
-	// 行が終わる形（写真の説明・コメントの見出し）。
+	// 行が終わる形（写真の説明・コメントの見出し）。2026-11-28 に公開文書（企業のお知らせ）で、見出しの
+	// 「会長 兼 社長 CEO　<姓><名>メッセージ」（氏名にメッセージ・コメントが直結する形）の全モードの見逃しを実測した。
 	personNameCEOLineEndRe = regexp.MustCompile(
-		`(?:CEO|COO|CFO|CTO|CIO)[ ]+([` + kanji + `]{1,4}[ ][` + kanji + `]{1,4}|[` + kanji + `]{3,6})[ ]*(?:$|のコメント|[）)])`,
+		`(?:CEO|COO|CFO|CTO|CIO)[ ]+([` + kanji + `]{1,4}[ ][` + kanji + `]{1,4}|[` + kanji + `]{3,6}?)[ ]*(?:$|のコメント|[）)]|(?:からの)?メッセージ|コメント)`,
+	)
+	// personNameDeptContactRe は問い合わせ先の「<団体名> 広報部 <姓> <名> TEL：…」「<課名>係 <姓> <名>
+	// 電話…」のように、部署名・空白・空白区切りの氏名の直後に電話・メールのラベルが続く形。2026-11-28 に
+	// 公開文書（業界団体のお知らせ）で、既定モードの見逃しを実測した。部署名の語尾と連絡先のラベルの両方を
+	// 要求し、値は「<辞書の姓> <辞書の名>」に限る（validDeptContactName）。
+	personNameDeptContactRe = regexp.MustCompile(
+		`(?:[部課室係]|センター|事務局|グループ|チーム)[ ]+([` + kanji + `]{1,4}[ ][` + kanji + `]{1,3})[ ]*(?:TEL|Tel|tel|電話|E-mail|e-mail|Email|メール)`,
 	)
 	// personNameAffiliationNoTitleRe は「<学部>の<氏名>教授が」「<講座名>学の<氏名>診療講師らの」のように、
 	// 所属 + の + 氏名 + 教員の職名。所属と職名の両方が手がかりになるので、名が辞書にない氏名も
@@ -171,4 +179,14 @@ func rejectHonorificOrgAbbrevOrOaza(line string, start, end int) bool {
 		}
 	}
 	return true
+}
+
+// validDeptContactName は personNameDeptContactRe の値を検証する。「<辞書の姓> <辞書の名>」を要求する
+// （部署名の後ろの「総務 担当」「企画 調整」のような一般語の組は名の辞書を通らない）。
+func validDeptContactName(v string) bool {
+	f := strings.Fields(strings.TrimSpace(v))
+	if len(f) != 2 || !validSpacedSurnameGiven(v) || !notOrgName(v) {
+		return false
+	}
+	return dict.IsGivenName(f[1]) && !dict.IsCommonWord(f[1]) && !dict.IsCommonWord(f[0]+f[1])
 }
