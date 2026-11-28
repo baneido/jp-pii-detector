@@ -207,7 +207,11 @@ const (
 	// jp-address / jp-address-high-recall では、このパターン専用に市区町村と
 	// の間のギャップを hiraganaNoParticle に制限し、末尾が実在する暦日形なら
 	// 棄却する Validate（notCalendarDateBanchi）を追加で必須にする。
-	banchiDash = `\d{1,4}(?:-\d{1,4})+`
+	//
+	// 「神明1の12の1」のように「の」で 3 つの数字をつなぐ番地（2026-11-28 に公開文書 1,401 件の人手確認で、
+	// 市役所の所在地で全モードの見逃しを実測した）も同じ扱いにする。「の」1 つの「1の2」は本文の語
+	// （第1の2つ目 等）と紛れるので、数字 3 つの形に限る。
+	banchiDash = `(?:\d{1,4}(?:-\d{1,4})+|\d{1,4}の\d{1,4}の\d{1,4})`
 
 	// banchiKanji は漢数字表記の番地（神南一丁目十九番十一号 等）。ASCII 数字は
 	// 使わずダッシュ形も持たない（ダッシュ連結は漢数字では実質使われないため）。
@@ -1176,7 +1180,7 @@ var (
 		`[（(]([` + kanji + `][` + kanji + hiragana + ` ]{1,11}?)君外[一二三四五六七八九十0-9]+名`,
 	)
 	personNameKunRosterRe = regexp.MustCompile(
-		`(?:^|[ ])[ ]*([` + kanji + `]{1,4}[ ]+[` + kanji + hiragana + `]{1,4}|[` + kanji + `]{2,6})君(?:[ ]|$)`,
+		`(?:^|[ ])[ ]*([` + kanji + `]{1,4}[ ]+[` + kanji + hiragana + `]{1,4}|[` + kanji + `]{2,6}|[` + kanji + `]{1,3}[` + hiragana + `]{2,4})君(?:[ ]|$)`,
 	)
 	personNameCommitteeListRe = regexp.MustCompile(
 		`(?:^|[、,，：:＞>]|[ ])[ ]*([` + kanji + `]{3,8}?)(?:副委員長|委員長|副会長|会長|副議長|議長|委員)`,
@@ -1441,6 +1445,9 @@ func validTantoReadingSurname(v string) bool {
 var personNamePlaceholders = []string{
 	"未定", "不明", "該当なし", "該当無し", "なし", "無し", "非公開", "匿名",
 	"名無し", "未設定", "未記入", "記入例", "空欄", "テスト", "サンプル", "ダミー",
+	// マイナンバーカードの見本の「氏名 番号 花子」（2026-11-28 に公開文書 1,401 件の人手確認で、
+	// 省庁の案内 PDF の券面イメージで実測した既定モードの偽陽性）。「番号」を含む実在の氏名は無い。
+	"番号",
 }
 
 // notPlaceholderName は氏名候補 v がプレースホルダ（未定・テスト等）を含まない
@@ -1655,6 +1662,9 @@ var personNameOrgSuffixes = []string{
 	// リース会社の自治体・取引先の実績一覧で実測した高再現率モードの偽陽性。官公庁・保険会社・
 	// 報道機関の名称で、個人を識別しない）。
 	"庁", "税関", "保険", "生命", "新聞", "通信社",
+	// 「<市名>市立さんない保育園」（2026-11-28 に公開文書 1,401 件の人手確認で、市の事業一覧で実測した
+	// 高再現率モードの偽陽性。「さん」で始まる施設名の前の設置者の語で、氏名ではない）。
+	"市立", "町立", "村立", "区立", "県立", "都立", "府立", "道立", "私立", "公立",
 	// 契約書の当事者欄「<寺院名> 事務局（以下「甲」という）」（Nemotron-PII-Japan の評価で実測）
 	// のように、団体の部局・合議体を表す語尾。名の末尾には来ない。
 	"事務局", "委員会", "協議会", "連合会", "事業団", "機構", "センター", "本部", "診療所",
@@ -2356,8 +2366,8 @@ func Builtin() []Rule {
 				// あり、不一致は棄却ではなく Medium への据え置きにしかならない
 				// ため recall には影響しない（dict.MunicipalityThenTownMatch の
 				// コメント参照）。
-				{Re: addressHighRecallMarkedRe, Base: High, Validate: dict.MunicipalityThenTownMatch, ValidateLine: rejectAddressNonAddressNumber},
-				{Re: addressHighRecallMarkedRe, Base: Medium, ValidateLine: rejectAddressNonAddressNumber},
+				{Re: addressHighRecallMarkedRe, Base: High, Validate: dict.MunicipalityThenTownMatch, ValidateLine: allValidateLine(rejectAddressNonAddressNumber, rejectStatTableChome)},
+				{Re: addressHighRecallMarkedRe, Base: Medium, ValidateLine: allValidateLine(rejectAddressNonAddressNumber, rejectStatTableChome)},
 				// マーカーなしダッシュ連結にも同じ twin 方式を適用する。High 側の
 				// Validate は notCalendarDateBanchiAndRealTown（notCalendarDateBanchi と
 				// dict.MunicipalityThenTownMatch の AND 合成）を使い、ISO 日付棄却が
@@ -2406,6 +2416,8 @@ func Builtin() []Rule {
 				// "ssh://git@github.com/user/repo"）を棄却する（OSS コーパスでの実測。
 				// digit_token_guard.go の rejectURLUserinfo 参照）。
 				{Re: emailASCIIRe, Base: High, ValidateLine: allValidateLine(rejectURLUserinfo, rejectEAIDomainContinuation, rejectEmailFormExample, rejectIAMGroupMember)},
+				// 「<ローカル部>*<ドメイン>（*を@に置き換えてください）」（email_obfuscated.go）。
+				{Re: emailStarObfuscatedRe, Base: High, ValidateLine: allValidateLine(requireStarInstruction, rejectEmailFormExample)},
 			},
 		},
 		{
@@ -2951,7 +2963,7 @@ func Builtin() []Rule {
 			ID:          "person-name-role-label",
 			Description: "氏名（担当者・宛名ラベル付き）",
 			Prefilter:   PrefilterCJK,
-			PrefilterLiterals: []string{"会長", "委員", "議長", "君", "担当", "宛名", "連絡先", "医長", "務め", "拝命", "左", "右", "中央", "役員", "薬剤師", "看護師", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "知 事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届", "監督", "先生", "講 師", "ゲスト", "登壇", "聞き手", "進行役", "さん×", "さん ×", "選手", "議員", "理事", "監事", "幹事", "様", "館長", "顧問", "［", "[", "】", "年 ", "会社：", "会社:", "事務所：", "事務所:", "教諭", "助教", "候補", "学長", "市長", "町長", "村長", "施設長", "所長", "院長", "園長", "校長", "社長", "センター長", "教育長", "補佐", "大臣", "総長", "研究員", "助教", "甲", "乙", "丙", "丁", "である", "との間", "さん", "部長", "科長", "長官", "頭取", "院生", "就任", "選任", "再任", "託者", "任者", "借主", "貸主", "買主", "売主", "賃借人", "賃貸人", "雇用主", "従業員", "労働者", "者の", "者は", "人の", "人は", "歳の", "者:", "者：", "人:", "人：", "者 :", "人 :", " 様", " 氏", "次長", "局長", "室長", "審議官", "統括官", "参事官", "代理", "代行", "相談役", "課長", "作者", "著者", "撮影", "司会", "モデレーター", "文責", "演者", "発表者", "受賞者", "報告者", "執筆者", "会員", "首相", "総理", "大統領", "区長", "党首", "県議", "市議", "学芸員", "医師", "職員", "主事", "主査", "主任", "役の",
+			PrefilterLiterals: []string{"会長", "委員", "議長", "君", "担当", "宛名", "連絡先", "医長", "務め", "拝命", "左", "右", "中央", "役員", "薬剤師", "看護師", "代表", "代 表", "取締役", "監査役", "弁護士", "弁理士", "司法書士", "行政書士", "税理士", "公認会計士", "社会保険労務士", "裁判官", "長 ", "申立人", "請求人", "原告", "被告", "控訴人", "上告人", "総代", "こと", "個人", "業者", "業 者", "業  者", "内線", "（以下「", "(以下「", "官 ", "業務禁止", "(", "（", "長 ", "官", "責任者", "担当役", "知事", "知 事", "教授", "講師", "長：", "長:", "頭取：", "CEO", "ＣＥＯ", "番", "長 :", "講演者", "審査員", "コーディネーター", "ファシリテーター", "オブザーバー", "パネリスト", "氏", "届", "監督", "先生", "講 師", "ゲスト", "登壇", "聞き手", "進行役", "さん×", "さん ×", "選手", "議員", "理事", "監事", "幹事", "様", "館長", "顧問", "［", "[", "】", "年 ", "会社：", "会社:", "事務所：", "事務所:", "教諭", "助教", "候補", "学長", "市長", "町長", "村長", "施設長", "所長", "院長", "園長", "校長", "社長", "センター長", "教育長", "補佐", "大臣", "総長", "研究員", "助教", "甲", "乙", "丙", "丁", "である", "との間", "さん", "部長", "科長", "長官", "頭取", "院生", "就任", "選任", "再任", "託者", "任者", "借主", "貸主", "買主", "売主", "賃借人", "賃貸人", "雇用主", "従業員", "労働者", "者の", "者は", "人の", "人は", "歳の", "者:", "者：", "人:", "人：", "者 :", "人 :", " 様", " 氏", "次長", "局長", "室長", "審議官", "統括官", "参事官", "代理", "代行", "相談役", "課長", "TEL", "Tel", "電話", "メール", "作者", "著者", "撮影", "司会", "モデレーター", "文責", "演者", "発表者", "受賞者", "報告者", "執筆者", "会員", "首相", "総理", "大統領", "区長", "党首", "県議", "市議", "学芸員", "医師", "職員", "主事", "主査", "主任", "役の",
 				// 2026-11-23 に足したパターン（name_selforg_context.go）の必須リテラル。
 				"監修", "執筆", "取材", "翻訳", "対談", "鼎談", "座談会", "トーク", "紹介", "スタッフ", "メンバー", "師長", "士長", "係長", "主幹"},
 			Validate: notPlaceholderName,
@@ -3116,7 +3128,10 @@ func Builtin() []Rule {
 				{Re: personNameKunTodanRe, Base: Medium, Validate: validKunStructuredName(true)},
 				{Re: personNameKunCallRe, Base: Medium, Validate: validKunOrKanaGivenName},
 				{Re: personNameKunBillRe, Base: Medium, Validate: validKunName},
-				{Re: personNameKunRosterRe, Base: Medium, Validate: validKunStructuredName(false)},
+				// 「副社長<氏名>君に」「研究代表者 <氏名>（」（name_minutes_context.go。2026-11-28 に実測した見逃し）。
+				{Re: personNameTitleGluedKunRe, Base: Medium, Validate: validKunName},
+				{Re: personNameResearchLeadRe, Base: Medium, Validate: validFullSplitOrSpacedSurnameGiven},
+				{Re: personNameKunRosterRe, Base: Medium, Validate: validKunRosterName},
 				{Re: personNameLecturerSpaceRe, Base: Medium, Validate: validPersonNameFullSplit},
 				{Re: personNameTantoSpaceRe, Base: Medium, Validate: validPersonNameFullSplit},
 				// 担当欄・代表者欄で姓と名の間が広く空いた表記（2026-10-30 10:00 に実測した見逃し）。
@@ -3192,6 +3207,8 @@ func Builtin() []Rule {
 				{Re: personNameTitleNameParenRe, Base: Medium, Validate: validLooseTitleName},
 				{Re: personNameTitleDotNameRe, Base: Medium, Validate: validLooseTitleName},
 				{Re: personNameCEOLineEndRe, Base: Medium, Validate: validLooseTitleName},
+				// 問い合わせ先の「<部署名> <姓> <名> TEL：」（name_rank_context.go。2026-11-28 に実測した見逃し）。
+				{Re: personNameDeptContactRe, Base: Medium, Validate: validDeptContactName},
 				{Re: personNameAffiliationNoTitleRe, Base: Medium, Validate: validSurnamePrefixName, ValidateLine: rejectPostTitleFragment},
 				// 括弧の役職の見出し + 読点区切りの氏名、「理事 <氏名>（<本務>）」、「<氏名><県名>知事」「<氏名><市名>市長」、
 				// 「理事長に<氏名>が就任」、「<職名> <姓> <名>...」、「<催し> <氏名>氏」の行末
@@ -4101,6 +4118,7 @@ func isEmailLocalSeparator(r rune) bool {
 // EAI 版（validEAIEmail）と判定基準を揃える。ASCII 版だけ上限が無いと、長大な
 // 英数字列にたまたま "@" が挟まったトークンをメールアドレスとして報告しうる。
 func validEmail(m string) bool {
+	m = unobfuscateStarEmail(m)
 	if len(m) > 254 {
 		return false
 	}
